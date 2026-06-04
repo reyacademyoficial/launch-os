@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh auth *)",
+      "PowerShell(gh *)",
+      "Bash(git config *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git remote *)",
+      "Bash(git push *)",
+      "Bash(git branch *)",
+      "Bash(mkdir -p docs/legacy)",
+      "Bash(git mv *)",
+      "Bash(git rm *)",
+      "Bash(rm -rf node_modules)",
+      "Bash(rmdir src *)",
+      "Bash(rm -f .DS_Store)",
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(npm uninstall *)"
+    ]
+  }
+}
