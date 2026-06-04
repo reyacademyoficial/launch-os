@@ -1,0 +1,7 @@
+node_modules
+.next
+out
+dist
+docs/legacy
+package-lock.json
+supabase/migrations/**/*.sql
