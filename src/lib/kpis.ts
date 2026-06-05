@@ -1,8 +1,11 @@
 /**
  * Pure KPI math, ported from the legacy prototype (`docs/legacy/App.jsx`).
  *
- * Every helper is safe against NaN/Infinity/division-by-zero so UI never crashes
- * on partial input.
+ * Input shape mirrors the DB `launches` row (snake_case) so rows from Supabase
+ * can be passed in directly. Output is camelCase because it's read by UI code.
+ *
+ * All helpers are safe against NaN / Infinity / division-by-zero so partial
+ * input never crashes the dashboard.
  */
 
 export const safeNumber = (v: unknown, fallback = 0): number => {
@@ -22,19 +25,19 @@ export const safeDiv = (a: unknown, b: unknown, fallback = 0): number => {
 
 export const safePercent = (a: unknown, b: unknown): number => safeDiv(a, b) * 100;
 
-export interface LaunchInput {
-  metaInvestment?: number | string | null;
-  metaLeads?: number | string | null;
-  googleInvestment?: number | string | null;
-  googleLeads?: number | string | null;
-  tiktokInvestment?: number | string | null;
-  tiktokLeads?: number | string | null;
-  contactosAPI?: number | string | null;
-  ingresosWhatsApp?: number | string | null;
+export interface LaunchKPIInput {
+  meta_investment?: number | string | null;
+  meta_leads?: number | string | null;
+  google_investment?: number | string | null;
+  google_leads?: number | string | null;
+  tiktok_investment?: number | string | null;
+  tiktok_leads?: number | string | null;
+  contactos_api?: number | string | null;
+  ingresos_whatsapp?: number | string | null;
   registrados?: number | string | null;
   asistentes?: number | string | null;
-  hastaPitch?: number | string | null;
-  ventasTotal?: number | string | null;
+  hasta_pitch?: number | string | null;
+  ventas_total?: number | string | null;
   revenue?: number | string | null;
 }
 
@@ -65,7 +68,7 @@ export interface LaunchKPIs {
   profit: number;
 }
 
-export function calculateLaunchKPIs(l: LaunchInput | null | undefined): LaunchKPIs {
+export function calculateLaunchKPIs(l: LaunchKPIInput | null | undefined): LaunchKPIs {
   if (!l) {
     return {
       metaInv: 0,
@@ -95,19 +98,19 @@ export function calculateLaunchKPIs(l: LaunchInput | null | undefined): LaunchKP
     };
   }
 
-  const metaInv = safeNumber(l.metaInvestment);
-  const metaLeads = safeInt(l.metaLeads);
-  const googleInv = safeNumber(l.googleInvestment);
-  const googleLeads = safeInt(l.googleLeads);
-  const tiktokInv = safeNumber(l.tiktokInvestment);
-  const tiktokLeads = safeInt(l.tiktokLeads);
-  const contactosAPI = safeInt(l.contactosAPI);
-  const whatsappRevenue = safeNumber(l.ingresosWhatsApp);
+  const metaInv = safeNumber(l.meta_investment);
+  const metaLeads = safeInt(l.meta_leads);
+  const googleInv = safeNumber(l.google_investment);
+  const googleLeads = safeInt(l.google_leads);
+  const tiktokInv = safeNumber(l.tiktok_investment);
+  const tiktokLeads = safeInt(l.tiktok_leads);
+  const contactosAPI = safeInt(l.contactos_api);
+  const whatsappRevenue = safeNumber(l.ingresos_whatsapp);
   const revenue = safeNumber(l.revenue);
   const registrados = safeInt(l.registrados);
   const asistentes = safeInt(l.asistentes);
-  const hastaPitch = safeInt(l.hastaPitch);
-  const ventas = safeInt(l.ventasTotal);
+  const hastaPitch = safeInt(l.hasta_pitch);
+  const ventas = safeInt(l.ventas_total);
 
   const totalLeads = metaLeads + googleLeads + tiktokLeads;
   const totalInvestment = metaInv + googleInv + tiktokInv;
