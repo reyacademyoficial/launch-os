@@ -1,10 +1,10 @@
 "use client";
 
 import {
-  Bar,
-  BarChart,
   CartesianGrid,
   Legend,
+  Line,
+  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -19,9 +19,11 @@ import {
 import type { LaunchDailyRow } from "@/lib/launch-daily/types";
 
 /**
- * Stacked bar of leads per day per channel, ported visually from the
- * prototype's chart (Recharts BarChart with one stack per row, one segment
- * per channel). Sorted ascending by date.
+ * Leads-per-day-per-channel line chart, ported from the prototype's
+ * Card "Leads por día y canal".
+ *
+ * Only renders a line for channels that have at least one non-zero day —
+ * otherwise the legend gets crowded with flat-zero series.
  */
 export function DailyChart({ rows }: { readonly rows: readonly LaunchDailyRow[] }) {
   if (rows.length === 0) return null;
@@ -39,10 +41,14 @@ export function DailyChart({ rows }: { readonly rows: readonly LaunchDailyRow[] 
       otro: r.otro,
     }));
 
+  const activeChannels = DAILY_CHANNELS.filter((ch) =>
+    data.some((d) => d[ch] > 0),
+  );
+
   return (
     <div className="h-72 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+        <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
           <XAxis
             dataKey="date"
@@ -54,6 +60,7 @@ export function DailyChart({ rows }: { readonly rows: readonly LaunchDailyRow[] 
             stroke="var(--color-fg-muted)"
             tick={{ fontSize: 11 }}
             allowDecimals={false}
+            width={32}
           />
           <Tooltip
             contentStyle={{
@@ -66,16 +73,20 @@ export function DailyChart({ rows }: { readonly rows: readonly LaunchDailyRow[] 
             itemStyle={{ color: "var(--color-fg)" }}
           />
           <Legend wrapperStyle={{ fontSize: 12 }} />
-          {DAILY_CHANNELS.map((ch) => (
-            <Bar
+          {activeChannels.map((ch) => (
+            <Line
               key={ch}
+              type="monotone"
               dataKey={ch}
-              stackId="leads"
-              fill={CHANNEL_COLORS[ch]}
+              stroke={CHANNEL_COLORS[ch]}
+              strokeWidth={2}
+              dot={{ r: 2 }}
+              activeDot={{ r: 4 }}
+              connectNulls
               name={CHANNEL_LABELS[ch]}
             />
           ))}
-        </BarChart>
+        </LineChart>
       </ResponsiveContainer>
     </div>
   );
