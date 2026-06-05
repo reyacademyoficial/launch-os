@@ -87,3 +87,35 @@ export async function requireRole(
   if (!allowed.includes(profile.role)) redirect("/");
   return profile;
 }
+
+/**
+ * Returns true if the caller can write to the given project. Delegates to the
+ * SQL helper `can_edit_project` (defined in 0002_functions.sql) so the rule
+ * stays in one place — the same function powers every RLS write policy.
+ */
+export async function userCanEditProject(projectId: string): Promise<boolean> {
+  const supabase = await createClient();
+  // `as never` cast on the args is the postgrest-js inference workaround
+  // (see memory feedback_supabase_never_inference). The runtime shape matches
+  // the function's `p_project_id` argument.
+  const { data } = await supabase.rpc(
+    "can_edit_project",
+    { p_project_id: projectId } as never,
+  );
+  return data === true;
+}
+
+/**
+ * Defense-in-depth layer 2 for write-only views (create/edit/delete pages and
+ * Server Actions). If the caller can't write to the project, redirect to the
+ * project overview (where they presumably came from / can still read).
+ */
+export async function requireCanEditProject(
+  projectId: string,
+): Promise<SessionProfile> {
+  const profile = await requireSessionProfile();
+  if (!(await userCanEditProject(projectId))) {
+    redirect(`/proyectos/${projectId}`);
+  }
+  return profile;
+}

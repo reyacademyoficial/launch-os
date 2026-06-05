@@ -5,6 +5,7 @@ import { StatusBadge } from "@/components/dashboard/launches/status-badge";
 import { fmtDate, fmtMoney, fmtMultiplier } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import { listLaunchesForProject } from "@/lib/launches/list";
+import { userCanEditProject } from "@/lib/supabase/auth";
 
 export const metadata: Metadata = { title: "Lanzamientos" };
 
@@ -14,25 +15,46 @@ export default async function LaunchesPage({
   readonly params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const launches = await listLaunchesForProject(projectId);
+  const [launches, canEdit] = await Promise.all([
+    listLaunchesForProject(projectId),
+    userCanEditProject(projectId),
+  ]);
 
   if (launches.length === 0) {
     return (
-      <section className="max-w-md space-y-3">
+      <section className="max-w-md space-y-4">
         <h1 className="text-2xl font-bold">Lanzamientos</h1>
         <p className="text-sm text-fg-muted">
-          Sin lanzamientos cargados todavía. Los vas a poder crear desde acá cuando
-          esté la Fase 5.C.
+          Sin lanzamientos cargados todavía
+          {canEdit ? "." : ". Pedile al admin del proyecto que cree el primero."}
         </p>
+        {canEdit && (
+          <Link
+            href={`/proyectos/${projectId}/launches/new`}
+            className="inline-flex items-center justify-center rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+          >
+            Crear el primero
+          </Link>
+        )}
       </section>
     );
   }
 
   return (
     <section className="space-y-6">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-bold">Lanzamientos</h1>
-        <span className="text-sm text-fg-muted">{launches.length} total</span>
+      <header className="flex items-baseline justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold">Lanzamientos</h1>
+          <p className="mt-1 text-xs text-fg-subtle">{launches.length} total</p>
+        </div>
+        {canEdit && (
+          <Link
+            href={`/proyectos/${projectId}/launches/new`}
+            className="inline-flex items-center justify-center rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+          >
+            + Nuevo lanzamiento
+          </Link>
+        )}
       </header>
 
       <div className="overflow-hidden rounded-md border border-border">
