@@ -1,33 +1,41 @@
 import type { Metadata } from "next";
 
+import { UserTable } from "@/components/dashboard/admin/user-table";
 import { createClient } from "@/lib/supabase/server";
+import { listAllUsers } from "@/lib/users/list";
 
-import { CreateUserForm } from "./form";
+import { CreateUserModal } from "./form";
 
 export const metadata: Metadata = { title: "Usuarios" };
 
+interface ProjectRow {
+  id: string;
+  name: string;
+}
+
 export default async function UsersAdminPage() {
-  // The (admin) layout already gates with requireRole('superadmin'), so we
-  // skip the page-level mirror. The Server Action itself re-checks the role
-  // (real auth boundary).
+  // (admin) layout already gated to superadmin. Fetch projects (for the modal's
+  // dropdown) and users in parallel.
   const supabase = await createClient();
-  const { data: projects } = await supabase
-    .from("projects")
-    .select("id, name")
-    .order("name", { ascending: true });
+  const [{ data: projectsRaw }, users] = await Promise.all([
+    supabase.from("projects").select("id, name").order("name", { ascending: true }),
+    listAllUsers(),
+  ]);
+  const projects = (projectsRaw ?? []) as ProjectRow[];
 
   return (
-    <section className="max-w-xl space-y-6">
-      <header>
-        <h1 className="text-2xl font-bold">Crear usuario</h1>
-        <p className="mt-1 text-sm text-fg-muted">
-          El usuario queda activo de inmediato con la contraseña inicial que
-          definas. Pasale email + contraseña por un canal seguro (chat con E2E,
-          password manager). Después él puede cambiarla en <code>/configuracion</code>.
-        </p>
+    <section className="space-y-6">
+      <header className="flex flex-wrap items-baseline justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold">Usuarios</h1>
+          <p className="mt-1 text-xs text-fg-subtle">{users.length} total</p>
+        </div>
+        <div className="flex items-center">
+          <CreateUserModal projects={projects} />
+        </div>
       </header>
 
-      <CreateUserForm projects={projects ?? []} />
+      <UserTable users={users} />
     </section>
   );
 }

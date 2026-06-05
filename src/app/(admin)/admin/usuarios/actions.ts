@@ -1,5 +1,7 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
+
 import { requireRole } from "@/lib/supabase/auth";
 import { createServiceClient } from "@/lib/supabase/service";
 
@@ -83,5 +85,6 @@ export async function createUser(
     };
   }
 
+  revalidatePath("/admin/usuarios");
   return { ok: true, userId: created.user.id, email, role };
 }
