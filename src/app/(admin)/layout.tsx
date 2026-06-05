@@ -1,13 +1,11 @@
 import { Shell } from "@/components/dashboard/shell";
+import { listAccessibleProjects } from "@/lib/projects/list";
 import { requireRole } from "@/lib/supabase/auth";
 
 /**
  * Admin guard — auth defense layer #2.
  *
- * Currently superadmin-only (admin/cliente delta intentionally undefined).
- * When admin gains some of these capabilities, loosen this guard and add a
- * page-level `requireRole('superadmin')` to the still-restricted pages.
- *
+ * Superadmin-only for now (admin/cliente delta intentionally undefined).
  * Uses the same <Shell> as the (app) group so navigation stays coherent.
  */
 export default async function AdminLayout({
@@ -16,5 +14,10 @@ export default async function AdminLayout({
   readonly children: React.ReactNode;
 }) {
   const profile = await requireRole("superadmin");
-  return <Shell profile={profile}>{children}</Shell>;
+  const projects = await listAccessibleProjects();
+  return (
+    <Shell profile={profile} projects={projects}>
+      {children}
+    </Shell>
+  );
 }

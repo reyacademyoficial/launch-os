@@ -2,24 +2,6 @@ import type { SessionProfile } from "@/lib/supabase/auth";
 
 import { NavLink } from "./nav-link";
 
-interface NavItem {
-  href: string;
-  label: string;
-}
-
-const APP_NAV: readonly NavItem[] = [
-  { href: "/", label: "Overview" },
-  { href: "/launches", label: "Lanzamientos" },
-  { href: "/calculadora", label: "Calculadora" },
-  { href: "/integraciones", label: "Integraciones" },
-  { href: "/configuracion", label: "Configuración" },
-];
-
-const ADMIN_NAV: readonly NavItem[] = [
-  { href: "/proyectos", label: "Proyectos" },
-  { href: "/usuarios", label: "Usuarios" },
-];
-
 export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
   const showAdmin = profile.role === "superadmin";
 
@@ -30,11 +12,13 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
       </div>
 
       <nav className="space-y-1">
-        {APP_NAV.map((item) => (
-          <NavLink key={item.href} href={item.href}>
-            {item.label}
-          </NavLink>
-        ))}
+        <NavLink scopedSuffix="" exact>
+          Overview
+        </NavLink>
+        <NavLink scopedSuffix="/launches">Lanzamientos</NavLink>
+        <NavLink href="/calculadora">Calculadora</NavLink>
+        <NavLink scopedSuffix="/integraciones">Integraciones</NavLink>
+        <NavLink href="/configuracion">Configuración</NavLink>
       </nav>
 
       {showAdmin && (
@@ -43,11 +27,8 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
             Admin
           </div>
           <nav className="space-y-1">
-            {ADMIN_NAV.map((item) => (
-              <NavLink key={item.href} href={item.href}>
-                {item.label}
-              </NavLink>
-            ))}
+            <NavLink href="/admin/proyectos">Proyectos</NavLink>
+            <NavLink href="/admin/usuarios">Usuarios</NavLink>
           </nav>
         </>
       )}
