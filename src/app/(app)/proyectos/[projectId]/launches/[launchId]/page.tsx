@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { AISummary } from "@/components/dashboard/launches/ai-summary";
 import { DailyChart } from "@/components/dashboard/launches/daily/daily-chart";
 import { DailyFormModal } from "@/components/dashboard/launches/daily/daily-form-modal";
 import { DailyTable } from "@/components/dashboard/launches/daily/daily-table";
@@ -127,6 +128,8 @@ export default async function LaunchDetailPage({
           </>
         )}
       </section>
+
+      <AISummary projectId={projectId} launchId={launchId} />
     </section>
   );
 }

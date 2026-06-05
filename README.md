@@ -39,10 +39,10 @@ Ver `.env.example`. Resumen:
 | `NEXT_PUBLIC_SUPABASE_URL`        | público  | URL del proyecto Supabase                         |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY`   | público  | Anon key                                          |
 | `SUPABASE_SERVICE_ROLE_KEY`       | **servidor** | Service-role: invites + `project_secrets`     |
-| `ANTHROPIC_API_KEY`               | **servidor** | Resumen ejecutivo con IA (Route Handler)      |
+| `OPENAI_API_KEY`                  | **servidor** | Resumen ejecutivo con IA (Server Action)      |
 | `NEXT_PUBLIC_APP_URL`             | público  | URL canónica (usada en `redirectTo` de invites)   |
 
-> **Regla:** `SUPABASE_SERVICE_ROLE_KEY` y `ANTHROPIC_API_KEY` nunca se importan
+> **Regla:** `SUPABASE_SERVICE_ROLE_KEY` y `OPENAI_API_KEY` nunca se importan
 > desde código de cliente ni se prefijan con `NEXT_PUBLIC_`.
 
 ## Estructura

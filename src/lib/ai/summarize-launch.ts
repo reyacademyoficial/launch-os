@@ -1,0 +1,107 @@
+import "server-only";
+
+import {
+  fmtMoney,
+  fmtMoneyDecimals,
+  fmtMultiplier,
+  fmtNumber,
+  fmtPercent,
+} from "@/lib/format";
+import { calculateLaunchKPIs } from "@/lib/kpis";
+import type { LaunchDailyRow } from "@/lib/launch-daily/types";
+import { DAILY_CHANNELS, CHANNEL_LABELS } from "@/lib/launch-daily/types";
+import type { LaunchRow } from "@/lib/launches/types";
+
+import { generateText } from "./client";
+
+const SYSTEM_PROMPT = `Sos un analista senior de marketing digital. Tu trabajo es leer las métricas de un lanzamiento y devolver un resumen ejecutivo accionable.
+
+Devolvé la respuesta en MARKDOWN, con esta estructura exacta:
+
+## Lo que funcionó
+- Punto 1
+- Punto 2
+- (opcional: Punto 3)
+
+## Lo que no funcionó
+- Punto 1
+- Punto 2
+- (opcional: Punto 3)
+
+## Recomendaciones para el próximo lanzamiento
+1. Acción concreta y priorizada
+2. Acción concreta y priorizada
+3. (opcional: tercera)
+
+Reglas duras:
+- Respondé en español rioplatense, máximo 350 palabras.
+- Usá los KPIs provistos tal cual; no inventes números.
+- Si faltan datos en algún canal, decilo explícito en vez de improvisar.
+- Sé directo, sin clichés ("¡increíble resultado!"). Hablás con el dueño del lanzamiento.
+- Usá **negrita** para resaltar métricas o números clave dentro de los puntos.
+- NO incluyas un h1 ni un título general — la página ya tiene "Resumen ejecutivo" como header.`;
+
+export async function summarizeLaunch(
+  launch: LaunchRow,
+  daily: readonly LaunchDailyRow[],
+): Promise<string> {
+  const kpi = calculateLaunchKPIs(launch);
+  const prompt = buildUserPrompt(launch, daily, kpi);
+  return generateText({ system: SYSTEM_PROMPT, user: prompt });
+}
+
+function buildUserPrompt(
+  launch: LaunchRow,
+  daily: readonly LaunchDailyRow[],
+  kpi: ReturnType<typeof calculateLaunchKPIs>,
+): string {
+  const lines: string[] = [];
+
+  lines.push(`Lanzamiento: ${launch.name}`);
+  if (launch.date) lines.push(`Fecha: ${launch.date}`);
+  if (launch.type) lines.push(`Tipo: ${launch.type}`);
+  if (launch.status) lines.push(`Status: ${launch.status}`);
+  if (launch.platforms.length > 0) {
+    lines.push(`Plataformas: ${launch.platforms.join(", ")}`);
+  }
+
+  lines.push("", "Inversión por canal:");
+  lines.push(`- Meta: ${fmtMoney(kpi.metaInv)} (${fmtNumber(kpi.metaLeads)} leads, CPL ${fmtMoneyDecimals(kpi.cplMeta)})`);
+  lines.push(`- Google: ${fmtMoney(kpi.googleInv)} (${fmtNumber(kpi.googleLeads)} leads, CPL ${fmtMoneyDecimals(kpi.cplGoogle)})`);
+  lines.push(`- TikTok: ${fmtMoney(kpi.tiktokInv)} (${fmtNumber(kpi.tiktokLeads)} leads, CPL ${fmtMoneyDecimals(kpi.cplTiktok)})`);
+  lines.push(`- Total inversión: ${fmtMoney(kpi.totalInvestment)}`);
+  lines.push(`- Leads totales (ads): ${fmtNumber(kpi.totalLeads)}`);
+
+  lines.push("", "Funnel:");
+  lines.push(`- Registrados: ${fmtNumber(kpi.registrados)}`);
+  lines.push(`- Asistentes: ${fmtNumber(kpi.asistentes)} (show rate ${fmtPercent(kpi.showRate)})`);
+  lines.push(`- Hasta el pitch: ${fmtNumber(kpi.hastaPitch)}`);
+  lines.push(`- Ventas: ${fmtNumber(kpi.ventas)} (close rate ${fmtPercent(kpi.closeRate)})`);
+
+  lines.push("", "Revenue + economics:");
+  lines.push(`- Revenue: ${fmtMoney(kpi.revenue)}`);
+  lines.push(`- Ingresos via WhatsApp: ${fmtMoney(kpi.whatsappRevenue)} (${fmtPercent(kpi.whatsappRevenueShare)} del revenue)`);
+  lines.push(`- ROAS: ${fmtMultiplier(kpi.roas)}`);
+  lines.push(`- CAC: ${fmtMoneyDecimals(kpi.cac)}`);
+  lines.push(`- Profit: ${fmtMoney(kpi.profit)}`);
+
+  if (daily.length > 0) {
+    lines.push("", "Leads por día por canal:");
+    const sorted = [...daily].sort((a, b) => a.date.localeCompare(b.date));
+    for (const row of sorted) {
+      const breakdown = DAILY_CHANNELS.filter((ch) => row[ch] > 0)
+        .map((ch) => `${CHANNEL_LABELS[ch]} ${row[ch]}`)
+        .join(", ");
+      lines.push(`- ${row.date}: ${breakdown || "sin datos"}`);
+    }
+  } else {
+    lines.push("", "Sin datos diarios cargados.");
+  }
+
+  lines.push(
+    "",
+    "Devolveme el análisis siguiendo la estructura del system prompt.",
+  );
+
+  return lines.join("\n");
+}
