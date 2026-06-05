@@ -2,15 +2,20 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { DailyChart } from "@/components/dashboard/launches/daily/daily-chart";
+import { DailyFormModal } from "@/components/dashboard/launches/daily/daily-form-modal";
+import { DailyTable } from "@/components/dashboard/launches/daily/daily-table";
 import { DeleteButton } from "@/components/dashboard/launches/delete-button";
 import { KpiGrid } from "@/components/dashboard/launches/kpi-grid";
 import { StatusBadge } from "@/components/dashboard/launches/status-badge";
 import { fmtDate } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
+import { listDailyForLaunch } from "@/lib/launch-daily/list";
 import { getLaunch } from "@/lib/launches/get";
 import { userCanEditProject } from "@/lib/supabase/auth";
 
 import { deleteLaunch } from "../actions";
+import { createDailyEntry } from "./daily-actions";
 
 export const metadata: Metadata = { title: "Lanzamiento" };
 
@@ -20,18 +25,20 @@ export default async function LaunchDetailPage({
   readonly params: Promise<{ projectId: string; launchId: string }>;
 }) {
   const { projectId, launchId } = await params;
-  const [launch, canEdit] = await Promise.all([
+  const [launch, canEdit, daily] = await Promise.all([
     getLaunch(launchId),
     userCanEditProject(projectId),
+    listDailyForLaunch(launchId),
   ]);
 
   if (!launch || launch.project_id !== projectId) notFound();
 
   const kpi = calculateLaunchKPIs(launch);
   const deleteAction = deleteLaunch.bind(null, projectId, launchId);
+  const addDailyAction = createDailyEntry.bind(null, projectId, launchId);
 
   return (
-    <section className="space-y-8">
+    <section className="space-y-10">
       <div className="text-xs text-fg-subtle">
         <Link href={`/proyectos/${projectId}/launches`} className="hover:text-fg">
           ← Volver al listado
@@ -80,6 +87,46 @@ export default async function LaunchDetailPage({
       </header>
 
       <KpiGrid kpi={kpi} />
+
+      <section className="space-y-4">
+        <header className="flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-base font-semibold text-fg">Datos diarios</h2>
+            <p className="text-xs text-fg-subtle">
+              Leads por canal por día. Alimenta el gráfico de abajo.
+            </p>
+          </div>
+          {canEdit && (
+            <DailyFormModal
+              triggerLabel="+ Agregar día"
+              title="Agregar día"
+              submitLabel="Guardar"
+              action={addDailyAction}
+            />
+          )}
+        </header>
+
+        {daily.length === 0 ? (
+          <div className="rounded-md border border-dashed border-border bg-surface/40 p-8 text-center text-sm text-fg-muted">
+            Sin datos diarios cargados.
+            {canEdit
+              ? " Agregá uno para empezar a ver el gráfico de leads por canal."
+              : " El admin del proyecto los va a cargar."}
+          </div>
+        ) : (
+          <>
+            <DailyTable
+              rows={daily}
+              canEdit={canEdit}
+              projectId={projectId}
+              launchId={launchId}
+            />
+            <div className="rounded-md border border-border bg-surface/40 p-4">
+              <DailyChart rows={daily} />
+            </div>
+          </>
+        )}
+      </section>
     </section>
   );
 }
