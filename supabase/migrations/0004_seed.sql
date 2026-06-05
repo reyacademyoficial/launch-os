@@ -3,15 +3,43 @@
 -- │                                                                          │
 -- │ Intentionally empty of fake data. Real users enter the system only by   │
 -- │ invitation (Server Action with the service-role) once Phase 3 is wired. │
--- │                                                                          │
--- │ Bootstrap the first superadmin manually after `supabase start`:         │
--- │   1) Sign up via the Studio (Authentication → Users → New user) or     │
--- │      hit the public signup endpoint BEFORE disabling open signups.     │
--- │   2) Promote the resulting profile:                                     │
--- │        update public.profiles                                           │
--- │           set role = 'superadmin'                                       │
--- │         where id = '<auth.users.id of that user>';                     │
--- │   3) Then disable "Allow new users to sign up" in the dashboard.        │
 -- ╰──────────────────────────────────────────────────────────────────────────╯
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Bootstrap del primer superadmin (chicken-and-egg)
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- El trigger `guard_profile_role` (definido en 0002_functions.sql) impide que
+-- nadie distinto a un superadmin cambie `profiles.role`. Pero todavía no hay
+-- ningún superadmin que pueda hacerlo. La salida es desactivar el trigger
+-- por el tiempo del UPDATE.
+--
+-- IMPORTANTE: estos pasos NO corren automáticamente con la migración. Son una
+-- referencia para hacerlos a mano desde el SQL Editor de Studio una sola vez,
+-- después de aplicar las migraciones.
+--
+--   1) Crear el usuario en Studio:
+--      Authentication → Users → Add user → email + password (Auto-confirm = yes)
+--
+--   2) En el SQL Editor de Studio, pegar esto reemplazando el email:
+--
+--        alter table public.profiles disable trigger guard_profile_role;
+--
+--        update public.profiles
+--           set role = 'superadmin'
+--         where id = (select id from auth.users
+--                     where email = 'TU-EMAIL@dominio.com');
+--
+--        alter table public.profiles enable trigger guard_profile_role;
+--
+--        select id, full_name, role from public.profiles where role = 'superadmin';
+--
+--   3) Después de validar, en Auth settings desactivar "Allow new users to sign up".
+--
+-- Cualquier futura promoción de roles via SQL (sin un superadmin con sesión)
+-- necesita el mismo apagado-prendido del trigger. Lo deseable es hacerlo desde
+-- la UI con un superadmin logueado, que ahí sí `is_superadmin()` devuelve true
+-- y el trigger pasa sin tocar.
+-- ═══════════════════════════════════════════════════════════════════════════
 
 -- (no rows inserted)

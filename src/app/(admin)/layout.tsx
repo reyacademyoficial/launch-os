@@ -1,20 +1,33 @@
+import { requireRole } from "@/lib/supabase/auth";
+
 /**
- * Admin/superadmin guard. Phase 3 wires the server-side role check:
- *   - Read user + role server-side via `createClient` from `@/lib/supabase/server`
- *   - Redirect to `/` (overview) if role is `cliente`
+ * Admin/superadmin guard — auth defense layer #2.
  *
- * This is auth defense layer #2 — middleware is #1, RLS is #3.
+ * Currently allows only superadmin. Both `/proyectos` and `/usuarios` are
+ * superadmin-only by spec (admin/cliente delta is intentionally undefined).
+ * When admin gains some of these capabilities, loosen this guard and add a
+ * page-level `requireRole('superadmin')` to the still-restricted pages.
  */
-export default function AdminLayout({
+export default async function AdminLayout({
   children,
 }: {
   readonly children: React.ReactNode;
 }) {
+  const profile = await requireRole("superadmin");
+
   return (
     <div className="min-h-dvh bg-bg text-fg">
-      <header className="border-b border-border bg-bg-elevated px-6 py-3">
-        <span className="text-sm font-semibold text-accent">Launch OS · Admin</span>
-        <span className="ml-3 text-xs text-fg-subtle">admin shell (placeholder)</span>
+      <header className="flex items-center justify-between border-b border-border bg-bg-elevated px-6 py-3">
+        <div>
+          <span className="text-sm font-semibold text-accent">Launch OS · Admin</span>
+          <span className="ml-3 text-xs text-fg-subtle">admin shell (placeholder)</span>
+        </div>
+        <div className="text-xs text-fg-muted">
+          {profile.fullName ?? profile.email ?? profile.id}{" "}
+          <span className="ml-2 rounded bg-surface px-2 py-0.5 text-fg-subtle">
+            {profile.role}
+          </span>
+        </div>
       </header>
       <main className="px-6 py-8">{children}</main>
     </div>

@@ -86,21 +86,42 @@ Los archivos en `supabase/migrations/` están ordenados:
 
 ### Primer superadmin
 
-1. Crear el primer usuario manualmente (Dashboard de Supabase o `signup` directo
-   antes de desactivar el registro abierto).
-2. Promoverlo: `update public.profiles set role = 'superadmin' where id = '<auth.uid>';`
+1. Crear el primer usuario en Studio (Authentication → Users → Add user, con
+   "Auto confirm" activado), o vía `signup` antes de desactivar el registro abierto.
+2. Promoverlo. El trigger `guard_profile_role` rebota cualquier `UPDATE` de
+   `role` por alguien que no sea superadmin, así que como todavía no hay ninguno
+   hay que apagarlo por el tiempo del UPDATE (chicken-and-egg):
 
-### Auth — invite-only
+   ```sql
+   alter table public.profiles disable trigger guard_profile_role;
+
+   update public.profiles
+      set role = 'superadmin'
+    where id = (select id from auth.users
+                where email = 'TU-EMAIL@dominio.com');
+
+   alter table public.profiles enable trigger guard_profile_role;
+   ```
+
+### Auth — alta directa por superadmin
 
 En el dashboard de Supabase, después del primer superadmin:
 
 1. **Desactivar** "Allow new users to sign up".
-2. **Site URL** = `NEXT_PUBLIC_APP_URL`.
-3. **Redirect URLs** permitidas: `<APP_URL>/auth/confirm`, `<APP_URL>/set-password`.
-4. Personalizar la plantilla de email **Invite**.
+2. **Site URL** = `NEXT_PUBLIC_APP_URL` (`http://localhost:3000` en dev).
 
-A partir de ahí, los usuarios nuevos solo entran vía `auth.admin.inviteUserByEmail`
-(Server Action en `(admin)/usuarios`, con service-role).
+Los usuarios nuevos se crean desde `(admin)/usuarios`: superadmin define email
++ contraseña + rol + proyecto, y la Server Action llama a
+`supabase.auth.admin.createUser({ ..., email_confirm: true })` con service-role.
+NO se manda mail de invitación: el superadmin pasa las credenciales por un
+canal externo (chat con E2E, password manager). El usuario después puede
+cambiar su contraseña en `/configuracion` (Fase 4).
+
+> Las rutas `/auth/confirm` y `/set-password` están armadas pero sin uso en el
+> flujo actual. Quedan listas para el password-reset por email (futuro): el
+> template de email tiene que apuntar a
+> `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=recovery`
+> (con `token_hash` en query, no `{{ .ConfirmationURL }}` que usa fragment).
 
 ## Roles y permisos
 

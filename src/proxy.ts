@@ -1,21 +1,39 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { updateSession } from "@/lib/supabase/middleware";
+
 /**
- * Next 16 renamed the `middleware` convention to `proxy`. This file replaces
- * what would have been `src/middleware.ts` in Next 15.
+ * Next 16 renamed the `middleware` convention to `proxy`. Same file model.
  *
- * Phase 1 stub — pass-through.
+ * Two responsibilities:
+ *   1. Refresh the Supabase auth session on every request (cookies in/out).
+ *   2. Coarse-grained route protection — bounce unauthenticated requests off
+ *      protected paths to /login.
  *
- * Phase 3 implements:
- *   1. Supabase session refresh via @supabase/ssr `updateSession` pattern
- *   2. Coarse route protection: unauthenticated users → /login
- *
- * SECURITY: the proxy is auth defense layer #1. It is necessary but NOT
- * sufficient. Every protected layout/page must re-verify the user server-side,
- * and RLS is the final guard. See memory `feedback_nextjs_auth_defense`.
+ * SECURITY: this is auth defense layer #1. NOT sufficient on its own. Every
+ * protected layout/page re-verifies server-side via `requireSessionProfile`
+ * (or `requireRole`); RLS is the final guard. See memory
+ * `feedback_nextjs_auth_defense`.
  */
-export function proxy(_request: NextRequest) {
-  return NextResponse.next();
+
+// Paths that don't need a session. Everything else does.
+const PUBLIC_PATHS: readonly string[] = ["/login", "/auth/confirm"];
+
+function isPublic(pathname: string): boolean {
+  return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
+export async function proxy(request: NextRequest) {
+  const { response, user } = await updateSession(request);
+
+  if (!user && !isPublic(request.nextUrl.pathname)) {
+    const loginUrl = request.nextUrl.clone();
+    loginUrl.pathname = "/login";
+    loginUrl.search = "";
+    return NextResponse.redirect(loginUrl);
+  }
+
+  return response;
 }
 
 export const config = {
