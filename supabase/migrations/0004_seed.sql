@@ -1,0 +1,17 @@
+-- ╭──────────────────────────────────────────────────────────────────────────╮
+-- │ Seed                                                                     │
+-- │                                                                          │
+-- │ Intentionally empty of fake data. Real users enter the system only by   │
+-- │ invitation (Server Action with the service-role) once Phase 3 is wired. │
+-- │                                                                          │
+-- │ Bootstrap the first superadmin manually after `supabase start`:         │
+-- │   1) Sign up via the Studio (Authentication → Users → New user) or     │
+-- │      hit the public signup endpoint BEFORE disabling open signups.     │
+-- │   2) Promote the resulting profile:                                     │
+-- │        update public.profiles                                           │
+-- │           set role = 'superadmin'                                       │
+-- │         where id = '<auth.users.id of that user>';                     │
+-- │   3) Then disable "Allow new users to sign up" in the dashboard.        │
+-- ╰──────────────────────────────────────────────────────────────────────────╯
+
+-- (no rows inserted)

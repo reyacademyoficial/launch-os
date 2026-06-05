@@ -17,7 +17,11 @@
       "Bash(rm -f .DS_Store)",
       "Bash(npm install *)",
       "Bash(npm run *)",
-      "Bash(npm uninstall *)"
+      "Bash(npm uninstall *)",
+      "Bash(docker version *)",
+      "Bash(supabase --version)",
+      "Bash(npx -y supabase --version)",
+      "Bash(npx supabase *)"
     ]
   }
 }
