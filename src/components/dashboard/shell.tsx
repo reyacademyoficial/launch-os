@@ -4,6 +4,11 @@ import type { SessionProfile } from "@/lib/supabase/auth";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
 
+/**
+ * App shell. The root container fills the viewport and never scrolls; the
+ * sidebar and topbar stay in place while only the `<main>` element scrolls.
+ * Pages render inside `<main>` and therefore inherit the scroll container.
+ */
 export function Shell({
   profile,
   projects,
@@ -14,11 +19,11 @@ export function Shell({
   readonly children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-dvh bg-bg text-fg">
+    <div className="flex h-dvh overflow-hidden bg-bg text-fg">
       <Sidebar profile={profile} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar profile={profile} projects={projects} />
-        <main className="flex-1 px-8 py-8">{children}</main>
+        <main className="flex-1 overflow-y-auto px-8 py-8">{children}</main>
       </div>
     </div>
   );

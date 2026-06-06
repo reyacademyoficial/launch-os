@@ -1,17 +1,34 @@
 "use client";
 
-import { useParams, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 
 interface Project {
   id: string;
   name: string;
 }
 
+/**
+ * Routes where the project switcher is suppressed because the page itself
+ * isn't tied to a project context — showing it there would either confuse
+ * (it'd just dangle in the header) or imply the action affects the current
+ * page, which it doesn't.
+ */
+const HIDDEN_PREFIXES = ["/configuracion", "/admin"] as const;
+
+function isHidden(pathname: string): boolean {
+  return HIDDEN_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
+
 export function ProjectSwitcher({ projects }: { readonly projects: readonly Project[] }) {
   const router = useRouter();
+  const pathname = usePathname();
   const params = useParams<{ projectId?: string | string[] }>();
   const activeId =
     typeof params.projectId === "string" ? params.projectId : undefined;
+
+  if (isHidden(pathname)) return null;
 
   if (projects.length === 0) {
     return <span className="text-xs text-fg-subtle">Sin proyectos</span>;
