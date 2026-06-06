@@ -49,10 +49,13 @@ export async function getSessionProfile(): Promise<SessionProfile | null> {
   // generated Database type includes the `__InternalSupabase` version marker.
   // Known issue in supabase-js 2.107 + @supabase/ssr 0.6.1. The runtime shape
   // matches `ProfileSummary` because the SQL select pins these columns.
+  // Soft-deleted profiles (`deleted_at` is not null) read as "no profile" so
+  // the rest of the app treats the user as signed out.
   const { data, error } = await supabase
     .from("profiles")
     .select("id, full_name, role")
     .eq("id", user.id)
+    .is("deleted_at", null)
     .maybeSingle();
 
   const profile = data as ProfileSummary | null;

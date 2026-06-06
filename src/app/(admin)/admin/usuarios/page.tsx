@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { UserTable } from "@/components/dashboard/admin/user-table";
+import { requireRole } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { listAllUsers } from "@/lib/users/list";
 
@@ -14,8 +15,11 @@ interface ProjectRow {
 }
 
 export default async function UsersAdminPage() {
-  // (admin) layout already gated to superadmin. Fetch projects (for the modal's
-  // dropdown) and users in parallel.
+  // (admin) layout already gated to superadmin. We re-read the profile here
+  // to know the current user's id (so the table can suppress edit/deactivate
+  // on the caller's own row — admins shouldn't lock themselves out from the UI).
+  const me = await requireRole("superadmin");
+
   const supabase = await createClient();
   const [{ data: projectsRaw }, users] = await Promise.all([
     supabase.from("projects").select("id, name").order("name", { ascending: true }),
@@ -35,7 +39,7 @@ export default async function UsersAdminPage() {
         </div>
       </header>
 
-      <UserTable users={users} />
+      <UserTable users={users} projects={projects} currentUserId={me.id} />
     </section>
   );
 }

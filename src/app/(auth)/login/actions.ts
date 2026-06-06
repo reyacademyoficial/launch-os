@@ -20,11 +20,29 @@ export async function signIn(
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
 
-  if (error) {
+  if (error || !data.user) {
     // Don't leak whether the email exists vs the password was wrong.
     return { error: "Credenciales inválidas." };
+  }
+
+  // Soft-delete check. Banning at the auth level (deactivateUser action) usually
+  // catches this earlier — signInWithPassword would error. This is the
+  // belt-and-suspenders fallback in case the ban didn't land.
+  const { data: profileCheck } = await supabase
+    .from("profiles")
+    .select("deleted_at")
+    .eq("id", data.user.id)
+    .maybeSingle();
+
+  const profileWithFlag = profileCheck as { deleted_at: string | null } | null;
+  if (profileWithFlag?.deleted_at) {
+    await supabase.auth.signOut();
+    return { error: "Tu cuenta fue desactivada. Hablá con un admin." };
   }
 
   redirect("/");

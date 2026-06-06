@@ -42,7 +42,10 @@ export async function listAllUsers(): Promise<UserListItem[]> {
 
   const [authResult, profilesResult, membersResult] = await Promise.all([
     service.auth.admin.listUsers({ perPage: 1000 }),
-    supabase.from("profiles").select("id, full_name, role, created_at"),
+    supabase
+      .from("profiles")
+      .select("id, full_name, role, created_at")
+      .is("deleted_at", null),
     supabase.from("project_members").select("user_id, projects(id, name)"),
   ]);
 
