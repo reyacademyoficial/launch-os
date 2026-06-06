@@ -3,10 +3,18 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
+import { setTheme } from "@/app/theme-actions";
 import { signOut } from "@/lib/auth/actions";
 import type { SessionProfile } from "@/lib/supabase/auth";
+import { type Theme, THEMES } from "@/lib/theme";
 
-export function UserMenu({ profile }: { readonly profile: SessionProfile }) {
+export function UserMenu({
+  profile,
+  theme,
+}: {
+  readonly profile: SessionProfile;
+  readonly theme: Theme;
+}) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -72,6 +80,31 @@ export function UserMenu({ profile }: { readonly profile: SessionProfile }) {
             Configuración
           </Link>
 
+          <div className="border-t border-border px-3 py-2">
+            <div className="mb-1.5 text-[10px] uppercase tracking-wider text-fg-subtle">
+              Tema
+            </div>
+            <div className="flex gap-1">
+              {THEMES.map((t) => (
+                <form key={t} action={setTheme} className="flex-1">
+                  <input type="hidden" name="theme" value={t} />
+                  <button
+                    type="submit"
+                    aria-pressed={theme === t}
+                    className={
+                      "w-full rounded-md border px-2 py-1 text-xs font-medium capitalize transition-colors " +
+                      (theme === t
+                        ? "border-accent bg-accent/15 text-accent"
+                        : "border-border bg-surface text-fg-muted hover:text-fg")
+                    }
+                  >
+                    {THEME_LABELS[t]}
+                  </button>
+                </form>
+              ))}
+            </div>
+          </div>
+
           <form action={signOut} className="border-t border-border">
             <button
               type="submit"
@@ -86,6 +119,12 @@ export function UserMenu({ profile }: { readonly profile: SessionProfile }) {
     </div>
   );
 }
+
+const THEME_LABELS: Record<Theme, string> = {
+  system: "Sistema",
+  light: "Claro",
+  dark: "Oscuro",
+};
 
 function PersonIcon() {
   return (

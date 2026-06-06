@@ -1,6 +1,7 @@
 import { Shell } from "@/components/dashboard/shell";
 import { listAccessibleProjects } from "@/lib/projects/list";
 import { requireRole } from "@/lib/supabase/auth";
+import { readThemeCookie } from "@/lib/theme-cookie";
 
 /**
  * Admin guard — auth defense layer #2.
@@ -14,9 +15,12 @@ export default async function AdminLayout({
   readonly children: React.ReactNode;
 }) {
   const profile = await requireRole("superadmin");
-  const projects = await listAccessibleProjects();
+  const [projects, theme] = await Promise.all([
+    listAccessibleProjects(),
+    readThemeCookie(),
+  ]);
   return (
-    <Shell profile={profile} projects={projects}>
+    <Shell profile={profile} projects={projects} theme={theme}>
       {children}
     </Shell>
   );

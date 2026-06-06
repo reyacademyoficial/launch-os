@@ -47,8 +47,8 @@ export default async function ProjectsAdminPage() {
           clientes puedan empezar a trabajar.
         </p>
       ) : (
-        <div className="overflow-hidden rounded-md border border-border">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto rounded-md border border-border">
+          <table className="w-full min-w-[640px] text-sm">
             <thead className="bg-surface text-left text-xs uppercase tracking-wide text-fg-subtle">
               <tr>
                 <th scope="col" className="px-4 py-3 font-medium">

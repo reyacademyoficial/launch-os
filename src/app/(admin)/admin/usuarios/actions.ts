@@ -112,7 +112,14 @@ export async function updateUser(
   await requireRole("superadmin");
 
   const fullName = String(formData.get("full_name") ?? "").trim();
-  const projectId = String(formData.get("project_id") ?? "").trim();
+  // Multi-select form posts repeated `project_ids` entries. We accept zero or
+  // more — admins/clientes can be assigned to several projects.
+  const projectIds = formData
+    .getAll("project_ids")
+    .map(String)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  const uniqueProjectIds = Array.from(new Set(projectIds));
 
   const service = createServiceClient();
 
@@ -138,22 +145,23 @@ export async function updateUser(
 
   if (profileError) return { error: profileError.message };
 
-  // Manage project assignment only for admin/cliente. Superadmin doesn't
+  // Manage project assignments only for admin/cliente. Superadmin doesn't
   // belong to project_members per spec.
   if (role === "admin" || role === "cliente") {
-    if (!projectId) {
-      return { error: "Tenés que elegir un proyecto." };
+    if (uniqueProjectIds.length === 0) {
+      return { error: "Asigná al menos un proyecto." };
     }
 
-    // Replace existing memberships with the chosen one. Users created from
-    // the UI always have at most one row; multi-project users (out of scope
-    // of the UI today) would be reduced to the single selection.
+    // Sync to exactly the selected set: wipe existing memberships, then
+    // insert the new set. Two-step instead of diffing because the table is
+    // small (rows per user are bounded) and idempotency matters more than
+    // micro-optimization here.
     await service.from("project_members").delete().eq("user_id", userId);
 
-    const memberPayload = {
+    const memberPayload = uniqueProjectIds.map((projectId) => ({
       user_id: userId,
       project_id: projectId,
-    } as never;
+    })) as never;
 
     const { error: memberError } = await service
       .from("project_members")
@@ -161,7 +169,7 @@ export async function updateUser(
 
     if (memberError) {
       return {
-        error: `Datos guardados, pero falló la asignación al proyecto: ${memberError.message}`,
+        error: `Datos guardados, pero falló la asignación a proyectos: ${memberError.message}`,
       };
     }
   }

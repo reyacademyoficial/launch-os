@@ -3,7 +3,7 @@ import Link from "next/link";
 
 import { StatusBadge } from "@/components/dashboard/launches/status-badge";
 import {
-  fmtDate,
+  fmtLaunchWindow,
   fmtMoney,
   fmtMoneyDecimals,
   fmtMultiplier,
@@ -156,7 +156,7 @@ export default async function OverviewPage({
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium text-fg">{l.name}</div>
                   <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-fg-subtle">
-                    <span>{fmtDate(l.date)}</span>
+                    <span>{fmtLaunchWindow(l.date_start, l.date_end)}</span>
                     <span>·</span>
                     <StatusBadge status={l.status} />
                   </div>

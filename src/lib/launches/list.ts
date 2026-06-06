@@ -16,7 +16,7 @@ export async function listLaunchesForProject(projectId: string): Promise<LaunchR
     .from("launches")
     .select("*")
     .eq("project_id", projectId)
-    .order("date", { ascending: false, nullsFirst: false })
+    .order("date_start", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false });
 
   return (data ?? []) as LaunchRow[];

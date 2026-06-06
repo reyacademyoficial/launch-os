@@ -37,12 +37,21 @@ export function LaunchForm({
             <Input id="name" name="name" required defaultValue={initial?.name ?? ""} />
           </Field>
           <Field>
-            <Label htmlFor="date">Fecha</Label>
+            <Label htmlFor="date_start">Fecha de inicio</Label>
             <Input
-              id="date"
-              name="date"
+              id="date_start"
+              name="date_start"
               type="date"
-              defaultValue={initial?.date ?? ""}
+              defaultValue={initial?.date_start ?? ""}
+            />
+          </Field>
+          <Field>
+            <Label htmlFor="date_end">Fecha de fin</Label>
+            <Input
+              id="date_end"
+              name="date_end"
+              type="date"
+              defaultValue={initial?.date_end ?? ""}
             />
           </Field>
           <Field>

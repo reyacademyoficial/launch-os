@@ -130,9 +130,12 @@ export type Database = {
       launches: {
         Row: {
           asistentes: number | null
+          closed_at: string | null
           contactos_api: number | null
           created_at: string
           date: string | null
+          date_end: string | null
+          date_start: string | null
           google_clicks: number | null
           google_investment: number | null
           google_leads: number | null
@@ -160,9 +163,12 @@ export type Database = {
         }
         Insert: {
           asistentes?: number | null
+          closed_at?: string | null
           contactos_api?: number | null
           created_at?: string
           date?: string | null
+          date_end?: string | null
+          date_start?: string | null
           google_clicks?: number | null
           google_investment?: number | null
           google_leads?: number | null
@@ -190,9 +196,12 @@ export type Database = {
         }
         Update: {
           asistentes?: number | null
+          closed_at?: string | null
           contactos_api?: number | null
           created_at?: string
           date?: string | null
+          date_end?: string | null
+          date_start?: string | null
           google_clicks?: number | null
           google_investment?: number | null
           google_leads?: number | null
@@ -353,6 +362,47 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "project_secrets_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      projections: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          inputs: Json
+          mode: string
+          name: string
+          outputs: Json
+          project_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          inputs?: Json
+          mode: string
+          name: string
+          outputs?: Json
+          project_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          inputs?: Json
+          mode?: string
+          name?: string
+          outputs?: Json
+          project_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "projections_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"

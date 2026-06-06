@@ -58,7 +58,15 @@ function buildUserPrompt(
   const lines: string[] = [];
 
   lines.push(`Lanzamiento: ${launch.name}`);
-  if (launch.date) lines.push(`Fecha: ${launch.date}`);
+  if (launch.date_start && launch.date_end) {
+    lines.push(`Ventana: ${launch.date_start} → ${launch.date_end}`);
+  } else if (launch.date_start) {
+    lines.push(`Inicio: ${launch.date_start}`);
+  } else if (launch.date) {
+    // Legacy fallback for rows pre-migration 0006 where only `date` was set.
+    lines.push(`Fecha: ${launch.date}`);
+  }
+  if (launch.closed_at) lines.push(`Cerrado: ${launch.closed_at}`);
   if (launch.type) lines.push(`Tipo: ${launch.type}`);
   if (launch.status) lines.push(`Status: ${launch.status}`);
   if (launch.platforms.length > 0) {

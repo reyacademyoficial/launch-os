@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { StatusBadge } from "@/components/dashboard/launches/status-badge";
-import { fmtDate, fmtMoney, fmtMultiplier } from "@/lib/format";
+import { fmtLaunchWindow, fmtMoney, fmtMultiplier } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { userCanEditProject } from "@/lib/supabase/auth";
@@ -57,8 +57,8 @@ export default async function LaunchesPage({
         )}
       </header>
 
-      <div className="overflow-hidden rounded-md border border-border">
-        <table className="w-full text-sm">
+      <div className="overflow-x-auto rounded-md border border-border">
+        <table className="w-full min-w-[640px] text-sm">
           <thead className="bg-surface text-left text-xs uppercase tracking-wide text-fg-subtle">
             <tr>
               <th scope="col" className="px-4 py-3 font-medium">
@@ -103,7 +103,9 @@ export default async function LaunchesPage({
                       {l.name}
                     </Link>
                   </td>
-                  <td className="px-4 py-3 text-fg-muted">{fmtDate(l.date)}</td>
+                  <td className="px-4 py-3 text-fg-muted">
+                    {fmtLaunchWindow(l.date_start, l.date_end)}
+                  </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={l.status} />
                   </td>

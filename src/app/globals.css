@@ -36,11 +36,20 @@
 }
 
 /*
- * Light theme — overrides the surface tokens only. Brand tokens stay constant.
- * Triggered by user preference; explicit theme toggle is added in Phase 4/5.
+ * Theme switching.
+ *
+ *   - No `data-theme` attribute → "system": dark by default, light from @media.
+ *   - `data-theme="dark"` → force dark even on light-pref systems.
+ *   - `data-theme="light"` → force light even on dark-pref systems.
+ *
+ * The attribute is written to <html> from a cookie on the server (see
+ * src/app/layout.tsx) so the initial render matches the user's choice with no
+ * flash. A client Server Action updates the cookie.
  */
+
+/* System auto-light: only when no explicit theme is set. */
 @media (prefers-color-scheme: light) {
-  :root {
+  html:not([data-theme="dark"]):not([data-theme="light"]) {
     --color-bg: #f5f5f7;
     --color-bg-elevated: #ffffff;
     --color-surface: #ffffff;
@@ -51,6 +60,32 @@
     --color-fg-subtle: #8e8e9e;
     --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.06);
   }
+}
+
+/* Explicit light: any system. */
+html[data-theme="light"] {
+  --color-bg: #f5f5f7;
+  --color-bg-elevated: #ffffff;
+  --color-surface: #ffffff;
+  --color-border: #e2e2e8;
+  --color-input: #f0f0f5;
+  --color-fg: #111111;
+  --color-fg-muted: #555566;
+  --color-fg-subtle: #8e8e9e;
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.06);
+}
+
+/* Explicit dark: any system — restate the @theme defaults so a light-pref OS doesn't leak through. */
+html[data-theme="dark"] {
+  --color-bg: #050505;
+  --color-bg-elevated: #0b0b0f;
+  --color-surface: #101014;
+  --color-border: #1a1a22;
+  --color-input: #151519;
+  --color-fg: #ffffff;
+  --color-fg-muted: #a1a1aa;
+  --color-fg-subtle: #71717a;
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 
 html,

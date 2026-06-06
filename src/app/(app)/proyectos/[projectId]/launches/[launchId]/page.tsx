@@ -9,13 +9,18 @@ import { DailyTable } from "@/components/dashboard/launches/daily/daily-table";
 import { DeleteButton } from "@/components/dashboard/launches/delete-button";
 import { KpiGrid } from "@/components/dashboard/launches/kpi-grid";
 import { StatusBadge } from "@/components/dashboard/launches/status-badge";
-import { fmtDate } from "@/lib/format";
+import { fmtDate, fmtLaunchWindow } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import { listDailyForLaunch } from "@/lib/launch-daily/list";
 import { getLaunch } from "@/lib/launches/get";
 import { userCanEditProject } from "@/lib/supabase/auth";
 
-import { deleteLaunch } from "../actions";
+import {
+  closeLaunch,
+  deleteLaunch,
+  duplicateLaunch,
+  reopenLaunch,
+} from "../actions";
 import { createDailyEntry } from "./daily-actions";
 
 export const metadata: Metadata = { title: "Lanzamiento" };
@@ -36,7 +41,11 @@ export default async function LaunchDetailPage({
 
   const kpi = calculateLaunchKPIs(launch);
   const deleteAction = deleteLaunch.bind(null, projectId, launchId);
+  const closeAction = closeLaunch.bind(null, projectId, launchId);
+  const reopenAction = reopenLaunch.bind(null, projectId, launchId);
+  const duplicateAction = duplicateLaunch.bind(null, projectId, launchId);
   const addDailyAction = createDailyEntry.bind(null, projectId, launchId);
+  const isClosed = launch.closed_at !== null;
 
   return (
     <section className="space-y-10">
@@ -50,7 +59,7 @@ export default async function LaunchDetailPage({
         <div className="space-y-2">
           <h1 className="text-2xl font-bold">{launch.name}</h1>
           <div className="flex flex-wrap items-center gap-3 text-sm text-fg-muted">
-            <span>{fmtDate(launch.date)}</span>
+            <span>{fmtLaunchWindow(launch.date_start, launch.date_end)}</span>
             {launch.type && (
               <>
                 <span className="text-fg-subtle">·</span>
@@ -59,6 +68,14 @@ export default async function LaunchDetailPage({
             )}
             <span className="text-fg-subtle">·</span>
             <StatusBadge status={launch.status} />
+            {isClosed && (
+              <>
+                <span className="text-fg-subtle">·</span>
+                <span className="rounded bg-fg-subtle/15 px-2 py-0.5 text-xs font-medium text-fg-muted">
+                  Cerrado {fmtDate(launch.closed_at)}
+                </span>
+              </>
+            )}
           </div>
           {launch.platforms.length > 0 && (
             <div className="flex flex-wrap gap-2 pt-1">
@@ -82,6 +99,33 @@ export default async function LaunchDetailPage({
             >
               Editar
             </Link>
+            <form action={duplicateAction}>
+              <button
+                type="submit"
+                className="inline-flex items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-bg-elevated"
+              >
+                Duplicar
+              </button>
+            </form>
+            {isClosed ? (
+              <form action={reopenAction}>
+                <button
+                  type="submit"
+                  className="inline-flex items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-bg-elevated"
+                >
+                  Reabrir
+                </button>
+              </form>
+            ) : (
+              <form action={closeAction}>
+                <button
+                  type="submit"
+                  className="inline-flex items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-bg-elevated"
+                >
+                  Cerrar lanzamiento
+                </button>
+              </form>
+            )}
             <DeleteButton launchName={launch.name} onConfirm={deleteAction} />
           </div>
         )}
@@ -97,13 +141,18 @@ export default async function LaunchDetailPage({
               Leads por canal por día. Alimenta el gráfico de abajo.
             </p>
           </div>
-          {canEdit && (
+          {canEdit && !isClosed && (
             <DailyFormModal
               triggerLabel="+ Agregar día"
               title="Agregar día"
               submitLabel="Guardar"
               action={addDailyAction}
             />
+          )}
+          {canEdit && isClosed && (
+            <p className="text-xs text-fg-subtle">
+              Lanzamiento cerrado — no se pueden cargar más datos.
+            </p>
           )}
         </header>
 
@@ -118,7 +167,7 @@ export default async function LaunchDetailPage({
           <>
             <DailyTable
               rows={daily}
-              canEdit={canEdit}
+              canEdit={canEdit && !isClosed}
               projectId={projectId}
               launchId={launchId}
             />

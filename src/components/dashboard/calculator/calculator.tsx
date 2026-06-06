@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
   FORWARD_DEFAULTS,
@@ -10,26 +10,69 @@ import {
   REVERSE_DEFAULTS,
   type ReverseInput,
 } from "@/lib/calculator/reverse";
+import type { ProjectionListItem } from "@/lib/projections/types";
+import type { ProjectListItem } from "@/lib/projects/list";
 
 import { ForwardSection } from "./forward-section";
+import { ProjectionsPanel } from "./projections-panel";
+import type {
+  ProjectionDeleteAction,
+  ProjectionSaveAction,
+} from "./projections-panel";
 import { ReverseSection } from "./reverse-section";
 
 type Mode = "reverse" | "forward";
 
-export function Calculator() {
+export function Calculator({
+  projections,
+  editableProjects,
+  saveAction,
+  deleteAction,
+}: {
+  readonly projections: readonly ProjectionListItem[];
+  readonly editableProjects: readonly ProjectListItem[];
+  readonly saveAction: ProjectionSaveAction;
+  readonly deleteAction: ProjectionDeleteAction;
+}) {
   const [mode, setMode] = useState<Mode>("reverse");
   // Keep input state OUTSIDE the section components so switching modes back
   // and forth preserves what the user typed in the inactive mode.
   const [reverseInput, setReverseInput] = useState<ReverseInput>(REVERSE_DEFAULTS);
   const [forwardInput, setForwardInput] = useState<ForwardInput>(FORWARD_DEFAULTS);
 
+  const currentInputs = useMemo(
+    () => (mode === "reverse" ? reverseInput : forwardInput),
+    [mode, reverseInput, forwardInput],
+  );
+
+  function loadProjection(p: ProjectionListItem) {
+    if (p.mode === "reverse") {
+      setReverseInput(p.inputs as ReverseInput);
+      setMode("reverse");
+    } else {
+      setForwardInput(p.inputs as ForwardInput);
+      setMode("forward");
+    }
+  }
+
   return (
     <section className="space-y-6">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-bold">Launch Revenue Simulator</h1>
-        <p className="text-sm text-fg-muted">
-          Modelá escenarios completos antes de ejecutar. Sin persistencia: lo que cambies acá no se guarda.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-bold">Launch Revenue Simulator</h1>
+          <p className="text-sm text-fg-muted">
+            Modelá escenarios. Guardá los importantes para volver a ellos.
+          </p>
+        </div>
+        <ProjectionsPanel
+          projections={projections}
+          editableProjects={editableProjects}
+          currentMode={mode}
+          currentInputs={currentInputs}
+          onLoad={loadProjection}
+          saveAction={saveAction}
+          deleteAction={deleteAction}
+        />
       </header>
 
       <div className="flex gap-2">

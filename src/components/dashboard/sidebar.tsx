@@ -18,6 +18,7 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
         <NavLink scopedSuffix="/launches">Lanzamientos</NavLink>
         <NavLink href="/calculadora">Calculadora</NavLink>
         <NavLink scopedSuffix="/integraciones">Integraciones</NavLink>
+        <NavLink scopedSuffix="/audit">Audit log</NavLink>
       </nav>
 
       {showAdmin && (

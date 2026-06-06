@@ -68,7 +68,7 @@ export function UserTable({
               email: u.email,
               fullName: u.fullName,
               role: u.role,
-              currentProjectId: u.projects[0]?.id ?? null,
+              currentProjectIds: u.projects.map((p) => p.id),
             };
             const deactivateAction = deactivateUser.bind(null, u.id);
 

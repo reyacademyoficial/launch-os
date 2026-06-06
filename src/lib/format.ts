@@ -47,3 +47,20 @@ export function fmtDate(value: string | null | undefined): string {
     year: "numeric",
   });
 }
+
+/**
+ * Formats a launch's [start, end] window for display.
+ *   start + end → "5 jun 2026 → 12 jun 2026"
+ *   start only  → "Desde 5 jun 2026"
+ *   end only    → "Hasta 12 jun 2026"
+ *   neither     → "—"
+ */
+export function fmtLaunchWindow(
+  start: string | null | undefined,
+  end: string | null | undefined,
+): string {
+  if (start && end) return `${fmtDate(start)} → ${fmtDate(end)}`;
+  if (start) return `Desde ${fmtDate(start)}`;
+  if (end) return `Hasta ${fmtDate(end)}`;
+  return "—";
+}

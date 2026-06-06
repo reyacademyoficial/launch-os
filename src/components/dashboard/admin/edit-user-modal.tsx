@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field-error";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select } from "@/components/ui/select";
 import type { Role } from "@/lib/supabase/auth";
 
 interface Project {
@@ -21,7 +20,7 @@ interface EditableUser {
   email: string;
   fullName: string | null;
   role: Role;
-  currentProjectId: string | null;
+  currentProjectIds: readonly string[];
 }
 
 /**
@@ -108,24 +107,32 @@ export function EditUserModal({
 
               {showProjectSelector && (
                 <div>
-                  <Label htmlFor="edit-project_id">Proyecto</Label>
-                  <Select
-                    id="edit-project_id"
-                    name="project_id"
-                    required
-                    defaultValue={user.currentProjectId ?? ""}
-                  >
-                    <option value="" disabled>
-                      Elegí uno…
-                    </option>
-                    {projects.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </Select>
+                  <Label>Proyectos</Label>
+                  {projects.length === 0 ? (
+                    <p className="text-xs text-fg-subtle">
+                      No hay proyectos creados todavía.
+                    </p>
+                  ) : (
+                    <div className="space-y-2 rounded-md border border-border bg-surface p-3 max-h-48 overflow-y-auto">
+                      {projects.map((p) => (
+                        <label
+                          key={p.id}
+                          className="flex cursor-pointer items-center gap-2 text-sm text-fg"
+                        >
+                          <input
+                            type="checkbox"
+                            name="project_ids"
+                            value={p.id}
+                            defaultChecked={user.currentProjectIds.includes(p.id)}
+                            className="accent-accent"
+                          />
+                          <span>{p.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
                   <p className="mt-1 text-xs text-fg-subtle">
-                    Reemplaza la asignación anterior por la elegida.
+                    El usuario tendrá acceso a los proyectos que tildés.
                   </p>
                 </div>
               )}

@@ -8,6 +8,64 @@ import { createClient } from "@/lib/supabase/server";
 
 export type DailyActionState = { ok: true } | { error: string } | null;
 
+type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
+
+interface LaunchWindow {
+  date_start: string | null;
+  date_end: string | null;
+  closed_at: string | null;
+}
+
+/**
+ * Loads the launch's window state for the append-only guards. Returns null if
+ * the launch doesn't exist or RLS hid it from the caller — the daily action
+ * surfaces that as a generic "no se encontró" error.
+ */
+async function loadLaunchWindow(
+  supabase: SupabaseServerClient,
+  launchId: string,
+): Promise<LaunchWindow | null> {
+  const { data } = await supabase
+    .from("launches")
+    .select("date_start, date_end, closed_at")
+    .eq("id", launchId)
+    .maybeSingle();
+  return (data as LaunchWindow | null) ?? null;
+}
+
+/**
+ * launch_daily is append-only, but the upsert by (launch_id, date) still has
+ * to respect two business invariants:
+ *   1. The date must fall inside [date_start, date_end] when those are set.
+ *   2. The launch must not be closed.
+ * These run on every write (insert + update). Phase 3 sync will reuse the same
+ * checks server-side so external APIs can't bypass them.
+ */
+function validateAgainstWindow(
+  window: LaunchWindow,
+  date: string,
+): { ok: true } | { ok: false; error: string } {
+  if (window.closed_at) {
+    return {
+      ok: false,
+      error: "El lanzamiento está cerrado. Reabrilo para cargar nuevos datos.",
+    };
+  }
+  if (window.date_start && date < window.date_start) {
+    return {
+      ok: false,
+      error: `La fecha está antes del inicio del lanzamiento (${window.date_start}).`,
+    };
+  }
+  if (window.date_end && date > window.date_end) {
+    return {
+      ok: false,
+      error: `La fecha está después del fin del lanzamiento (${window.date_end}).`,
+    };
+  }
+  return { ok: true };
+}
+
 function str(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
 }
@@ -74,6 +132,12 @@ export async function createDailyEntry(
   }
 
   const supabase = await createClient();
+  const window = await loadLaunchWindow(supabase, launchId);
+  if (!window) return { error: "No se encontró el lanzamiento." };
+
+  const windowCheck = validateAgainstWindow(window, parsed.payload.date);
+  if (!windowCheck.ok) return { error: windowCheck.error };
+
   const payload = { ...parsed.payload, launch_id: launchId } as never;
   const { error } = await supabase.from("launch_daily").insert(payload);
 
@@ -105,6 +169,12 @@ export async function updateDailyEntry(
   if (!parsed.ok) return { error: parsed.error };
 
   const supabase = await createClient();
+  const window = await loadLaunchWindow(supabase, launchId);
+  if (!window) return { error: "No se encontró el lanzamiento." };
+
+  const windowCheck = validateAgainstWindow(window, parsed.payload.date);
+  if (!windowCheck.ok) return { error: windowCheck.error };
+
   const payload = parsed.payload as never;
   const { error } = await supabase
     .from("launch_daily")
@@ -135,6 +205,11 @@ export async function deleteDailyEntry(
   await requireCanEditProject(projectId);
 
   const supabase = await createClient();
+  // Closed launches are frozen — no edits, no deletes — to match the same
+  // invariant the sync engine (Phase 3) will use.
+  const window = await loadLaunchWindow(supabase, launchId);
+  if (window?.closed_at) return;
+
   await supabase
     .from("launch_daily")
     .delete()
