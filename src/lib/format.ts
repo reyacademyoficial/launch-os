@@ -36,12 +36,34 @@ export const fmtNumber = (n: unknown): string =>
 export const fmtMultiplier = (n: unknown): string =>
   safeNumber(n).toFixed(2) + "x";
 
-/** ISO date string `2026-06-05` → readable `5 jun 2026`. Falls back to raw on parse failure. */
+/**
+ * ISO date string → readable `5 jun 2026`. Falls back to raw on parse failure.
+ *
+ * Distingue dos casos para evitar el off-by-one por timezone:
+ *  - `YYYY-MM-DD` (DATE en Postgres, sin TZ): `new Date(s)` lo interpreta como
+ *    UTC medianoche; sin `timeZone: 'UTC'`, `toLocaleDateString` en Buenos Aires
+ *    (UTC−3) lo formatea como el día anterior. Lo armamos a mano en UTC.
+ *  - timestamptz (con hora + zona): `new Date(s)` ya devuelve el instante
+ *    correcto; lo formateamos en zona local del browser, que es lo esperado.
+ */
 export function fmtDate(value: string | null | undefined): string {
   if (!value) return "—";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleDateString("es-AR", {
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [y, m, d] = value.split("-").map(Number);
+    if (y && m && d) {
+      return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("es-AR", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        timeZone: "UTC",
+      });
+    }
+  }
+
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return value;
+  return dt.toLocaleDateString("es-AR", {
     day: "numeric",
     month: "short",
     year: "numeric",
