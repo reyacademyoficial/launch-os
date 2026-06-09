@@ -74,45 +74,6 @@ export type Database = {
           },
         ]
       }
-      launch_assignments: {
-        Row: {
-          can_edit: boolean
-          created_at: string
-          id: string
-          launch_id: string
-          user_id: string
-        }
-        Insert: {
-          can_edit?: boolean
-          created_at?: string
-          id?: string
-          launch_id: string
-          user_id: string
-        }
-        Update: {
-          can_edit?: boolean
-          created_at?: string
-          id?: string
-          launch_id?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "launch_assignments_launch_id_fkey"
-            columns: ["launch_id"]
-            isOneToOne: false
-            referencedRelation: "launches"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "launch_assignments_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       launch_daily: {
         Row: {
           created_at: string
@@ -481,9 +442,8 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      can_edit_launch: { Args: { p_launch_id: string }; Returns: boolean }
+      can_edit_launches_in: { Args: { p_project_id: string }; Returns: boolean }
       can_edit_project: { Args: { p_project_id: string }; Returns: boolean }
-      has_launch_access: { Args: { p_launch_id: string }; Returns: boolean }
       has_project_access: { Args: { p_project_id: string }; Returns: boolean }
       is_superadmin: { Args: never; Returns: boolean }
       project_of_launch: { Args: { p_launch_id: string }; Returns: string }

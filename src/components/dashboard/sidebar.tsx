@@ -5,14 +5,13 @@ import { NavLink } from "./nav-link";
 /**
  * Sidebar links are cosmetic — RLS is the real gate on what each user can
  * reach. We hide entries here so the UI doesn't dangle dead links:
- *   - Calculadora: hidden for cliente (vista ejecutiva reducida, brief Fase 2).
- *   - Audit log: hidden for operador / cliente (audit_log SELECT policy in
- *     0009 already returns empty for them).
- *   - Admin section: superadmin only.
+ *   - Calculadora: visible para todos los roles (decisión 2026-06-09).
+ *   - Audit log: oculto para operador / cliente (la policy de audit_log en
+ *     0009 ya les devuelve vacío de todas formas).
+ *   - Admin section: solo superadmin.
  */
 export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
   const showAdmin = profile.role === "superadmin";
-  const showCalculator = profile.role !== "cliente";
   const showAudit =
     profile.role === "superadmin" ||
     profile.role === "admin" ||
@@ -29,7 +28,7 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
           Overview
         </NavLink>
         <NavLink scopedSuffix="/launches">Lanzamientos</NavLink>
-        {showCalculator && <NavLink href="/calculadora">Calculadora</NavLink>}
+        <NavLink href="/calculadora">Calculadora</NavLink>
         <NavLink scopedSuffix="/integraciones">Integraciones</NavLink>
         {showAudit && <NavLink scopedSuffix="/audit">Audit log</NavLink>}
       </nav>

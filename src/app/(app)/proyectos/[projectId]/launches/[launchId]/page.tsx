@@ -8,14 +8,12 @@ import { DailyFormModal } from "@/components/dashboard/launches/daily/daily-form
 import { DailyTable } from "@/components/dashboard/launches/daily/daily-table";
 import { DeleteButton } from "@/components/dashboard/launches/delete-button";
 import { KpiGrid } from "@/components/dashboard/launches/kpi-grid";
-import { LaunchAssignmentsSection } from "@/components/dashboard/launches/launch-assignments-section";
 import { StatusBadge } from "@/components/dashboard/launches/status-badge";
 import { fmtDate, fmtLaunchWindow } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import { listDailyForLaunch } from "@/lib/launch-daily/list";
-import { loadLaunchAssignmentData } from "@/lib/launch-assignments/list";
 import { getLaunch } from "@/lib/launches/get";
-import { userCanEditLaunch, userCanEditProject } from "@/lib/supabase/auth";
+import { userCanEditLaunchesIn, userCanEditProject } from "@/lib/supabase/auth";
 
 import {
   closeLaunch,
@@ -33,26 +31,19 @@ export default async function LaunchDetailPage({
   readonly params: Promise<{ projectId: string; launchId: string }>;
 }) {
   const { projectId, launchId } = await params;
-  // Two scopes:
+  // Dos scopes que necesitamos en esta página:
   //   - canEditLaunch  → "Editar", Cerrar/Reabrir, daily add/edit/delete.
-  //     Operador asignado con can_edit pasa por acá.
-  //   - canEditProject → "Duplicar" y "Borrar" (crean/destruyen el launch
-  //     completo; el operador nunca crea ni borra lanzamientos).
+  //     Admin + operador miembros del proyecto pasan por acá.
+  //   - canEditProject → "Duplicar" y "Borrar" (CREATE/DELETE del launch).
+  //     Solo admin/superadmin — el operador edita pero no crea ni borra.
   const [launch, canEditLaunchValue, canEditProjectValue, daily] = await Promise.all([
     getLaunch(launchId),
-    userCanEditLaunch(launchId),
+    userCanEditLaunchesIn(projectId),
     userCanEditProject(projectId),
     listDailyForLaunch(launchId),
   ]);
 
   if (!launch || launch.project_id !== projectId) notFound();
-
-  // Assignment management lives behind the same gate as project-level writes:
-  // only admin / superadmin assign. Skip the fetch for everyone else so we
-  // don't pay the service-role round-trip per render.
-  const assignmentData = canEditProjectValue
-    ? await loadLaunchAssignmentData(projectId, launchId)
-    : null;
 
   const kpi = calculateLaunchKPIs(launch);
   const deleteAction = deleteLaunch.bind(null, projectId, launchId);
@@ -184,7 +175,7 @@ export default async function LaunchDetailPage({
             Sin datos diarios cargados.
             {canEditLaunchValue
               ? " Agregá uno para empezar a ver el gráfico de leads por canal."
-              : " El admin u operador asignado los va a cargar."}
+              : " El admin u operador del proyecto los va a cargar."}
           </div>
         ) : (
           <>
@@ -200,15 +191,6 @@ export default async function LaunchDetailPage({
           </>
         )}
       </section>
-
-      {assignmentData && (
-        <LaunchAssignmentsSection
-          projectId={projectId}
-          launchId={launchId}
-          assignees={assignmentData.assignees}
-          assignable={assignmentData.assignable}
-        />
-      )}
 
       <AISummary projectId={projectId} launchId={launchId} />
     </section>

@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
-import { requireCanEditLaunch, requireCanEditProject } from "@/lib/supabase/auth";
+import { requireCanEditLaunchesIn, requireCanEditProject } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
 export type LaunchActionState = { error: string } | null;
@@ -162,7 +162,7 @@ export async function updateLaunch(
   _prev: LaunchActionState,
   formData: FormData,
 ): Promise<LaunchActionState> {
-  await requireCanEditLaunch(projectId, launchId);
+  await requireCanEditLaunchesIn(projectId);
 
   const parsed = parseLaunchFromForm(formData);
   if (!parsed.ok) return { error: parsed.error };
@@ -257,7 +257,7 @@ export async function duplicateLaunch(
  * assigned with can_edit can close their own launches.
  */
 export async function closeLaunch(projectId: string, launchId: string): Promise<void> {
-  await requireCanEditLaunch(projectId, launchId);
+  await requireCanEditLaunchesIn(projectId);
 
   const supabase = await createClient();
   const payload = { closed_at: new Date().toISOString() } as never;
@@ -274,7 +274,7 @@ export async function closeLaunch(projectId: string, launchId: string): Promise<
  * Reopens a closed launch — clears closed_at. Same permission gate as close.
  */
 export async function reopenLaunch(projectId: string, launchId: string): Promise<void> {
-  await requireCanEditLaunch(projectId, launchId);
+  await requireCanEditLaunchesIn(projectId);
 
   const supabase = await createClient();
   const payload = { closed_at: null } as never;

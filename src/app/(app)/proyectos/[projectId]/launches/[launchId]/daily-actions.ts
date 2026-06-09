@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { DAILY_CHANNELS } from "@/lib/launch-daily/types";
-import { requireCanEditLaunch } from "@/lib/supabase/auth";
+import { requireCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
 export type DailyActionState = { ok: true } | { error: string } | null;
@@ -123,7 +123,7 @@ export async function createDailyEntry(
   _prev: DailyActionState,
   formData: FormData,
 ): Promise<DailyActionState> {
-  await requireCanEditLaunch(projectId, launchId);
+  await requireCanEditLaunchesIn(projectId);
 
   const parsed = parseFromForm(formData);
   if (!parsed.ok) return { error: parsed.error };
@@ -163,7 +163,7 @@ export async function updateDailyEntry(
   _prev: DailyActionState,
   formData: FormData,
 ): Promise<DailyActionState> {
-  await requireCanEditLaunch(projectId, launchId);
+  await requireCanEditLaunchesIn(projectId);
 
   const parsed = parseFromForm(formData);
   if (!parsed.ok) return { error: parsed.error };
@@ -202,7 +202,7 @@ export async function deleteDailyEntry(
   launchId: string,
   entryId: string,
 ): Promise<void> {
-  await requireCanEditLaunch(projectId, launchId);
+  await requireCanEditLaunchesIn(projectId);
 
   const supabase = await createClient();
   // Closed launches are frozen — no edits, no deletes — to match the same
