@@ -136,12 +136,17 @@ export type Database = {
           date: string | null
           date_end: string | null
           date_start: string | null
+          dur_calentamiento: number
+          dur_captacion: number
+          dur_cierre: number
+          dur_compra: number
           google_clicks: number | null
           google_investment: number | null
           google_leads: number | null
           hasta_pitch: number | null
           id: string
           ingresos_whatsapp: number | null
+          launch_date: string | null
           meta_clicks: number | null
           meta_investment: number | null
           meta_leads: number | null
@@ -167,14 +172,17 @@ export type Database = {
           contactos_api?: number | null
           created_at?: string
           date?: string | null
-          date_end?: string | null
-          date_start?: string | null
+          dur_calentamiento?: number
+          dur_captacion?: number
+          dur_cierre?: number
+          dur_compra?: number
           google_clicks?: number | null
           google_investment?: number | null
           google_leads?: number | null
           hasta_pitch?: number | null
           id?: string
           ingresos_whatsapp?: number | null
+          launch_date?: string | null
           meta_clicks?: number | null
           meta_investment?: number | null
           meta_leads?: number | null
@@ -200,14 +208,17 @@ export type Database = {
           contactos_api?: number | null
           created_at?: string
           date?: string | null
-          date_end?: string | null
-          date_start?: string | null
+          dur_calentamiento?: number
+          dur_captacion?: number
+          dur_cierre?: number
+          dur_compra?: number
           google_clicks?: number | null
           google_investment?: number | null
           google_leads?: number | null
           hasta_pitch?: number | null
           id?: string
           ingresos_whatsapp?: number | null
+          launch_date?: string | null
           meta_clicks?: number | null
           meta_investment?: number | null
           meta_leads?: number | null

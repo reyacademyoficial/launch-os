@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { LaunchFormModal } from "@/components/dashboard/launches/launch-form-modal";
 import { StatusBadge } from "@/components/dashboard/launches/status-badge";
 import { fmtLaunchWindow, fmtMoney, fmtMultiplier } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { userCanEditProject } from "@/lib/supabase/auth";
+
+import { createLaunch } from "./actions";
 
 export const metadata: Metadata = { title: "Lanzamientos" };
 
@@ -20,6 +23,8 @@ export default async function LaunchesPage({
     userCanEditProject(projectId),
   ]);
 
+  const createAction = createLaunch.bind(null, projectId);
+
   if (launches.length === 0) {
     return (
       <section className="max-w-md space-y-4">
@@ -29,12 +34,12 @@ export default async function LaunchesPage({
           {canEdit ? "." : ". Pedile al admin del proyecto que cree el primero."}
         </p>
         {canEdit && (
-          <Link
-            href={`/proyectos/${projectId}/launches/new`}
-            className="inline-flex items-center justify-center rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
-          >
-            Crear el primero
-          </Link>
+          <LaunchFormModal
+            triggerLabel="Crear el primero"
+            title="Nuevo lanzamiento"
+            submitLabel="Crear lanzamiento"
+            action={createAction}
+          />
         )}
       </section>
     );
@@ -48,12 +53,12 @@ export default async function LaunchesPage({
           <p className="mt-1 text-xs text-fg-subtle">{launches.length} total</p>
         </div>
         {canEdit && (
-          <Link
-            href={`/proyectos/${projectId}/launches/new`}
-            className="inline-flex items-center justify-center rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
-          >
-            + Nuevo lanzamiento
-          </Link>
+          <LaunchFormModal
+            triggerLabel="+ Nuevo lanzamiento"
+            title="Nuevo lanzamiento"
+            submitLabel="Crear lanzamiento"
+            action={createAction}
+          />
         )}
       </header>
 

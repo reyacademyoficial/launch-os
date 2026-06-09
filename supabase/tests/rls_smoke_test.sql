@@ -113,7 +113,7 @@ on conflict (id) do nothing;
 -- - UPDATE/DELETE bloqueado por USING → fila se filtra silencioso, 0 filas.
 --   Lo testeamos con `is_empty(WITH ... RETURNING 1)`.
 --
-insert into _smoke_results(result) values (plan(15));
+insert into _smoke_results(result) values (plan(17));
 
 -- 1) cliente NO puede insertar launches (WITH CHECK falla) → 42501
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
@@ -240,6 +240,41 @@ insert into _smoke_results(result) values (is_empty(
     'cccccccc-cccc-cccc-cccc-cccccccccccc'
   ),
   'cliente NO edita launches'
+));
+
+-- ── Tests del calendario (post-0011) ─────────────────────────────────────
+-- Validan que las columnas GENERATED `date_start` y `date_end` reproducen
+-- el ejemplo numérico del roadmap exactamente: launch_date = 2026-07-10
+-- con defaults 21/14/5/3 → date_start = 2026-06-19, date_end = 2026-07-20.
+
+-- Insertamos un launch dedicado con la fecha del ejemplo. RLS está activa
+-- (estamos como cliente todavía del test 15) así que volvemos a superadmin
+-- por la operación de seed y los queries de lectura.
+select pg_temp.login_as('11111111-1111-1111-1111-111111111111');
+
+insert into public.launches (id, project_id, name, launch_date) values
+  ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+   'Launch ejemplo roadmap',
+   '2026-07-10')
+on conflict (id) do nothing;
+
+-- 16) date_start derivado correctamente: 2026-07-10 − 21 = 2026-06-19
+insert into _smoke_results(result) values (is(
+  (select date_start::text
+     from public.launches
+    where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'),
+  '2026-06-19',
+  'date_start = L − dur_captacion (ejemplo del roadmap)'
+));
+
+-- 17) date_end derivado: 2026-07-10 + 2 + 5 + 3 = 2026-07-20
+insert into _smoke_results(result) values (is(
+  (select date_end::text
+     from public.launches
+    where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'),
+  '2026-07-20',
+  'date_end = L + 2 + dur_compra + dur_cierre (ejemplo del roadmap)'
 ));
 
 insert into _smoke_results(result) select * from finish();

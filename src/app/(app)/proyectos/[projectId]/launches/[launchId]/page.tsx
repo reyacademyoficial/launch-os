@@ -8,10 +8,13 @@ import { DailyFormModal } from "@/components/dashboard/launches/daily/daily-form
 import { DailyTable } from "@/components/dashboard/launches/daily/daily-table";
 import { DeleteButton } from "@/components/dashboard/launches/delete-button";
 import { KpiGrid } from "@/components/dashboard/launches/kpi-grid";
+import { LaunchCalendarTable } from "@/components/dashboard/launches/launch-calendar-table";
+import { LaunchFormModal } from "@/components/dashboard/launches/launch-form-modal";
 import { StatusBadge } from "@/components/dashboard/launches/status-badge";
 import { fmtDate, fmtLaunchWindow } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import { listDailyForLaunch } from "@/lib/launch-daily/list";
+import { tryComputeLaunchCalendar } from "@/lib/launches/calendar";
 import { getLaunch } from "@/lib/launches/get";
 import { userCanEditLaunchesIn, userCanEditProject } from "@/lib/supabase/auth";
 
@@ -20,6 +23,7 @@ import {
   deleteLaunch,
   duplicateLaunch,
   reopenLaunch,
+  updateLaunch,
 } from "../actions";
 import { createDailyEntry } from "./daily-actions";
 
@@ -46,6 +50,14 @@ export default async function LaunchDetailPage({
   if (!launch || launch.project_id !== projectId) notFound();
 
   const kpi = calculateLaunchKPIs(launch);
+  const calendar = tryComputeLaunchCalendar({
+    launchDate: launch.launch_date ?? undefined,
+    durCaptacion: launch.dur_captacion,
+    durCalentamiento: launch.dur_calentamiento,
+    durCompra: launch.dur_compra,
+    durCierre: launch.dur_cierre,
+  });
+  const updateAction = updateLaunch.bind(null, projectId, launchId);
   const deleteAction = deleteLaunch.bind(null, projectId, launchId);
   const closeAction = closeLaunch.bind(null, projectId, launchId);
   const reopenAction = reopenLaunch.bind(null, projectId, launchId);
@@ -101,12 +113,14 @@ export default async function LaunchDetailPage({
         {showAnyAction && (
           <div className="flex items-center gap-3">
             {canEditLaunchValue && (
-              <Link
-                href={`/proyectos/${projectId}/launches/${launchId}/edit`}
-                className="inline-flex items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-bg-elevated"
-              >
-                Editar
-              </Link>
+              <LaunchFormModal
+                triggerLabel="Editar"
+                triggerVariant="secondary"
+                title="Editar lanzamiento"
+                submitLabel="Guardar cambios"
+                action={updateAction}
+                initial={launch}
+              />
             )}
             {canEditProjectValue && (
               <form action={duplicateAction}>
@@ -146,6 +160,25 @@ export default async function LaunchDetailPage({
       </header>
 
       <KpiGrid kpi={kpi} />
+
+      <section className="space-y-3">
+        <header>
+          <h2 className="text-base font-semibold text-fg">Calendario</h2>
+          <p className="text-xs text-fg-subtle">
+            Etapas derivadas de la fecha de lanzamiento + las 4 duraciones
+            configurables en el form. La ventana total (date_start → date_end)
+            es la que usa el sync engine.
+          </p>
+        </header>
+        {calendar ? (
+          <LaunchCalendarTable calendar={calendar} />
+        ) : (
+          <p className="rounded-md border border-dashed border-border bg-surface/40 p-4 text-center text-sm text-fg-muted">
+            Sin fecha de lanzamiento cargada. Editá el launch para definirla y
+            ver el calendario.
+          </p>
+        )}
+      </section>
 
       <section className="space-y-4">
         <header className="flex items-center justify-between gap-4">

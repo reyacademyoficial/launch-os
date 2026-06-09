@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect, useState } from "react";
 
 import type { LaunchActionState } from "@/app/(app)/proyectos/[projectId]/launches/actions";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,13 @@ import { FieldError } from "@/components/ui/field-error";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import {
+  DEFAULT_DURATIONS,
+  tryComputeLaunchCalendar,
+} from "@/lib/launches/calendar";
 import type { LaunchRow } from "@/lib/launches/types";
+
+import { LaunchCalendarTable } from "./launch-calendar-table";
 
 const TYPES = ["En Vivo", "Automatizado", "Replay"] as const;
 const STATUSES = ["Activo", "Escalando", "Finalizado", "Evergreen"] as const;
@@ -17,16 +23,57 @@ const PLATFORMS = ["Facebook", "Instagram", "Tiktok", "Youtube", "Email"] as con
 type FormState = LaunchActionState;
 type FormAction = (prev: FormState, formData: FormData) => Promise<FormState>;
 
+function dur(value: number | null | undefined, fallback: number): number {
+  return typeof value === "number" ? value : fallback;
+}
+
 export function LaunchForm({
   action,
   initial,
   submitLabel,
+  onSuccess,
 }: {
   readonly action: FormAction;
   readonly initial?: LaunchRow;
   readonly submitLabel: string;
+  /**
+   * Llamado cuando la action devuelve `{ ok: true }` (caso update). Lo usa
+   * `LaunchFormModal` para cerrarse. En create el flujo es distinto: la
+   * action redirige a la URL del nuevo launch y el componente se desmonta,
+   * así que onSuccess no se dispara — y eso está bien.
+   */
+  readonly onSuccess?: () => void;
 }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(action, null);
+
+  useEffect(() => {
+    if (state && "ok" in state && state.ok) onSuccess?.();
+  }, [state, onSuccess]);
+
+  // Estado controlado para los inputs que alimentan la preview del calendario.
+  // Otros inputs siguen como uncontrolled (defaultValue) — no nos importa
+  // recomputar UI con cada keystroke fuera de la sección Calendario.
+  const [launchDate, setLaunchDate] = useState<string>(initial?.launch_date ?? "");
+  const [durCaptacion, setDurCaptacion] = useState<number>(
+    dur(initial?.dur_captacion, DEFAULT_DURATIONS.durCaptacion),
+  );
+  const [durCalentamiento, setDurCalentamiento] = useState<number>(
+    dur(initial?.dur_calentamiento, DEFAULT_DURATIONS.durCalentamiento),
+  );
+  const [durCompra, setDurCompra] = useState<number>(
+    dur(initial?.dur_compra, DEFAULT_DURATIONS.durCompra),
+  );
+  const [durCierre, setDurCierre] = useState<number>(
+    dur(initial?.dur_cierre, DEFAULT_DURATIONS.durCierre),
+  );
+
+  const calendar = tryComputeLaunchCalendar({
+    launchDate: launchDate || undefined,
+    durCaptacion,
+    durCalentamiento,
+    durCompra,
+    durCierre,
+  });
 
   return (
     <form action={formAction} className="space-y-10">
@@ -35,24 +82,6 @@ export function LaunchForm({
           <Field className="sm:col-span-2">
             <Label htmlFor="name">Nombre *</Label>
             <Input id="name" name="name" required defaultValue={initial?.name ?? ""} />
-          </Field>
-          <Field>
-            <Label htmlFor="date_start">Fecha de inicio</Label>
-            <Input
-              id="date_start"
-              name="date_start"
-              type="date"
-              defaultValue={initial?.date_start ?? ""}
-            />
-          </Field>
-          <Field>
-            <Label htmlFor="date_end">Fecha de fin</Label>
-            <Input
-              id="date_end"
-              name="date_end"
-              type="date"
-              defaultValue={initial?.date_end ?? ""}
-            />
           </Field>
           <Field>
             <Label htmlFor="type">Tipo</Label>
@@ -97,6 +126,66 @@ export function LaunchForm({
             ))}
           </div>
         </Field>
+      </Section>
+
+      <Section title="Calendario del lanzamiento">
+        <p className="text-xs text-fg-subtle">
+          La fecha del lanzamiento es la fecha de la Clase 1. Las 4 duraciones
+          son configurables por lanzamiento — defaults <b>21/14/5/3</b> días.
+          <code className="ml-1 rounded bg-surface px-1 py-0.5 text-fg">date_start</code>
+          {" "}y{" "}
+          <code className="rounded bg-surface px-1 py-0.5 text-fg">date_end</code>
+          {" "}quedan derivadas automáticamente (las usa el sync engine).
+        </p>
+        <FieldsGrid>
+          <Field>
+            <Label htmlFor="launch_date">Fecha de lanzamiento (Clase 1)</Label>
+            <Input
+              id="launch_date"
+              name="launch_date"
+              type="date"
+              value={launchDate}
+              onChange={(e) => setLaunchDate(e.target.value)}
+            />
+          </Field>
+          <DurField
+            id="dur_captacion"
+            label="Días de captación"
+            value={durCaptacion}
+            onChange={setDurCaptacion}
+          />
+          <DurField
+            id="dur_calentamiento"
+            label="Días de calentamiento"
+            value={durCalentamiento}
+            onChange={setDurCalentamiento}
+          />
+          <DurField
+            id="dur_compra"
+            label="Días de compra"
+            value={durCompra}
+            onChange={setDurCompra}
+          />
+          <DurField
+            id="dur_cierre"
+            label="Días de cierre"
+            value={durCierre}
+            onChange={setDurCierre}
+          />
+        </FieldsGrid>
+
+        {calendar ? (
+          <div className="mt-4 rounded-md border border-border bg-surface/40 p-4">
+            <h3 className="mb-3 text-sm font-semibold text-fg">
+              Preview en vivo
+            </h3>
+            <LaunchCalendarTable calendar={calendar} />
+          </div>
+        ) : (
+          <p className="mt-4 text-xs text-fg-subtle">
+            Elegí la fecha de lanzamiento para ver el calendario calculado.
+          </p>
+        )}
       </Section>
 
       <ChannelSection
@@ -148,7 +237,7 @@ export function LaunchForm({
         <Button type="submit" disabled={pending}>
           {pending ? "Guardando…" : submitLabel}
         </Button>
-        {state?.error && <FieldError>{state.error}</FieldError>}
+        {state && "error" in state && <FieldError>{state.error}</FieldError>}
       </div>
     </form>
   );
@@ -187,6 +276,36 @@ function Field({
   readonly className?: string;
 }) {
   return <div className={className}>{children}</div>;
+}
+
+function DurField({
+  id,
+  label,
+  value,
+  onChange,
+}: {
+  readonly id: string;
+  readonly label: string;
+  readonly value: number;
+  readonly onChange: (next: number) => void;
+}) {
+  return (
+    <Field>
+      <Label htmlFor={id}>{label}</Label>
+      <Input
+        id={id}
+        name={id}
+        type="number"
+        min="0"
+        step="1"
+        value={String(value)}
+        onChange={(e) => {
+          const parsed = parseInt(e.target.value, 10);
+          onChange(Number.isFinite(parsed) && parsed >= 0 ? parsed : 0);
+        }}
+      />
+    </Field>
+  );
 }
 
 function ChannelSection({

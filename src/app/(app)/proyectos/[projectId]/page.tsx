@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { LaunchFormModal } from "@/components/dashboard/launches/launch-form-modal";
 import { StatusBadge } from "@/components/dashboard/launches/status-badge";
 import {
   fmtLaunchWindow,
@@ -14,6 +15,8 @@ import { listLaunchesForProject } from "@/lib/launches/list";
 import { aggregateProjectKPIs } from "@/lib/projects/aggregates";
 import { createClient } from "@/lib/supabase/server";
 import { userCanEditProject } from "@/lib/supabase/auth";
+
+import { createLaunch } from "./launches/actions";
 
 export const metadata: Metadata = { title: "Overview" };
 
@@ -40,6 +43,7 @@ export default async function OverviewPage({
   const project = projectRaw as { name: string; business_name: string | null } | null;
   const name = project?.name ?? "Proyecto";
   const agg = aggregateProjectKPIs(launches);
+  const createAction = createLaunch.bind(null, projectId);
 
   if (agg.launchCount === 0) {
     return (
@@ -55,12 +59,12 @@ export default async function OverviewPage({
           {canEdit ? "." : ". Pedile al admin que cree el primero."}
         </p>
         {canEdit && (
-          <Link
-            href={`/proyectos/${projectId}/launches/new`}
-            className="inline-flex items-center justify-center rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
-          >
-            Crear primer lanzamiento
-          </Link>
+          <LaunchFormModal
+            triggerLabel="Crear primer lanzamiento"
+            title="Nuevo lanzamiento"
+            submitLabel="Crear lanzamiento"
+            action={createAction}
+          />
         )}
       </section>
     );
@@ -137,12 +141,14 @@ export default async function OverviewPage({
         <header className="flex items-baseline justify-between">
           <h2 className="text-base font-semibold text-fg">Últimos lanzamientos</h2>
           {canEdit && (
-            <Link
-              href={`/proyectos/${projectId}/launches/new`}
-              className="text-xs font-medium text-accent hover:opacity-80"
-            >
-              + Nuevo
-            </Link>
+            <LaunchFormModal
+              triggerLabel="+ Nuevo"
+              triggerVariant="secondary"
+              triggerClassName="!px-2 !py-1 !text-xs"
+              title="Nuevo lanzamiento"
+              submitLabel="Crear lanzamiento"
+              action={createAction}
+            />
           )}
         </header>
 
