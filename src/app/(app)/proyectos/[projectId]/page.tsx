@@ -44,6 +44,7 @@ export default async function OverviewPage({
   const name = project?.name ?? "Proyecto";
   const agg = aggregateProjectKPIs(launches);
   const createAction = createLaunch.bind(null, projectId);
+  const copyableLaunches = launches.map((l) => ({ id: l.id, name: l.name }));
 
   if (agg.launchCount === 0) {
     return (
@@ -148,6 +149,7 @@ export default async function OverviewPage({
               title="Nuevo lanzamiento"
               submitLabel="Crear lanzamiento"
               action={createAction}
+              copyableLaunches={copyableLaunches}
             />
           )}
         </header>

@@ -1,0 +1,4 @@
+{
+  "unexpected_key": "no data field at all",
+  "note": "Acá guardamos un response real con shape inesperado para validar que el adapter no rompe. Pasa cuando: (a) Meta devuelve HTML de un 5xx pero el HTTP client lo intenta parsear como JSON, (b) cambian el shape entre versiones de la API, (c) hay un error transient que devuelve algo con `data` no-array."
+}

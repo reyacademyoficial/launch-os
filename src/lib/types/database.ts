@@ -74,6 +74,138 @@ export type Database = {
           },
         ]
       }
+      launch_daily_ads: {
+        Row: {
+          clicks: number
+          date: string
+          id: string
+          impressions: number
+          launch_id: string
+          leads: number
+          provider: string
+          raw: Json
+          spend: number
+          synced_at: string
+        }
+        Insert: {
+          clicks?: number
+          date: string
+          id?: string
+          impressions?: number
+          launch_id: string
+          leads?: number
+          provider: string
+          raw?: Json
+          spend?: number
+          synced_at?: string
+        }
+        Update: {
+          clicks?: number
+          date?: string
+          id?: string
+          impressions?: number
+          launch_id?: string
+          leads?: number
+          provider?: string
+          raw?: Json
+          spend?: number
+          synced_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "launch_daily_ads_launch_id_fkey"
+            columns: ["launch_id"]
+            isOneToOne: false
+            referencedRelation: "launches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      launch_secrets: {
+        Row: {
+          created_at: string
+          id: string
+          launch_id: string
+          provider: string
+          secret: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          launch_id: string
+          provider: string
+          secret: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          launch_id?: string
+          provider?: string
+          secret?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "launch_secrets_launch_id_fkey"
+            columns: ["launch_id"]
+            isOneToOne: false
+            referencedRelation: "launches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      integration_runs: {
+        Row: {
+          error_detail: Json | null
+          finished_at: string | null
+          id: string
+          launch_id: string
+          provider: string
+          rows_written: number | null
+          started_at: string
+          status: string
+          triggered_by: string | null
+          window_end: string | null
+          window_start: string | null
+        }
+        Insert: {
+          error_detail?: Json | null
+          finished_at?: string | null
+          id?: string
+          launch_id: string
+          provider: string
+          rows_written?: number | null
+          started_at?: string
+          status: string
+          triggered_by?: string | null
+          window_end?: string | null
+          window_start?: string | null
+        }
+        Update: {
+          error_detail?: Json | null
+          finished_at?: string | null
+          id?: string
+          launch_id?: string
+          provider?: string
+          rows_written?: number | null
+          started_at?: string
+          status?: string
+          triggered_by?: string | null
+          window_end?: string | null
+          window_start?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "integration_runs_launch_id_fkey"
+            columns: ["launch_id"]
+            isOneToOne: false
+            referencedRelation: "launches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       launch_daily: {
         Row: {
           created_at: string
@@ -146,6 +278,7 @@ export type Database = {
           hasta_pitch: number | null
           id: string
           ingresos_whatsapp: number | null
+          integration_config: Json
           launch_date: string | null
           meta_clicks: number | null
           meta_investment: number | null
@@ -182,6 +315,7 @@ export type Database = {
           hasta_pitch?: number | null
           id?: string
           ingresos_whatsapp?: number | null
+          integration_config?: Json
           launch_date?: string | null
           meta_clicks?: number | null
           meta_investment?: number | null
@@ -218,6 +352,7 @@ export type Database = {
           hasta_pitch?: number | null
           id?: string
           ingresos_whatsapp?: number | null
+          integration_config?: Json
           launch_date?: string | null
           meta_clicks?: number | null
           meta_investment?: number | null

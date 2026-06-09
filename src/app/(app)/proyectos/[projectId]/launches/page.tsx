@@ -24,6 +24,9 @@ export default async function LaunchesPage({
   ]);
 
   const createAction = createLaunch.bind(null, projectId);
+  // El select "Copiar conexiones de" en el modal de crear listea launches
+  // existentes del mismo proyecto. Se reusan los datos que ya pedimos arriba.
+  const copyableLaunches = launches.map((l) => ({ id: l.id, name: l.name }));
 
   if (launches.length === 0) {
     return (
@@ -58,6 +61,7 @@ export default async function LaunchesPage({
             title="Nuevo lanzamiento"
             submitLabel="Crear lanzamiento"
             action={createAction}
+            copyableLaunches={copyableLaunches}
           />
         )}
       </header>

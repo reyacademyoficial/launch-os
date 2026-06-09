@@ -7,13 +7,16 @@ import { DailyChart } from "@/components/dashboard/launches/daily/daily-chart";
 import { DailyFormModal } from "@/components/dashboard/launches/daily/daily-form-modal";
 import { DailyTable } from "@/components/dashboard/launches/daily/daily-table";
 import { DeleteButton } from "@/components/dashboard/launches/delete-button";
+import { LaunchIntegrationsSection } from "@/components/dashboard/launches/integrations/launch-integrations-section";
+import { RealtimeProbe } from "@/components/dashboard/launches/integrations/realtime-probe";
 import { KpiGrid } from "@/components/dashboard/launches/kpi-grid";
 import { LaunchCalendarTable } from "@/components/dashboard/launches/launch-calendar-table";
 import { LaunchFormModal } from "@/components/dashboard/launches/launch-form-modal";
 import { StatusBadge } from "@/components/dashboard/launches/status-badge";
 import { fmtDate, fmtLaunchWindow } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
-import { listDailyForLaunch } from "@/lib/launch-daily/list";
+import { listAdsForLaunch, listDailyForLaunch } from "@/lib/launch-daily/list";
+import { mergeDailyData } from "@/lib/launch-daily/merge";
 import { tryComputeLaunchCalendar } from "@/lib/launches/calendar";
 import { getLaunch } from "@/lib/launches/get";
 import { userCanEditLaunchesIn, userCanEditProject } from "@/lib/supabase/auth";
@@ -40,16 +43,22 @@ export default async function LaunchDetailPage({
   //     Admin + operador miembros del proyecto pasan por acá.
   //   - canEditProject → "Duplicar" y "Borrar" (CREATE/DELETE del launch).
   //     Solo admin/superadmin — el operador edita pero no crea ni borra.
-  const [launch, canEditLaunchValue, canEditProjectValue, daily] = await Promise.all([
-    getLaunch(launchId),
-    userCanEditLaunchesIn(projectId),
-    userCanEditProject(projectId),
-    listDailyForLaunch(launchId),
-  ]);
+  const [launch, canEditLaunchValue, canEditProjectValue, daily, ads] =
+    await Promise.all([
+      getLaunch(launchId),
+      userCanEditLaunchesIn(projectId),
+      userCanEditProject(projectId),
+      listDailyForLaunch(launchId),
+      listAdsForLaunch(launchId),
+    ]);
 
   if (!launch || launch.project_id !== projectId) notFound();
 
   const kpi = calculateLaunchKPIs(launch);
+  // El chart muestra el merge manual+API (API gana por día/canal). La tabla
+  // de Datos diarios sigue mostrando solo los rows manuales — porque ahí se
+  // edita/borra y los rows de ads no se tocan a mano.
+  const mergedDaily = mergeDailyData(daily, ads);
   const calendar = tryComputeLaunchCalendar({
     launchDate: launch.launch_date ?? undefined,
     durCaptacion: launch.dur_captacion,
@@ -203,11 +212,11 @@ export default async function LaunchDetailPage({
           )}
         </header>
 
-        {daily.length === 0 ? (
+        {daily.length === 0 && mergedDaily.length === 0 ? (
           <div className="rounded-md border border-dashed border-border bg-surface/40 p-8 text-center text-sm text-fg-muted">
             Sin datos diarios cargados.
             {canEditLaunchValue
-              ? " Agregá uno para empezar a ver el gráfico de leads por canal."
+              ? " Agregá uno a mano o configurá la integración para que la API los traiga sola."
               : " El admin u operador del proyecto los va a cargar."}
           </div>
         ) : (
@@ -219,13 +228,23 @@ export default async function LaunchDetailPage({
               launchId={launchId}
             />
             <div className="rounded-md border border-border bg-surface/40 p-4">
-              <DailyChart rows={daily} />
+              <DailyChart rows={mergedDaily} />
             </div>
           </>
         )}
       </section>
 
+      {canEditLaunchValue && (
+        <LaunchIntegrationsSection
+          projectId={projectId}
+          launchId={launchId}
+          isClosed={isClosed}
+        />
+      )}
+
       <AISummary projectId={projectId} launchId={launchId} />
+
+      <RealtimeProbe launchId={launchId} />
     </section>
   );
 }

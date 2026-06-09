@@ -15,8 +15,8 @@ import {
   CHANNEL_COLORS,
   CHANNEL_LABELS,
   DAILY_CHANNELS,
+  type DailyChannel,
 } from "@/lib/launch-daily/types";
-import type { LaunchDailyRow } from "@/lib/launch-daily/types";
 
 /**
  * Leads-per-day-per-channel line chart, ported from the prototype's
@@ -24,8 +24,13 @@ import type { LaunchDailyRow } from "@/lib/launch-daily/types";
  *
  * Only renders a line for channels that have at least one non-zero day —
  * otherwise the legend gets crowded with flat-zero series.
+ *
+ * Acepta cualquier row con `date` + las 7 columnas de canales — sirve tanto
+ * para `LaunchDailyRow` (manual) como `MergedDailyRow` (manual + API).
  */
-export function DailyChart({ rows }: { readonly rows: readonly LaunchDailyRow[] }) {
+export type DailyChartRow = { date: string } & Record<DailyChannel, number>;
+
+export function DailyChart({ rows }: { readonly rows: readonly DailyChartRow[] }) {
   if (rows.length === 0) return null;
 
   const data = [...rows]

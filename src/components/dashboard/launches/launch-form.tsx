@@ -32,6 +32,7 @@ export function LaunchForm({
   initial,
   submitLabel,
   onSuccess,
+  copyableLaunches,
 }: {
   readonly action: FormAction;
   readonly initial?: LaunchRow;
@@ -43,6 +44,13 @@ export function LaunchForm({
    * así que onSuccess no se dispara — y eso está bien.
    */
   readonly onSuccess?: () => void;
+  /**
+   * Lista de launches del mismo proyecto desde los que se pueden copiar
+   * conexiones (token + integration_config). Solo se muestra el select en
+   * modo create (initial === undefined). Si no se pasa o está vacía, no
+   * aparece la opción.
+   */
+  readonly copyableLaunches?: ReadonlyArray<{ id: string; name: string }>;
 }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(action, null);
 
@@ -75,8 +83,37 @@ export function LaunchForm({
     durCierre,
   });
 
+  const showCopyFrom =
+    !initial && copyableLaunches !== undefined && copyableLaunches.length > 0;
+
   return (
     <form action={formAction} className="space-y-10">
+      {showCopyFrom && (
+        <Section title="Copiar conexiones de">
+          <div className="space-y-1">
+            <Label htmlFor="copy_from_launch_id">
+              Lanzamiento de origen (opcional)
+            </Label>
+            <Select
+              id="copy_from_launch_id"
+              name="copy_from_launch_id"
+              defaultValue=""
+            >
+              <option value="">— No copiar nada —</option>
+              {copyableLaunches!.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </Select>
+            <p className="text-xs text-fg-subtle">
+              Copia el token + ad_account_id + campañas. Editable después desde
+              la sección Integraciones del lanzamiento nuevo.
+            </p>
+          </div>
+        </Section>
+      )}
+
       <Section title="Datos básicos">
         <FieldsGrid>
           <Field className="sm:col-span-2">

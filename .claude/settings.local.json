@@ -28,7 +28,10 @@
       "Bash(rm \"src/app/\\(app\\)/proyectos/[projectId]/launches/new/page.tsx\")",
       "Bash(rmdir \"src/app/\\(app\\)/proyectos/[projectId]/launches/new\")",
       "Bash(rm \"src/app/\\(app\\)/proyectos/[projectId]/launches/[launchId]/edit/page.tsx\")",
-      "Bash(rmdir \"src/app/\\(app\\)/proyectos/[projectId]/launches/[launchId]/edit\")"
+      "Bash(rmdir \"src/app/\\(app\\)/proyectos/[projectId]/launches/[launchId]/edit\")",
+      "WebFetch(domain:developers.facebook.com)",
+      "Bash(npm ls *)",
+      "Bash(npx vitest *)"
     ]
   }
 }

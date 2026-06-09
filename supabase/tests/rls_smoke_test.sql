@@ -113,7 +113,7 @@ on conflict (id) do nothing;
 -- - UPDATE/DELETE bloqueado por USING → fila se filtra silencioso, 0 filas.
 --   Lo testeamos con `is_empty(WITH ... RETURNING 1)`.
 --
-insert into _smoke_results(result) values (plan(17));
+insert into _smoke_results(result) values (plan(21));
 
 -- 1) cliente NO puede insertar launches (WITH CHECK falla) → 42501
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
@@ -275,6 +275,61 @@ insert into _smoke_results(result) values (is(
     where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'),
   '2026-07-20',
   'date_end = L + 2 + dur_compra + dur_cierre (ejemplo del roadmap)'
+));
+
+-- ── Tests de integraciones (post-0012) ──────────────────────────────────
+-- Validan que las 3 tablas nuevas tienen la RLS correcta:
+--   - launch_daily_ads: SELECT visible a miembros, write blindada
+--   - launch_secrets:   blindada total (SELECT devuelve 0 filas)
+--   - integration_runs: SELECT visible a miembros, write blindada
+
+-- Seed: estas 3 tablas tienen RLS sin policies de write, así que ni
+-- superadmin (via authenticated + JWT) puede insertar. Volvemos al rol
+-- postgres del connection — bypasea RLS — para popularlas. Después
+-- re-login como cliente para los tests de visibilidad.
+reset role;
+
+insert into public.launch_daily_ads (launch_id, date, provider, spend, leads) values
+  ('cccccccc-cccc-cccc-cccc-cccccccccccc', '2026-07-10', 'meta', 50, 5)
+on conflict (launch_id, date, provider) do nothing;
+
+insert into public.launch_secrets (launch_id, provider, secret) values
+  ('cccccccc-cccc-cccc-cccc-cccccccccccc', 'meta', 'EAAB-dummy-token-for-tests')
+on conflict (launch_id, provider) do nothing;
+
+insert into public.integration_runs (launch_id, provider, status, rows_written) values
+  ('cccccccc-cccc-cccc-cccc-cccccccccccc', 'meta', 'success', 1);
+
+-- 18) cliente lee launch_daily_ads del launch de su proyecto → ✅
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+insert into _smoke_results(result) values (isnt_empty(
+  format('select 1 from public.launch_daily_ads where launch_id = %L',
+         'cccccccc-cccc-cccc-cccc-cccccccccccc'),
+  'cliente lee launch_daily_ads de su proyecto'
+));
+
+-- 19) cliente NO ve launch_secrets (blindada — RLS sin policies)
+insert into _smoke_results(result) values (is_empty(
+  format('select 1 from public.launch_secrets where launch_id = %L',
+         'cccccccc-cccc-cccc-cccc-cccccccccccc'),
+  'launch_secrets blindada — cliente ve 0 filas'
+));
+
+-- 20) cliente NO puede insertar en launch_daily_ads (sin policy de write)
+insert into _smoke_results(result) values (throws_ok(
+  format(
+    'insert into public.launch_daily_ads (launch_id, date, provider, leads) values (%L, ''2026-07-11'', ''meta'', 99)',
+    'cccccccc-cccc-cccc-cccc-cccccccccccc'
+  ),
+  '42501', null,
+  'launch_daily_ads INSERT blindado para authenticated'
+));
+
+-- 21) cliente lee integration_runs de su proyecto → ✅
+insert into _smoke_results(result) values (isnt_empty(
+  format('select 1 from public.integration_runs where launch_id = %L',
+         'cccccccc-cccc-cccc-cccc-cccccccccccc'),
+  'cliente lee integration_runs de su proyecto'
 ));
 
 insert into _smoke_results(result) select * from finish();

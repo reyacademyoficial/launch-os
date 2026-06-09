@@ -167,7 +167,62 @@ export async function createLaunch(
   }
 
   const id = (data as { id: string }).id;
+
+  // Si el usuario eligió "Copiar conexiones de" en el modal, traemos config +
+  // launch_secrets del launch fuente. Service-role para leer/escribir
+  // launch_secrets (que está blindada). Si la copia falla NO bloqueamos el
+  // create — el launch se creó OK, el usuario puede recargar las conexiones
+  // a mano desde la sección Integraciones.
+  const copyFromId = String(formData.get("copy_from_launch_id") ?? "").trim();
+  if (copyFromId) {
+    await copyConnectionsInline(projectId, copyFromId, id);
+  }
+
   redirect(`/proyectos/${projectId}/launches/${id}`);
+}
+
+async function copyConnectionsInline(
+  projectId: string,
+  sourceLaunchId: string,
+  targetLaunchId: string,
+): Promise<void> {
+  // Import inline para no arrastrar el service-role client en cada createLaunch
+  // — solo cuando hace falta.
+  const { createServiceClient } = await import("@/lib/supabase/service");
+  const service = createServiceClient();
+
+  const sourceRes = await service
+    .from("launches")
+    .select("project_id, integration_config")
+    .eq("id", sourceLaunchId)
+    .maybeSingle();
+  const source = sourceRes.data as
+    | { project_id: string; integration_config: unknown }
+    | null;
+  // Guard de URL tampering: si el source es de otro proyecto, no copiamos.
+  if (!source || source.project_id !== projectId) return;
+
+  const cfgPayload = {
+    integration_config: source.integration_config ?? {},
+  } as never;
+  await service.from("launches").update(cfgPayload).eq("id", targetLaunchId);
+
+  const secretsRes = await service
+    .from("launch_secrets")
+    .select("provider, secret")
+    .eq("launch_id", sourceLaunchId);
+  const secrets =
+    (secretsRes.data ?? []) as Array<{ provider: string; secret: string }>;
+  if (secrets.length > 0) {
+    const rows = secrets.map((s) => ({
+      launch_id: targetLaunchId,
+      provider: s.provider,
+      secret: s.secret,
+    }));
+    await service
+      .from("launch_secrets")
+      .upsert(rows as never, { onConflict: "launch_id,provider" });
+  }
 }
 
 /**

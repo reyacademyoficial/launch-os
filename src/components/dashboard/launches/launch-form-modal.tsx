@@ -33,6 +33,7 @@ export function LaunchFormModal({
   submitLabel,
   action,
   initial,
+  copyableLaunches,
 }: {
   readonly triggerLabel: string;
   readonly triggerVariant?: "primary" | "secondary";
@@ -41,6 +42,7 @@ export function LaunchFormModal({
   readonly submitLabel: string;
   readonly action: FormAction;
   readonly initial?: LaunchRow;
+  readonly copyableLaunches?: ReadonlyArray<{ id: string; name: string }>;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -88,6 +90,7 @@ export function LaunchFormModal({
                 initial={initial}
                 submitLabel={submitLabel}
                 onSuccess={() => setOpen(false)}
+                copyableLaunches={copyableLaunches}
               />
             </div>
           </div>
