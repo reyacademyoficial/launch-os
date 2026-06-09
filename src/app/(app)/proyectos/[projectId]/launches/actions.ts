@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
-import { requireCanEditProject } from "@/lib/supabase/auth";
+import { requireCanEditLaunch, requireCanEditProject } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
 export type LaunchActionState = { error: string } | null;
@@ -151,8 +151,10 @@ export async function createLaunch(
 }
 
 /**
- * Updates an existing launch. Caller must be able to edit the project, and
- * the launch must belong to that project (URL tampering guard).
+ * Updates an existing launch. Gate is launch-scope: admin/superadmin on the
+ * project pass, and operadores assigned to this launch with `can_edit = true`
+ * pass too. Analista and cliente never pass. The `eq("project_id", projectId)`
+ * below is the URL-tampering guard (launch must belong to the URL's project).
  */
 export async function updateLaunch(
   projectId: string,
@@ -160,7 +162,7 @@ export async function updateLaunch(
   _prev: LaunchActionState,
   formData: FormData,
 ): Promise<LaunchActionState> {
-  await requireCanEditProject(projectId);
+  await requireCanEditLaunch(projectId, launchId);
 
   const parsed = parseLaunchFromForm(formData);
   if (!parsed.ok) return { error: parsed.error };
@@ -251,10 +253,11 @@ export async function duplicateLaunch(
 /**
  * Closes a launch — sets closed_at = now(). A closed launch rejects new daily
  * data (see daily-actions). In Phase 3 the integrations sync engine will also
- * stop polling once a launch is closed.
+ * stop polling once a launch is closed. Launch-scope gate so operadores
+ * assigned with can_edit can close their own launches.
  */
 export async function closeLaunch(projectId: string, launchId: string): Promise<void> {
-  await requireCanEditProject(projectId);
+  await requireCanEditLaunch(projectId, launchId);
 
   const supabase = await createClient();
   const payload = { closed_at: new Date().toISOString() } as never;
@@ -271,7 +274,7 @@ export async function closeLaunch(projectId: string, launchId: string): Promise<
  * Reopens a closed launch — clears closed_at. Same permission gate as close.
  */
 export async function reopenLaunch(projectId: string, launchId: string): Promise<void> {
-  await requireCanEditProject(projectId);
+  await requireCanEditLaunch(projectId, launchId);
 
   const supabase = await createClient();
   const payload = { closed_at: null } as never;

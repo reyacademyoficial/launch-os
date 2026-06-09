@@ -23,7 +23,8 @@
       "Bash(npx -y supabase --version)",
       "Bash(npx supabase *)",
       "Bash(mkdir -p \"src/app/\\(app\\)/proyectos/[projectId]/launches/[launchId]\" \"src/app/\\(app\\)/proyectos/[projectId]/integraciones\" \"src/app/\\(admin\\)/admin/proyectos\" \"src/app/\\(admin\\)/admin/usuarios\")",
-      "Bash(rmdir \"src/app/\\(app\\)/launches/[id]\" \"src/app/\\(app\\)/launches\" \"src/app/\\(app\\)/integraciones\" \"src/app/\\(admin\\)/proyectos\" \"src/app/\\(admin\\)/usuarios\")"
+      "Bash(rmdir \"src/app/\\(app\\)/launches/[id]\" \"src/app/\\(app\\)/launches\" \"src/app/\\(app\\)/integraciones\" \"src/app/\\(admin\\)/proyectos\" \"src/app/\\(admin\\)/usuarios\")",
+      "Bash(npx tsc *)"
     ]
   }
 }

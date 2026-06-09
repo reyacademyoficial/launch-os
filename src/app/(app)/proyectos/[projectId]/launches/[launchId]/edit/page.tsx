@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 
 import { LaunchForm } from "@/components/dashboard/launches/launch-form";
 import { getLaunch } from "@/lib/launches/get";
-import { requireCanEditProject } from "@/lib/supabase/auth";
+import { requireCanEditLaunch } from "@/lib/supabase/auth";
 
 import { updateLaunch } from "../../actions";
 
@@ -15,7 +15,8 @@ export default async function EditLaunchPage({
   readonly params: Promise<{ projectId: string; launchId: string }>;
 }) {
   const { projectId, launchId } = await params;
-  await requireCanEditProject(projectId);
+  // Launch-scope: operador asignado con can_edit edita el form igual que admin.
+  await requireCanEditLaunch(projectId, launchId);
 
   const launch = await getLaunch(launchId);
   if (!launch || launch.project_id !== projectId) notFound();

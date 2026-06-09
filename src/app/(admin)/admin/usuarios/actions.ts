@@ -10,7 +10,10 @@ export type CreateUserState =
   | { error: string }
   | null;
 
-const CREATABLE_ROLES = ["admin", "cliente"] as const;
+// superadmin is intentionally NOT creatable from the UI — promotion to
+// superadmin still requires Studio + disabling guard_profile_role briefly
+// (see 0004_seed.sql for the bootstrap procedure).
+const CREATABLE_ROLES = ["admin", "operador", "analista", "cliente"] as const;
 type CreatableRole = (typeof CREATABLE_ROLES)[number];
 
 function isCreatableRole(value: string): value is CreatableRole {
@@ -145,9 +148,10 @@ export async function updateUser(
 
   if (profileError) return { error: profileError.message };
 
-  // Manage project assignments only for admin/cliente. Superadmin doesn't
-  // belong to project_members per spec.
-  if (role === "admin" || role === "cliente") {
+  // Manage project assignments for every non-superadmin role. Superadmin
+  // doesn't belong to project_members per spec; everyone else does (admin,
+  // operador, analista, cliente — pertenencia define el proyecto).
+  if (role !== "superadmin") {
     if (uniqueProjectIds.length === 0) {
       return { error: "Asigná al menos un proyecto." };
     }

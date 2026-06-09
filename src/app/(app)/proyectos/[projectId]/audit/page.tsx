@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
+import { canViewAuditLog } from "@/lib/auth/permissions";
 import { listAuditLog } from "@/lib/audit/list";
+import { requireSessionProfile } from "@/lib/supabase/auth";
 
 export const metadata: Metadata = { title: "Audit log" };
 
@@ -15,6 +18,13 @@ export default async function AuditLogPage({
   readonly searchParams: Promise<{ page?: string }>;
 }) {
   const { projectId } = await params;
+  // Operador y cliente NO ven audit log. La RLS de 0009 ya devuelve vacío para
+  // ellos, pero gateamos también acá para evitar mostrar la página vacía y
+  // dejarla esquinada del UI.
+  const profile = await requireSessionProfile();
+  if (!canViewAuditLog(profile, projectId)) {
+    redirect(`/proyectos/${projectId}`);
+  }
   const { page: pageStr } = await searchParams;
   const page = Math.max(0, Number.parseInt(pageStr ?? "0", 10) || 0);
 

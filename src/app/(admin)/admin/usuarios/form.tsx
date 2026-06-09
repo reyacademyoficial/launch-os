@@ -120,8 +120,10 @@ export function CreateUserModal({
                 <div>
                   <Label htmlFor="role">Rol</Label>
                   <Select id="role" name="role" required defaultValue="cliente">
-                    <option value="cliente">cliente (solo lectura)</option>
-                    <option value="admin">admin (lectura + escritura)</option>
+                    <option value="cliente">cliente (solo lectura, scope por launch)</option>
+                    <option value="operador">operador (edita launches asignados)</option>
+                    <option value="analista">analista (lectura del proyecto + simulador)</option>
+                    <option value="admin">admin (lectura + escritura del proyecto)</option>
                   </Select>
                 </div>
                 <div>

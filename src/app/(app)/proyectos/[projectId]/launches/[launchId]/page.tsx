@@ -8,12 +8,14 @@ import { DailyFormModal } from "@/components/dashboard/launches/daily/daily-form
 import { DailyTable } from "@/components/dashboard/launches/daily/daily-table";
 import { DeleteButton } from "@/components/dashboard/launches/delete-button";
 import { KpiGrid } from "@/components/dashboard/launches/kpi-grid";
+import { LaunchAssignmentsSection } from "@/components/dashboard/launches/launch-assignments-section";
 import { StatusBadge } from "@/components/dashboard/launches/status-badge";
 import { fmtDate, fmtLaunchWindow } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import { listDailyForLaunch } from "@/lib/launch-daily/list";
+import { loadLaunchAssignmentData } from "@/lib/launch-assignments/list";
 import { getLaunch } from "@/lib/launches/get";
-import { userCanEditProject } from "@/lib/supabase/auth";
+import { userCanEditLaunch, userCanEditProject } from "@/lib/supabase/auth";
 
 import {
   closeLaunch,
@@ -31,13 +33,26 @@ export default async function LaunchDetailPage({
   readonly params: Promise<{ projectId: string; launchId: string }>;
 }) {
   const { projectId, launchId } = await params;
-  const [launch, canEdit, daily] = await Promise.all([
+  // Two scopes:
+  //   - canEditLaunch  → "Editar", Cerrar/Reabrir, daily add/edit/delete.
+  //     Operador asignado con can_edit pasa por acá.
+  //   - canEditProject → "Duplicar" y "Borrar" (crean/destruyen el launch
+  //     completo; el operador nunca crea ni borra lanzamientos).
+  const [launch, canEditLaunchValue, canEditProjectValue, daily] = await Promise.all([
     getLaunch(launchId),
+    userCanEditLaunch(launchId),
     userCanEditProject(projectId),
     listDailyForLaunch(launchId),
   ]);
 
   if (!launch || launch.project_id !== projectId) notFound();
+
+  // Assignment management lives behind the same gate as project-level writes:
+  // only admin / superadmin assign. Skip the fetch for everyone else so we
+  // don't pay the service-role round-trip per render.
+  const assignmentData = canEditProjectValue
+    ? await loadLaunchAssignmentData(projectId, launchId)
+    : null;
 
   const kpi = calculateLaunchKPIs(launch);
   const deleteAction = deleteLaunch.bind(null, projectId, launchId);
@@ -46,6 +61,7 @@ export default async function LaunchDetailPage({
   const duplicateAction = duplicateLaunch.bind(null, projectId, launchId);
   const addDailyAction = createDailyEntry.bind(null, projectId, launchId);
   const isClosed = launch.closed_at !== null;
+  const showAnyAction = canEditLaunchValue || canEditProjectValue;
 
   return (
     <section className="space-y-10">
@@ -91,42 +107,49 @@ export default async function LaunchDetailPage({
           )}
         </div>
 
-        {canEdit && (
+        {showAnyAction && (
           <div className="flex items-center gap-3">
-            <Link
-              href={`/proyectos/${projectId}/launches/${launchId}/edit`}
-              className="inline-flex items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-bg-elevated"
-            >
-              Editar
-            </Link>
-            <form action={duplicateAction}>
-              <button
-                type="submit"
+            {canEditLaunchValue && (
+              <Link
+                href={`/proyectos/${projectId}/launches/${launchId}/edit`}
                 className="inline-flex items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-bg-elevated"
               >
-                Duplicar
-              </button>
-            </form>
-            {isClosed ? (
-              <form action={reopenAction}>
+                Editar
+              </Link>
+            )}
+            {canEditProjectValue && (
+              <form action={duplicateAction}>
                 <button
                   type="submit"
                   className="inline-flex items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-bg-elevated"
                 >
-                  Reabrir
-                </button>
-              </form>
-            ) : (
-              <form action={closeAction}>
-                <button
-                  type="submit"
-                  className="inline-flex items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-bg-elevated"
-                >
-                  Cerrar lanzamiento
+                  Duplicar
                 </button>
               </form>
             )}
-            <DeleteButton launchName={launch.name} onConfirm={deleteAction} />
+            {canEditLaunchValue &&
+              (isClosed ? (
+                <form action={reopenAction}>
+                  <button
+                    type="submit"
+                    className="inline-flex items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-bg-elevated"
+                  >
+                    Reabrir
+                  </button>
+                </form>
+              ) : (
+                <form action={closeAction}>
+                  <button
+                    type="submit"
+                    className="inline-flex items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-bg-elevated"
+                  >
+                    Cerrar lanzamiento
+                  </button>
+                </form>
+              ))}
+            {canEditProjectValue && (
+              <DeleteButton launchName={launch.name} onConfirm={deleteAction} />
+            )}
           </div>
         )}
       </header>
@@ -141,7 +164,7 @@ export default async function LaunchDetailPage({
               Leads por canal por día. Alimenta el gráfico de abajo.
             </p>
           </div>
-          {canEdit && !isClosed && (
+          {canEditLaunchValue && !isClosed && (
             <DailyFormModal
               triggerLabel="+ Agregar día"
               title="Agregar día"
@@ -149,7 +172,7 @@ export default async function LaunchDetailPage({
               action={addDailyAction}
             />
           )}
-          {canEdit && isClosed && (
+          {canEditLaunchValue && isClosed && (
             <p className="text-xs text-fg-subtle">
               Lanzamiento cerrado — no se pueden cargar más datos.
             </p>
@@ -159,15 +182,15 @@ export default async function LaunchDetailPage({
         {daily.length === 0 ? (
           <div className="rounded-md border border-dashed border-border bg-surface/40 p-8 text-center text-sm text-fg-muted">
             Sin datos diarios cargados.
-            {canEdit
+            {canEditLaunchValue
               ? " Agregá uno para empezar a ver el gráfico de leads por canal."
-              : " El admin del proyecto los va a cargar."}
+              : " El admin u operador asignado los va a cargar."}
           </div>
         ) : (
           <>
             <DailyTable
               rows={daily}
-              canEdit={canEdit && !isClosed}
+              canEdit={canEditLaunchValue && !isClosed}
               projectId={projectId}
               launchId={launchId}
             />
@@ -177,6 +200,15 @@ export default async function LaunchDetailPage({
           </>
         )}
       </section>
+
+      {assignmentData && (
+        <LaunchAssignmentsSection
+          projectId={projectId}
+          launchId={launchId}
+          assignees={assignmentData.assignees}
+          assignable={assignmentData.assignable}
+        />
+      )}
 
       <AISummary projectId={projectId} launchId={launchId} />
     </section>
