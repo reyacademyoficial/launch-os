@@ -24,8 +24,22 @@ import { SyncButton } from "./sync-button";
  * el page parent. Esta función no re-verifica permisos: confía en el caller.
  */
 
-const PROVIDERS: ReadonlyArray<{ id: "meta"; label: string }> = [
-  { id: "meta", label: "Meta Ads" },
+type ProviderId = "meta" | "google" | "tiktok";
+
+/**
+ * Catálogo de providers. `available: false` renderiza una card placeholder
+ * "Disponible próximamente". Cuando se cablee el backend de un provider,
+ * basta con flipear `available: true` y agregarle el caso en
+ * `lib/integrations/instructions` + `lib/integrations/*`.
+ */
+const PROVIDERS: ReadonlyArray<{
+  id: ProviderId;
+  label: string;
+  available: boolean;
+}> = [
+  { id: "meta", label: "Meta Ads", available: true },
+  { id: "google", label: "Google Ads", available: false },
+  { id: "tiktok", label: "TikTok Ads", available: false },
 ];
 
 interface IntegrationConfigShape {
@@ -80,6 +94,36 @@ export async function LaunchIntegrationsSection({
 
       <div className="space-y-3">
         {PROVIDERS.map((p) => {
+          // Si available=false → placeholder. Y si available=true pero el id
+          // no es "meta" (futuro: cuando se cablee Google/Tiktok), también
+          // placeholder hasta que SyncProviderId se extienda. Este segundo
+          // guard narrowea `p.id` a "meta" para los ConfigModal/SyncButton de
+          // abajo, que aceptan solo SyncProviderId.
+          if (!p.available || p.id !== "meta") {
+            return (
+              <article
+                key={p.id}
+                className="rounded-md border border-dashed border-border bg-surface/40 p-4"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <h3 className="text-sm font-semibold text-fg-muted">
+                        {p.label}
+                      </h3>
+                      <span className="rounded bg-fg-subtle/15 px-2 py-0.5 text-[10px] uppercase tracking-wide text-fg-muted">
+                        Próximamente
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-fg-subtle">
+                      Integración disponible en una próxima fase.
+                    </p>
+                  </div>
+                </div>
+              </article>
+            );
+          }
+
           const providerConfig = config[p.id] ?? {};
           const adAccount = providerConfig.ad_account_id ?? "";
           const campaigns = providerConfig.campaign_ids ?? [];

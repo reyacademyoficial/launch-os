@@ -113,7 +113,7 @@ on conflict (id) do nothing;
 -- - UPDATE/DELETE bloqueado por USING → fila se filtra silencioso, 0 filas.
 --   Lo testeamos con `is_empty(WITH ... RETURNING 1)`.
 --
-insert into _smoke_results(result) values (plan(41));
+insert into _smoke_results(result) values (plan(46));
 
 -- 1) cliente NO puede insertar launches (WITH CHECK falla) → 42501
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
@@ -618,6 +618,73 @@ insert into _smoke_results(result) values (is_empty(
          select id from public.sales where project_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
        )$sql$,
   'cliente NO ve payments de sale ajena'
+));
+
+-- ── Tests de ai_runs (post-0015) ──────────────────────────────────────────
+-- Historial de ejecuciones de análisis IA por launch.
+--   - SELECT  → has_project_access (todo miembro lee)
+--   - INSERT  → can_edit_launches_in (admin+operador)
+--   - UPDATE  → sin GRANT → blindado (historial inmutable)
+--   - DELETE  → can_edit_project (admin/superadmin purga)
+
+reset role;
+delete from public.ai_runs where project_id in (
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+);
+
+-- 42) operador SÍ inserta ai_run en su proyecto
+select pg_temp.login_as('44444444-4444-4444-4444-444444444444');
+insert into _smoke_results(result) values (lives_ok(
+  format(
+    $sql$insert into public.ai_runs (launch_id, project_id, model, output_text)
+         values (%L, %L, 'gpt-test', 'salida ejemplo')$sql$,
+    'cccccccc-cccc-cccc-cccc-cccccccccccc',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  ),
+  'operador inserta ai_run'
+));
+
+-- 43) analista NO inserta ai_run (no es can_edit_launches_in)
+select pg_temp.login_as('55555555-5555-5555-5555-555555555555');
+insert into _smoke_results(result) values (throws_ok(
+  format(
+    $sql$insert into public.ai_runs (launch_id, project_id, model, output_text)
+         values (%L, %L, 'gpt-test', 'hack')$sql$,
+    'cccccccc-cccc-cccc-cccc-cccccccccccc',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  ),
+  '42501', null,
+  'analista NO inserta ai_run'
+));
+
+-- 44) cliente lee ai_runs de su proyecto
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+insert into _smoke_results(result) values (isnt_empty(
+  format('select 1 from public.ai_runs where project_id = %L',
+         'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  'cliente lee ai_runs de su proyecto'
+));
+
+-- 45) historial inmutable: UPDATE no tiene GRANT → permission denied 42501
+insert into _smoke_results(result) values (throws_ok(
+  format(
+    $sql$update public.ai_runs set output_text = 'tampered'
+         where project_id = %L$sql$,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  ),
+  '42501', null,
+  'ai_runs UPDATE blindado (historial inmutable)'
+));
+
+-- 46) operador NO puede DELETE (es can_edit_project) → USING filtra a 0
+select pg_temp.login_as('44444444-4444-4444-4444-444444444444');
+insert into _smoke_results(result) values (is_empty(
+  format(
+    $sql$with d as (delete from public.ai_runs where project_id = %L returning 1) select * from d$sql$,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  ),
+  'operador NO borra ai_runs (es admin-only)'
 ));
 
 insert into _smoke_results(result) select * from finish();
