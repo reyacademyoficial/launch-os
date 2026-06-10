@@ -19,6 +19,9 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
     profile.role === "admin" ||
     profile.role === "analista";
   const showCrm = profile.role !== "cliente";
+  // Comisiones es admin-only (modalidades + reglas son decisión de admin).
+  const showCommissions =
+    profile.role === "superadmin" || profile.role === "admin";
 
   return (
     <aside className="flex w-60 shrink-0 flex-col overflow-y-auto border-r border-border bg-bg-elevated px-4 py-6">
@@ -33,6 +36,12 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
         <NavLink scopedSuffix="/launches">Lanzamientos</NavLink>
         {showCrm && <NavLink scopedSuffix="/leads">Leads</NavLink>}
         {showCrm && <NavLink scopedSuffix="/equipo">Equipo</NavLink>}
+        {showCrm && (
+          <NavLink scopedSuffix="/leaderboard">Leaderboard</NavLink>
+        )}
+        {showCommissions && (
+          <NavLink scopedSuffix="/comisiones">Comisiones</NavLink>
+        )}
         <NavLink href="/calculadora">Calculadora</NavLink>
         <NavLink scopedSuffix="/integraciones">Integraciones</NavLink>
         {showAudit && <NavLink scopedSuffix="/audit">Audit log</NavLink>}

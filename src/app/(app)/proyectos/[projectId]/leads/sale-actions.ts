@@ -1,0 +1,185 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+
+import { requireCanEditLaunchesIn } from "@/lib/supabase/auth";
+import { createClient } from "@/lib/supabase/server";
+
+export type SaleActionState = { ok: true; saleId?: string } | { error: string } | null;
+
+function str(formData: FormData, key: string): string {
+  return String(formData.get(key) ?? "").trim();
+}
+
+function nullable(value: string): string | null {
+  return value === "" ? null : value;
+}
+
+/**
+ * Crea una sale para un lead. El lead pasa automáticamente a status='cerrado'
+ * (la venta es la confirmación del cierre). El brief dice "una venta cuelga
+ * de un lead cerrado": elegimos cerrarlo nosotros al crear la venta, en lugar
+ * de exigir que el usuario lo mueva antes — UX más directa.
+ */
+export async function createSale(
+  projectId: string,
+  leadId: string,
+  _prev: SaleActionState,
+  formData: FormData,
+): Promise<SaleActionState> {
+  await requireCanEditLaunchesIn(projectId);
+
+  const payment_modality_id = str(formData, "payment_modality_id");
+  if (!payment_modality_id) return { error: "Elegí una modalidad." };
+
+  const totalRaw = str(formData, "total_amount");
+  const total_amount = parseFloat(totalRaw);
+  if (!Number.isFinite(total_amount) || total_amount < 0) {
+    return { error: "Monto pactado inválido." };
+  }
+
+  const team_member_id = nullable(str(formData, "team_member_id"));
+  const closedAtRaw = str(formData, "closed_at");
+  const closed_at = closedAtRaw === "" ? new Date().toISOString() : closedAtRaw;
+
+  const supabase = await createClient();
+
+  // Resolver project_id real del lead — guard contra URL tampering.
+  const { data: leadData } = await supabase
+    .from("leads")
+    .select("project_id")
+    .eq("id", leadId)
+    .maybeSingle();
+  const lead = leadData as { project_id: string } | null;
+  if (!lead || lead.project_id !== projectId) {
+    return { error: "Lead inexistente o de otro proyecto." };
+  }
+
+  const insertPayload = {
+    project_id: projectId,
+    lead_id: leadId,
+    team_member_id,
+    payment_modality_id,
+    total_amount,
+    closed_at,
+  } as never;
+
+  const { data, error } = await supabase
+    .from("sales")
+    .insert(insertPayload)
+    .select("id")
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === "23505") {
+      return { error: "Este lead ya tiene una venta registrada." };
+    }
+    return { error: error.message };
+  }
+
+  // Marcar lead cerrado (puede que ya lo esté; es idempotente).
+  const leadUpdate = { status: "cerrado" } as never;
+  await supabase
+    .from("leads")
+    .update(leadUpdate)
+    .eq("id", leadId)
+    .eq("project_id", projectId);
+
+  revalidatePath(`/proyectos/${projectId}/leads`);
+  const saleId = (data as { id: string } | null)?.id;
+  return { ok: true, saleId };
+}
+
+export async function updateSale(
+  projectId: string,
+  saleId: string,
+  _prev: SaleActionState,
+  formData: FormData,
+): Promise<SaleActionState> {
+  await requireCanEditLaunchesIn(projectId);
+
+  const payment_modality_id = str(formData, "payment_modality_id");
+  if (!payment_modality_id) return { error: "Elegí una modalidad." };
+
+  const totalRaw = str(formData, "total_amount");
+  const total_amount = parseFloat(totalRaw);
+  if (!Number.isFinite(total_amount) || total_amount < 0) {
+    return { error: "Monto pactado inválido." };
+  }
+  const team_member_id = nullable(str(formData, "team_member_id"));
+  const closedAtRaw = str(formData, "closed_at");
+
+  const supabase = await createClient();
+  const payload = {
+    payment_modality_id,
+    total_amount,
+    team_member_id,
+    ...(closedAtRaw && { closed_at: closedAtRaw }),
+  } as never;
+
+  const { error } = await supabase
+    .from("sales")
+    .update(payload)
+    .eq("id", saleId)
+    .eq("project_id", projectId);
+  if (error) return { error: error.message };
+
+  revalidatePath(`/proyectos/${projectId}/leads`);
+  return { ok: true };
+}
+
+export async function deleteSale(projectId: string, saleId: string): Promise<void> {
+  await requireCanEditLaunchesIn(projectId);
+  const supabase = await createClient();
+  await supabase
+    .from("sales")
+    .delete()
+    .eq("id", saleId)
+    .eq("project_id", projectId);
+  revalidatePath(`/proyectos/${projectId}/leads`);
+}
+
+// ─── payments ─────────────────────────────────────────────────────────────
+
+export type PaymentActionState = { ok: true } | { error: string } | null;
+
+export async function addPayment(
+  projectId: string,
+  saleId: string,
+  _prev: PaymentActionState,
+  formData: FormData,
+): Promise<PaymentActionState> {
+  await requireCanEditLaunchesIn(projectId);
+
+  const amountRaw = str(formData, "amount");
+  const amount = parseFloat(amountRaw);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return { error: "El monto debe ser mayor a 0." };
+  }
+  const paidAt = str(formData, "paid_at");
+  const notes = nullable(str(formData, "notes"));
+
+  const supabase = await createClient();
+  const payload = {
+    sale_id: saleId,
+    amount,
+    ...(paidAt && { paid_at: paidAt }),
+    notes,
+  } as never;
+
+  const { error } = await supabase.from("payments").insert(payload);
+  if (error) return { error: error.message };
+
+  revalidatePath(`/proyectos/${projectId}/leads`);
+  return { ok: true };
+}
+
+export async function deletePayment(
+  projectId: string,
+  paymentId: string,
+): Promise<void> {
+  await requireCanEditLaunchesIn(projectId);
+  const supabase = await createClient();
+  await supabase.from("payments").delete().eq("id", paymentId);
+  revalidatePath(`/proyectos/${projectId}/leads`);
+}

@@ -113,7 +113,7 @@ on conflict (id) do nothing;
 -- - UPDATE/DELETE bloqueado por USING → fila se filtra silencioso, 0 filas.
 --   Lo testeamos con `is_empty(WITH ... RETURNING 1)`.
 --
-insert into _smoke_results(result) values (plan(29));
+insert into _smoke_results(result) values (plan(41));
 
 -- 1) cliente NO puede insertar launches (WITH CHECK falla) → 42501
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
@@ -432,6 +432,192 @@ insert into _smoke_results(result) values (is_empty(
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
   ),
   'analista NO edita leads (USING filtra)'
+));
+
+-- ── Tests de ventas/comisiones (post-0014) ────────────────────────────────
+-- Validan project-scope + el split admin vs operador:
+--   - payment_modalities + commission_rules → can_edit_project (admin only)
+--   - sales + payments                       → can_edit_launches_in (admin+op)
+--
+-- Limpieza previa para que los conteos sean deterministicos entre corridas.
+reset role;
+delete from public.payments where sale_id in (
+  select id from public.sales where project_id in (
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+  )
+);
+delete from public.sales where project_id in (
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+);
+delete from public.commission_rules where project_id in (
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+);
+delete from public.payment_modalities where project_id in (
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+);
+
+-- 30) admin SÍ inserta modalidad de pago (can_edit_project)
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+insert into _smoke_results(result) values (lives_ok(
+  format(
+    'insert into public.payment_modalities (project_id, name) values (%L, %L)',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Pago total'
+  ),
+  'admin inserta payment_modality'
+));
+
+-- 31) operador NO inserta modalidad (gate = can_edit_project, no _launches_in)
+select pg_temp.login_as('44444444-4444-4444-4444-444444444444');
+insert into _smoke_results(result) values (throws_ok(
+  format(
+    'insert into public.payment_modalities (project_id, name) values (%L, %L)',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Hack del operador'
+  ),
+  '42501', null,
+  'operador NO inserta payment_modality (es admin-only)'
+));
+
+-- 32) admin SÍ inserta commission_rule (% sobre Pago total, sin launch)
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+insert into _smoke_results(result) values (lives_ok(
+  format(
+    $sql$insert into public.commission_rules (project_id, payment_modality_id, type, value)
+         select %L, id, 'percent', 10 from public.payment_modalities
+         where project_id = %L and name = 'Pago total'$sql$,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  ),
+  'admin inserta commission_rule % default'
+));
+
+-- 33) operador NO inserta commission_rule
+select pg_temp.login_as('44444444-4444-4444-4444-444444444444');
+insert into _smoke_results(result) values (throws_ok(
+  format(
+    $sql$insert into public.commission_rules (project_id, payment_modality_id, type, value)
+         select %L, id, 'fixed', 500 from public.payment_modalities
+         where project_id = %L and name = 'Pago total'$sql$,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  ),
+  '42501', null,
+  'operador NO inserta commission_rule'
+));
+
+-- 34) UNIQUE NULLS NOT DISTINCT: NO se puede insertar otra rule default
+--     (launch_id NULL) para la misma modalidad
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+insert into _smoke_results(result) values (throws_ok(
+  format(
+    $sql$insert into public.commission_rules (project_id, payment_modality_id, type, value)
+         select %L, id, 'fixed', 999 from public.payment_modalities
+         where project_id = %L and name = 'Pago total'$sql$,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  ),
+  '23505', null,
+  'UNIQUE NULLS NOT DISTINCT bloquea segunda rule default por modalidad'
+));
+
+-- 35) operador SÍ inserta sale (can_edit_launches_in). Necesita un lead +
+--     una modalidad: usamos el lead que el operador creó en el test 28 y la
+--     modalidad de pago total. Operador hace todo el flujo.
+select pg_temp.login_as('44444444-4444-4444-4444-444444444444');
+insert into _smoke_results(result) values (lives_ok(
+  format(
+    $sql$insert into public.sales (project_id, lead_id, payment_modality_id, total_amount)
+         select %L,
+                (select id from public.leads where project_id = %L limit 1),
+                (select id from public.payment_modalities where project_id = %L and name = 'Pago total'),
+                1000$sql$,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  ),
+  'operador inserta sale en su proyecto'
+));
+
+-- 36) analista NO inserta sale
+select pg_temp.login_as('55555555-5555-5555-5555-555555555555');
+insert into _smoke_results(result) values (throws_ok(
+  format(
+    $sql$insert into public.sales (project_id, lead_id, payment_modality_id, total_amount)
+         select %L,
+                (select id from public.leads where project_id = %L limit 1),
+                (select id from public.payment_modalities where project_id = %L limit 1),
+                500$sql$,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  ),
+  '42501', null,
+  'analista NO inserta sale'
+));
+
+-- 37) operador SÍ inserta payment (carga cobros día a día)
+select pg_temp.login_as('44444444-4444-4444-4444-444444444444');
+insert into _smoke_results(result) values (lives_ok(
+  format(
+    $sql$insert into public.payments (sale_id, amount)
+         select id, 300 from public.sales where project_id = %L limit 1$sql$,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  ),
+  'operador inserta payment'
+));
+
+-- 38) check amount > 0 → 0 o negativo rechaza
+insert into _smoke_results(result) values (throws_ok(
+  format(
+    $sql$insert into public.payments (sale_id, amount)
+         select id, 0 from public.sales where project_id = %L limit 1$sql$,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  ),
+  '23514', null,
+  'payments.amount > 0 (check rechaza 0)'
+));
+
+-- 39) cliente lee sales de su proyecto (es read por has_project_access)
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+insert into _smoke_results(result) values (isnt_empty(
+  format('select 1 from public.sales where project_id = %L',
+         'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  'cliente lee sales de su proyecto'
+));
+
+-- 40) cliente NO ve sales de proyecto ajeno (seed en B como postgres)
+reset role;
+insert into public.payment_modalities (project_id, name) values
+  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Cross-tenant total');
+insert into public.leads (project_id, name) values
+  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Cross-tenant lead');
+insert into public.sales (project_id, lead_id, payment_modality_id, total_amount)
+  select 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+         (select id from public.leads where project_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' limit 1),
+         (select id from public.payment_modalities where project_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' limit 1),
+         5000;
+
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+insert into _smoke_results(result) values (is_empty(
+  format('select 1 from public.sales where project_id = %L',
+         'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'),
+  'cliente NO ve sales de proyecto ajeno'
+));
+
+-- 41) cliente NO ve payments de proyecto ajeno (project_of_sale resuelve B)
+reset role;
+insert into public.payments (sale_id, amount)
+  select id, 100 from public.sales where project_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' limit 1;
+
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+insert into _smoke_results(result) values (is_empty(
+  $sql$select 1 from public.payments where sale_id in (
+         select id from public.sales where project_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+       )$sql$,
+  'cliente NO ve payments de sale ajena'
 ));
 
 insert into _smoke_results(result) select * from finish();

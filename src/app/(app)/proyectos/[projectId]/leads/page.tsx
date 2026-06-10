@@ -4,8 +4,17 @@ import { redirect } from "next/navigation";
 
 import { KanbanBoard } from "@/components/dashboard/leads/kanban-board";
 import { LeadFormModal } from "@/components/dashboard/leads/lead-form-modal";
+import {
+  listCommissionRules,
+  listPaymentModalities,
+} from "@/lib/commissions/list";
+import type { PaymentRow, SaleRow } from "@/lib/commissions/types";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { listLeads } from "@/lib/leads/list";
+import {
+  listPaymentsForProject,
+  listSalesForProject,
+} from "@/lib/sales/list";
 import { requireSessionProfile, userCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { listTeamMembers } from "@/lib/team/list";
 
@@ -15,6 +24,11 @@ import {
   moveLeadStatus,
   updateLead,
 } from "./actions";
+import {
+  addPayment,
+  createSale,
+  deletePayment,
+} from "./sale-actions";
 
 export const metadata: Metadata = { title: "Leads" };
 
@@ -30,12 +44,17 @@ export default async function LeadsPage({
   const profile = await requireSessionProfile();
   if (profile.role === "cliente") redirect(`/proyectos/${projectId}`);
 
-  const [leads, teamMembers, launches, canEdit] = await Promise.all([
-    listLeads(projectId),
-    listTeamMembers(projectId),
-    listLaunchesForProject(projectId),
-    userCanEditLaunchesIn(projectId),
-  ]);
+  const [leads, teamMembers, launches, canEdit, sales, payments, modalities, rules] =
+    await Promise.all([
+      listLeads(projectId),
+      listTeamMembers(projectId),
+      listLaunchesForProject(projectId),
+      userCanEditLaunchesIn(projectId),
+      listSalesForProject(projectId),
+      listPaymentsForProject(projectId),
+      listPaymentModalities(projectId),
+      listCommissionRules(projectId),
+    ]);
 
   const teamForForm = teamMembers.map((m) => ({
     id: m.id,
@@ -44,16 +63,26 @@ export default async function LeadsPage({
   }));
   const launchesForForm = launches.map((l) => ({ id: l.id, name: l.name }));
 
+  // Maps lead → sale, sale → payments. Mantenemos refs simples para que el
+  // cliente derive la comisión por card sin hacer un fetch extra.
+  const salesByLeadId = new Map<string, SaleRow>(sales.map((s) => [s.lead_id, s]));
+  const paymentsBySaleId = new Map<string, PaymentRow[]>();
+  for (const p of payments) {
+    const existing = paymentsBySaleId.get(p.sale_id);
+    if (existing) existing.push(p);
+    else paymentsBySaleId.set(p.sale_id, [p]);
+  }
+
   // Server actions parcialmente bound al projectId. `.bind()` sobre una Server
   // Action produce otra Server Action serializable — el cliente puede pasarla
-  // como prop y a su vez hacer `.bind(null, leadId)` por card. Antes envolvía
-  // estas en arrow functions del Server Component, lo cual no es serializable
-  // hacia un Client Component y rompía con "Functions cannot be passed
-  // directly to Client Components".
+  // como prop y a su vez hacer `.bind(null, leadId)` por card.
   const createAction = createLead.bind(null, projectId);
   const moveAction = moveLeadStatus.bind(null, projectId);
   const updateAction = updateLead.bind(null, projectId);
   const deleteAction = deleteLead.bind(null, projectId);
+  const createSaleAction = createSale.bind(null, projectId);
+  const addPaymentAction = addPayment.bind(null, projectId);
+  const deletePaymentAction = deletePayment.bind(null, projectId);
 
   const activeMembers = teamMembers.filter((m) => m.active).length;
 
@@ -100,6 +129,13 @@ export default async function LeadsPage({
           moveAction={moveAction}
           updateAction={updateAction}
           deleteAction={deleteAction}
+          salesByLeadId={salesByLeadId}
+          paymentsBySaleId={paymentsBySaleId}
+          modalities={modalities}
+          rules={rules}
+          createSaleAction={createSaleAction}
+          addPaymentAction={addPaymentAction}
+          deletePaymentAction={deletePaymentAction}
         />
       )}
     </section>

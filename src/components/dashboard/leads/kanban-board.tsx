@@ -3,6 +3,19 @@
 import { useOptimistic, useState, useTransition, type DragEvent } from "react";
 
 import type { LeadActionState } from "@/app/(app)/proyectos/[projectId]/leads/actions";
+import type {
+  PaymentActionState,
+  SaleActionState,
+} from "@/app/(app)/proyectos/[projectId]/leads/sale-actions";
+import { SaleModal } from "@/components/dashboard/sales/sale-modal";
+import { computeCommission, findApplicableRule } from "@/lib/commissions/calc";
+import type {
+  CommissionRuleRow,
+  PaymentModalityRow,
+  PaymentRow,
+  SaleRow,
+} from "@/lib/commissions/types";
+import { fmtMoney } from "@/lib/format";
 import { LEAD_STATUSES, LEAD_STATUS_LABELS, type LeadRow, type LeadStatus } from "@/lib/leads/types";
 import type { TeamMemberRow } from "@/lib/team/types";
 
@@ -20,6 +33,19 @@ type UpdateAction = (
 ) => Promise<LeadActionState>;
 
 type DeleteAction = (leadId: string) => Promise<void>;
+
+// ─── sales-related action types ───────────────────────────────────────────
+type CreateSaleAction = (
+  leadId: string,
+  prev: SaleActionState,
+  formData: FormData,
+) => Promise<SaleActionState>;
+type AddPaymentAction = (
+  saleId: string,
+  prev: PaymentActionState,
+  formData: FormData,
+) => Promise<PaymentActionState>;
+type DeletePaymentAction = (paymentId: string) => Promise<void>;
 
 /**
  * Tablero kanban del pipeline. Columnas = LEAD_STATUSES, ordenadas según el
@@ -39,6 +65,14 @@ export function KanbanBoard({
   moveAction,
   updateAction,
   deleteAction,
+  // Sales 4b
+  salesByLeadId,
+  paymentsBySaleId,
+  modalities,
+  rules,
+  createSaleAction,
+  addPaymentAction,
+  deletePaymentAction,
 }: {
   readonly leads: ReadonlyArray<LeadRow>;
   readonly teamMembers: ReadonlyArray<Pick<TeamMemberRow, "id" | "name" | "active">>;
@@ -48,6 +82,13 @@ export function KanbanBoard({
   readonly moveAction: MoveAction;
   readonly updateAction: UpdateAction;
   readonly deleteAction: DeleteAction;
+  readonly salesByLeadId: ReadonlyMap<string, SaleRow>;
+  readonly paymentsBySaleId: ReadonlyMap<string, ReadonlyArray<PaymentRow>>;
+  readonly modalities: ReadonlyArray<PaymentModalityRow>;
+  readonly rules: ReadonlyArray<CommissionRuleRow>;
+  readonly createSaleAction: CreateSaleAction;
+  readonly addPaymentAction: AddPaymentAction;
+  readonly deletePaymentAction: DeletePaymentAction;
 }) {
   const [, startTransition] = useTransition();
   const [dragOverCol, setDragOverCol] = useState<LeadStatus | null>(null);
@@ -130,6 +171,21 @@ export function KanbanBoard({
                   const assignee = lead.team_member_id
                     ? memberById.get(lead.team_member_id)
                     : null;
+                  const sale = salesByLeadId.get(lead.id) ?? null;
+                  const salePayments = sale
+                    ? paymentsBySaleId.get(sale.id) ?? []
+                    : [];
+                  const rule = sale
+                    ? findApplicableRule(
+                        rules,
+                        sale.payment_modality_id,
+                        lead.launch_id,
+                      )
+                    : null;
+                  const breakdown = sale
+                    ? computeCommission(sale, salePayments, rule)
+                    : null;
+
                   return (
                     <div
                       key={lead.id}
@@ -157,18 +213,53 @@ export function KanbanBoard({
                           </span>
                         )}
                       </div>
+
+                      {breakdown && (
+                        <div className="mt-2 flex items-center justify-between rounded-md bg-surface/60 px-2 py-1 text-xs">
+                          <span className="text-fg-subtle">
+                            Cobrado {fmtMoney(breakdown.collected)}
+                          </span>
+                          <span className="font-medium text-accent">
+                            +{fmtMoney(breakdown.commission)}
+                          </span>
+                        </div>
+                      )}
+
                       <div className="mt-2 flex items-center justify-between gap-2 text-xs text-fg-subtle">
                         <span className="truncate">
                           {assignee ? assignee.name : "Sin asignar"}
                         </span>
                         {canEdit && (
-                          <LeadRowActions
-                            lead={lead}
-                            teamMembers={teamMembers}
-                            launches={launches}
-                            updateAction={updateAction.bind(null, lead.id)}
-                            deleteAction={deleteAction.bind(null, lead.id)}
-                          />
+                          <div className="flex items-center gap-1">
+                            <SaleModal
+                              triggerLabel={sale ? "💰" : "Venta"}
+                              triggerClassName={
+                                sale
+                                  ? "rounded-md border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-xs text-accent hover:bg-accent/20"
+                                  : "rounded-md border border-border bg-surface px-2 py-0.5 text-xs text-fg hover:bg-bg-elevated"
+                              }
+                              lead={lead}
+                              sale={sale}
+                              payments={salePayments}
+                              modalities={modalities}
+                              rules={rules}
+                              teamMembers={teamMembers}
+                              createSaleAction={createSaleAction.bind(null, lead.id)}
+                              addPaymentAction={
+                                sale
+                                  ? addPaymentAction.bind(null, sale.id)
+                                  : addPaymentAction.bind(null, "")
+                              }
+                              deletePaymentAction={deletePaymentAction}
+                            />
+                            <LeadRowActions
+                              lead={lead}
+                              teamMembers={teamMembers}
+                              launches={launches}
+                              updateAction={updateAction.bind(null, lead.id)}
+                              deleteAction={deleteAction.bind(null, lead.id)}
+                            />
+                          </div>
                         )}
                       </div>
                     </div>
