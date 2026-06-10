@@ -6,7 +6,6 @@ import { KanbanBoard } from "@/components/dashboard/leads/kanban-board";
 import { LeadFormModal } from "@/components/dashboard/leads/lead-form-modal";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { listLeads } from "@/lib/leads/list";
-import type { LeadStatus } from "@/lib/leads/types";
 import { requireSessionProfile, userCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { listTeamMembers } from "@/lib/team/list";
 
@@ -45,11 +44,16 @@ export default async function LeadsPage({
   }));
   const launchesForForm = launches.map((l) => ({ id: l.id, name: l.name }));
 
+  // Server actions parcialmente bound al projectId. `.bind()` sobre una Server
+  // Action produce otra Server Action serializable — el cliente puede pasarla
+  // como prop y a su vez hacer `.bind(null, leadId)` por card. Antes envolvía
+  // estas en arrow functions del Server Component, lo cual no es serializable
+  // hacia un Client Component y rompía con "Functions cannot be passed
+  // directly to Client Components".
   const createAction = createLead.bind(null, projectId);
-  const move = async (leadId: string, status: LeadStatus) =>
-    moveLeadStatus(projectId, leadId, status);
-  const updateActionFor = (leadId: string) => updateLead.bind(null, projectId, leadId);
-  const deleteActionFor = (leadId: string) => deleteLead.bind(null, projectId, leadId);
+  const moveAction = moveLeadStatus.bind(null, projectId);
+  const updateAction = updateLead.bind(null, projectId);
+  const deleteAction = deleteLead.bind(null, projectId);
 
   const activeMembers = teamMembers.filter((m) => m.active).length;
 
@@ -93,9 +97,9 @@ export default async function LeadsPage({
           teamMembers={teamForForm}
           launches={launchesForForm}
           canEdit={canEdit}
-          moveAction={move}
-          updateActionFor={updateActionFor}
-          deleteActionFor={deleteActionFor}
+          moveAction={moveAction}
+          updateAction={updateAction}
+          deleteAction={deleteAction}
         />
       )}
     </section>

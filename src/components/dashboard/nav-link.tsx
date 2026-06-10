@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, usePathname } from "next/navigation";
+import { usePathname } from "next/navigation";
 
 type Props = {
   readonly children: React.ReactNode;
@@ -11,38 +11,49 @@ type Props = {
   | { readonly href?: never; readonly scopedSuffix: string }
 );
 
+const PROJECT_PATH = /^\/proyectos\/([^/]+)/;
+
 /**
  * Sidebar nav link.
  *
  * Two modes:
- *   - Static (`href` prop): for free routes (`/calculadora`, `/configuracion`)
- *     and admin routes (`/admin/proyectos`, `/admin/usuarios`).
- *   - Scoped to the active project (`scopedSuffix` prop): builds href from
- *     `useParams().projectId`. If no active project (e.g., on `/calculadora`),
- *     the link points to `/` (project picker).
+ *   - Static (`href` prop): rutas libres (`/calculadora`, `/configuracion`) y
+ *     admin (`/admin/proyectos`, `/admin/usuarios`).
+ *   - Scoped (`scopedSuffix`): se arma a partir del projectId del pathname
+ *     actual. ¿Por qué pathname y no useParams? Sidebar vive en
+ *     `(app)/layout.tsx`, que es padre del segmento `[projectId]`. useParams
+ *     puede devolver undefined durante una transición → el link cae a "/" y
+ *     un click te manda al project picker en lugar del destino esperado. El
+ *     pathname siempre tiene el path actual sin lag.
  *
- * `exact` toggles strict pathname equality for active highlight, used for the
- * overview route (`/proyectos/[id]`) so it doesn't stay active while inside
- * `/proyectos/[id]/launches`.
+ * `exact` fuerza igualdad estricta para el highlight del overview
+ * (`/proyectos/[id]`) — sino quedaría activo dentro de `/launches`, `/leads`,
+ * etc.
+ *
+ * Si scopedSuffix y no se pudo extraer projectId del pathname (estás en una
+ * ruta no-proyecto como `/calculadora`), el link cae a "/" pero NUNCA se
+ * muestra activo: evita que todos los scoped links se vean rosa en `/`.
  */
 export function NavLink(props: Props) {
   const { children, exact } = props;
   const pathname = usePathname();
-  const params = useParams<{ projectId?: string | string[] }>();
-  const activeProjectId =
-    typeof params.projectId === "string" ? params.projectId : undefined;
+  const activeProjectId = pathname.match(PROJECT_PATH)?.[1];
 
-  const resolvedHref =
-    "scopedSuffix" in props && props.scopedSuffix !== undefined
-      ? activeProjectId
-        ? `/proyectos/${activeProjectId}${props.scopedSuffix}`
-        : "/"
-      : props.href;
+  const isScoped = "scopedSuffix" in props && props.scopedSuffix !== undefined;
+  const scopedFallback = !isScoped ? false : !activeProjectId;
 
-  const isActive = exact
-    ? pathname === resolvedHref
-    : pathname === resolvedHref ||
-      (resolvedHref !== "/" && pathname.startsWith(`${resolvedHref}/`));
+  const resolvedHref = isScoped
+    ? activeProjectId
+      ? `/proyectos/${activeProjectId}${props.scopedSuffix}`
+      : "/"
+    : props.href;
+
+  const isActive = scopedFallback
+    ? false
+    : exact
+      ? pathname === resolvedHref
+      : pathname === resolvedHref ||
+        (resolvedHref !== "/" && pathname.startsWith(`${resolvedHref}/`));
 
   return (
     <Link

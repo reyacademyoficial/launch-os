@@ -13,11 +13,13 @@ type MoveAction = (
   status: LeadStatus,
 ) => Promise<{ ok: true } | { error: string }>;
 
-type UpdateActionFactory = (
+type UpdateAction = (
   leadId: string,
-) => (prev: LeadActionState, formData: FormData) => Promise<LeadActionState>;
+  prev: LeadActionState,
+  formData: FormData,
+) => Promise<LeadActionState>;
 
-type DeleteActionFactory = (leadId: string) => () => Promise<void>;
+type DeleteAction = (leadId: string) => Promise<void>;
 
 /**
  * Tablero kanban del pipeline. Columnas = LEAD_STATUSES, ordenadas según el
@@ -35,16 +37,17 @@ export function KanbanBoard({
   launches,
   canEdit,
   moveAction,
-  updateActionFor,
-  deleteActionFor,
+  updateAction,
+  deleteAction,
 }: {
   readonly leads: ReadonlyArray<LeadRow>;
   readonly teamMembers: ReadonlyArray<Pick<TeamMemberRow, "id" | "name" | "active">>;
   readonly launches: ReadonlyArray<{ id: string; name: string }>;
   readonly canEdit: boolean;
+  /** Server Action bound al projectId. Bindeamos por leadId en cada card. */
   readonly moveAction: MoveAction;
-  readonly updateActionFor: UpdateActionFactory;
-  readonly deleteActionFor: DeleteActionFactory;
+  readonly updateAction: UpdateAction;
+  readonly deleteAction: DeleteAction;
 }) {
   const [, startTransition] = useTransition();
   const [dragOverCol, setDragOverCol] = useState<LeadStatus | null>(null);
@@ -163,8 +166,8 @@ export function KanbanBoard({
                             lead={lead}
                             teamMembers={teamMembers}
                             launches={launches}
-                            updateAction={updateActionFor(lead.id)}
-                            deleteAction={deleteActionFor(lead.id)}
+                            updateAction={updateAction.bind(null, lead.id)}
+                            deleteAction={deleteAction.bind(null, lead.id)}
                           />
                         )}
                       </div>
