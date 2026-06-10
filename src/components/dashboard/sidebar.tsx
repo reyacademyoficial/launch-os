@@ -1,23 +1,21 @@
 import type { SessionProfile } from "@/lib/supabase/auth";
 
+import { NavGroup } from "./nav-group";
 import { NavLink } from "./nav-link";
 
 /**
  * Sidebar links are cosmetic — RLS is the real gate on what each user can
  * reach. We hide entries here so the UI doesn't dangle dead links:
  *   - Calculadora: visible para todos los roles (decisión 2026-06-09).
- *   - Audit log: oculto para operador / cliente (la policy de audit_log en
- *     0009 ya les devuelve vacío de todas formas).
  *   - Equipo / Leads (CRM Fase 4): ocultos para cliente. La page.tsx también
  *     hace bounce — esto evita el link colgado.
  *   - Admin section: solo superadmin.
+ *
+ * Audit log: ruta sigue existiendo (`/proyectos/[id]/audit`) pero la sacamos
+ * del sidebar — accesible solo via URL directa cuando el equipo lo necesite.
  */
 export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
   const showAdmin = profile.role === "superadmin";
-  const showAudit =
-    profile.role === "superadmin" ||
-    profile.role === "admin" ||
-    profile.role === "analista";
   const showCrm = profile.role !== "cliente";
   // Comisiones es admin-only (modalidades + reglas son decisión de admin).
   const showCommissions =
@@ -34,17 +32,26 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
           Overview
         </NavLink>
         <NavLink scopedSuffix="/launches">Lanzamientos</NavLink>
-        {showCrm && <NavLink scopedSuffix="/leads">Leads</NavLink>}
-        {showCrm && <NavLink scopedSuffix="/equipo">Equipo</NavLink>}
         {showCrm && (
-          <NavLink scopedSuffix="/leaderboard">Leaderboard</NavLink>
-        )}
-        {showCommissions && (
-          <NavLink scopedSuffix="/comisiones">Comisiones</NavLink>
+          <NavGroup
+            label="Ventas"
+            scopedSuffixes={[
+              "/leads",
+              "/equipo",
+              "/leaderboard",
+              ...(showCommissions ? ["/comisiones"] : []),
+            ]}
+          >
+            <NavLink scopedSuffix="/leads">Leads</NavLink>
+            <NavLink scopedSuffix="/equipo">Equipo</NavLink>
+            <NavLink scopedSuffix="/leaderboard">Leaderboard</NavLink>
+            {showCommissions && (
+              <NavLink scopedSuffix="/comisiones">Comisiones</NavLink>
+            )}
+          </NavGroup>
         )}
         <NavLink href="/calculadora">Calculadora</NavLink>
         <NavLink scopedSuffix="/integraciones">Integraciones</NavLink>
-        {showAudit && <NavLink scopedSuffix="/audit">Audit log</NavLink>}
       </nav>
 
       {showAdmin && (
