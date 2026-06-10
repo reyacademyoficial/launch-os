@@ -31,7 +31,11 @@
       "Bash(rmdir \"src/app/\\(app\\)/proyectos/[projectId]/launches/[launchId]/edit\")",
       "WebFetch(domain:developers.facebook.com)",
       "Bash(npm ls *)",
-      "Bash(npx vitest *)"
+      "Bash(npx vitest *)",
+      "Read(//tmp/**)",
+      "Bash(npx eslint *)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(git checkout *)"
     ]
   }
 }

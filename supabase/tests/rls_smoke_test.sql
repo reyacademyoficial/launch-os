@@ -113,7 +113,7 @@ on conflict (id) do nothing;
 -- - UPDATE/DELETE bloqueado por USING → fila se filtra silencioso, 0 filas.
 --   Lo testeamos con `is_empty(WITH ... RETURNING 1)`.
 --
-insert into _smoke_results(result) values (plan(21));
+insert into _smoke_results(result) values (plan(29));
 
 -- 1) cliente NO puede insertar launches (WITH CHECK falla) → 42501
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
@@ -330,6 +330,108 @@ insert into _smoke_results(result) values (isnt_empty(
   format('select 1 from public.integration_runs where launch_id = %L',
          'cccccccc-cccc-cccc-cccc-cccccccccccc'),
   'cliente lee integration_runs de su proyecto'
+));
+
+-- ── Tests de CRM (post-0013): team_members + leads ────────────────────────
+-- Validan project-scope sobre las 2 tablas nuevas:
+--   - team_members  → read miembro, write admin+operador, NO analista/cliente
+--   - leads         → mismo gate; FK opcional a launches y a team_members
+-- Pre-condición: team_members vacía para Proyecto A. Si una corrida anterior
+-- dejó datos, los limpiamos como postgres (sin RLS) para que el conteo sea
+-- determinístico. Esto y los seeds van como postgres, los gates como rol.
+
+reset role;
+delete from public.leads where project_id in (
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+);
+delete from public.team_members where project_id in (
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+);
+
+-- 22) admin SÍ puede insertar team_members en su proyecto
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+insert into _smoke_results(result) values (lives_ok(
+  format(
+    'insert into public.team_members (project_id, name, role) values (%L, %L, %L)',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Setter Uno', 'setter'
+  ),
+  'admin inserta team_member en su proyecto'
+));
+
+-- 23) operador SÍ puede insertar team_members en su proyecto (mismo gate)
+select pg_temp.login_as('44444444-4444-4444-4444-444444444444');
+insert into _smoke_results(result) values (lives_ok(
+  format(
+    'insert into public.team_members (project_id, name, role) values (%L, %L, %L)',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Closer Uno', 'closer'
+  ),
+  'operador inserta team_member en su proyecto'
+));
+
+-- 24) analista NO inserta team_members (gate = can_edit_launches_in)
+select pg_temp.login_as('55555555-5555-5555-5555-555555555555');
+insert into _smoke_results(result) values (throws_ok(
+  format(
+    'insert into public.team_members (project_id, name, role) values (%L, %L, %L)',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Hack', 'setter'
+  ),
+  '42501', null,
+  'analista NO inserta team_members'
+));
+
+-- 25) cliente NO inserta team_members
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+insert into _smoke_results(result) values (throws_ok(
+  format(
+    'insert into public.team_members (project_id, name, role) values (%L, %L, %L)',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Hack cliente', 'setter'
+  ),
+  '42501', null,
+  'cliente NO inserta team_members'
+));
+
+-- 26) cliente SÍ lee team_members de su proyecto (los 2 insertados arriba)
+insert into _smoke_results(result) values (is(
+  (select count(*)::int
+     from public.team_members
+    where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  2,
+  'cliente ve los 2 team_members de su proyecto'
+));
+
+-- 27) cliente NO ve team_members de proyecto ajeno (Proyecto B vacío igual,
+--     pero seedeamos uno con postgres para validar el cross-tenant filter)
+reset role;
+insert into public.team_members (project_id, name, role) values
+  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Cross-tenant setter', 'setter');
+
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+insert into _smoke_results(result) values (is_empty(
+  format('select 1 from public.team_members where project_id = %L',
+         'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'),
+  'cliente NO ve team_members de proyecto ajeno'
+));
+
+-- 28) operador SÍ inserta lead en su proyecto (source default = manual)
+select pg_temp.login_as('44444444-4444-4444-4444-444444444444');
+insert into _smoke_results(result) values (lives_ok(
+  format(
+    'insert into public.leads (project_id, name) values (%L, %L)',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Lead manual del operador'
+  ),
+  'operador inserta lead manual en su proyecto'
+));
+
+-- 29) analista NO edita leads (USING filtra UPDATE → 0 filas)
+select pg_temp.login_as('55555555-5555-5555-5555-555555555555');
+insert into _smoke_results(result) values (is_empty(
+  format(
+    'with u as (update public.leads set status = ''cerrado'' where project_id = %L returning 1) select * from u',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  ),
+  'analista NO edita leads (USING filtra)'
 ));
 
 insert into _smoke_results(result) select * from finish();

@@ -8,6 +8,8 @@ import { NavLink } from "./nav-link";
  *   - Calculadora: visible para todos los roles (decisión 2026-06-09).
  *   - Audit log: oculto para operador / cliente (la policy de audit_log en
  *     0009 ya les devuelve vacío de todas formas).
+ *   - Equipo / Leads (CRM Fase 4): ocultos para cliente. La page.tsx también
+ *     hace bounce — esto evita el link colgado.
  *   - Admin section: solo superadmin.
  */
 export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
@@ -16,6 +18,7 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
     profile.role === "superadmin" ||
     profile.role === "admin" ||
     profile.role === "analista";
+  const showCrm = profile.role !== "cliente";
 
   return (
     <aside className="flex w-60 shrink-0 flex-col overflow-y-auto border-r border-border bg-bg-elevated px-4 py-6">
@@ -28,6 +31,8 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
           Overview
         </NavLink>
         <NavLink scopedSuffix="/launches">Lanzamientos</NavLink>
+        {showCrm && <NavLink scopedSuffix="/leads">Leads</NavLink>}
+        {showCrm && <NavLink scopedSuffix="/equipo">Equipo</NavLink>}
         <NavLink href="/calculadora">Calculadora</NavLink>
         <NavLink scopedSuffix="/integraciones">Integraciones</NavLink>
         {showAudit && <NavLink scopedSuffix="/audit">Audit log</NavLink>}
