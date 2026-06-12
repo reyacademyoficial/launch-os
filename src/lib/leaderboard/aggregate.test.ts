@@ -38,6 +38,7 @@ function lead(
     contact: null,
     email: null,
     phone_normalized: null,
+    external_id: null,
     pinned_to_kanban: false,
     source: "manual",
     status: "nuevo",

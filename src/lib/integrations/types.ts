@@ -76,7 +76,7 @@ export const PROVIDERS: readonly ProviderConfig[] = [
     color: "#7C3AED",
     accountLabel: "Subaccount ID",
     accountPlaceholder: "abc123",
-    secretLabel: "API key",
+    secretLabel: "Private integration token",
   },
 ];
 

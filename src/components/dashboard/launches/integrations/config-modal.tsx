@@ -14,29 +14,32 @@ import { Label } from "@/components/ui/label";
 import type { SyncProviderId } from "@/lib/integrations/sync";
 
 /**
- * Modal de configuración por provider. Tres pasos en un mismo modal:
- *   1) Pegar el token (`saveLaunchSecret`).
- *   2) Cargar ad_account_id + campaign_ids (`saveIntegrationConfig`).
+ * Modal de configuración por provider. Dos forms independientes:
+ *   1) Pegar el token (`saveLaunchSecret`) — copy distinto por provider.
+ *   2) Cargar la config (`saveIntegrationConfig`) — campos distintos por
+ *      provider: Meta/Google/TikTok piden ad_account_id + campaign_ids; GHL
+ *      pide location_id + default_country.
  *
- * Las dos forms son independientes — el usuario puede guardar el token sin
- * tocar la config (útil para reconectar) y viceversa.
+ * El usuario puede guardar token sin tocar config y viceversa.
  */
+export type InitialConfig =
+  | { kind: "ads"; adAccountId: string; campaignIds: readonly string[] }
+  | { kind: "ghl"; locationId: string; defaultCountry: string };
+
 export function ConfigModal({
   projectId,
   launchId,
   provider,
   providerLabel,
   hasSecret,
-  initialAdAccountId,
-  initialCampaignIds,
+  initialConfig,
 }: {
   readonly projectId: string;
   readonly launchId: string;
   readonly provider: SyncProviderId;
   readonly providerLabel: string;
   readonly hasSecret: boolean;
-  readonly initialAdAccountId: string;
-  readonly initialCampaignIds: readonly string[];
+  readonly initialConfig: InitialConfig;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -93,7 +96,9 @@ export function ConfigModal({
                   Conectar {providerLabel}
                 </h3>
                 <p className="mt-1 text-xs text-fg-subtle">
-                  Necesitás el access token + el ad_account_id + al menos una campaña.
+                  {provider === "ghl"
+                    ? "Necesitás el Private Integration Token + el Location ID del subaccount."
+                    : "Necesitás el access token + el ad_account_id + al menos una campaña."}
                 </p>
               </div>
               <button
@@ -110,7 +115,10 @@ export function ConfigModal({
               <form action={secretAction} className="space-y-3">
                 <div>
                   <Label htmlFor="secret">
-                    Access token (System User) {hasSecret && (
+                    {provider === "ghl"
+                      ? "Private Integration Token"
+                      : "Access token (System User)"}{" "}
+                    {hasSecret && (
                       <span className="ml-2 text-xs text-success">· guardado</span>
                     )}
                   </Label>
@@ -122,11 +130,16 @@ export function ConfigModal({
                     placeholder={
                       hasSecret
                         ? "Dejá vacío para no cambiarlo · pegá uno nuevo para reconectar"
-                        : "EAAB... (pegá el token completo)"
+                        : provider === "ghl"
+                          ? "pit-... (pegá el token completo)"
+                          : "EAAB... (pegá el token completo)"
                     }
                   />
                   <p className="mt-1 text-xs text-fg-subtle">
-                    Nunca lo vamos a mostrar de nuevo. Si lo perdés, generás uno nuevo desde Meta Business Manager.
+                    Nunca lo vamos a mostrar de nuevo. Si lo perdés,{" "}
+                    {provider === "ghl"
+                      ? "borrá el viejo en GHL y generá uno nuevo desde Settings → Private Integrations."
+                      : "generás uno nuevo desde Meta Business Manager."}
                   </p>
                 </div>
                 <div className="flex items-center justify-end gap-3">
@@ -141,47 +154,97 @@ export function ConfigModal({
 
               <div className="h-px bg-border" />
 
-              {/* Paso 2: ad account + campaigns */}
-              <form action={configAction} className="space-y-3">
-                <div>
-                  <Label htmlFor="ad_account_id">Ad Account ID</Label>
-                  <Input
-                    id="ad_account_id"
-                    name="ad_account_id"
-                    type="text"
-                    autoComplete="off"
-                    placeholder="act_1234567890"
-                    defaultValue={initialAdAccountId}
-                  />
-                  <p className="mt-1 text-xs text-fg-subtle">
-                    Arranca con <code className="text-fg">act_</code>.
-                  </p>
-                </div>
-                <div>
-                  <Label htmlFor="campaign_ids">
-                    Campaign IDs <span className="text-xs text-fg-subtle">(al menos 1)</span>
-                  </Label>
-                  <Input
-                    id="campaign_ids"
-                    name="campaign_ids"
-                    type="text"
-                    autoComplete="off"
-                    placeholder="120203456789 120204567891"
-                    defaultValue={initialCampaignIds.join(" ")}
-                  />
-                  <p className="mt-1 text-xs text-fg-subtle">
-                    Separados por coma o espacio. Sin esto no podemos atribuir el gasto a este lanzamiento.
-                  </p>
-                </div>
-                <div className="flex items-center justify-end gap-3">
-                  {configState && "error" in configState && (
-                    <FieldError>{configState.error}</FieldError>
-                  )}
-                  <Button type="submit" disabled={configPending}>
-                    {configPending ? "Guardando…" : "Guardar config"}
-                  </Button>
-                </div>
-              </form>
+              {/* Paso 2: config polimórfica por provider */}
+              {initialConfig.kind === "ghl" ? (
+                <form action={configAction} className="space-y-3">
+                  <div>
+                    <Label htmlFor="location_id">Location ID (Subaccount)</Label>
+                    <Input
+                      id="location_id"
+                      name="location_id"
+                      type="text"
+                      autoComplete="off"
+                      placeholder="abc123XYZ456"
+                      defaultValue={initialConfig.locationId}
+                    />
+                    <p className="mt-1 text-xs text-fg-subtle">
+                      El ID del subaccount del cliente (se ve en la URL de GHL después de <code className="text-fg">/location/</code>).
+                    </p>
+                  </div>
+                  <div>
+                    <Label htmlFor="default_country">
+                      País default del teléfono
+                    </Label>
+                    <select
+                      id="default_country"
+                      name="default_country"
+                      defaultValue={initialConfig.defaultCountry || "AR"}
+                      className="mt-1 w-full rounded-md border border-border bg-bg-elevated p-2 text-sm text-fg"
+                    >
+                      <option value="AR">Argentina (+54)</option>
+                      <option value="UY">Uruguay (+598)</option>
+                      <option value="CL">Chile (+56)</option>
+                      <option value="CO">Colombia (+57)</option>
+                      <option value="MX">México (+52)</option>
+                      <option value="ES">España (+34)</option>
+                      <option value="US">Estados Unidos (+1)</option>
+                    </select>
+                    <p className="mt-1 text-xs text-fg-subtle">
+                      Usado para normalizar los teléfonos de GHL antes del match con leads.
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-end gap-3">
+                    {configState && "error" in configState && (
+                      <FieldError>{configState.error}</FieldError>
+                    )}
+                    <Button type="submit" disabled={configPending}>
+                      {configPending ? "Guardando…" : "Guardar config"}
+                    </Button>
+                  </div>
+                </form>
+              ) : (
+                <form action={configAction} className="space-y-3">
+                  <div>
+                    <Label htmlFor="ad_account_id">Ad Account ID</Label>
+                    <Input
+                      id="ad_account_id"
+                      name="ad_account_id"
+                      type="text"
+                      autoComplete="off"
+                      placeholder="act_1234567890"
+                      defaultValue={initialConfig.adAccountId}
+                    />
+                    <p className="mt-1 text-xs text-fg-subtle">
+                      Arranca con <code className="text-fg">act_</code>.
+                    </p>
+                  </div>
+                  <div>
+                    <Label htmlFor="campaign_ids">
+                      Campaign IDs{" "}
+                      <span className="text-xs text-fg-subtle">(al menos 1)</span>
+                    </Label>
+                    <Input
+                      id="campaign_ids"
+                      name="campaign_ids"
+                      type="text"
+                      autoComplete="off"
+                      placeholder="120203456789 120204567891"
+                      defaultValue={initialConfig.campaignIds.join(" ")}
+                    />
+                    <p className="mt-1 text-xs text-fg-subtle">
+                      Separados por coma o espacio. Sin esto no podemos atribuir el gasto a este lanzamiento.
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-end gap-3">
+                    {configState && "error" in configState && (
+                      <FieldError>{configState.error}</FieldError>
+                    )}
+                    <Button type="submit" disabled={configPending}>
+                      {configPending ? "Guardando…" : "Guardar config"}
+                    </Button>
+                  </div>
+                </form>
+              )}
             </div>
           </div>
         </div>

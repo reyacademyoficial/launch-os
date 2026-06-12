@@ -25,6 +25,7 @@ const INSTRUCTIONS_DIR = path.join(process.cwd(), "src/lib/integrations/instruct
 
 const TITLES: Record<string, string> = {
   meta: "¿Cómo conecto Meta Ads?",
+  ghl: "¿Cómo conecto Go High Level?",
 };
 
 export function getInstructions(providerId: string): ProviderInstructions | null {

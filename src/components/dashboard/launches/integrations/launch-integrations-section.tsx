@@ -5,6 +5,7 @@ import {
   getLaunchIntegrationStatus,
   listRecentRuns,
 } from "@/lib/integrations/runs";
+import type { SyncProviderId } from "@/lib/integrations/sync";
 import { createServiceClient } from "@/lib/supabase/service";
 
 import { ConfigModal } from "./config-modal";
@@ -24,28 +25,37 @@ import { SyncButton } from "./sync-button";
  * el page parent. Esta función no re-verifica permisos: confía en el caller.
  */
 
-type ProviderId = "meta" | "google" | "tiktok";
-
 /**
- * Catálogo de providers. `available: false` renderiza una card placeholder
- * "Disponible próximamente". Cuando se cablee el backend de un provider,
- * basta con flipear `available: true` y agregarle el caso en
- * `lib/integrations/instructions` + `lib/integrations/*`.
+ * Catálogo de providers separado en dos arrays para que TS narrowee bien:
+ *   - los AVAILABLE tienen id : SyncProviderId (backend implementado).
+ *   - los SOON son placeholders con un label, sin más logic.
  */
-const PROVIDERS: ReadonlyArray<{
-  id: ProviderId;
+const AVAILABLE_PROVIDERS: ReadonlyArray<{
+  id: SyncProviderId;
   label: string;
-  available: boolean;
 }> = [
-  { id: "meta", label: "Meta Ads", available: true },
-  { id: "google", label: "Google Ads", available: false },
-  { id: "tiktok", label: "TikTok Ads", available: false },
+  { id: "meta", label: "Meta Ads" },
+  { id: "ghl", label: "Go High Level" },
 ];
 
+const SOON_PROVIDERS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: "google", label: "Google Ads" },
+  { id: "tiktok", label: "TikTok Ads" },
+];
+
+interface MetaConfigShape {
+  ad_account_id?: string;
+  campaign_ids?: string[];
+}
+interface GhlConfigShape {
+  location_id?: string;
+  default_country?: string;
+}
 interface IntegrationConfigShape {
-  meta?: { ad_account_id?: string; campaign_ids?: string[] };
-  google?: { ad_account_id?: string; campaign_ids?: string[] };
-  tiktok?: { ad_account_id?: string; campaign_ids?: string[] };
+  meta?: MetaConfigShape;
+  ghl?: GhlConfigShape;
+  google?: MetaConfigShape;
+  tiktok?: MetaConfigShape;
 }
 
 export async function LaunchIntegrationsSection({
@@ -93,55 +103,28 @@ export async function LaunchIntegrationsSection({
       </header>
 
       <div className="space-y-3">
-        {PROVIDERS.map((p) => {
-          // Si available=false → placeholder. Y si available=true pero el id
-          // no es "meta" (futuro: cuando se cablee Google/Tiktok), también
-          // placeholder hasta que SyncProviderId se extienda. Este segundo
-          // guard narrowea `p.id` a "meta" para los ConfigModal/SyncButton de
-          // abajo, que aceptan solo SyncProviderId.
-          if (!p.available || p.id !== "meta") {
-            return (
-              <article
-                key={p.id}
-                className="rounded-md border border-dashed border-border bg-surface/40 p-4"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-3">
-                      <h3 className="text-sm font-semibold text-fg-muted">
-                        {p.label}
-                      </h3>
-                      <span className="rounded bg-fg-subtle/15 px-2 py-0.5 text-[10px] uppercase tracking-wide text-fg-muted">
-                        Próximamente
-                      </span>
-                    </div>
-                    <p className="mt-1 text-xs text-fg-subtle">
-                      Integración disponible en una próxima fase.
-                    </p>
-                  </div>
-                </div>
-              </article>
-            );
-          }
-
-          const providerConfig = config[p.id] ?? {};
-          const adAccount = providerConfig.ad_account_id ?? "";
-          const campaigns = providerConfig.campaign_ids ?? [];
+        {AVAILABLE_PROVIDERS.map((p) => {
+          // Provider available: extraemos los datos de display de forma
+          // distinta según el shape de config del provider.
           const hasSecret = secretProviders.has(p.id);
-          const hasConfig =
-            adAccount.length > 0 && Array.isArray(campaigns) && campaigns.length > 0;
           const status = statusByProvider.get(p.id);
-
           const instructions = getInstructions(p.id);
 
+          // Meta/Google/TikTok comparten el shape de ad-account + campaigns.
+          // GHL usa location_id (sin campañas).
+          const display =
+            p.id === "ghl"
+              ? buildGhlDisplay(config.ghl ?? {})
+              : buildAdsDisplay(config[p.id] ?? {});
+
           const disabled =
-            isClosed || !hasSecret || !hasConfig || status?.lastRunStatus === "running";
+            isClosed || !hasSecret || !display.hasConfig || status?.lastRunStatus === "running";
           const disabledReason = isClosed
             ? "Lanzamiento cerrado"
             : !hasSecret
               ? "Falta el token"
-              : !hasConfig
-                ? "Falta ad_account_id o campañas"
+              : !display.hasConfig
+                ? display.missingMessage
                 : status?.lastRunStatus === "running"
                   ? "Hay una sincronización en curso"
                   : undefined;
@@ -158,20 +141,17 @@ export async function LaunchIntegrationsSection({
                     <StatusBadge status={status?.lastRunStatus ?? null} />
                   </div>
                   <div className="mt-1 space-y-0.5 text-xs text-fg-subtle">
-                    {hasConfig ? (
-                      <>
-                        <div>
-                          <span className="text-fg-muted">Ad account:</span>{" "}
-                          <code className="text-fg">{adAccount}</code>
+                    {display.hasConfig ? (
+                      display.fields.map((f) => (
+                        <div key={f.label}>
+                          <span className="text-fg-muted">{f.label}:</span>{" "}
+                          {f.code ? (
+                            <code className="text-fg">{f.value}</code>
+                          ) : (
+                            <span className="text-fg">{f.value}</span>
+                          )}
                         </div>
-                        <div>
-                          <span className="text-fg-muted">Campañas:</span>{" "}
-                          <span className="text-fg">
-                            {campaigns.length} configurada
-                            {campaigns.length === 1 ? "" : "s"}
-                          </span>
-                        </div>
-                      </>
+                      ))
                     ) : (
                       <div>Sin configurar</div>
                     )}
@@ -206,8 +186,7 @@ export async function LaunchIntegrationsSection({
                     provider={p.id}
                     providerLabel={p.label}
                     hasSecret={hasSecret}
-                    initialAdAccountId={adAccount}
-                    initialCampaignIds={campaigns}
+                    initialConfig={display.initialConfig}
                   />
                   <SyncButton
                     projectId={projectId}
@@ -225,18 +204,41 @@ export async function LaunchIntegrationsSection({
 
               {status?.lastRunStatus === "token_invalid" && (
                 <div className="mt-3 rounded-md border border-error/40 bg-error/10 p-3 text-xs text-error">
-                  El token dejó de funcionar. Generá uno nuevo desde Meta Business Manager
-                  y reconectá usando el botón <strong>Editar conexión</strong>.
+                  El token dejó de funcionar. Generá uno nuevo y reconectá con
+                  el botón <strong>Editar conexión</strong>.
                 </div>
               )}
               {status?.lastRunStatus === "rate_limited" && (
                 <div className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-warning">
-                  Meta nos pidió esperar antes de pedir más datos. Reintentá en unos minutos.
+                  El proveedor nos pidió esperar antes de pedir más datos. Reintentá en unos minutos.
                 </div>
               )}
             </article>
           );
         })}
+
+        {SOON_PROVIDERS.map((p) => (
+          <article
+            key={p.id}
+            className="rounded-md border border-dashed border-border bg-surface/40 p-4"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-3">
+                  <h3 className="text-sm font-semibold text-fg-muted">
+                    {p.label}
+                  </h3>
+                  <span className="rounded bg-fg-subtle/15 px-2 py-0.5 text-[10px] uppercase tracking-wide text-fg-muted">
+                    Próximamente
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-fg-subtle">
+                  Integración disponible en una próxima fase.
+                </p>
+              </div>
+            </div>
+          </article>
+        ))}
       </div>
 
       <p className="text-xs text-fg-subtle">
@@ -245,6 +247,61 @@ export async function LaunchIntegrationsSection({
       </p>
     </section>
   );
+}
+
+// ─── Display por provider ──────────────────────────────────────────────────
+
+/**
+ * Shape común que el card y el modal consumen. `initialConfig` se pasa al
+ * ConfigModal para que sepa qué campos prellenar (es polimórfica por provider).
+ */
+interface ProviderDisplay {
+  hasConfig: boolean;
+  missingMessage: string;
+  fields: ReadonlyArray<{ label: string; value: string; code?: boolean }>;
+  initialConfig:
+    | { kind: "ads"; adAccountId: string; campaignIds: string[] }
+    | { kind: "ghl"; locationId: string; defaultCountry: string };
+}
+
+function buildAdsDisplay(cfg: MetaConfigShape): ProviderDisplay {
+  const adAccount = cfg.ad_account_id ?? "";
+  const campaigns = cfg.campaign_ids ?? [];
+  const hasConfig =
+    adAccount.length > 0 && Array.isArray(campaigns) && campaigns.length > 0;
+
+  return {
+    hasConfig,
+    missingMessage: "Falta ad_account_id o campañas",
+    fields: hasConfig
+      ? [
+          { label: "Ad account", value: adAccount, code: true },
+          {
+            label: "Campañas",
+            value: `${campaigns.length} configurada${campaigns.length === 1 ? "" : "s"}`,
+          },
+        ]
+      : [],
+    initialConfig: { kind: "ads", adAccountId: adAccount, campaignIds: campaigns },
+  };
+}
+
+function buildGhlDisplay(cfg: GhlConfigShape): ProviderDisplay {
+  const locationId = cfg.location_id ?? "";
+  const defaultCountry = cfg.default_country ?? "AR";
+  const hasConfig = locationId.length > 0;
+
+  return {
+    hasConfig,
+    missingMessage: "Falta el Location ID",
+    fields: hasConfig
+      ? [
+          { label: "Location ID", value: locationId, code: true },
+          { label: "País default", value: defaultCountry },
+        ]
+      : [],
+    initialConfig: { kind: "ghl", locationId, defaultCountry },
+  };
 }
 
 function StatusBadge({ status }: { readonly status: string | null }) {

@@ -1,0 +1,40 @@
+{
+  "events": [
+    {
+      "id": "evt_abc123",
+      "calendarId": "cal_main",
+      "locationId": "loc_xyz",
+      "contactId": "contact_001",
+      "title": "Sesión con María García",
+      "appointmentStatus": "confirmed",
+      "startTime": "2026-06-15T14:00:00.000Z",
+      "endTime": "2026-06-15T15:00:00.000Z",
+      "contact": {
+        "name": "María García",
+        "firstName": "María",
+        "lastName": "García",
+        "email": "maria@example.com",
+        "phone": "+5491155555555"
+      }
+    },
+    {
+      "id": "evt_def456",
+      "calendarId": "cal_main",
+      "locationId": "loc_xyz",
+      "contactId": "contact_002",
+      "title": "Llamada con Juan",
+      "appointmentStatus": "confirmed",
+      "startTime": "2026-06-16T10:30:00.000Z",
+      "endTime": "2026-06-16T11:00:00.000Z",
+      "contactName": "Juan Pérez",
+      "phone": "+5491144444444"
+    },
+    {
+      "id": "evt_ghi789",
+      "calendarId": "cal_other",
+      "locationId": "loc_xyz",
+      "title": "Bloqueo personal",
+      "startTime": "2026-06-17T09:00:00.000Z"
+    }
+  ]
+}

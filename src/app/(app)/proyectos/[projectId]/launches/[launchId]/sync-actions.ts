@@ -64,18 +64,22 @@ export async function triggerSync(
 
 // ─── saveIntegrationConfig ────────────────────────────────────────────────
 
-interface ProviderConfigPayload {
+interface AdsConfigPayload {
   ad_account_id: string;
   campaign_ids: string[];
+}
+interface GhlConfigPayload {
+  location_id: string;
+  default_country: string;
 }
 
 /**
  * Guarda la config de un provider en `launches.integration_config`. Hace
  * merge con la config existente (no pisa la de otros providers).
  *
- * - Valida que `ad_account_id` arranque con `act_` (regla de Meta; las
- *   demás integraciones la formatearán a su manera cuando lleguen en 3b).
- * - Exige ≥ 1 campaign_id (regla del brief: nunca pulleamos la cuenta entera).
+ * El shape del payload depende del provider:
+ *   - meta / google / tiktok → ad_account_id + campaign_ids (≥1).
+ *   - ghl → location_id + default_country.
  */
 export async function saveIntegrationConfig(
   projectId: string,
@@ -86,30 +90,41 @@ export async function saveIntegrationConfig(
 ): Promise<SyncActionState> {
   await requireCanEditLaunchesIn(projectId);
 
-  const adAccountId = String(formData.get("ad_account_id") ?? "").trim();
-  const campaignIdsRaw = String(formData.get("campaign_ids") ?? "").trim();
+  let payload: AdsConfigPayload | GhlConfigPayload;
 
-  if (!adAccountId) return { error: "Tenés que ingresar el Ad Account ID." };
-  if (provider === "meta" && !adAccountId.startsWith("act_")) {
-    return {
-      error: "El Ad Account ID de Meta arranca con 'act_'. Revisalo (sale del Business Manager).",
-    };
+  if (provider === "ghl") {
+    const locationId = String(formData.get("location_id") ?? "").trim();
+    if (!locationId) {
+      return { error: "Tenés que ingresar el Location ID del subaccount." };
+    }
+    const defaultCountry =
+      String(formData.get("default_country") ?? "AR").trim() || "AR";
+    payload = { location_id: locationId, default_country: defaultCountry };
+  } else {
+    const adAccountId = String(formData.get("ad_account_id") ?? "").trim();
+    const campaignIdsRaw = String(formData.get("campaign_ids") ?? "").trim();
+
+    if (!adAccountId) return { error: "Tenés que ingresar el Ad Account ID." };
+    if (provider === "meta" && !adAccountId.startsWith("act_")) {
+      return {
+        error:
+          "El Ad Account ID de Meta arranca con 'act_'. Revisalo (sale del Business Manager).",
+      };
+    }
+
+    const campaignIds = campaignIdsRaw
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (campaignIds.length === 0) {
+      return {
+        error:
+          "Asociá al menos una campaña — el sync filtra por campañas para no mezclar gastos.",
+      };
+    }
+
+    payload = { ad_account_id: adAccountId, campaign_ids: campaignIds };
   }
-
-  const campaignIds = campaignIdsRaw
-    .split(/[\s,]+/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-  if (campaignIds.length === 0) {
-    return {
-      error: "Asociá al menos una campaña — el sync filtra por campañas para no mezclar gastos.",
-    };
-  }
-
-  const payload: ProviderConfigPayload = {
-    ad_account_id: adAccountId,
-    campaign_ids: campaignIds,
-  };
 
   const service = createServiceClient();
 

@@ -17,7 +17,6 @@ import {
 } from "./ghl-match";
 
 import type { createServiceClient } from "@/lib/supabase/service";
-import type { LeadStatus } from "@/lib/leads/types";
 
 /**
  * Lógica de match + persistencia para el sync de GHL. Recibe el service-role
@@ -37,6 +36,19 @@ import type { LeadStatus } from "@/lib/leads/types";
  */
 
 type ServiceClient = ReturnType<typeof createServiceClient>;
+
+/**
+ * El `Database` type generado no incluye la tabla `leads` (regen pendiente
+ * post-0013). El SSR client es laxo y no se queja; el service-role es
+ * estricto. Castamos a un shape suelto solo para las queries de leads —
+ * limitado a esta lib.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type LooseClient = { from: (name: string) => any };
+
+function loose(service: ServiceClient): LooseClient {
+  return service as unknown as LooseClient;
+}
 
 export type GhlRunSummary =
   | {
@@ -187,7 +199,7 @@ async function findByExternalId(
   source: "ghl" | "whatsapp",
   externalId: string,
 ): Promise<ExistingLeadView | null> {
-  const res = await service
+  const res = await loose(service)
     .from("leads")
     .select("id, status, pinned_to_kanban")
     .eq("project_id", projectId)
@@ -195,12 +207,7 @@ async function findByExternalId(
     .eq("external_id", externalId)
     .maybeSingle();
   if (!res.data) return null;
-  const row = res.data as {
-    id: string;
-    status: LeadStatus;
-    pinned_to_kanban: boolean;
-  };
-  return row;
+  return res.data as ExistingLeadView;
 }
 
 async function findByPhone(
@@ -212,7 +219,7 @@ async function findByPhone(
   // y ahora vincularse a un appointment de GHL. Si hubiera ambigüedad
   // (varios leads con el mismo phone, lo que el unique partial ya evita),
   // tomamos el más reciente.
-  const res = await service
+  const res = await loose(service)
     .from("leads")
     .select("id, status, pinned_to_kanban")
     .eq("project_id", projectId)
@@ -221,12 +228,7 @@ async function findByPhone(
     .limit(1)
     .maybeSingle();
   if (!res.data) return null;
-  const row = res.data as {
-    id: string;
-    status: LeadStatus;
-    pinned_to_kanban: boolean;
-  };
-  return row;
+  return res.data as ExistingLeadView;
 }
 
 async function applyAction(
@@ -243,8 +245,8 @@ async function applyAction(
       launch_id: args.launchId,
       // Notes solo en CREATE — no queremos pisar notas del operador en UPDATE.
       notes,
-    } as never;
-    const { error } = await args.service.from("leads").insert(insertPayload);
+    };
+    const { error } = await loose(args.service).from("leads").insert(insertPayload);
     if (error) {
       // Si el insert falla por colisión del unique partial (carrera con otro
       // proceso, o evento procesado en paralelo), lo contamos como skipped.
@@ -257,9 +259,9 @@ async function applyAction(
   }
 
   // action.kind === "update"
-  const { error } = await args.service
+  const { error } = await loose(args.service)
     .from("leads")
-    .update(action.patch as never)
+    .update(action.patch)
     .eq("id", action.leadId);
   if (error) throw new Error(`GHL update lead: ${error.message}`);
   return "updated";

@@ -97,8 +97,12 @@ export async function fetchGhlAppointments(
 
   const result = await ghlFetch(url, args.token);
   if (!result.ok) return result;
+  return { ok: true, rows: parseAppointmentsBody(result.body) };
+}
 
-  const events = extractArray(result.body, ["events"]);
+/** Pure function — testeable contra fixtures sin mockear fetch. */
+export function parseAppointmentsBody(body: unknown): GhlAppointment[] {
+  const events = extractArray(body, ["events"]);
   const rows: GhlAppointment[] = [];
   for (const item of events) {
     if (typeof item !== "object" || item === null) continue;
@@ -114,7 +118,7 @@ export async function fetchGhlAppointments(
       raw: evt,
     });
   }
-  return { ok: true, rows };
+  return rows;
 }
 
 // ─── Conversations (WhatsApp) ──────────────────────────────────────────────
@@ -142,11 +146,21 @@ export async function fetchGhlConversations(
     }),
   });
   if (!result.ok) return result;
-
-  const items = extractArray(result.body, ["conversations"]);
   const sinceMs = dateToEpochStart(args.since);
   const untilMs = dateToEpochEnd(args.until);
+  return {
+    ok: true,
+    rows: parseConversationsBody(result.body, sinceMs, untilMs),
+  };
+}
 
+/** Pure function — testeable contra fixtures sin mockear fetch. */
+export function parseConversationsBody(
+  body: unknown,
+  sinceMs: number,
+  untilMs: number,
+): GhlConversation[] {
+  const items = extractArray(body, ["conversations"]);
   const rows: GhlConversation[] = [];
   for (const item of items) {
     if (typeof item !== "object" || item === null) continue;
@@ -174,7 +188,7 @@ export async function fetchGhlConversations(
       raw: conv,
     });
   }
-  return { ok: true, rows };
+  return rows;
 }
 
 // ─── HTTP + classifying ────────────────────────────────────────────────────
@@ -326,12 +340,10 @@ function extractPhone(obj: Record<string, unknown>): string | null {
 }
 
 function extractContactName(obj: Record<string, unknown>): string {
-  // Endpoint calendar: title o contactName
-  const direct = strOrNull(obj.contactName) ?? strOrNull(obj.title);
-  if (direct) return direct;
-  const fullName = strOrNull(obj.fullName);
-  if (fullName) return fullName;
-  // Anidado
+  // Prioridad: nombre del contacto > nombre directo > title (que en calendar
+  // events suele ser "Sesión con X" en vez del nombre puro). Si el evento NO
+  // tiene contacto asociado (ej. bloqueo personal), caemos a title como
+  // fallback informativo.
   const contact = obj.contact;
   if (typeof contact === "object" && contact !== null) {
     const c = contact as Record<string, unknown>;
@@ -341,7 +353,13 @@ function extractContactName(obj: Record<string, unknown>): string {
       joinName(strOrNull(c.firstName), strOrNull(c.lastName));
     if (cn) return cn;
   }
-  return joinName(strOrNull(obj.firstName), strOrNull(obj.lastName)) ?? "Contacto sin nombre";
+  const direct =
+    strOrNull(obj.contactName) ??
+    strOrNull(obj.fullName) ??
+    joinName(strOrNull(obj.firstName), strOrNull(obj.lastName));
+  if (direct) return direct;
+  // Fallback a title — solo si no hay ningún name extraíble.
+  return strOrNull(obj.title) ?? "Contacto sin nombre";
 }
 
 function joinName(first: string | null, last: string | null): string | null {
