@@ -8,6 +8,8 @@ import {
   fmtPercent,
 } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
+import { aggregateMergedDaily } from "@/lib/launch-daily/aggregate";
+import { mergeDailyData, type AdsDailyRow } from "@/lib/launch-daily/merge";
 import type { LaunchDailyRow } from "@/lib/launch-daily/types";
 import { DAILY_CHANNELS, CHANNEL_LABELS } from "@/lib/launch-daily/types";
 import type { LaunchRow } from "@/lib/launches/types";
@@ -44,8 +46,14 @@ Reglas duras:
 export async function summarizeLaunch(
   launch: LaunchRow,
   daily: readonly LaunchDailyRow[],
+  ads: readonly AdsDailyRow[] = [],
 ): Promise<string> {
-  const kpi = calculateLaunchKPIs(launch);
+  // Mismo derive que el resto de los call sites — el resumen IA tiene que
+  // ver los mismos números que el KPI grid del detalle, sino el modelo
+  // analiza un launch fantasma.
+  const merged = mergeDailyData(daily, ads);
+  const adsAggregate = aggregateMergedDaily(merged);
+  const kpi = calculateLaunchKPIs(launch, { adsAggregate });
   const prompt = buildUserPrompt(launch, daily, kpi);
   return generateText({ system: SYSTEM_PROMPT, user: prompt });
 }

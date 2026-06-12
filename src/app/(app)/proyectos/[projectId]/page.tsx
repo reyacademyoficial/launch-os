@@ -11,6 +11,7 @@ import {
   fmtNumber,
   fmtPercent,
 } from "@/lib/format";
+import { listAggregatesForProject } from "@/lib/launch-daily/list";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { aggregateProjectKPIs } from "@/lib/projects/aggregates";
 import { createClient } from "@/lib/supabase/server";
@@ -30,7 +31,7 @@ export default async function OverviewPage({
   const { projectId } = await params;
   const supabase = await createClient();
 
-  const [{ data: projectRaw }, launches, canEdit] = await Promise.all([
+  const [{ data: projectRaw }, launches, canEdit, adsAggregates] = await Promise.all([
     supabase
       .from("projects")
       .select("name, business_name")
@@ -38,11 +39,12 @@ export default async function OverviewPage({
       .maybeSingle(),
     listLaunchesForProject(projectId),
     userCanEditProject(projectId),
+    listAggregatesForProject(projectId),
   ]);
 
   const project = projectRaw as { name: string; business_name: string | null } | null;
   const name = project?.name ?? "Proyecto";
-  const agg = aggregateProjectKPIs(launches);
+  const agg = aggregateProjectKPIs(launches, adsAggregates);
   const createAction = createLaunch.bind(null, projectId);
   const copyableLaunches = launches.map((l) => ({ id: l.id, name: l.name }));
 

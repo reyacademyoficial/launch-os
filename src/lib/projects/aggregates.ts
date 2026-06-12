@@ -1,4 +1,5 @@
 import { safeDiv, safePercent } from "@/lib/kpis";
+import type { DailyAggregate } from "@/lib/launch-daily/aggregate";
 import type { LaunchRow } from "@/lib/launches/types";
 
 /**
@@ -7,6 +8,12 @@ import type { LaunchRow } from "@/lib/launches/types";
  * Sums the raw fields (revenue, investment, leads, ventas, etc.) and derives
  * the rate-style KPIs from the totals — never average-of-ratios, which would
  * double-count differently-sized launches.
+ *
+ * Para los campos de ads (inversión + leads por canal), aplicamos la misma
+ * regla que `calculateLaunchKPIs`: si el launch tiene daily (manual o API,
+ * `daysCovered > 0`), sale del agregado; si no, fallback a las columnas
+ * estáticas `launches.meta_investment` / `meta_leads` / etc. Por launch, una
+ * fuente o la otra — nunca mezcladas.
  */
 export interface ProjectAggregates {
   launchCount: number;
@@ -25,7 +32,10 @@ export interface ProjectAggregates {
   aggregateCloseRate: number;
 }
 
-export function aggregateProjectKPIs(launches: readonly LaunchRow[]): ProjectAggregates {
+export function aggregateProjectKPIs(
+  launches: readonly LaunchRow[],
+  aggregatesByLaunch?: ReadonlyMap<string, DailyAggregate>,
+): ProjectAggregates {
   let revenue = 0;
   let investment = 0;
   let leads = 0;
@@ -37,11 +47,22 @@ export function aggregateProjectKPIs(launches: readonly LaunchRow[]): ProjectAgg
 
   for (const l of launches) {
     revenue += Number(l.revenue) || 0;
-    investment +=
-      (Number(l.meta_investment) || 0) +
-      (Number(l.google_investment) || 0) +
-      (Number(l.tiktok_investment) || 0);
-    leads += (l.meta_leads ?? 0) + (l.google_leads ?? 0) + (l.tiktok_leads ?? 0);
+
+    const adsAgg = aggregatesByLaunch?.get(l.id);
+    const useAggregate = (adsAgg?.daysCovered ?? 0) > 0;
+
+    if (useAggregate) {
+      investment += adsAgg!.metaSpend + adsAgg!.googleSpend + adsAgg!.tiktokSpend;
+      leads += adsAgg!.metaLeads + adsAgg!.googleLeads + adsAgg!.tiktokLeads;
+    } else {
+      investment +=
+        (Number(l.meta_investment) || 0) +
+        (Number(l.google_investment) || 0) +
+        (Number(l.tiktok_investment) || 0);
+      leads +=
+        (l.meta_leads ?? 0) + (l.google_leads ?? 0) + (l.tiktok_leads ?? 0);
+    }
+
     ventas += l.ventas_total ?? 0;
     registrados += l.registrados ?? 0;
     asistentes += l.asistentes ?? 0;

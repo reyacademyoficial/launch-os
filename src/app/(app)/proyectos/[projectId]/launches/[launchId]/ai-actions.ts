@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { summarizeLaunch } from "@/lib/ai/summarize-launch";
-import { listDailyForLaunch } from "@/lib/launch-daily/list";
+import { listAdsForLaunch, listDailyForLaunch } from "@/lib/launch-daily/list";
 import { getLaunch } from "@/lib/launches/get";
 import {
   requireCanEditLaunchesIn,
@@ -35,11 +35,14 @@ export async function generateLaunchSummary(
     return { error: "No se encontró el lanzamiento (o no tenés acceso)." };
   }
 
-  const daily = await listDailyForLaunch(launchId);
+  const [daily, ads] = await Promise.all([
+    listDailyForLaunch(launchId),
+    listAdsForLaunch(launchId),
+  ]);
   const supabase = await createClient();
 
   try {
-    const text = await summarizeLaunch(launch, daily);
+    const text = await summarizeLaunch(launch, daily, ads);
 
     const insertPayload = {
       launch_id: launchId,

@@ -7,6 +7,7 @@ import { DailyTable } from "@/components/dashboard/launches/daily/daily-table";
 import { RealtimeProbe } from "@/components/dashboard/launches/integrations/realtime-probe";
 import { KpiGrid } from "@/components/dashboard/launches/kpi-grid";
 import { calculateLaunchKPIs } from "@/lib/kpis";
+import { aggregateMergedDaily } from "@/lib/launch-daily/aggregate";
 import { listAdsForLaunch, listDailyForLaunch } from "@/lib/launch-daily/list";
 import { mergeDailyData } from "@/lib/launch-daily/merge";
 import { getLaunch } from "@/lib/launches/get";
@@ -37,8 +38,9 @@ export default async function LaunchKpiPage({
 
   if (!launch || launch.project_id !== projectId) notFound();
 
-  const kpi = calculateLaunchKPIs(launch);
   const mergedDaily = mergeDailyData(daily, ads);
+  const adsAggregate = aggregateMergedDaily(mergedDaily);
+  const kpi = calculateLaunchKPIs(launch, { adsAggregate });
   const isClosed = launch.closed_at !== null;
   const addDailyAction = createDailyEntry.bind(null, projectId, launchId);
 

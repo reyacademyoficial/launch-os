@@ -5,6 +5,7 @@ import { LaunchFormModal } from "@/components/dashboard/launches/launch-form-mod
 import { StatusBadge } from "@/components/dashboard/launches/status-badge";
 import { fmtLaunchWindow, fmtMoney, fmtMultiplier } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
+import { listAggregatesForProject } from "@/lib/launch-daily/list";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { userCanEditProject } from "@/lib/supabase/auth";
 
@@ -18,9 +19,10 @@ export default async function LaunchesPage({
   readonly params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const [launches, canEdit] = await Promise.all([
+  const [launches, canEdit, adsAggregates] = await Promise.all([
     listLaunchesForProject(projectId),
     userCanEditProject(projectId),
+    listAggregatesForProject(projectId),
   ]);
 
   const createAction = createLaunch.bind(null, projectId);
@@ -92,7 +94,9 @@ export default async function LaunchesPage({
           </thead>
           <tbody>
             {launches.map((l) => {
-              const kpi = calculateLaunchKPIs(l);
+              const kpi = calculateLaunchKPIs(l, {
+                adsAggregate: adsAggregates.get(l.id),
+              });
               const profitColor =
                 kpi.profit > 0
                   ? "text-success"

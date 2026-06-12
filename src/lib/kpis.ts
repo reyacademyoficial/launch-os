@@ -6,7 +6,16 @@
  *
  * All helpers are safe against NaN / Infinity / division-by-zero so partial
  * input never crashes the dashboard.
+ *
+ * Fuente de los campos por canal de ads (meta/google/tiktok inv + leads +
+ * clicks): si el caller pasa `opts.adsAggregate` y tiene `daysCovered > 0`,
+ * todo el bloque de ads sale del agregado (que ya resolvió manual vs API por
+ * día). Si no, fallback a las columnas estáticas de `launches.*` cargadas a
+ * mano — compat con launches del prototipo viejo que nunca tuvieron daily.
+ * NUNCA se mezclan agregado y columna estática: o uno o el otro.
  */
+
+import type { DailyAggregate } from "./launch-daily/aggregate";
 
 export const safeNumber = (v: unknown, fallback = 0): number => {
   const n = typeof v === "number" ? v : parseFloat(v as string);
@@ -41,6 +50,16 @@ export interface LaunchKPIInput {
   revenue?: number | string | null;
 }
 
+export interface LaunchKPIOptions {
+  /**
+   * Totales por canal derivados de `launch_daily ∪ launch_daily_ads`. Cuando
+   * `daysCovered > 0`, los campos de ads (metaInv/metaLeads/google/tiktok)
+   * salen de acá y el campo estático del launch se ignora. Cuando no, fallback
+   * al estático.
+   */
+  adsAggregate?: DailyAggregate;
+}
+
 export interface LaunchKPIs {
   metaInv: number;
   metaLeads: number;
@@ -68,7 +87,10 @@ export interface LaunchKPIs {
   profit: number;
 }
 
-export function calculateLaunchKPIs(l: LaunchKPIInput | null | undefined): LaunchKPIs {
+export function calculateLaunchKPIs(
+  l: LaunchKPIInput | null | undefined,
+  opts: LaunchKPIOptions = {},
+): LaunchKPIs {
   if (!l) {
     return {
       metaInv: 0,
@@ -98,12 +120,21 @@ export function calculateLaunchKPIs(l: LaunchKPIInput | null | undefined): Launc
     };
   }
 
-  const metaInv = safeNumber(l.meta_investment);
-  const metaLeads = safeInt(l.meta_leads);
-  const googleInv = safeNumber(l.google_investment);
-  const googleLeads = safeInt(l.google_leads);
-  const tiktokInv = safeNumber(l.tiktok_investment);
-  const tiktokLeads = safeInt(l.tiktok_leads);
+  // Si hay daily real (merge cubre al menos 1 día), los 6 campos de ads
+  // salen del agregado. Si no, fallback a las columnas estáticas del launch.
+  const useAggregate = (opts.adsAggregate?.daysCovered ?? 0) > 0;
+  const agg = opts.adsAggregate;
+
+  const metaInv = useAggregate ? agg!.metaSpend : safeNumber(l.meta_investment);
+  const metaLeads = useAggregate ? agg!.metaLeads : safeInt(l.meta_leads);
+  const googleInv = useAggregate
+    ? agg!.googleSpend
+    : safeNumber(l.google_investment);
+  const googleLeads = useAggregate ? agg!.googleLeads : safeInt(l.google_leads);
+  const tiktokInv = useAggregate
+    ? agg!.tiktokSpend
+    : safeNumber(l.tiktok_investment);
+  const tiktokLeads = useAggregate ? agg!.tiktokLeads : safeInt(l.tiktok_leads);
   const contactosAPI = safeInt(l.contactos_api);
   const whatsappRevenue = safeNumber(l.ingresos_whatsapp);
   const revenue = safeNumber(l.revenue);
