@@ -2,6 +2,8 @@ import "server-only";
 
 import { createServiceClient } from "@/lib/supabase/service";
 
+import { tryComputeLaunchCalendar } from "@/lib/launches/calendar";
+
 import { fetchMetaInsights, type MetaInsightDay, type MetaSyncResult } from "./meta";
 import { runGhlSync, type GhlRunSummary } from "./sync-ghl";
 
@@ -286,10 +288,10 @@ function readGhlConfig(configBlob: unknown): GhlProviderConfig {
 }
 
 /**
- * Bifurcación del orchestrator para GHL. Levanta config + secret, crea el
- * `integration_run` y delega el grueso del trabajo a `runGhlSync` (match +
- * INSERT/UPDATE de leads). Devuelve el SyncLaunchResult coherente con la
- * rama Meta para que el caller no tenga que ramificar.
+ * Bifurcación del orchestrator para GHL. Levanta config + secret, calcula la
+ * ventana compra+cierre del calendar (para conversations), obtiene el
+ * `lastSuccessAt` del último run exitoso (sync incremental), crea el
+ * `integration_run` y delega a `runGhlSync`.
  */
 async function runGhlBranch(args: {
   service: ServiceClient;
@@ -365,6 +367,48 @@ async function runGhlBranch(args: {
     };
   }
 
+  // Calendario del launch — para la ventana de WhatsApp (compra+cierre).
+  // Si no tiene launch_date, conversationsWindow queda null y el sync usa
+  // [date_start, date_end] como fallback.
+  const launchRowRes = await service
+    .from("launches")
+    .select(
+      "launch_date, dur_captacion, dur_calentamiento, dur_compra, dur_cierre",
+    )
+    .eq("id", args.launchId)
+    .maybeSingle();
+  const launchRow = launchRowRes.data as {
+    launch_date: string | null;
+    dur_captacion: number;
+    dur_calentamiento: number;
+    dur_compra: number;
+    dur_cierre: number;
+  } | null;
+  const calendar = tryComputeLaunchCalendar({
+    launchDate: launchRow?.launch_date ?? undefined,
+    durCaptacion: launchRow?.dur_captacion,
+    durCalentamiento: launchRow?.dur_calentamiento,
+    durCompra: launchRow?.dur_compra,
+    durCierre: launchRow?.dur_cierre,
+  });
+  const conversationsWindow = calendar
+    ? { start: calendar.compra.startDate, end: calendar.cierre.endDate }
+    : null;
+
+  // Sync incremental: tomamos started_at del último run con status='success'.
+  // Si nunca corrió, lastSuccessAt = null → el adapter procesa toda la ventana.
+  const lastSuccessRes = await service
+    .from("integration_runs")
+    .select("started_at")
+    .eq("launch_id", args.launchId)
+    .eq("provider", "ghl")
+    .eq("status", "success")
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const lastSuccessAt =
+    (lastSuccessRes.data as { started_at: string } | null)?.started_at ?? null;
+
   const summary: GhlRunSummary = await runGhlSync({
     service,
     token,
@@ -374,6 +418,8 @@ async function runGhlBranch(args: {
     launchId: args.launchId,
     since: args.dateStart,
     until: args.dateEnd,
+    conversationsWindow,
+    lastSuccessAt,
   });
 
   // Switch sobre el discriminator para que TS narrowee bien las 3 ramas.
@@ -389,10 +435,17 @@ async function runGhlBranch(args: {
 
     case "partial": {
       const written =
-        summary.appointments.created + summary.appointments.updated;
+        summary.appointments.created +
+        summary.appointments.updated +
+        summary.conversations.created +
+        summary.conversations.updated +
+        summary.contacts.created +
+        summary.contacts.updated;
       return await finalizeRun(service, runId, "partial", written, {
         cause: "ghl_partial",
         appointments: summary.appointments,
+        conversations: summary.conversations,
+        contacts: summary.contacts,
         appointments_meta: summary.appointmentsMeta,
         partial_error: summary.partialError,
       });
@@ -403,13 +456,17 @@ async function runGhlBranch(args: {
         summary.appointments.created +
         summary.appointments.updated +
         summary.conversations.created +
-        summary.conversations.updated;
+        summary.conversations.updated +
+        summary.contacts.created +
+        summary.contacts.updated;
       return await finalizeRun(service, runId, "success", totalWritten, {
         cause: "ghl_summary",
         appointments: summary.appointments,
         conversations: summary.conversations,
+        contacts: summary.contacts,
         appointments_meta: summary.appointmentsMeta,
         conversations_meta: summary.conversationsMeta,
+        contacts_meta: summary.contactsMeta,
       });
     }
   }

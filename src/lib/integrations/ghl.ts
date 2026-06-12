@@ -45,12 +45,28 @@ export interface GhlAppointment {
 export interface GhlConversation {
   /** Id de la conversación. */
   id: string;
+  /** Id del contact en GHL — sirve para fetchear tags. */
+  contactId: string | null;
   rawPhone: string | null;
   contactName: string;
   /** Tipo de canal según GHL — usamos esto para filtrar WhatsApp. */
   type: string | null;
   /** ISO timestamp del último mensaje (útil para acotar al rango del launch). */
   lastMessageDate: string | null;
+  raw: unknown;
+}
+
+export interface GhlContact {
+  id: string;
+  rawPhone: string | null;
+  email: string | null;
+  contactName: string;
+  /** Tags asociados — usamos esto para detectar "cliente" → status='cerrado'. */
+  tags: string[];
+  /** ISO timestamp de creación. */
+  dateAdded: string | null;
+  /** ISO timestamp de última modificación. */
+  dateUpdated: string | null;
   raw: unknown;
 }
 
@@ -98,18 +114,31 @@ export interface AppointmentsMeta {
 }
 
 export interface ConversationsMeta {
-  /** Cuántas conversaciones devolvió GHL en total antes de cualquier filtro. */
+  /** Páginas pedidas a GHL (de 100 cada una). */
+  pages_fetched: number;
+  /** Total acumulado de conversaciones crudas a través de todas las páginas. */
   raw_total: number;
   /** Keys top-level del primer item, para verificar shape. */
   sample_conv_keys: string[];
   /** Valores distintos de `type` que vimos (es el canal del contacto). */
   observed_types: string[];
-  /** Valores distintos de `lastMessageType` (es el canal del ÚLTIMO mensaje, el que usa GHL para identificar WhatsApp). */
+  /** Valores distintos de `lastMessageType`. */
   observed_last_message_types: string[];
-  /** Cuántas pasaron el filtro "WhatsApp" (mirando type Y lastMessageType). */
   passed_type_filter: number;
-  /** Cuántas pasaron el filtro de ventana de fecha. */
   passed_window_filter: number;
+  /** Si se cortó por fecha (cortocircuito incremental). */
+  stopped_by_date_cutoff: boolean;
+}
+
+export interface ContactsMeta {
+  pages_fetched: number;
+  raw_total: number;
+  sample_contact_keys: string[];
+  /** Tags distintas observadas a lo largo de los contacts (para verificar que "cliente" aparezca). */
+  observed_tags: string[];
+  /** Cuántos contacts en ventana tenían tag "cliente". */
+  with_client_tag: number;
+  stopped_by_date_cutoff: boolean;
 }
 
 interface FetchArgs {
@@ -351,88 +380,312 @@ export function parseAppointmentsBody(body: unknown): GhlAppointment[] {
  * Para WA usamos `type` que GHL emite como "TYPE_WHATSAPP" o variantes;
  * matchamos por substring case-insensitive para tolerar cambios menores.
  */
+export interface ConversationsFetchArgs extends FetchArgs {
+  /**
+   * Incremental: si está seteado, paramos de paginar cuando el item tiene
+   * `lastMessageDate < cutoffIso` (lo que ya procesamos en el sync anterior).
+   * Si no, recorremos toda la ventana `[since, until]`.
+   */
+  cutoffIso?: string | null;
+}
+
+const PAGE_SIZE = 100;
+const MAX_PAGES = 50; // tope defensivo: 5000 conversaciones por sync
+
+/**
+ * Paginación de conversations con cortocircuito por fecha. GHL devuelve
+ * ordenado por `lastMessageDate desc`, entonces:
+ *   - Si encontramos un item < cutoff (la última sync), paramos: las
+ *     siguientes páginas son aún más viejas.
+ *   - Si encontramos un item < since (la ventana del launch), paramos.
+ *   - Sin no, seguimos hasta MAX_PAGES.
+ */
 export async function fetchGhlConversations(
-  args: FetchArgs,
+  args: ConversationsFetchArgs,
 ): Promise<
   | { ok: true; rows: GhlConversation[]; meta: ConversationsMeta }
   | GhlFetchFailure
 > {
-  const params = new URLSearchParams({
-    locationId: args.locationId,
-    limit: "100",
-    sort: "desc",
-    sortBy: "last_message_date",
-  });
-  const url = `${GHL_API_BASE}/conversations/search?${params.toString()}`;
-  const result = await ghlFetch(url, args.token);
-  if (!result.ok) return result;
-
   const sinceMs = dateToEpochStart(args.since);
   const untilMs = dateToEpochEnd(args.until);
+  const cutoffMs = args.cutoffIso ? Date.parse(args.cutoffIso) : null;
+  // El cutoff efectivo es el MÁS RECIENTE entre el inicio de la ventana y
+  // el último sync. Eso evita re-procesar lo que ya entró.
+  const effectiveCutoff =
+    cutoffMs !== null && Number.isFinite(cutoffMs)
+      ? Math.max(sinceMs, cutoffMs)
+      : sinceMs;
 
-  const rawItems = extractArray(result.body, ["conversations"]);
   const meta: ConversationsMeta = {
-    raw_total: rawItems.length,
-    sample_conv_keys:
-      rawItems.length > 0 && typeof rawItems[0] === "object" && rawItems[0]
-        ? Object.keys(rawItems[0] as Record<string, unknown>)
-        : [],
+    pages_fetched: 0,
+    raw_total: 0,
+    sample_conv_keys: [],
     observed_types: [],
     observed_last_message_types: [],
     passed_type_filter: 0,
     passed_window_filter: 0,
+    stopped_by_date_cutoff: false,
   };
-
-  // Recolectamos `type` y `lastMessageType` distintos para diagnóstico.
   const typesSet = new Set<string>();
   const lastTypesSet = new Set<string>();
-  for (const item of rawItems) {
-    if (typeof item !== "object" || item === null) continue;
-    const obj = item as Record<string, unknown>;
-    if (typeof obj.type === "string") typesSet.add(obj.type);
-    if (typeof obj.lastMessageType === "string") {
-      lastTypesSet.add(obj.lastMessageType);
-    }
-  }
-  meta.observed_types = Array.from(typesSet);
-  meta.observed_last_message_types = Array.from(lastTypesSet);
-
   const out: GhlConversation[] = [];
-  for (const item of rawItems) {
-    if (typeof item !== "object" || item === null) continue;
-    const conv = item as Record<string, unknown>;
-    const id = strOrNull(conv.id);
-    if (!id) continue;
 
-    // El canal real de WhatsApp viene en `lastMessageType` (ej.
-    // `TYPE_WHATSAPP`). El `type` del contacto es otra cosa
-    // (ej. `TYPE_PHONE` = "tiene teléfono como medio de contacto").
-    // Aceptamos match en cualquiera de los dos por defensividad.
-    const type = strOrNull(conv.type);
-    const lastMessageType = strOrNull(conv.lastMessageType);
-    if (!isWhatsAppType(type) && !isWhatsAppType(lastMessageType)) continue;
-    meta.passed_type_filter++;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const offset = page * PAGE_SIZE;
+    const params = new URLSearchParams({
+      locationId: args.locationId,
+      limit: String(PAGE_SIZE),
+      sort: "desc",
+      sortBy: "last_message_date",
+      offset: String(offset),
+    });
+    const url = `${GHL_API_BASE}/conversations/search?${params.toString()}`;
+    const result = await ghlFetch(url, args.token);
+    if (!result.ok) return result;
 
-    const lastIso = strOrNull(conv.lastMessageDate);
-    if (lastIso) {
-      const lastMs = Date.parse(lastIso);
+    const rawItems = extractArray(result.body, ["conversations"]);
+    meta.pages_fetched++;
+    meta.raw_total += rawItems.length;
+
+    if (meta.sample_conv_keys.length === 0 && rawItems[0]) {
+      meta.sample_conv_keys = Object.keys(
+        rawItems[0] as Record<string, unknown>,
+      );
+    }
+
+    if (rawItems.length === 0) break; // GHL no tiene más
+
+    let oldestThisPageMs = Number.POSITIVE_INFINITY;
+    for (const item of rawItems) {
+      if (typeof item !== "object" || item === null) continue;
+      const conv = item as Record<string, unknown>;
+      const id = strOrNull(conv.id);
+      if (!id) continue;
+
+      if (typeof conv.type === "string") typesSet.add(conv.type);
+      if (typeof conv.lastMessageType === "string") {
+        lastTypesSet.add(conv.lastMessageType);
+      }
+
+      const type = strOrNull(conv.type);
+      const lastMessageType = strOrNull(conv.lastMessageType);
+      const isWhats = isWhatsAppType(type) || isWhatsAppType(lastMessageType);
+
+      const lastIso = strOrNull(conv.lastMessageDate);
+      const lastMs = lastIso ? Date.parse(lastIso) : NaN;
+      if (Number.isFinite(lastMs)) {
+        oldestThisPageMs = Math.min(oldestThisPageMs, lastMs);
+      }
+
+      if (!isWhats) continue;
+      meta.passed_type_filter++;
+
       if (Number.isFinite(lastMs) && (lastMs < sinceMs || lastMs > untilMs)) {
         continue;
       }
-    }
-    meta.passed_window_filter++;
+      meta.passed_window_filter++;
 
-    out.push({
-      id,
-      rawPhone: extractPhone(conv),
-      contactName: extractContactName(conv),
-      // Reflejamos el `lastMessageType` cuando exista (es el canal real).
-      type: lastMessageType ?? type,
-      lastMessageDate: lastIso,
-      raw: conv,
-    });
+      out.push({
+        id,
+        contactId: strOrNull(conv.contactId),
+        rawPhone: extractPhone(conv),
+        contactName: extractContactName(conv),
+        type: lastMessageType ?? type,
+        lastMessageDate: lastIso,
+        raw: conv,
+      });
+    }
+
+    // Cortocircuito: si el item más viejo de la página es anterior al
+    // cutoff efectivo, no tiene sentido seguir paginando.
+    if (
+      Number.isFinite(oldestThisPageMs) &&
+      oldestThisPageMs < effectiveCutoff
+    ) {
+      meta.stopped_by_date_cutoff = true;
+      break;
+    }
+    if (rawItems.length < PAGE_SIZE) break; // última página parcial
   }
 
+  meta.observed_types = Array.from(typesSet);
+  meta.observed_last_message_types = Array.from(lastTypesSet);
+  return { ok: true, rows: out, meta };
+}
+
+/**
+ * Cuenta mensajes INBOUND de una conversación específica. Hace falta para
+ * decidir frío (1 msg del lead) vs tibio (2+). GHL pagina los mensajes de
+ * a 100; para el conteo paginamos hasta cortar (con un tope defensivo).
+ *
+ * `messageCount` es el conteo de INBOUND solamente. Direction se determina
+ * por el campo `direction` del mensaje (`inbound` | `outbound`).
+ */
+export async function fetchGhlInboundMessageCount(
+  token: string,
+  conversationId: string,
+): Promise<number | null> {
+  const MAX_MSG_PAGES = 10; // hasta 1000 mensajes; suficiente
+  let inbound = 0;
+  let lastId: string | null = null;
+  for (let page = 0; page < MAX_MSG_PAGES; page++) {
+    const params = new URLSearchParams({ limit: "100" });
+    if (lastId) params.set("lastMessageId", lastId);
+    const url = `${GHL_API_BASE}/conversations/${encodeURIComponent(
+      conversationId,
+    )}/messages?${params.toString()}`;
+    const result = await ghlFetch(url, token);
+    if (!result.ok) {
+      // No abortamos el sync por un conteo fallido — fallback a null y el
+      // caller decide (lo trata como frío por defecto).
+      return null;
+    }
+    const body = result.body as Record<string, unknown> | null;
+    const messages = body && Array.isArray((body as Record<string, unknown>).messages)
+      ? ((body as { messages: unknown[] }).messages)
+      : extractArray(result.body, ["messages"]);
+
+    if (messages.length === 0) break;
+    for (const m of messages) {
+      if (typeof m !== "object" || m === null) continue;
+      const obj = m as Record<string, unknown>;
+      if (strOrNull(obj.direction) === "inbound") inbound++;
+    }
+    const lastMsg = messages[messages.length - 1];
+    if (typeof lastMsg === "object" && lastMsg !== null) {
+      lastId = strOrNull((lastMsg as Record<string, unknown>).id);
+    }
+    if (messages.length < 100 || !lastId) break;
+  }
+  return inbound;
+}
+
+// ─── Contacts (formulario y CRM general) ────────────────────────────────────
+
+export interface ContactsFetchArgs extends FetchArgs {
+  cutoffIso?: string | null;
+}
+
+/**
+ * Lista contacts del location ordenados por `dateUpdated desc`. Pagina con
+ * `startAfterId`/`startAfter` (los dos cursores que usa GHL). Cortocircuito
+ * por `dateUpdated < cutoffEfectivo`.
+ *
+ * Mismo enfoque que conversations: el sync incremental procesa contacts
+ * nuevos Y modificados desde la última corrida (ej. un contact viejo al que
+ * le agregaron el tag "cliente").
+ */
+export async function fetchGhlContacts(
+  args: ContactsFetchArgs,
+): Promise<{ ok: true; rows: GhlContact[]; meta: ContactsMeta } | GhlFetchFailure> {
+  const sinceMs = dateToEpochStart(args.since);
+  const untilMs = dateToEpochEnd(args.until);
+  const cutoffMs = args.cutoffIso ? Date.parse(args.cutoffIso) : null;
+  const effectiveCutoff =
+    cutoffMs !== null && Number.isFinite(cutoffMs)
+      ? Math.max(sinceMs, cutoffMs)
+      : sinceMs;
+
+  const meta: ContactsMeta = {
+    pages_fetched: 0,
+    raw_total: 0,
+    sample_contact_keys: [],
+    observed_tags: [],
+    with_client_tag: 0,
+    stopped_by_date_cutoff: false,
+  };
+  const tagsSet = new Set<string>();
+  const out: GhlContact[] = [];
+
+  let startAfter: number | null = null;
+  let startAfterId: string | null = null;
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const params = new URLSearchParams({
+      locationId: args.locationId,
+      limit: String(PAGE_SIZE),
+    });
+    if (startAfter !== null) params.set("startAfter", String(startAfter));
+    if (startAfterId) params.set("startAfterId", startAfterId);
+    const url = `${GHL_API_BASE}/contacts/?${params.toString()}`;
+    const result = await ghlFetch(url, args.token);
+    if (!result.ok) return result;
+
+    const rawItems = extractArray(result.body, ["contacts"]);
+    meta.pages_fetched++;
+    meta.raw_total += rawItems.length;
+
+    if (meta.sample_contact_keys.length === 0 && rawItems[0]) {
+      meta.sample_contact_keys = Object.keys(
+        rawItems[0] as Record<string, unknown>,
+      );
+    }
+
+    if (rawItems.length === 0) break;
+
+    let oldestThisPageMs = Number.POSITIVE_INFINITY;
+    let lastIdSeen: string | null = null;
+    let lastUpdatedMs: number | null = null;
+
+    for (const item of rawItems) {
+      if (typeof item !== "object" || item === null) continue;
+      const c = item as Record<string, unknown>;
+      const id = strOrNull(c.id);
+      if (!id) continue;
+      lastIdSeen = id;
+
+      const tags = Array.isArray(c.tags)
+        ? (c.tags as unknown[]).filter((t): t is string => typeof t === "string")
+        : [];
+      for (const t of tags) tagsSet.add(t.toLowerCase());
+
+      const dateUpdated = strOrNull(c.dateUpdated);
+      const dateAdded = strOrNull(c.dateAdded);
+      const updatedMs = dateUpdated ? Date.parse(dateUpdated) : NaN;
+      if (Number.isFinite(updatedMs)) {
+        oldestThisPageMs = Math.min(oldestThisPageMs, updatedMs);
+        lastUpdatedMs = updatedMs;
+      }
+
+      // Solo incluimos si dateUpdated cae dentro de [sinceMs, untilMs].
+      if (
+        Number.isFinite(updatedMs) &&
+        (updatedMs < sinceMs || updatedMs > untilMs)
+      ) {
+        continue;
+      }
+
+      const hasClient = tags.some((t) => t.toLowerCase() === "cliente");
+      if (hasClient) meta.with_client_tag++;
+
+      out.push({
+        id,
+        rawPhone: extractPhone(c),
+        email: strOrNull(c.email),
+        contactName: extractContactName(c),
+        tags,
+        dateAdded,
+        dateUpdated,
+        raw: c,
+      });
+    }
+
+    if (
+      Number.isFinite(oldestThisPageMs) &&
+      oldestThisPageMs < effectiveCutoff
+    ) {
+      meta.stopped_by_date_cutoff = true;
+      break;
+    }
+    if (rawItems.length < PAGE_SIZE) break;
+
+    // Cursor para próxima página.
+    startAfter = lastUpdatedMs;
+    startAfterId = lastIdSeen;
+    if (startAfter === null || startAfterId === null) break;
+  }
+
+  meta.observed_tags = Array.from(tagsSet);
   return { ok: true, rows: out, meta };
 }
 
@@ -463,6 +716,7 @@ export function parseConversationsBody(
 
     rows.push({
       id,
+      contactId: strOrNull(conv.contactId),
       rawPhone: extractPhone(conv),
       contactName: extractContactName(conv),
       type,

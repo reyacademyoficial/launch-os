@@ -41,7 +41,7 @@ function lead(
     external_id: null,
     pinned_to_kanban: false,
     source: "manual",
-    status: "nuevo",
+    status: "frio",
     notes: null,
     created_at: TS,
     updated_at: TS,

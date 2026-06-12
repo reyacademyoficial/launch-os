@@ -16,10 +16,22 @@ export type LeadSource =
   | "whatsapp"
   | "otro";
 
+/**
+ * Status del lead. Cambió en 3b — el modelo viejo (nuevo/contactado/calificado)
+ * mezclaba "etapa del setter" con "calor del lead". Ahora refleja actividad
+ * real:
+ *   - frio: lead nuevo con poca o nula actividad (1 msg de WhatsApp o solo
+ *     formulario sin más).
+ *   - tibio: lead que respondió (2+ mensajes inbound en WhatsApp).
+ *   - agendado: tiene appointment en GHL.
+ *   - cerrado: tag "cliente" en GHL o cierre manual.
+ *   - perdido: cierre negativo manual.
+ *
+ * Migración 0018 mapea los valores anteriores.
+ */
 export type LeadStatus =
-  | "nuevo"
-  | "contactado"
-  | "calificado"
+  | "frio"
+  | "tibio"
   | "agendado"
   | "cerrado"
   | "perdido";
@@ -47,18 +59,16 @@ export interface LeadRow {
  * de status en formularios. "cerrado" y "perdido" cierran el pipeline.
  */
 export const LEAD_STATUSES: readonly LeadStatus[] = [
-  "nuevo",
-  "contactado",
-  "calificado",
+  "frio",
+  "tibio",
   "agendado",
   "cerrado",
   "perdido",
 ] as const;
 
 export const LEAD_STATUS_LABELS: Record<LeadStatus, string> = {
-  nuevo: "Nuevo",
-  contactado: "Contactado",
-  calificado: "Calificado",
+  frio: "Frío",
+  tibio: "Tibio",
   agendado: "Agendado",
   cerrado: "Cerrado",
   perdido: "Perdido",

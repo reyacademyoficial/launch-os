@@ -228,7 +228,7 @@ function mapRowToPayload(
       email,
       phone_normalized: phoneNormalized,
       source: "import",
-      status: "nuevo",
+      status: "frio",
     },
   };
 }

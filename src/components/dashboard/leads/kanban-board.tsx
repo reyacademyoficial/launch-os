@@ -130,9 +130,8 @@ export function KanbanBoard({
   }
 
   const buckets: Record<LeadStatus, LeadRow[]> = {
-    nuevo: [],
-    contactado: [],
-    calificado: [],
+    frio: [],
+    tibio: [],
     agendado: [],
     cerrado: [],
     perdido: [],

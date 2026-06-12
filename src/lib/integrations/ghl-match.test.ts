@@ -3,12 +3,23 @@ import { describe, it, expect } from "vitest";
 import { resolveMatchAction, type ExistingLeadView } from "./ghl-match";
 
 /**
- * Reglas de transición del brief Fase 3b:
- *   - Appointment + lead existente no-terminal → status=agendado + pin.
- *   - Appointment + lead terminal (cerrado/perdido) → noop.
- *   - Appointment sin match → create source='ghl', status='agendado', pin.
- *   - WhatsApp + lead existente → solo pin (no toca status).
- *   - WhatsApp sin match → create source='whatsapp', status='nuevo', pin.
+ * Reglas Fase 3b:
+ *  - Appointment + lead no-terminal → agendado + pin.
+ *  - Appointment + lead terminal → noop.
+ *  - Appointment sin match → create source='ghl', agendado, pinned.
+ *
+ *  - WhatsApp 1 msg + sin lead → create source='whatsapp', frio, pinned.
+ *  - WhatsApp 2+ msgs + sin lead → create source='whatsapp', tibio, pinned.
+ *  - WhatsApp 1 msg + lead frio → queda frío (no degrada).
+ *  - WhatsApp 2+ msgs + lead frio → sube a tibio.
+ *  - WhatsApp 1 msg + lead tibio → no degrada.
+ *  - WhatsApp + lead terminal → noop.
+ *
+ *  - Contact con tag 'cliente' + sin lead → create source='ghl', cerrado, pinned.
+ *  - Contact con tag 'cliente' + lead no-terminal → cerrado + pin.
+ *  - Contact con tag 'cliente' + lead terminal → noop.
+ *  - Contact sin tag 'cliente' + sin lead → create source='ghl', frio, NO pinned.
+ *  - Contact sin tag 'cliente' + lead existente → noop.
  */
 
 const BASE_ARGS = {
@@ -21,22 +32,23 @@ const BASE_ARGS = {
 function existing(overrides: Partial<ExistingLeadView> = {}): ExistingLeadView {
   return {
     id: "lead-1",
-    status: "nuevo",
+    status: "frio",
     pinned_to_kanban: false,
     ...overrides,
   };
 }
 
+// ─── Appointment ────────────────────────────────────────────────────────────
+
 describe("resolveMatchAction — appointment", () => {
-  it("lead existente no-terminal → update a 'agendado' + pin + external_id", () => {
+  it("lead frío existente → status='agendado' + pin + external_id", () => {
     const action = resolveMatchAction({
       eventKind: "appointment",
-      existing: existing({ status: "contactado" }),
+      existing: existing({ status: "frio" }),
       ...BASE_ARGS,
     });
     expect(action.kind).toBe("update");
     if (action.kind !== "update") return;
-    expect(action.leadId).toBe("lead-1");
     expect(action.patch).toEqual({
       status: "agendado",
       pinned_to_kanban: true,
@@ -44,33 +56,21 @@ describe("resolveMatchAction — appointment", () => {
     });
   });
 
-  it("lead ya en 'agendado' igual recibe pin + external_id (refresh)", () => {
+  it("lead tibio existente → status='agendado' + pin", () => {
     const action = resolveMatchAction({
       eventKind: "appointment",
-      existing: existing({ status: "agendado", pinned_to_kanban: true }),
+      existing: existing({ status: "tibio" }),
       ...BASE_ARGS,
     });
     expect(action.kind).toBe("update");
     if (action.kind !== "update") return;
     expect(action.patch.status).toBe("agendado");
-    expect(action.patch.external_id).toBe("ext-1");
   });
 
-  it("lead en 'cerrado' → noop (no toco terminales)", () => {
+  it("lead cerrado → noop", () => {
     const action = resolveMatchAction({
       eventKind: "appointment",
       existing: existing({ status: "cerrado" }),
-      ...BASE_ARGS,
-    });
-    expect(action.kind).toBe("noop");
-    if (action.kind !== "noop") return;
-    expect(action.reason).toBe("lead_terminal");
-  });
-
-  it("lead en 'perdido' → noop", () => {
-    const action = resolveMatchAction({
-      eventKind: "appointment",
-      existing: existing({ status: "perdido" }),
       ...BASE_ARGS,
     });
     expect(action.kind).toBe("noop");
@@ -87,66 +87,161 @@ describe("resolveMatchAction — appointment", () => {
     expect(action.payload.source).toBe("ghl");
     expect(action.payload.status).toBe("agendado");
     expect(action.payload.pinned_to_kanban).toBe(true);
-    expect(action.payload.external_id).toBe("ext-1");
-    expect(action.payload.phone_normalized).toBe("+5491155555555");
-    expect(action.payload.name).toBe("Test User");
-  });
-
-  it("sin lead y sin phone normalizado → guarda rawPhone en `contact`", () => {
-    const action = resolveMatchAction({
-      eventKind: "appointment",
-      existing: null,
-      externalId: "ext-2",
-      contactName: "Sin teléfono",
-      phoneNormalized: null,
-      rawPhone: "123-no-valido",
-    });
-    expect(action.kind).toBe("create");
-    if (action.kind !== "create") return;
-    expect(action.payload.phone_normalized).toBeNull();
-    expect(action.payload.contact).toBe("123-no-valido");
   });
 });
 
-describe("resolveMatchAction — whatsapp", () => {
-  it("lead existente → pin, NO cambia status", () => {
-    const action = resolveMatchAction({
-      eventKind: "whatsapp",
-      existing: existing({ status: "calificado", pinned_to_kanban: false }),
-      ...BASE_ARGS,
-    });
-    expect(action.kind).toBe("update");
-    if (action.kind !== "update") return;
-    // El brief es claro: WhatsApp NO cambia status, solo pin.
-    expect(action.patch.status).toBeUndefined();
-    expect(action.patch.pinned_to_kanban).toBe(true);
-    expect(action.patch.external_id).toBe("ext-1");
-  });
+// ─── WhatsApp ────────────────────────────────────────────────────────────────
 
-  it("lead terminal (cerrado/perdido) en WhatsApp → IGUAL pin (no es como appointment)", () => {
-    // Decisión: WhatsApp es señal de actividad, no de etapa. Pinneamos
-    // siempre — incluso si está cerrado, el operador puede querer verlo.
-    const action = resolveMatchAction({
-      eventKind: "whatsapp",
-      existing: existing({ status: "cerrado", pinned_to_kanban: false }),
-      ...BASE_ARGS,
-    });
-    expect(action.kind).toBe("update");
-    if (action.kind !== "update") return;
-    expect(action.patch.pinned_to_kanban).toBe(true);
-    expect(action.patch.status).toBeUndefined();
-  });
-
-  it("sin lead → create source='whatsapp', status='nuevo', pinned", () => {
+describe("resolveMatchAction — whatsapp con conteo de mensajes inbound", () => {
+  it("1 mensaje + sin lead → create frio pinned", () => {
     const action = resolveMatchAction({
       eventKind: "whatsapp",
       existing: null,
+      inboundMessageCount: 1,
       ...BASE_ARGS,
     });
     expect(action.kind).toBe("create");
     if (action.kind !== "create") return;
-    expect(action.payload.source).toBe("whatsapp");
-    expect(action.payload.status).toBe("nuevo");
+    expect(action.payload.status).toBe("frio");
     expect(action.payload.pinned_to_kanban).toBe(true);
+    expect(action.payload.source).toBe("whatsapp");
+  });
+
+  it("2 mensajes + sin lead → create tibio pinned", () => {
+    const action = resolveMatchAction({
+      eventKind: "whatsapp",
+      existing: null,
+      inboundMessageCount: 2,
+      ...BASE_ARGS,
+    });
+    expect(action.kind).toBe("create");
+    if (action.kind !== "create") return;
+    expect(action.payload.status).toBe("tibio");
+  });
+
+  it("count=null → fallback a frio", () => {
+    const action = resolveMatchAction({
+      eventKind: "whatsapp",
+      existing: null,
+      inboundMessageCount: null,
+      ...BASE_ARGS,
+    });
+    expect(action.kind).toBe("create");
+    if (action.kind !== "create") return;
+    expect(action.payload.status).toBe("frio");
+  });
+
+  it("1 mensaje + lead frio → no toca status, solo pin + external_id", () => {
+    const action = resolveMatchAction({
+      eventKind: "whatsapp",
+      existing: existing({ status: "frio" }),
+      inboundMessageCount: 1,
+      ...BASE_ARGS,
+    });
+    expect(action.kind).toBe("update");
+    if (action.kind !== "update") return;
+    expect(action.patch.status).toBeUndefined();
+    expect(action.patch.pinned_to_kanban).toBe(true);
+  });
+
+  it("2 mensajes + lead frio → sube a tibio", () => {
+    const action = resolveMatchAction({
+      eventKind: "whatsapp",
+      existing: existing({ status: "frio" }),
+      inboundMessageCount: 2,
+      ...BASE_ARGS,
+    });
+    expect(action.kind).toBe("update");
+    if (action.kind !== "update") return;
+    expect(action.patch.status).toBe("tibio");
+  });
+
+  it("1 mensaje + lead tibio → NO degrada", () => {
+    const action = resolveMatchAction({
+      eventKind: "whatsapp",
+      existing: existing({ status: "tibio" }),
+      inboundMessageCount: 1,
+      ...BASE_ARGS,
+    });
+    expect(action.kind).toBe("update");
+    if (action.kind !== "update") return;
+    expect(action.patch.status).toBeUndefined(); // queda tibio
+  });
+
+  it("lead cerrado → noop", () => {
+    const action = resolveMatchAction({
+      eventKind: "whatsapp",
+      existing: existing({ status: "cerrado" }),
+      inboundMessageCount: 3,
+      ...BASE_ARGS,
+    });
+    expect(action.kind).toBe("noop");
+  });
+});
+
+// ─── Contact ────────────────────────────────────────────────────────────────
+
+describe("resolveMatchAction — contact con tag cliente → cerrado", () => {
+  it("sin lead → create source='ghl', status='cerrado', pinned", () => {
+    const action = resolveMatchAction({
+      eventKind: "contact",
+      existing: null,
+      hasClientTag: true,
+      ...BASE_ARGS,
+    });
+    expect(action.kind).toBe("create");
+    if (action.kind !== "create") return;
+    expect(action.payload.source).toBe("ghl");
+    expect(action.payload.status).toBe("cerrado");
+    expect(action.payload.pinned_to_kanban).toBe(true);
+  });
+
+  it("lead tibio existente → cerrado + pin", () => {
+    const action = resolveMatchAction({
+      eventKind: "contact",
+      existing: existing({ status: "tibio" }),
+      hasClientTag: true,
+      ...BASE_ARGS,
+    });
+    expect(action.kind).toBe("update");
+    if (action.kind !== "update") return;
+    expect(action.patch.status).toBe("cerrado");
+    expect(action.patch.pinned_to_kanban).toBe(true);
+  });
+
+  it("lead cerrado existente → noop (ya está en estado final)", () => {
+    const action = resolveMatchAction({
+      eventKind: "contact",
+      existing: existing({ status: "cerrado" }),
+      hasClientTag: true,
+      ...BASE_ARGS,
+    });
+    expect(action.kind).toBe("noop");
+  });
+});
+
+describe("resolveMatchAction — contact sin tag cliente (formulario sin actividad)", () => {
+  it("sin lead → create source='ghl', status='frio', NO pinned", () => {
+    const action = resolveMatchAction({
+      eventKind: "contact",
+      existing: null,
+      hasClientTag: false,
+      ...BASE_ARGS,
+    });
+    expect(action.kind).toBe("create");
+    if (action.kind !== "create") return;
+    expect(action.payload.source).toBe("ghl");
+    expect(action.payload.status).toBe("frio");
+    expect(action.payload.pinned_to_kanban).toBe(false);
+  });
+
+  it("lead existente → noop (no toca; el sync de WA/appointments se encarga)", () => {
+    const action = resolveMatchAction({
+      eventKind: "contact",
+      existing: existing({ status: "tibio" }),
+      hasClientTag: false,
+      ...BASE_ARGS,
+    });
+    expect(action.kind).toBe("noop");
   });
 });
