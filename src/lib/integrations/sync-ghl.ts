@@ -17,7 +17,6 @@ import {
 } from "./ghl";
 import {
   resolveMatchAction,
-  type EventKind,
   type ExistingLeadView,
   type MatchAction,
 } from "./ghl-match";
@@ -123,17 +122,19 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   });
   if (!apptResult.ok) return propagateFailure(apptResult);
 
-  const apptSummary = await processBatch(
-    args,
-    "appointment",
-    apptResult.rows,
-    country,
-    (e) => e.id,
-    (e) => e.contactName,
-    (e) => e.rawPhone,
-    () => null,
-    (e) => buildAppointmentNotes(e),
-  );
+  // Pre-locate en paralelo, después apply secuencial.
+  const apptLocated = await parallelMap(apptResult.rows, 10, async (e) => {
+    const phoneNormalized = normalize(e.rawPhone, country);
+    const existing = await locateLead({
+      service: args.service,
+      projectId: args.projectId,
+      source: "ghl",
+      externalId: e.id,
+      phoneNormalized,
+    });
+    return { evt: e, phoneNormalized, existing };
+  });
+  const apptSummary = await applyAppointments(args, apptLocated);
 
   // ─── 2) Conversations (WhatsApp) ─────────────────────────────────────────
   const convResult = await fetchGhlConversations({
@@ -159,27 +160,31 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     };
   }
 
-  // Para cada conversation, contamos inbound (mensajes del lead). Frío vs
-  // tibio. Si el conteo falla, fallback a 1 (lo trata como frío).
-  const convWithCounts = await Promise.all(
-    convResult.rows.map(async (c) => {
-      const count = await fetchGhlInboundMessageCount(args.token, c.id);
-      return { conv: c, inboundCount: count };
-    }),
-  );
+  // Locate primero (en paralelo) para saber qué leads ya existen, qué
+  // estado tienen y decidir si vale la pena contar mensajes para cada uno.
+  // Si el lead ya está en tibio/agendado/cerrado/perdido, contar inbound
+  // no cambia nada — saltamos el fetch (es el cuello de botella principal).
+  const convLocated = await parallelMap(convResult.rows, 10, async (c) => {
+    const phoneNormalized = normalize(c.rawPhone, country);
+    const existing = await locateLead({
+      service: args.service,
+      projectId: args.projectId,
+      source: "whatsapp",
+      externalId: c.id,
+      phoneNormalized,
+    });
+    return { conv: c, phoneNormalized, existing };
+  });
 
-  const convSummary = await processBatchWithCount(
-    args,
-    "whatsapp",
-    convWithCounts,
-    country,
-    (x) => x.conv.id,
-    (x) => x.conv.contactName,
-    (x) => x.conv.rawPhone,
-    () => null,
-    (x) => buildConversationNotes(x.conv),
-    (x) => x.inboundCount,
-  );
+  // Contamos inbound solo donde el resultado importa.
+  const convWithCounts = await parallelMap(convLocated, 10, async (item) => {
+    const count = shouldCountMessages(item.existing)
+      ? await fetchGhlInboundMessageCount(args.token, item.conv.id)
+      : null;
+    return { ...item, inboundCount: count };
+  });
+
+  const convSummary = await applyConversations(args, convWithCounts);
 
   // ─── 3) Contacts (formulario / CRM general) ──────────────────────────────
   const contactsResult = await fetchGhlContacts({
@@ -205,11 +210,18 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     };
   }
 
-  const contactsSummary = await processBatchContact(
-    args,
-    contactsResult.rows,
-    country,
-  );
+  const contactsLocated = await parallelMap(contactsResult.rows, 10, async (c) => {
+    const phoneNormalized = normalize(c.rawPhone, country);
+    const existing = await locateLead({
+      service: args.service,
+      projectId: args.projectId,
+      source: "ghl",
+      externalId: c.id,
+      phoneNormalized,
+    });
+    return { contact: c, phoneNormalized, existing };
+  });
+  const contactsSummary = await applyContacts(args, contactsLocated);
 
   return {
     status: "success",
@@ -222,144 +234,143 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   };
 }
 
-// ─── processBatch (appointment) ────────────────────────────────────────────
+// ─── apply (post-locate) ───────────────────────────────────────────────────
 
-async function processBatch<T>(
+interface LocatedAppointment {
+  evt: GhlAppointment;
+  phoneNormalized: string | null;
+  existing: ExistingLeadView | null;
+}
+
+interface LocatedConversation {
+  conv: GhlConversation;
+  phoneNormalized: string | null;
+  existing: ExistingLeadView | null;
+  inboundCount: number | null;
+}
+
+interface LocatedContact {
+  contact: GhlContact;
+  phoneNormalized: string | null;
+  existing: ExistingLeadView | null;
+}
+
+async function applyAppointments(
   args: RunGhlSyncArgs,
-  eventKind: EventKind,
-  rows: ReadonlyArray<T>,
-  country: CountryCode,
-  getId: (r: T) => string,
-  getName: (r: T) => string,
-  getPhone: (r: T) => string | null,
-  getEmail: (r: T) => string | null,
-  getNotes: (r: T) => string | null,
+  items: ReadonlyArray<LocatedAppointment>,
 ): Promise<StageCounts> {
   const summary: StageCounts = {
-    fetched: rows.length,
+    fetched: items.length,
     created: 0,
     updated: 0,
     skipped: 0,
   };
-  const source: "ghl" | "whatsapp" =
-    eventKind === "whatsapp" ? "whatsapp" : "ghl";
-
-  for (const row of rows) {
-    const externalId = getId(row);
-    const rawPhone = getPhone(row);
-    const phoneNormalized = normalize(rawPhone, country);
-    const existing = await locateLead({
-      service: args.service,
-      projectId: args.projectId,
-      source,
-      externalId,
-      phoneNormalized,
-    });
+  for (const item of items) {
     const action = resolveMatchAction({
-      eventKind,
-      existing,
-      externalId,
-      contactName: getName(row),
-      phoneNormalized,
-      rawPhone,
-      email: getEmail(row),
+      eventKind: "appointment",
+      existing: item.existing,
+      externalId: item.evt.id,
+      contactName: item.evt.contactName,
+      phoneNormalized: item.phoneNormalized,
+      rawPhone: item.evt.rawPhone,
     });
-    const applied = await applyAction(args, action, getNotes(row));
+    const applied = await applyAction(args, action, buildAppointmentNotes(item.evt));
     accumulate(summary, applied);
   }
   return summary;
 }
 
-// ─── processBatchWithCount (whatsapp con conteo de mensajes) ───────────────
-
-async function processBatchWithCount<T>(
+async function applyConversations(
   args: RunGhlSyncArgs,
-  eventKind: EventKind,
-  rows: ReadonlyArray<T>,
-  country: CountryCode,
-  getId: (r: T) => string,
-  getName: (r: T) => string,
-  getPhone: (r: T) => string | null,
-  getEmail: (r: T) => string | null,
-  getNotes: (r: T) => string | null,
-  getInboundCount: (r: T) => number | null,
+  items: ReadonlyArray<LocatedConversation>,
 ): Promise<StageCounts> {
   const summary: StageCounts = {
-    fetched: rows.length,
+    fetched: items.length,
     created: 0,
     updated: 0,
     skipped: 0,
   };
-  const source: "ghl" | "whatsapp" =
-    eventKind === "whatsapp" ? "whatsapp" : "ghl";
-
-  for (const row of rows) {
-    const externalId = getId(row);
-    const rawPhone = getPhone(row);
-    const phoneNormalized = normalize(rawPhone, country);
-    const existing = await locateLead({
-      service: args.service,
-      projectId: args.projectId,
-      source,
-      externalId,
-      phoneNormalized,
-    });
+  for (const item of items) {
     const action = resolveMatchAction({
-      eventKind,
-      existing,
-      externalId,
-      contactName: getName(row),
-      phoneNormalized,
-      rawPhone,
-      email: getEmail(row),
-      inboundMessageCount: getInboundCount(row),
+      eventKind: "whatsapp",
+      existing: item.existing,
+      externalId: item.conv.id,
+      contactName: item.conv.contactName,
+      phoneNormalized: item.phoneNormalized,
+      rawPhone: item.conv.rawPhone,
+      inboundMessageCount: item.inboundCount,
     });
-    const applied = await applyAction(args, action, getNotes(row));
+    const applied = await applyAction(args, action, buildConversationNotes(item.conv));
     accumulate(summary, applied);
   }
   return summary;
 }
 
-// ─── processBatchContact (contacts del CRM) ────────────────────────────────
-
-async function processBatchContact(
+async function applyContacts(
   args: RunGhlSyncArgs,
-  rows: ReadonlyArray<GhlContact>,
-  country: CountryCode,
+  items: ReadonlyArray<LocatedContact>,
 ): Promise<StageCounts> {
   const summary: StageCounts = {
-    fetched: rows.length,
+    fetched: items.length,
     created: 0,
     updated: 0,
     skipped: 0,
   };
-
-  for (const row of rows) {
-    const externalId = row.id;
-    const rawPhone = row.rawPhone;
-    const phoneNormalized = normalize(rawPhone, country);
-    const hasClientTag = row.tags.some((t) => t.toLowerCase() === "cliente");
-    const existing = await locateLead({
-      service: args.service,
-      projectId: args.projectId,
-      source: "ghl",
-      externalId,
-      phoneNormalized,
-    });
+  for (const item of items) {
+    const hasClientTag = item.contact.tags.some(
+      (t) => t.toLowerCase() === "cliente",
+    );
     const action = resolveMatchAction({
       eventKind: "contact",
-      existing,
-      externalId,
-      contactName: row.contactName,
-      phoneNormalized,
-      rawPhone,
-      email: row.email,
+      existing: item.existing,
+      externalId: item.contact.id,
+      contactName: item.contact.contactName,
+      phoneNormalized: item.phoneNormalized,
+      rawPhone: item.contact.rawPhone,
+      email: item.contact.email,
       hasClientTag,
     });
-    const applied = await applyAction(args, action, buildContactNotes(row));
+    const applied = await applyAction(args, action, buildContactNotes(item.contact));
     accumulate(summary, applied);
   }
   return summary;
+}
+
+// ─── concurrency helper ────────────────────────────────────────────────────
+
+/**
+ * Procesa `items` con `concurrency` workers en paralelo. Mantiene el orden
+ * del array de salida (idx-based slotting). No usa `Promise.all` directo
+ * porque para 1000+ items eso dispararía 1000 fetches simultáneos contra
+ * GHL y nos van a tirar 429 en segundos.
+ */
+async function parallelMap<T, R>(
+  items: ReadonlyArray<T>,
+  concurrency: number,
+  fn: (item: T, idx: number) => Promise<R>,
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const i = cursor++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i]!, i);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+/**
+ * Decide si vale la pena gastar un fetch para contar mensajes inbound. La
+ * respuesta cambia el `status` solo si el lead va a ser nuevo o está en frío
+ * (puede subir a tibio). Si ya está en tibio/agendado/cerrado/perdido, el
+ * conteo no afecta — ahorramos el fetch.
+ */
+function shouldCountMessages(existing: ExistingLeadView | null): boolean {
+  if (!existing) return true;
+  return existing.status === "frio";
 }
 
 // ─── locate (external_id O phone) ──────────────────────────────────────────

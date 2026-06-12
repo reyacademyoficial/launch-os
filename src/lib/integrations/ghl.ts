@@ -438,6 +438,10 @@ export async function fetchGhlConversations(
       sort: "desc",
       sortBy: "last_message_date",
       offset: String(offset),
+      // Filtramos WhatsApp en server-side. Antes el adapter pedía todo y
+      // descartaba en TS — con 5k conversaciones (WA + IG + FB + email)
+      // paginaba 50 veces para descartar 80% del volumen.
+      lastMessageType: "TYPE_WHATSAPP",
     });
     const url = `${GHL_API_BASE}/conversations/search?${params.toString()}`;
     const result = await ghlFetch(url, args.token);
