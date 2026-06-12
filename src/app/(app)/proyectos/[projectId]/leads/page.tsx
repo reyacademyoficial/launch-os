@@ -2,15 +2,28 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { ImportLeadsModal } from "@/components/dashboard/leads/import-modal";
 import { KanbanBoard } from "@/components/dashboard/leads/kanban-board";
 import { LeadFormModal } from "@/components/dashboard/leads/lead-form-modal";
+import { LeadsTable } from "@/components/dashboard/leads/leads-table";
 import {
   listCommissionRules,
   listPaymentModalities,
 } from "@/lib/commissions/list";
 import type { PaymentRow, SaleRow } from "@/lib/commissions/types";
 import { listLaunchesForProject } from "@/lib/launches/list";
-import { listLeads } from "@/lib/leads/list";
+import { listKanbanLeads, listLeadsPaginated } from "@/lib/leads/search";
+import {
+  SORTABLE_COLUMNS,
+  SORT_DIRECTIONS,
+  type SortableColumn,
+  type SortDirection,
+} from "@/lib/leads/search-config";
+import {
+  LEAD_STATUSES,
+  type LeadSource,
+  type LeadStatus,
+} from "@/lib/leads/types";
 import {
   listPaymentsForProject,
   listSalesForProject,
@@ -32,21 +45,38 @@ import {
 
 export const metadata: Metadata = { title: "Leads" };
 
+type Tab = "tabla" | "kanban";
+
+/**
+ * Index de leads con dos vistas:
+ *   - "tabla" (default): server-paginated/filtered/sorted, para volumen alto.
+ *     Toda la URL state (?status, ?page, ?q, ?sort, ?dir, ?from, ?to,
+ *     ?setter, ?launch) se lee acá y se pasa a `listLeadsPaginated`.
+ *   - "kanban": filtrada a `pinned_to_kanban = true`, drag-and-drop existente.
+ *     Pensada como vista de trabajo del subconjunto promovido a mano.
+ *
+ * Decisión: NO usamos subrutas /leads/tabla y /leads/kanban porque
+ * compartirían el 80% de los fetches (teamMembers, launches, modalities, etc).
+ * El tab en la query param permite reusar la carga sin duplicar páginas.
+ */
 export default async function LeadsPage({
   params,
+  searchParams,
 }: {
   readonly params: Promise<{ projectId: string }>;
+  readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { projectId } = await params;
+  const sp = await searchParams;
 
-  // Cliente fuera del módulo CRM (decisión Fase 4). RLS también lo bloquea
-  // en la DB; este redirect es UX.
   const profile = await requireSessionProfile();
   if (profile.role === "cliente") redirect(`/proyectos/${projectId}`);
 
-  const [leads, teamMembers, launches, canEdit, sales, payments, modalities, rules] =
+  const tab: Tab = readString(sp.view) === "kanban" ? "kanban" : "tabla";
+
+  // ─── Fetches compartidos por ambos tabs ────────────────────────────────
+  const [teamMembers, launches, canEdit, sales, payments, modalities, rules] =
     await Promise.all([
-      listLeads(projectId),
       listTeamMembers(projectId),
       listLaunchesForProject(projectId),
       userCanEditLaunchesIn(projectId),
@@ -63,8 +93,6 @@ export default async function LeadsPage({
   }));
   const launchesForForm = launches.map((l) => ({ id: l.id, name: l.name }));
 
-  // Maps lead → sale, sale → payments. Mantenemos refs simples para que el
-  // cliente derive la comisión por card sin hacer un fetch extra.
   const salesByLeadId = new Map<string, SaleRow>(sales.map((s) => [s.lead_id, s]));
   const paymentsBySaleId = new Map<string, PaymentRow[]>();
   for (const p of payments) {
@@ -73,9 +101,6 @@ export default async function LeadsPage({
     else paymentsBySaleId.set(p.sale_id, [p]);
   }
 
-  // Server actions parcialmente bound al projectId. `.bind()` sobre una Server
-  // Action produce otra Server Action serializable — el cliente puede pasarla
-  // como prop y a su vez hacer `.bind(null, leadId)` por card.
   const createAction = createLead.bind(null, projectId);
   const moveAction = moveLeadStatus.bind(null, projectId);
   const updateAction = updateLead.bind(null, projectId);
@@ -92,7 +117,6 @@ export default async function LeadsPage({
         <div>
           <h1 className="text-2xl font-bold">Leads</h1>
           <p className="mt-1 text-xs text-fg-subtle">
-            {leads.length} en pipeline ·{" "}
             <Link
               href={`/proyectos/${projectId}/equipo`}
               className="underline-offset-2 hover:underline"
@@ -102,29 +126,40 @@ export default async function LeadsPage({
           </p>
         </div>
         {canEdit && (
-          <LeadFormModal
-            triggerLabel="+ Nuevo lead"
-            title="Nuevo lead"
-            submitLabel="Crear"
-            action={createAction}
-            teamMembers={teamForForm}
-            launches={launchesForForm}
-          />
+          <div className="flex flex-wrap gap-2">
+            <ImportLeadsModal
+              projectId={projectId}
+              launches={launchesForForm}
+              triggerLabel="⇪ Importar xlsx"
+            />
+            <LeadFormModal
+              triggerLabel="+ Nuevo lead"
+              title="Nuevo lead"
+              submitLabel="Crear"
+              action={createAction}
+              teamMembers={teamForForm}
+              launches={launchesForForm}
+            />
+          </div>
         )}
       </header>
 
-      {leads.length === 0 ? (
-        <div className="rounded-md border border-dashed border-border bg-surface/40 p-8 text-center">
-          <p className="text-sm text-fg-muted">
-            Sin leads cargados todavía
-            {canEdit ? "." : ". Pedile al equipo que cargue el primero."}
-          </p>
-        </div>
-      ) : (
-        <KanbanBoard
-          leads={leads}
-          teamMembers={teamForForm}
-          launches={launchesForForm}
+      {/* Tabs */}
+      <nav className="flex gap-1 border-b border-border" aria-label="Vista de leads">
+        <TabLink projectId={projectId} tab="tabla" current={tab} label="Tabla" />
+        <TabLink
+          projectId={projectId}
+          tab="kanban"
+          current={tab}
+          label="Kanban (promovidos)"
+        />
+      </nav>
+
+      {tab === "kanban" ? (
+        <KanbanTab
+          projectId={projectId}
+          teamForForm={teamForForm}
+          launchesForForm={launchesForForm}
           canEdit={canEdit}
           moveAction={moveAction}
           updateAction={updateAction}
@@ -137,7 +172,217 @@ export default async function LeadsPage({
           addPaymentAction={addPaymentAction}
           deletePaymentAction={deletePaymentAction}
         />
+      ) : (
+        <TablaTab
+          projectId={projectId}
+          searchParams={sp}
+          teamForForm={teamForForm}
+          launchesForForm={launchesForForm}
+        />
       )}
     </section>
   );
+}
+
+function TabLink({
+  projectId,
+  tab,
+  current,
+  label,
+}: {
+  readonly projectId: string;
+  readonly tab: Tab;
+  readonly current: Tab;
+  readonly label: string;
+}) {
+  const isActive = tab === current;
+  const href =
+    tab === "tabla"
+      ? `/proyectos/${projectId}/leads`
+      : `/proyectos/${projectId}/leads?view=kanban`;
+  return (
+    <Link
+      href={href}
+      className={
+        "border-b-2 px-3 py-2 text-sm font-medium " +
+        (isActive
+          ? "border-accent text-accent"
+          : "border-transparent text-fg-muted hover:text-fg")
+      }
+    >
+      {label}
+    </Link>
+  );
+}
+
+async function TablaTab({
+  projectId,
+  searchParams,
+  teamForForm,
+  launchesForForm,
+}: {
+  readonly projectId: string;
+  readonly searchParams: Record<string, string | string[] | undefined>;
+  readonly teamForForm: ReadonlyArray<{ id: string; name: string; active: boolean }>;
+  readonly launchesForForm: ReadonlyArray<{ id: string; name: string }>;
+}) {
+  const page = parsePositiveInt(readString(searchParams.page)) ?? 1;
+  const search = readString(searchParams.q) ?? "";
+  const status = filterLiteral(
+    readString(searchParams.status),
+    LEAD_STATUSES as ReadonlyArray<string>,
+  ) as LeadStatus | undefined;
+  const source = filterLiteral(
+    readString(searchParams.source),
+    ["manual", "import", "meta", "ghl", "otro"],
+  ) as LeadSource | undefined;
+  const teamMemberId = readString(searchParams.setter);
+  const launchId = readString(searchParams.launch);
+  const dateFrom = readString(searchParams.from);
+  const dateTo = readString(searchParams.to);
+  const sortColumn = (filterLiteral(
+    readString(searchParams.sort),
+    SORTABLE_COLUMNS as ReadonlyArray<string>,
+  ) ?? "created_at") as SortableColumn;
+  const sortDirection = (filterLiteral(
+    readString(searchParams.dir),
+    SORT_DIRECTIONS as ReadonlyArray<string>,
+  ) ?? "desc") as SortDirection;
+
+  const result = await listLeadsPaginated({
+    projectId,
+    page,
+    pageSize: 50,
+    search,
+    sortColumn,
+    sortDirection,
+    filters: {
+      status,
+      source,
+      teamMemberId: teamMemberId || undefined,
+      launchId: launchId || undefined,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+    },
+  });
+
+  return (
+    <LeadsTable
+      projectId={projectId}
+      rows={result.rows}
+      totalCount={result.totalCount}
+      page={result.page}
+      pageSize={result.pageSize}
+      totalPages={result.totalPages}
+      initialSearch={search}
+      initialFilters={{
+        status: status ?? "",
+        source: source ?? "",
+        teamMemberId: teamMemberId ?? "",
+        launchId: launchId ?? "",
+        dateFrom: dateFrom ?? "",
+        dateTo: dateTo ?? "",
+      }}
+      initialSort={{ column: sortColumn, direction: sortDirection }}
+      teamMembers={teamForForm}
+      launches={launchesForForm}
+    />
+  );
+}
+
+async function KanbanTab({
+  projectId,
+  teamForForm,
+  launchesForForm,
+  canEdit,
+  moveAction,
+  updateAction,
+  deleteAction,
+  salesByLeadId,
+  paymentsBySaleId,
+  modalities,
+  rules,
+  createSaleAction,
+  addPaymentAction,
+  deletePaymentAction,
+}: {
+  readonly projectId: string;
+  readonly teamForForm: ReadonlyArray<{ id: string; name: string; active: boolean }>;
+  readonly launchesForForm: ReadonlyArray<{ id: string; name: string }>;
+  readonly canEdit: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly moveAction: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly updateAction: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly deleteAction: any;
+  readonly salesByLeadId: ReadonlyMap<string, SaleRow>;
+  readonly paymentsBySaleId: ReadonlyMap<string, ReadonlyArray<PaymentRow>>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly modalities: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly rules: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly createSaleAction: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly addPaymentAction: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly deletePaymentAction: any;
+}) {
+  const leads = await listKanbanLeads(projectId);
+
+  if (leads.length === 0) {
+    return (
+      <div className="rounded-md border border-dashed border-border bg-surface/40 p-8 text-center">
+        <p className="text-sm text-fg-muted">
+          El kanban no tiene leads promovidos todavía.
+        </p>
+        <p className="mt-2 text-xs text-fg-subtle">
+          Desde la <Link href={`/proyectos/${projectId}/leads`} className="underline">tabla</Link>,
+          seleccioná los leads que vas a trabajar a mano y promovelos con
+          “★ Al kanban”.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <KanbanBoard
+      leads={leads}
+      teamMembers={teamForForm}
+      launches={launchesForForm}
+      canEdit={canEdit}
+      moveAction={moveAction}
+      updateAction={updateAction}
+      deleteAction={deleteAction}
+      salesByLeadId={salesByLeadId}
+      paymentsBySaleId={paymentsBySaleId}
+      modalities={modalities}
+      rules={rules}
+      createSaleAction={createSaleAction}
+      addPaymentAction={addPaymentAction}
+      deletePaymentAction={deletePaymentAction}
+    />
+  );
+}
+
+// ─── helpers de parseo de query params ──────────────────────────────────────
+
+function readString(v: string | string[] | undefined): string | undefined {
+  if (Array.isArray(v)) return v[0];
+  return v;
+}
+
+function parsePositiveInt(v: string | undefined): number | undefined {
+  if (!v) return undefined;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+function filterLiteral(
+  v: string | undefined,
+  allowed: ReadonlyArray<string>,
+): string | undefined {
+  if (!v) return undefined;
+  return allowed.includes(v) ? v : undefined;
 }

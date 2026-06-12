@@ -3,6 +3,7 @@ import "server-only";
 import { createServiceClient } from "@/lib/supabase/service";
 
 import { fetchMetaInsights, type MetaInsightDay, type MetaSyncResult } from "./meta";
+import { runGhlSync, type GhlRunSummary } from "./sync-ghl";
 
 /**
  * Orchestrator del sync. Una sola función pública `syncLaunch` que el Server
@@ -24,7 +25,7 @@ import { fetchMetaInsights, type MetaInsightDay, type MetaSyncResult } from "./m
  *    `config_missing` y termina.
  */
 
-export type SyncProviderId = "meta";
+export type SyncProviderId = "meta" | "ghl";
 
 export interface SyncLaunchInput {
   launchId: string;
@@ -56,6 +57,20 @@ interface LaunchSnapshot {
 interface MetaProviderConfig {
   ad_account_id?: string;
   campaign_ids?: string[];
+}
+
+interface GhlProviderConfig {
+  /**
+   * Location ID (subaccount) de GHL. Cambia por launch porque cada cliente
+   * tiene su propio location aunque compartan PIT del business.
+   */
+  location_id?: string;
+  /**
+   * Default country code para normalizar los teléfonos GHL antes del match.
+   * Si no se setea, fallback a "AR" para no bloquear el sync. Cuando exista
+   * config por project, este default se va al project.
+   */
+  default_country?: string;
 }
 
 /**
@@ -108,7 +123,21 @@ export async function syncLaunch(
     );
   }
 
-  // 2) Cargar config + secret del provider
+  // 2a) GHL toma su propia rama — modelo y errores son distintos a Meta.
+  //     Lee config + secret + ejecuta match adentro y devuelve directo.
+  if (input.provider === "ghl") {
+    return await runGhlBranch({
+      service,
+      input,
+      launchId: launch.id,
+      projectId: launch.project_id,
+      dateStart: launch.date_start,
+      dateEnd: launch.date_end,
+      integrationConfig: launch.integration_config,
+    });
+  }
+
+  // 2b) Meta: cargar config + secret
   const providerConfig = readProviderConfig(launch.integration_config, input.provider);
   if (!providerConfig.ad_account_id) {
     return await recordTerminalRun(
@@ -178,24 +207,14 @@ export async function syncLaunch(
     };
   }
 
-  // 4) Llamar al adapter
-  let result: MetaSyncResult;
-  if (input.provider === "meta") {
-    result = await fetchMetaInsights({
-      token,
-      adAccountId: providerConfig.ad_account_id,
-      campaignIds: providerConfig.campaign_ids,
-      since: launch.date_start,
-      until: launch.date_end,
-    });
-  } else {
-    // 3a: solo Meta. Si llega otro provider, marcamos como error de
-    // configuración para evitar invocar un adapter inexistente.
-    return await finalizeRun(service, runId, "error", 0, {
-      cause: "provider_not_implemented",
-      provider: input.provider,
-    });
-  }
+  // 4) Llamar al adapter Meta — la rama GHL ya retornó antes (2a).
+  const result: MetaSyncResult = await fetchMetaInsights({
+    token,
+    adAccountId: providerConfig.ad_account_id,
+    campaignIds: providerConfig.campaign_ids,
+    since: launch.date_start,
+    until: launch.date_end,
+  });
 
   // 5) Manejar el resultado
   if (!result.ok) {
@@ -251,6 +270,130 @@ function readProviderConfig(
       ? campaigns.filter((c): c is string => typeof c === "string")
       : undefined,
   };
+}
+
+function readGhlConfig(configBlob: unknown): GhlProviderConfig {
+  if (configBlob === null || typeof configBlob !== "object") return {};
+  const cfg = (configBlob as Record<string, unknown>).ghl;
+  if (cfg === null || typeof cfg !== "object") return {};
+  const record = cfg as Record<string, unknown>;
+  return {
+    location_id: typeof record.location_id === "string" ? record.location_id : undefined,
+    default_country:
+      typeof record.default_country === "string" ? record.default_country : undefined,
+  };
+}
+
+/**
+ * Bifurcación del orchestrator para GHL. Levanta config + secret, crea el
+ * `integration_run` y delega el grueso del trabajo a `runGhlSync` (match +
+ * INSERT/UPDATE de leads). Devuelve el SyncLaunchResult coherente con la
+ * rama Meta para que el caller no tenga que ramificar.
+ */
+async function runGhlBranch(args: {
+  service: ServiceClient;
+  input: SyncLaunchInput;
+  launchId: string;
+  projectId: string;
+  dateStart: string;
+  dateEnd: string;
+  integrationConfig: Record<string, unknown>;
+}): Promise<SyncLaunchResult> {
+  const { service, input } = args;
+  const launchSnapshot: LaunchSnapshot = {
+    id: args.launchId,
+    project_id: args.projectId,
+    date_start: args.dateStart,
+    date_end: args.dateEnd,
+    closed_at: null, // ya validado arriba
+    integration_config: args.integrationConfig,
+  };
+
+  const cfg = readGhlConfig(args.integrationConfig);
+  if (!cfg.location_id) {
+    return await recordTerminalRun(
+      service,
+      input,
+      launchSnapshot,
+      "config_missing",
+      "Falta el location_id en la config del launch (Subaccount ID de GHL).",
+      { cause: "missing_location_id" },
+    );
+  }
+
+  const secretRes = await service
+    .from("launch_secrets")
+    .select("secret")
+    .eq("launch_id", args.launchId)
+    .eq("provider", "ghl")
+    .maybeSingle();
+  const token = (secretRes.data as { secret: string } | null)?.secret ?? null;
+  if (!token) {
+    return await recordTerminalRun(
+      service,
+      input,
+      launchSnapshot,
+      "config_missing",
+      "Falta el Private Integration Token de GHL. Pegalo en la sección de integraciones del launch.",
+      { cause: "missing_token" },
+    );
+  }
+
+  const runPayload = {
+    launch_id: args.launchId,
+    provider: "ghl",
+    triggered_by: input.triggeredBy,
+    status: "running",
+    window_start: args.dateStart,
+    window_end: args.dateEnd,
+  } as never;
+
+  const runInsert = await service
+    .from("integration_runs")
+    .insert(runPayload)
+    .select("id")
+    .maybeSingle();
+  const runId = (runInsert.data as { id: string } | null)?.id;
+  if (!runId) {
+    return {
+      runId: "",
+      status: "error",
+      rowsWritten: 0,
+      errorMessage:
+        runInsert.error?.message ?? "No pude insertar el integration_run inicial",
+    };
+  }
+
+  const summary: GhlRunSummary = await runGhlSync({
+    service,
+    token,
+    locationId: cfg.location_id,
+    defaultCountry: cfg.default_country ?? "AR",
+    projectId: args.projectId,
+    launchId: args.launchId,
+    since: args.dateStart,
+    until: args.dateEnd,
+  });
+
+  if (!summary.ok) {
+    return await finalizeRun(service, runId, summary.kind, 0, {
+      ...summary.detail,
+      message: summary.message,
+      retryAfterSeconds: summary.retryAfterSeconds ?? null,
+    });
+  }
+
+  const totalWritten =
+    summary.appointments.created +
+    summary.appointments.updated +
+    summary.conversations.created +
+    summary.conversations.updated;
+
+  return await finalizeRun(service, runId, "success", totalWritten, {
+    cause: "ghl_summary",
+    appointments: summary.appointments,
+    conversations: summary.conversations,
+  });
 }
 
 function buildAdsRow(

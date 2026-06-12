@@ -4,8 +4,17 @@
  * `source` arranca con 4 valores; la lista crece cuando se cableen providers
  * automáticos. El check constraint en la DB es la fuente autoritativa — si se
  * agrega un valor, sumarlo acá también.
+ *
+ * `import` (0016) marca leads que entraron por el wizard de xlsx masivo, para
+ * distinguirlos de los cargados a mano (`manual`) — útil para auditar/filtrar.
  */
-export type LeadSource = "manual" | "meta" | "ghl" | "otro";
+export type LeadSource =
+  | "manual"
+  | "import"
+  | "meta"
+  | "ghl"
+  | "whatsapp"
+  | "otro";
 
 export type LeadStatus =
   | "nuevo"
@@ -22,6 +31,10 @@ export interface LeadRow {
   team_member_id: string | null;
   name: string;
   contact: string | null;
+  email: string | null;
+  phone_normalized: string | null;
+  external_id: string | null;
+  pinned_to_kanban: boolean;
   source: LeadSource;
   status: LeadStatus;
   notes: string | null;
