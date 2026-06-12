@@ -69,6 +69,49 @@ export interface GhlFetchFailure {
 
 export type GhlFetchResult<T> = GhlFetchSuccess<T> | GhlFetchFailure;
 
+/**
+ * Metadata de debug propio de la rama appointments. Acompaña a `rows` para
+ * que el run del sync pueda mostrar dónde se cayó la cuenta (ej. "GHL trajo
+ * 0 calendars" vs "GHL trajo 5 calendars pero 0 events" vs "trajo events
+ * pero ninguno mappeable porque viene en otro shape").
+ */
+export interface AppointmentsMeta {
+  calendars_found: number;
+  sample_calendar_ids: string[];
+  users_found: number;
+  sample_user_ids: string[];
+  raw_events_total: number;
+  raw_events_by_source: { from_calendars: number; from_users: number };
+  sample_event_keys: string[];
+  source_errors: number;
+  /** Ventana que mandamos a GHL — para descartar el caso "appointments fuera del rango". */
+  window: {
+    start_iso: string;
+    end_iso: string;
+    start_ms: number;
+    end_ms: number;
+  };
+  /** Keys top-level del primer response body. Si no es `events`, acá se ve. */
+  sample_response_keys: string[];
+  /** Counts por key conocida en el body. Detectamos si GHL usa otro nombre. */
+  array_keys_observed: Record<string, number>;
+}
+
+export interface ConversationsMeta {
+  /** Cuántas conversaciones devolvió GHL en total antes de cualquier filtro. */
+  raw_total: number;
+  /** Keys top-level del primer item, para verificar shape. */
+  sample_conv_keys: string[];
+  /** Valores distintos de `type` que vimos (es el canal del contacto). */
+  observed_types: string[];
+  /** Valores distintos de `lastMessageType` (es el canal del ÚLTIMO mensaje, el que usa GHL para identificar WhatsApp). */
+  observed_last_message_types: string[];
+  /** Cuántas pasaron el filtro "WhatsApp" (mirando type Y lastMessageType). */
+  passed_type_filter: number;
+  /** Cuántas pasaron el filtro de ventana de fecha. */
+  passed_window_filter: number;
+}
+
 interface FetchArgs {
   token: string;
   locationId: string;
@@ -76,28 +119,207 @@ interface FetchArgs {
   until: string; // YYYY-MM-DD
 }
 
-// ─── Appointments ──────────────────────────────────────────────────────────
+// ─── Calendars (descubrimiento) + Appointments ─────────────────────────────
 
 /**
- * Trae appointments del calendar entre `since` y `until` (inclusive).
- * GHL espera epoch millis en startTime/endTime — convertimos las date-only
- * strings que vienen del launch (date_start/date_end).
+ * Trae appointments en `[since, until]` para TODOS los calendars del location.
+ *
+ * Por qué este 2-step (list calendars → list events per calendar):
+ *   `GET /calendars/events` de v2 NO acepta `locationId` solo. Exige uno de
+ *   `calendarId`, `userId` o `groupId` además de la ventana. Si mandás solo
+ *   locationId, GHL responde 422 sin detalle ("Unprocessable Entity").
+ *
+ *   En vez de pedirle al usuario que ingrese un calendarId a mano (frágil:
+ *   los subaccounts suelen tener varios), descubrimos todos los calendars
+ *   y agregamos sus eventos. Es 1 + N requests, pero N es chico (típicamente
+ *   < 5 calendars por subaccount).
+ *
+ * Errores: si list-calendars falla (auth/rate), propagamos. Si un calendar
+ * individual falla, lo registramos en `detail.partial_calendar_errors` pero
+ * seguimos con los demás (no rompemos el sync entero por un solo calendar).
  */
 export async function fetchGhlAppointments(
   args: FetchArgs,
-): Promise<GhlFetchResult<GhlAppointment>> {
+): Promise<
+  | { ok: true; rows: GhlAppointment[]; meta: AppointmentsMeta }
+  | GhlFetchFailure
+> {
+  // Pedimos calendars Y users en paralelo. En GHL los appointments quedan en
+  // calendars de usuarios (setters/closers), no en los Calendar Resources
+  // del location — por eso una sola fuente puede dar `events: []` aunque
+  // haya appointments reales.
+  const [calsResult, usersResult] = await Promise.all([
+    fetchGhlCalendars(args.token, args.locationId),
+    fetchGhlUsers(args.token, args.locationId),
+  ]);
+  if (!calsResult.ok) return calsResult;
+  if (!usersResult.ok) return usersResult;
+
   const startMs = dateToEpochStart(args.since);
   const endMs = dateToEpochEnd(args.until);
-  const params = new URLSearchParams({
-    locationId: args.locationId,
-    startTime: String(startMs),
-    endTime: String(endMs),
-  });
-  const url = `${GHL_API_BASE}/calendars/events?${params.toString()}`;
 
-  const result = await ghlFetch(url, args.token);
+  const meta: AppointmentsMeta = {
+    calendars_found: calsResult.rows.length,
+    sample_calendar_ids: calsResult.rows.slice(0, 5).map((c) => c.id),
+    users_found: usersResult.rows.length,
+    sample_user_ids: usersResult.rows.slice(0, 5).map((u) => u.id),
+    raw_events_total: 0,
+    raw_events_by_source: { from_calendars: 0, from_users: 0 },
+    sample_event_keys: [],
+    source_errors: 0,
+    window: {
+      start_iso: args.since,
+      end_iso: args.until,
+      start_ms: startMs,
+      end_ms: endMs,
+    },
+    sample_response_keys: [],
+    array_keys_observed: {},
+  };
+
+  const allRows: GhlAppointment[] = [];
+  let sampleSeen = false;
+
+  // Helper: pide events para un (key, id) y los acumula.
+  async function pullFor(
+    paramKey: "calendarId" | "userId",
+    id: string,
+    countAgainst: "from_calendars" | "from_users",
+  ): Promise<
+    | { ok: true }
+    | { ok: false; kind: "token_invalid" | "rate_limited"; failure: GhlFetchFailure }
+  > {
+    const params = new URLSearchParams({
+      locationId: args.locationId,
+      [paramKey]: id,
+      startTime: String(startMs),
+      endTime: String(endMs),
+    });
+    const url = `${GHL_API_BASE}/calendars/events?${params.toString()}`;
+    const result = await ghlFetch(url, args.token);
+    if (!result.ok) {
+      if (result.kind === "token_invalid" || result.kind === "rate_limited") {
+        return { ok: false, kind: result.kind, failure: result };
+      }
+      meta.source_errors++;
+      return { ok: true };
+    }
+    // Diagnóstico de shape: capturamos las keys del primer response que veamos,
+    // y por cada response anotamos cuáles keys son arrays + su tamaño. Si GHL
+    // emite los appointments en otra key (ej. "appointments"), se ve acá.
+    if (
+      meta.sample_response_keys.length === 0 &&
+      typeof result.body === "object" &&
+      result.body !== null
+    ) {
+      meta.sample_response_keys = Object.keys(
+        result.body as Record<string, unknown>,
+      );
+    }
+    if (typeof result.body === "object" && result.body !== null) {
+      for (const [k, v] of Object.entries(result.body as Record<string, unknown>)) {
+        if (Array.isArray(v)) {
+          meta.array_keys_observed[k] =
+            (meta.array_keys_observed[k] ?? 0) + v.length;
+        }
+      }
+    }
+
+    const rawEvents = extractArray(result.body, ["events"]);
+    meta.raw_events_total += rawEvents.length;
+    meta.raw_events_by_source[countAgainst] += rawEvents.length;
+
+    if (!sampleSeen && rawEvents.length > 0) {
+      const first = rawEvents[0];
+      if (first && typeof first === "object") {
+        meta.sample_event_keys = Object.keys(first as Record<string, unknown>);
+        sampleSeen = true;
+      }
+    }
+    for (const row of parseAppointmentsBody({ events: rawEvents })) {
+      allRows.push(row);
+    }
+    return { ok: true };
+  }
+
+  for (const cal of calsResult.rows) {
+    const r = await pullFor("calendarId", cal.id, "from_calendars");
+    if (!r.ok) return r.failure;
+  }
+  for (const u of usersResult.rows) {
+    const r = await pullFor("userId", u.id, "from_users");
+    if (!r.ok) return r.failure;
+  }
+
+  // De-dup por event.id (el mismo appointment puede aparecer como event del
+  // calendar Y como event del user assigned).
+  const seen = new Set<string>();
+  const deduped = allRows.filter((r) => {
+    if (seen.has(r.id)) return false;
+    seen.add(r.id);
+    return true;
+  });
+
+  return { ok: true, rows: deduped, meta };
+}
+
+interface GhlUserRef {
+  id: string;
+  name: string;
+}
+
+/**
+ * Lista users del location. La API devuelve `{ users: [...] }`. Si el PIT no
+ * tiene scope `View Users`, falla con 401/403 → propagamos como token_invalid
+ * y el caller (appointments) corta.
+ */
+async function fetchGhlUsers(
+  token: string,
+  locationId: string,
+): Promise<GhlFetchResult<GhlUserRef>> {
+  const url = `${GHL_API_BASE}/users/?locationId=${encodeURIComponent(locationId)}`;
+  const result = await ghlFetch(url, token);
   if (!result.ok) return result;
-  return { ok: true, rows: parseAppointmentsBody(result.body) };
+
+  const items = extractArray(result.body, ["users"]);
+  const rows: GhlUserRef[] = [];
+  for (const item of items) {
+    if (typeof item !== "object" || item === null) continue;
+    const u = item as Record<string, unknown>;
+    const id = strOrNull(u.id);
+    if (!id) continue;
+    rows.push({ id, name: strOrNull(u.name) ?? id });
+  }
+  return { ok: true, rows };
+}
+
+interface GhlCalendarRef {
+  id: string;
+  name: string;
+}
+
+/**
+ * Lista todos los calendars del location. La API devuelve `{ calendars: [...] }`.
+ * Falla → propagamos el GhlFetchFailure tal cual.
+ */
+async function fetchGhlCalendars(
+  token: string,
+  locationId: string,
+): Promise<GhlFetchResult<GhlCalendarRef>> {
+  const url = `${GHL_API_BASE}/calendars/?locationId=${encodeURIComponent(locationId)}`;
+  const result = await ghlFetch(url, token);
+  if (!result.ok) return result;
+
+  const cals = extractArray(result.body, ["calendars"]);
+  const rows: GhlCalendarRef[] = [];
+  for (const item of cals) {
+    if (typeof item !== "object" || item === null) continue;
+    const c = item as Record<string, unknown>;
+    const id = strOrNull(c.id);
+    if (!id) continue;
+    rows.push({ id, name: strOrNull(c.name) ?? id });
+  }
+  return { ok: true, rows };
 }
 
 /** Pure function — testeable contra fixtures sin mockear fetch. */
@@ -131,27 +353,87 @@ export function parseAppointmentsBody(body: unknown): GhlAppointment[] {
  */
 export async function fetchGhlConversations(
   args: FetchArgs,
-): Promise<GhlFetchResult<GhlConversation>> {
-  const url = `${GHL_API_BASE}/conversations/search`;
-  const result = await ghlFetch(url, args.token, {
-    method: "POST",
-    body: JSON.stringify({
-      locationId: args.locationId,
-      // GHL acepta sort por dateUpdated desc y limit hasta 100. Para 3b
-      // pedimos los 100 más recientes; cuando el caso aparezca con más,
-      // sumamos paginación (esto es 3b, no 3c).
-      limit: 100,
-      sort: "desc",
-      sortBy: "last_message_date",
-    }),
+): Promise<
+  | { ok: true; rows: GhlConversation[]; meta: ConversationsMeta }
+  | GhlFetchFailure
+> {
+  const params = new URLSearchParams({
+    locationId: args.locationId,
+    limit: "100",
+    sort: "desc",
+    sortBy: "last_message_date",
   });
+  const url = `${GHL_API_BASE}/conversations/search?${params.toString()}`;
+  const result = await ghlFetch(url, args.token);
   if (!result.ok) return result;
+
   const sinceMs = dateToEpochStart(args.since);
   const untilMs = dateToEpochEnd(args.until);
-  return {
-    ok: true,
-    rows: parseConversationsBody(result.body, sinceMs, untilMs),
+
+  const rawItems = extractArray(result.body, ["conversations"]);
+  const meta: ConversationsMeta = {
+    raw_total: rawItems.length,
+    sample_conv_keys:
+      rawItems.length > 0 && typeof rawItems[0] === "object" && rawItems[0]
+        ? Object.keys(rawItems[0] as Record<string, unknown>)
+        : [],
+    observed_types: [],
+    observed_last_message_types: [],
+    passed_type_filter: 0,
+    passed_window_filter: 0,
   };
+
+  // Recolectamos `type` y `lastMessageType` distintos para diagnóstico.
+  const typesSet = new Set<string>();
+  const lastTypesSet = new Set<string>();
+  for (const item of rawItems) {
+    if (typeof item !== "object" || item === null) continue;
+    const obj = item as Record<string, unknown>;
+    if (typeof obj.type === "string") typesSet.add(obj.type);
+    if (typeof obj.lastMessageType === "string") {
+      lastTypesSet.add(obj.lastMessageType);
+    }
+  }
+  meta.observed_types = Array.from(typesSet);
+  meta.observed_last_message_types = Array.from(lastTypesSet);
+
+  const out: GhlConversation[] = [];
+  for (const item of rawItems) {
+    if (typeof item !== "object" || item === null) continue;
+    const conv = item as Record<string, unknown>;
+    const id = strOrNull(conv.id);
+    if (!id) continue;
+
+    // El canal real de WhatsApp viene en `lastMessageType` (ej.
+    // `TYPE_WHATSAPP`). El `type` del contacto es otra cosa
+    // (ej. `TYPE_PHONE` = "tiene teléfono como medio de contacto").
+    // Aceptamos match en cualquiera de los dos por defensividad.
+    const type = strOrNull(conv.type);
+    const lastMessageType = strOrNull(conv.lastMessageType);
+    if (!isWhatsAppType(type) && !isWhatsAppType(lastMessageType)) continue;
+    meta.passed_type_filter++;
+
+    const lastIso = strOrNull(conv.lastMessageDate);
+    if (lastIso) {
+      const lastMs = Date.parse(lastIso);
+      if (Number.isFinite(lastMs) && (lastMs < sinceMs || lastMs > untilMs)) {
+        continue;
+      }
+    }
+    meta.passed_window_filter++;
+
+    out.push({
+      id,
+      rawPhone: extractPhone(conv),
+      contactName: extractContactName(conv),
+      // Reflejamos el `lastMessageType` cuando exista (es el canal real).
+      type: lastMessageType ?? type,
+      lastMessageDate: lastIso,
+      raw: conv,
+    });
+  }
+
+  return { ok: true, rows: out, meta };
 }
 
 /** Pure function — testeable contra fixtures sin mockear fetch. */
@@ -231,14 +513,19 @@ async function ghlFetch(
     };
   }
 
-  // 401 = token inválido / sin permiso. GHL devuelve message tipo "Invalid JWT"
-  // o "Unauthorized". No discriminamos subcausas — todo 401 va a token_invalid.
+  // Cualquier respuesta no-OK: capturamos el body crudo en `responseBody` para
+  // que el orchestrator, al hacer merge con su propio `message`, no pise lo
+  // que GHL haya mandado en el cuerpo.
   if (res.status === 401 || res.status === 403) {
     return {
       ok: false,
       kind: "token_invalid",
       message: `GHL respondió ${res.status}`,
-      detail: await safeJson(res),
+      detail: {
+        httpStatus: res.status,
+        url,
+        responseBody: await safeJson(res),
+      },
     };
   }
 
@@ -251,19 +538,14 @@ async function ghlFetch(
       ok: false,
       kind: "rate_limited",
       message: "GHL rate limit (429)",
-      detail: await safeJson(res),
+      detail: {
+        httpStatus: 429,
+        url,
+        responseBody: await safeJson(res),
+      },
       retryAfterSeconds: Number.isFinite(retryAfterSeconds ?? NaN)
         ? retryAfterSeconds
         : null,
-    };
-  }
-
-  if (res.status >= 500) {
-    return {
-      ok: false,
-      kind: "error",
-      message: `GHL respondió ${res.status}`,
-      detail: await safeJson(res),
     };
   }
 
@@ -272,7 +554,11 @@ async function ghlFetch(
       ok: false,
       kind: "error",
       message: `GHL respondió ${res.status}`,
-      detail: await safeJson(res),
+      detail: {
+        httpStatus: res.status,
+        url,
+        responseBody: await safeJson(res),
+      },
     };
   }
 

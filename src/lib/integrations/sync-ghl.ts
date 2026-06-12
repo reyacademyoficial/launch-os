@@ -5,9 +5,11 @@ import { parsePhoneNumberFromString, type CountryCode } from "libphonenumber-js"
 import {
   fetchGhlAppointments,
   fetchGhlConversations,
+  type AppointmentsMeta,
+  type ConversationsMeta,
   type GhlAppointment,
   type GhlConversation,
-  type GhlFetchResult,
+  type GhlFetchFailure,
 } from "./ghl";
 import {
   resolveMatchAction,
@@ -50,15 +52,35 @@ function loose(service: ServiceClient): LooseClient {
   return service as unknown as LooseClient;
 }
 
+interface StageCounts {
+  fetched: number;
+  created: number;
+  updated: number;
+  skipped: number;
+}
+
 export type GhlRunSummary =
   | {
-      ok: true;
-      appointments: { fetched: number; created: number; updated: number; skipped: number };
-      conversations: { fetched: number; created: number; updated: number; skipped: number };
+      status: "success";
+      appointments: StageCounts;
+      conversations: StageCounts;
+      appointmentsMeta: AppointmentsMeta;
+      conversationsMeta: ConversationsMeta;
     }
   | {
-      ok: false;
-      kind: "token_invalid" | "rate_limited" | "error";
+      status: "partial";
+      appointments: StageCounts;
+      conversations: StageCounts;
+      appointmentsMeta: AppointmentsMeta;
+      partialError: {
+        stage: "conversations";
+        kind: "token_invalid" | "rate_limited" | "error";
+        message: string;
+        detail: Record<string, unknown>;
+      };
+    }
+  | {
+      status: "token_invalid" | "rate_limited" | "error";
       message: string;
       detail: Record<string, unknown>;
       retryAfterSeconds?: number | null;
@@ -78,6 +100,8 @@ export interface RunGhlSyncArgs {
 export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   const country = (args.defaultCountry || "AR") as CountryCode;
 
+  // Etapa 1: appointments. Si falla, cortamos — no tiene sentido procesar
+  // conversations si ni siquiera pudimos leer del calendario.
   const apptResult = await fetchGhlAppointments({
     token: args.token,
     locationId: args.locationId,
@@ -103,7 +127,20 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     since: args.since,
     until: args.until,
   });
-  if (!convResult.ok) return propagateFailure(convResult);
+  if (!convResult.ok) {
+    return {
+      status: "partial",
+      appointments: apptSummary,
+      conversations: { fetched: 0, created: 0, updated: 0, skipped: 0 },
+      appointmentsMeta: apptResult.meta,
+      partialError: {
+        stage: "conversations",
+        kind: convResult.kind,
+        message: convResult.message,
+        detail: convResult.detail,
+      },
+    };
+  }
 
   const convSummary = await processBatch(
     args,
@@ -117,9 +154,11 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   );
 
   return {
-    ok: true,
+    status: "success",
     appointments: apptSummary,
     conversations: convSummary,
+    appointmentsMeta: apptResult.meta,
+    conversationsMeta: convResult.meta,
   };
 }
 
@@ -288,10 +327,9 @@ function buildConversationNotes(c: GhlConversation): string | null {
   return `GHL ${c.type ?? "WhatsApp"} conversación ${c.id} — último mensaje ${c.lastMessageDate}`;
 }
 
-function propagateFailure<T>(failure: Extract<GhlFetchResult<T>, { ok: false }>): GhlRunSummary {
+function propagateFailure(failure: GhlFetchFailure): GhlRunSummary {
   return {
-    ok: false,
-    kind: failure.kind,
+    status: failure.kind,
     message: failure.message,
     detail: failure.detail,
     retryAfterSeconds: failure.retryAfterSeconds ?? null,

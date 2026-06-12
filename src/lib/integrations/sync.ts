@@ -37,6 +37,7 @@ export interface SyncLaunchResult {
   runId: string;
   status:
     | "success"
+    | "partial"
     | "error"
     | "token_invalid"
     | "rate_limited"
@@ -375,25 +376,43 @@ async function runGhlBranch(args: {
     until: args.dateEnd,
   });
 
-  if (!summary.ok) {
-    return await finalizeRun(service, runId, summary.kind, 0, {
-      ...summary.detail,
-      message: summary.message,
-      retryAfterSeconds: summary.retryAfterSeconds ?? null,
-    });
+  // Switch sobre el discriminator para que TS narrowee bien las 3 ramas.
+  switch (summary.status) {
+    case "token_invalid":
+    case "rate_limited":
+    case "error":
+      return await finalizeRun(service, runId, summary.status, 0, {
+        ...summary.detail,
+        message: summary.message,
+        retryAfterSeconds: summary.retryAfterSeconds ?? null,
+      });
+
+    case "partial": {
+      const written =
+        summary.appointments.created + summary.appointments.updated;
+      return await finalizeRun(service, runId, "partial", written, {
+        cause: "ghl_partial",
+        appointments: summary.appointments,
+        appointments_meta: summary.appointmentsMeta,
+        partial_error: summary.partialError,
+      });
+    }
+
+    case "success": {
+      const totalWritten =
+        summary.appointments.created +
+        summary.appointments.updated +
+        summary.conversations.created +
+        summary.conversations.updated;
+      return await finalizeRun(service, runId, "success", totalWritten, {
+        cause: "ghl_summary",
+        appointments: summary.appointments,
+        conversations: summary.conversations,
+        appointments_meta: summary.appointmentsMeta,
+        conversations_meta: summary.conversationsMeta,
+      });
+    }
   }
-
-  const totalWritten =
-    summary.appointments.created +
-    summary.appointments.updated +
-    summary.conversations.created +
-    summary.conversations.updated;
-
-  return await finalizeRun(service, runId, "success", totalWritten, {
-    cause: "ghl_summary",
-    appointments: summary.appointments,
-    conversations: summary.conversations,
-  });
 }
 
 function buildAdsRow(
