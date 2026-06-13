@@ -107,6 +107,14 @@ export default async function LaunchLayout({
                 ⬇ PDF ejecutivo
               </a>
             )}
+            {canEditProjectValue && (
+              <a
+                href={`/api/proyectos/${projectId}/launches/${launchId}/report/commissions`}
+                className="inline-flex items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-bg-elevated"
+              >
+                ⬇ PDF comisiones
+              </a>
+            )}
             {canEditLaunchValue && (
               <LaunchFormModal
                 triggerLabel="Editar"
