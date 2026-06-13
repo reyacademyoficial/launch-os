@@ -56,19 +56,29 @@ export default async function LaunchKpiPage({
               Leads por canal por día. Alimenta el gráfico de abajo.
             </p>
           </div>
-          {canEditLaunchValue && !isClosed && (
-            <DailyFormModal
-              triggerLabel="+ Agregar día"
-              title="Agregar día"
-              submitLabel="Guardar"
-              action={addDailyAction}
-            />
-          )}
-          {canEditLaunchValue && isClosed && (
-            <p className="text-xs text-fg-subtle">
-              Lanzamiento cerrado — no se pueden cargar más datos.
-            </p>
-          )}
+          <div className="flex items-center gap-2">
+            {canEditLaunchValue && mergedDaily.length > 0 && (
+              <a
+                href={`/api/proyectos/${projectId}/launches/${launchId}/daily/export?format=csv`}
+                className="inline-flex items-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-semibold text-fg hover:bg-bg-elevated"
+              >
+                ⬇ Exportar CSV
+              </a>
+            )}
+            {canEditLaunchValue && !isClosed && (
+              <DailyFormModal
+                triggerLabel="+ Agregar día"
+                title="Agregar día"
+                submitLabel="Guardar"
+                action={addDailyAction}
+              />
+            )}
+            {canEditLaunchValue && isClosed && (
+              <p className="text-xs text-fg-subtle">
+                Lanzamiento cerrado — no se pueden cargar más datos.
+              </p>
+            )}
+          </div>
         </header>
 
         {daily.length === 0 && mergedDaily.length === 0 ? (

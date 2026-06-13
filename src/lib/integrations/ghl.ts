@@ -218,6 +218,9 @@ export async function fetchGhlAppointments(
   let sampleSeen = false;
 
   // Helper: pide events para un (key, id) y los acumula.
+  // Antes corría dentro de dos `for await` secuenciales: con 5 calendars + 10
+  // users eso eran 15 round-trips a GHL en serie. Ahora se ejecutan todos en
+  // paralelo con concurrency 5 (medido contra el rate limit típico de GHL).
   async function pullFor(
     paramKey: "calendarId" | "userId",
     id: string,
@@ -279,14 +282,42 @@ export async function fetchGhlAppointments(
     return { ok: true };
   }
 
-  for (const cal of calsResult.rows) {
-    const r = await pullFor("calendarId", cal.id, "from_calendars");
-    if (!r.ok) return r.failure;
-  }
-  for (const u of usersResult.rows) {
-    const r = await pullFor("userId", u.id, "from_users");
-    if (!r.ok) return r.failure;
-  }
+  // Construimos la lista de jobs (calendarId/userId) y los ejecutamos con
+  // concurrency limitada. Si alguno falla con token_invalid/rate_limited
+  // propagamos el primer error encontrado (no tiene sentido seguir tirando
+  // contra una API que ya nos rechazó).
+  type Job = {
+    paramKey: "calendarId" | "userId";
+    id: string;
+    countAgainst: "from_calendars" | "from_users";
+  };
+  const jobs: Job[] = [
+    ...calsResult.rows.map((c): Job => ({
+      paramKey: "calendarId",
+      id: c.id,
+      countAgainst: "from_calendars",
+    })),
+    ...usersResult.rows.map((u): Job => ({
+      paramKey: "userId",
+      id: u.id,
+      countAgainst: "from_users",
+    })),
+  ];
+
+  let cursor = 0;
+  let propagated: GhlFetchFailure | null = null;
+  const workers = Array.from({ length: Math.min(5, jobs.length) }, async () => {
+    while (true) {
+      if (propagated) return;
+      const i = cursor++;
+      if (i >= jobs.length) return;
+      const j = jobs[i]!;
+      const r = await pullFor(j.paramKey, j.id, j.countAgainst);
+      if (!r.ok && !propagated) propagated = r.failure;
+    }
+  });
+  await Promise.all(workers);
+  if (propagated) return propagated;
 
   // De-dup por event.id (el mismo appointment puede aparecer como event del
   // calendar Y como event del user assigned).

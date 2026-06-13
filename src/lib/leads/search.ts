@@ -119,6 +119,88 @@ export async function listLeadsPaginated(
 }
 
 /**
+ * Variante de `listLeadsPaginated` para exportar — mismo filtrado pero sin
+ * paginación, con un cap defensivo. A escala esperada (~20k leads por brief)
+ * el cap nunca se toca; existe para que un proyecto extremo no traiga 200k
+ * filas y reviente el serializer (xlsx en memoria, CSV string en memoria).
+ *
+ * El cap se aplica server-side via `range(0, MAX_EXPORT_ROWS - 1)`. Si lo
+ * tocamos, se marca `truncated = true` para que el caller decida qué hacer
+ * (header de respuesta, banner, etc.).
+ *
+ * Permisos: los filtros + RLS aplican igual que en la versión paginada — solo
+ * trae lo que el caller puede leer.
+ */
+export const MAX_EXPORT_ROWS = 50_000;
+
+export interface LeadExportParams {
+  projectId: string;
+  filters: LeadFilters;
+  search: string;
+  sortColumn: SortableColumn;
+  sortDirection: SortDirection;
+}
+
+export interface LeadExportResult {
+  rows: LeadRow[];
+  totalCount: number;
+  truncated: boolean;
+}
+
+export async function listLeadsForExport(
+  params: LeadExportParams,
+): Promise<LeadExportResult> {
+  const supabase = await createClient();
+
+  let query = supabase
+    .from("leads")
+    .select("*", { count: "exact" })
+    .eq("project_id", params.projectId);
+
+  // Filtros — misma lógica que `listLeadsPaginated`. Mantenemos el copy/paste
+  // a propósito porque chainear `.from().select()` con el client de Supabase
+  // no se factoriza bien (cada `.eq()` devuelve un type narrowing nuevo).
+  const f = params.filters;
+  if (f.status) query = query.eq("status", f.status);
+  if (f.source) query = query.eq("source", f.source);
+  if (f.teamMemberId) query = query.eq("team_member_id", f.teamMemberId);
+  if (f.launchId) query = query.eq("launch_id", f.launchId);
+  if (f.dateFrom) query = query.gte("created_at", f.dateFrom);
+  if (f.dateTo) query = query.lte("created_at", `${f.dateTo}T23:59:59.999Z`);
+  if (typeof f.pinnedToKanban === "boolean") {
+    query = query.eq("pinned_to_kanban", f.pinnedToKanban);
+  }
+
+  const q = params.search.trim();
+  if (q !== "") {
+    const escaped = escapeIlike(q);
+    query = query.or(
+      `name.ilike.%${escaped}%,phone_normalized.ilike.%${escaped}%,email.ilike.%${escaped}%`,
+    );
+  }
+
+  const sortColumn = (SORTABLE_COLUMNS as ReadonlyArray<string>).includes(
+    params.sortColumn,
+  )
+    ? params.sortColumn
+    : "created_at";
+  const ascending = params.sortDirection === "asc";
+
+  query = query.order(sortColumn, { ascending }).range(0, MAX_EXPORT_ROWS - 1);
+
+  const { data, count, error } = await query;
+  if (error) throw new Error(error.message);
+
+  const rows = (data ?? []) as unknown as LeadRow[];
+  const totalCount = count ?? rows.length;
+  return {
+    rows,
+    totalCount,
+    truncated: totalCount > rows.length,
+  };
+}
+
+/**
  * Lee leads para el kanban — solo los pinned. Se mantiene la misma forma de
  * `listLeads` (devuelve LeadRow[]) para no romper el client del board.
  *

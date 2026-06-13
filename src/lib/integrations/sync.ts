@@ -5,7 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { tryComputeLaunchCalendar } from "@/lib/launches/calendar";
 
 import { fetchMetaInsights, type MetaInsightDay, type MetaSyncResult } from "./meta";
-import { runGhlSync, type GhlRunSummary } from "./sync-ghl";
+import { runGhlSync, type GhlRunSummary, type GhlSyncStage } from "./sync-ghl";
 
 /**
  * Orchestrator del sync. Una sola función pública `syncLaunch` que el Server
@@ -29,19 +29,29 @@ import { runGhlSync, type GhlRunSummary } from "./sync-ghl";
 
 export type SyncProviderId = "meta" | "ghl";
 
-// La función `expire_stale_integration_runs` está fuera del Database type
-// generado — usamos un cast laxo para llamarla por nombre sin perder type
-// safety en el resto del archivo. Mismo patrón que usa sync-ghl.ts.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type LooseRpcClient = { rpc: (name: string, args?: Record<string, unknown>) => any };
-function loose(svc: unknown): LooseRpcClient {
-  return svc as LooseRpcClient;
+// Cast laxo para llamar a `expire_stale_integration_runs` (RPC fuera del
+// Database type generado) y para queries contra columnas nuevas que el
+// generador todavía no conoce (ej. `stage` agregado por 0020). Mismo
+// workaround que usa sync-ghl.ts.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+type LooseClient = {
+  rpc: (name: string, args?: Record<string, unknown>) => any;
+  from: (name: string) => any;
+};
+/* eslint-enable @typescript-eslint/no-explicit-any */
+function loose(svc: unknown): LooseClient {
+  return svc as LooseClient;
 }
 
 export interface SyncLaunchInput {
   launchId: string;
   provider: SyncProviderId;
   triggeredBy: string | null;
+  /**
+   * Solo para GHL: qué stage correr. Meta ignora este campo (su sync no se
+   * particiona). Si provider='ghl' y stage no viene, default a 'appointments'.
+   */
+  stage?: GhlSyncStage;
 }
 
 export interface SyncLaunchResult {
@@ -154,6 +164,7 @@ export async function syncLaunch(
       dateStart: launch.date_start,
       dateEnd: launch.date_end,
       integrationConfig: launch.integration_config,
+      stage: input.stage ?? "appointments",
     });
   }
 
@@ -305,10 +316,11 @@ function readGhlConfig(configBlob: unknown): GhlProviderConfig {
 }
 
 /**
- * Bifurcación del orchestrator para GHL. Levanta config + secret, calcula la
- * ventana compra+cierre del calendar (para conversations), obtiene el
- * `lastSuccessAt` del último run exitoso (sync incremental), crea el
- * `integration_run` y delega a `runGhlSync`.
+ * Bifurcación del orchestrator para GHL. Una corrida = UNA stage. Cada stage
+ * se persiste con su propio integration_run (incluye columna `stage`), lleva
+ * su propio `lastSuccessAt` incremental y vive dentro del timeout del Server
+ * Action. El usuario hace 3 clicks para cubrir las 3 stages (o 1 click si ya
+ * sincronizó las otras y solo quiere refrescar una).
  */
 async function runGhlBranch(args: {
   service: ServiceClient;
@@ -318,8 +330,9 @@ async function runGhlBranch(args: {
   dateStart: string;
   dateEnd: string;
   integrationConfig: Record<string, unknown>;
+  stage: GhlSyncStage;
 }): Promise<SyncLaunchResult> {
-  const { service, input } = args;
+  const { service, input, stage } = args;
   const launchSnapshot: LaunchSnapshot = {
     id: args.launchId,
     project_id: args.projectId,
@@ -338,6 +351,7 @@ async function runGhlBranch(args: {
       "config_missing",
       "Falta el location_id en la config del launch (Subaccount ID de GHL).",
       { cause: "missing_location_id" },
+      stage,
     );
   }
 
@@ -356,12 +370,14 @@ async function runGhlBranch(args: {
       "config_missing",
       "Falta el Private Integration Token de GHL. Pegalo en la sección de integraciones del launch.",
       { cause: "missing_token" },
+      stage,
     );
   }
 
   const runPayload = {
     launch_id: args.launchId,
     provider: "ghl",
+    stage,
     triggered_by: input.triggeredBy,
     status: "running",
     window_start: args.dateStart,
@@ -385,8 +401,8 @@ async function runGhlBranch(args: {
   }
 
   // Calendario del launch — para la ventana de WhatsApp (compra+cierre).
-  // Si no tiene launch_date, conversationsWindow queda null y el sync usa
-  // [date_start, date_end] como fallback.
+  // Solo lo necesitamos si la stage es 'conversations'; pedirlo igual no
+  // cuesta nada y mantiene el código uniforme.
   const launchRowRes = await service
     .from("launches")
     .select(
@@ -412,13 +428,16 @@ async function runGhlBranch(args: {
     ? { start: calendar.compra.startDate, end: calendar.cierre.endDate }
     : null;
 
-  // Sync incremental: tomamos started_at del último run con status='success'.
-  // Si nunca corrió, lastSuccessAt = null → el adapter procesa toda la ventana.
-  const lastSuccessRes = await service
+  // Incremental por stage: cada stage lleva su propio cutoff. Si la stage
+  // nunca tuvo success, lastSuccessAt = null → procesa toda la ventana.
+  // Cast vía loose() porque la columna `stage` (0020) todavía no está en el
+  // Database type generado — mismo workaround que el resto del archivo.
+  const lastSuccessRes = await loose(service)
     .from("integration_runs")
     .select("started_at")
     .eq("launch_id", args.launchId)
     .eq("provider", "ghl")
+    .eq("stage", stage)
     .eq("status", "success")
     .order("started_at", { ascending: false })
     .limit(1)
@@ -433,60 +452,29 @@ async function runGhlBranch(args: {
     defaultCountry: cfg.default_country ?? "AR",
     projectId: args.projectId,
     launchId: args.launchId,
+    stage,
     since: args.dateStart,
     until: args.dateEnd,
     conversationsWindow,
     lastSuccessAt,
   });
 
-  // Switch sobre el discriminator para que TS narrowee bien las 3 ramas.
-  switch (summary.status) {
-    case "token_invalid":
-    case "rate_limited":
-    case "error":
-      return await finalizeRun(service, runId, summary.status, 0, {
-        ...summary.detail,
-        message: summary.message,
-        retryAfterSeconds: summary.retryAfterSeconds ?? null,
-      });
-
-    case "partial": {
-      const written =
-        summary.appointments.created +
-        summary.appointments.updated +
-        summary.conversations.created +
-        summary.conversations.updated +
-        summary.contacts.created +
-        summary.contacts.updated;
-      return await finalizeRun(service, runId, "partial", written, {
-        cause: "ghl_partial",
-        appointments: summary.appointments,
-        conversations: summary.conversations,
-        contacts: summary.contacts,
-        appointments_meta: summary.appointmentsMeta,
-        partial_error: summary.partialError,
-      });
-    }
-
-    case "success": {
-      const totalWritten =
-        summary.appointments.created +
-        summary.appointments.updated +
-        summary.conversations.created +
-        summary.conversations.updated +
-        summary.contacts.created +
-        summary.contacts.updated;
-      return await finalizeRun(service, runId, "success", totalWritten, {
-        cause: "ghl_summary",
-        appointments: summary.appointments,
-        conversations: summary.conversations,
-        contacts: summary.contacts,
-        appointments_meta: summary.appointmentsMeta,
-        conversations_meta: summary.conversationsMeta,
-        contacts_meta: summary.contactsMeta,
-      });
-    }
+  if (summary.status !== "success") {
+    return await finalizeRun(service, runId, summary.status, 0, {
+      stage: summary.stage,
+      ...summary.detail,
+      message: summary.message,
+      retryAfterSeconds: summary.retryAfterSeconds ?? null,
+    });
   }
+
+  const written = summary.counts.created + summary.counts.updated;
+  return await finalizeRun(service, runId, "success", written, {
+    cause: "ghl_summary",
+    stage: summary.stage,
+    counts: summary.counts,
+    meta: summary.meta,
+  });
 }
 
 function buildAdsRow(
@@ -521,10 +509,13 @@ async function recordTerminalRun(
   status: SyncLaunchResult["status"],
   message: string,
   detail: Record<string, unknown>,
+  /** Solo para GHL: persiste qué stage falló. Null para Meta (no aplica). */
+  stage: GhlSyncStage | null = null,
 ): Promise<SyncLaunchResult> {
   const payload = {
     launch_id: launch.id,
     provider: input.provider,
+    stage,
     triggered_by: input.triggeredBy,
     started_at: new Date().toISOString(),
     finished_at: new Date().toISOString(),

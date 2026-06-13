@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { syncLaunch, type SyncProviderId } from "@/lib/integrations/sync";
+import type { GhlSyncStage } from "@/lib/integrations/sync-ghl";
 import {
   requireCanEditLaunchesIn,
   requireSessionProfile,
@@ -42,6 +43,8 @@ export async function triggerSync(
   projectId: string,
   launchId: string,
   provider: SyncProviderId,
+  /** Solo para GHL: qué stage correr. Meta lo ignora. */
+  stage?: GhlSyncStage,
 ): Promise<TriggerSyncResult> {
   const profile = await requireCanEditLaunchesIn(projectId);
 
@@ -49,6 +52,7 @@ export async function triggerSync(
     launchId,
     provider,
     triggeredBy: profile.id,
+    stage,
   });
 
   revalidatePath(`/proyectos/${projectId}/launches/${launchId}`);

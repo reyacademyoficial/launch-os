@@ -57,32 +57,68 @@ function fireWatchdogInBackground(): void {
  * el orchestrator vía service-role.
  */
 
+export type RunStatus =
+  | "running"
+  | "success"
+  | "partial"
+  | "error"
+  | "token_invalid"
+  | "rate_limited"
+  | "config_missing";
+
+/** Las stages que usa GHL. Otros providers tienen stage=null. */
+export type RunStage = "appointments" | "conversations" | "contacts";
+
+export interface StageStatus {
+  /** Status de la última corrida de esta stage (cualquier estado). */
+  lastRunStatus: RunStatus | null;
+  lastRunStartedAt: string | null;
+  /** Último OK de esta stage (sirve para el "Última sync OK" por stage). */
+  lastSuccessAt: string | null;
+  lastSuccessRowsWritten: number | null;
+}
+
 export interface IntegrationStatusForProvider {
   provider: string;
-  /** Status del run más reciente, o null si nunca corrió. */
-  lastRunStatus:
-    | "running"
-    | "success"
-    | "partial"
-    | "error"
-    | "token_invalid"
-    | "rate_limited"
-    | "config_missing"
-    | null;
+  /** Status del run más reciente del provider (ignora stage). */
+  lastRunStatus: RunStatus | null;
   /** ISO timestamp del run más reciente, sin importar el status. */
   lastRunStartedAt: string | null;
-  /** ISO timestamp del último run con status='success'. */
+  /** ISO timestamp del último run con status='success' (ignora stage). */
   lastSuccessAt: string | null;
   /** rows_written del último run con status='success'. */
   lastSuccessRowsWritten: number | null;
+  /**
+   * Estado granular por stage. Solo se popula para GHL — Meta deja todas
+   * las entradas vacías porque su sync no se particiona.
+   */
+  stages: Record<RunStage, StageStatus>;
 }
 
 interface RunRow {
   provider: string;
-  status: IntegrationStatusForProvider["lastRunStatus"];
+  stage: RunStage | null;
+  status: RunStatus | null;
   started_at: string;
   finished_at: string | null;
   rows_written: number | null;
+}
+
+function emptyStageStatus(): StageStatus {
+  return {
+    lastRunStatus: null,
+    lastRunStartedAt: null,
+    lastSuccessAt: null,
+    lastSuccessRowsWritten: null,
+  };
+}
+
+function emptyStages(): Record<RunStage, StageStatus> {
+  return {
+    appointments: emptyStageStatus(),
+    conversations: emptyStageStatus(),
+    contacts: emptyStageStatus(),
+  };
 }
 
 /**
@@ -101,10 +137,11 @@ export async function getLaunchIntegrationStatus(
 
   const supabase = await createClient();
   // Trae todos los runs del launch ordenados desc — agrupamos por provider
-  // en memoria. El volumen esperado es chico (decenas, no miles).
+  // (y por stage para los que tienen) en memoria. Volumen esperado: decenas,
+  // no miles.
   const { data } = await supabase
     .from("integration_runs")
-    .select("provider, status, started_at, finished_at, rows_written")
+    .select("provider, stage, status, started_at, finished_at, rows_written")
     .eq("launch_id", launchId)
     .order("started_at", { ascending: false });
 
@@ -120,26 +157,46 @@ export async function getLaunchIntegrationStatus(
       ? "error"
       : row.status;
 
-    const existing = map.get(row.provider);
-    if (!existing) {
-      map.set(row.provider, {
+    let entry = map.get(row.provider);
+    if (!entry) {
+      entry = {
         provider: row.provider,
         lastRunStatus: effectiveStatus,
         lastRunStartedAt: row.started_at,
         lastSuccessAt: effectiveStatus === "success" ? row.started_at : null,
         lastSuccessRowsWritten:
           effectiveStatus === "success" ? row.rows_written : null,
-      });
-      continue;
-    }
-    // Ya tenemos el run más reciente como `lastRunStatus`. Solo falta encontrar
-    // el último success (que puede ser anterior al run actual si el último falló).
-    if (
-      existing.lastSuccessAt === null &&
+        stages: emptyStages(),
+      };
+      map.set(row.provider, entry);
+    } else if (
+      entry.lastSuccessAt === null &&
       effectiveStatus === "success"
     ) {
-      existing.lastSuccessAt = row.started_at;
-      existing.lastSuccessRowsWritten = row.rows_written;
+      entry.lastSuccessAt = row.started_at;
+      entry.lastSuccessRowsWritten = row.rows_written;
+    }
+
+    // Si tiene stage (solo GHL post-0020), también acumulamos en el bucket
+    // por stage. La primera fila vista para una stage es la más reciente
+    // (vienen ordenadas desc) así que ahí seteamos `lastRunStatus` por stage;
+    // las siguientes solo completan `lastSuccessAt` si todavía falta.
+    if (row.stage) {
+      const stageBucket = entry.stages[row.stage];
+      if (stageBucket.lastRunStatus === null) {
+        stageBucket.lastRunStatus = effectiveStatus;
+        stageBucket.lastRunStartedAt = row.started_at;
+        if (effectiveStatus === "success") {
+          stageBucket.lastSuccessAt = row.started_at;
+          stageBucket.lastSuccessRowsWritten = row.rows_written;
+        }
+      } else if (
+        stageBucket.lastSuccessAt === null &&
+        effectiveStatus === "success"
+      ) {
+        stageBucket.lastSuccessAt = row.started_at;
+        stageBucket.lastSuccessRowsWritten = row.rows_written;
+      }
     }
   }
 
@@ -153,7 +210,8 @@ export async function getLaunchIntegrationStatus(
 export interface RunHistoryEntry {
   id: string;
   provider: string;
-  status: IntegrationStatusForProvider["lastRunStatus"];
+  stage: RunStage | null;
+  status: RunStatus | null;
   startedAt: string;
   finishedAt: string | null;
   rowsWritten: number | null;
@@ -170,7 +228,7 @@ export async function listRecentRuns(
   const { data } = await supabase
     .from("integration_runs")
     .select(
-      "id, provider, status, started_at, finished_at, rows_written, error_detail, window_start, window_end",
+      "id, provider, stage, status, started_at, finished_at, rows_written, error_detail, window_start, window_end",
     )
     .eq("launch_id", launchId)
     .order("started_at", { ascending: false })
@@ -179,7 +237,8 @@ export async function listRecentRuns(
   interface RawHistoryRow {
     id: string;
     provider: string;
-    status: IntegrationStatusForProvider["lastRunStatus"];
+    stage: RunStage | null;
+    status: RunStatus | null;
     started_at: string;
     finished_at: string | null;
     rows_written: number | null;
@@ -197,6 +256,7 @@ export async function listRecentRuns(
     return {
       id: r.id,
       provider: r.provider,
+      stage: r.stage,
       status: expired ? "error" : r.status,
       startedAt: r.started_at,
       finishedAt: r.finished_at,

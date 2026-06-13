@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { ExportLeadsButton } from "@/components/dashboard/leads/export-leads-button";
 import { ImportLeadsModal } from "@/components/dashboard/leads/import-modal";
 import { KanbanBoard } from "@/components/dashboard/leads/kanban-board";
 import { LeadFormModal } from "@/components/dashboard/leads/lead-form-modal";
@@ -127,6 +128,7 @@ export default async function LeadsPage({
         </div>
         {canEdit && (
           <div className="flex flex-wrap gap-2">
+            <ExportLeadsButton projectId={projectId} />
             <ImportLeadsModal
               projectId={projectId}
               launches={launchesForForm}

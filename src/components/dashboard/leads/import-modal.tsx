@@ -18,9 +18,10 @@ import { IMPORT_FIELDS, type ImportMapping } from "@/lib/leads/import-config";
  * Modal de import xlsx (reemplaza la página dedicada).
  *
  * 3 pasos:
- *   1. Upload: arrastrar el .xlsx o usar el botón. Antes hay 2 links de
- *      descarga — plantilla vacía con headers + ejemplo, y export de los
- *      leads actuales (formato espejo para edición masiva externa).
+ *   1. Upload: arrastrar el .xlsx o usar el botón. Antes hay un link de
+ *      descarga a la plantilla vacía con headers + ejemplo. (El export de
+ *      leads actuales vive afuera del modal, en el header de /leads — usa
+ *      `<ExportLeadsButton>` y respeta los filtros activos.)
  *   2. Mapear columnas + país + lanzamiento. Click "Validar archivo" llama
  *      a `validateImport` que parsea todo sin insertar y devuelve cuántas
  *      filas son válidas / con error / duplicadas internas.
@@ -145,7 +146,6 @@ function Wizard({
   const [pending, startTransition] = useTransition();
 
   const templateHref = `/api/proyectos/${projectId}/leads/template`;
-  const exportHref = `/api/proyectos/${projectId}/leads/export`;
 
   function reset() {
     setStep("upload");
@@ -232,7 +232,6 @@ function Wizard({
           pending={pending}
           previewError={preview && !preview.ok ? preview.error : null}
           templateHref={templateHref}
-          exportHref={exportHref}
         />
       )}
 
@@ -286,7 +285,6 @@ function UploadStep({
   pending,
   previewError,
   templateHref,
-  exportHref,
 }: {
   readonly file: File | null;
   readonly setFile: (f: File | null) => void;
@@ -294,7 +292,6 @@ function UploadStep({
   readonly pending: boolean;
   readonly previewError: string | null;
   readonly templateHref: string;
-  readonly exportHref: string;
 }) {
   return (
     <div className="space-y-5">
@@ -312,12 +309,6 @@ function UploadStep({
             className="inline-flex items-center rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-fg hover:bg-bg-elevated"
           >
             ⬇ Descargar plantilla vacía
-          </a>
-          <a
-            href={exportHref}
-            className="inline-flex items-center rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-fg hover:bg-bg-elevated"
-          >
-            ⬇ Exportar leads actuales (.xlsx)
           </a>
         </div>
       </div>

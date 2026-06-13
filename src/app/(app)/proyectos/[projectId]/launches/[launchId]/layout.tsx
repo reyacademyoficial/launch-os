@@ -100,6 +100,14 @@ export default async function LaunchLayout({
         {showAnyAction && (
           <div className="flex items-center gap-3">
             {canEditLaunchValue && (
+              <a
+                href={`/api/proyectos/${projectId}/launches/${launchId}/report/executive`}
+                className="inline-flex items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-bg-elevated"
+              >
+                ⬇ PDF ejecutivo
+              </a>
+            )}
+            {canEditLaunchValue && (
               <LaunchFormModal
                 triggerLabel="Editar"
                 triggerVariant="secondary"

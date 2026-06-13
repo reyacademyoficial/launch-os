@@ -9,6 +9,7 @@ import type { SyncProviderId } from "@/lib/integrations/sync";
 import { createServiceClient } from "@/lib/supabase/service";
 
 import { ConfigModal } from "./config-modal";
+import { GhlStageButtons } from "./ghl-stage-buttons";
 import { InstructionsModal } from "./instructions-modal";
 import { RunsHistory } from "./runs-history";
 import { SyncButton } from "./sync-button";
@@ -188,13 +189,25 @@ export async function LaunchIntegrationsSection({
                     hasSecret={hasSecret}
                     initialConfig={display.initialConfig}
                   />
-                  <SyncButton
-                    projectId={projectId}
-                    launchId={launchId}
-                    provider={p.id}
-                    disabled={disabled}
-                    disabledReason={disabledReason}
-                  />
+                  {p.id === "ghl" ? (
+                    <GhlStageButtons
+                      projectId={projectId}
+                      launchId={launchId}
+                      status={status ?? null}
+                      isClosed={isClosed}
+                      hasSecret={hasSecret}
+                      hasConfig={display.hasConfig}
+                      missingMessage={display.missingMessage}
+                    />
+                  ) : (
+                    <SyncButton
+                      projectId={projectId}
+                      launchId={launchId}
+                      provider={p.id}
+                      disabled={disabled}
+                      disabledReason={disabledReason}
+                    />
+                  )}
                 </div>
               </div>
 
