@@ -32,12 +32,20 @@ export type GhlSyncErrorKind = "token_invalid" | "rate_limited" | "error";
 export interface GhlAppointment {
   /** Id del calendario event (idempotencia). */
   id: string;
+  /** contactId del lead asociado al appointment (puede faltar en bloqueos sin contacto). */
+  contactId: string | null;
   /** Teléfono CRUDO del contacto. Puede ser null si el contacto no tiene phone. */
   rawPhone: string | null;
   /** Nombre del contacto, displayable. Fallback a "Contacto sin nombre". */
   contactName: string;
   /** ISO timestamp del comienzo del appointment. */
   startTime: string | null;
+  /**
+   * Status del evento según GHL: 'confirmed' | 'cancelled' | 'noshow' |
+   * 'completed' | 'pending' | etc. Usado por el matcher para NO agendar leads
+   * cuyo appointment fue cancelado o noshow.
+   */
+  status: string | null;
   /** El item crudo, para `leads.notes` o debug. */
   raw: unknown;
 }
@@ -53,6 +61,16 @@ export interface GhlConversation {
   type: string | null;
   /** ISO timestamp del último mensaje (útil para acotar al rango del launch). */
   lastMessageDate: string | null;
+  /**
+   * Type del último mensaje. Sirve para inferir si el último mensaje fue
+   * inbound (lead respondió). GHL emite strings tipo "TYPE_WHATSAPP" para
+   * el canal, pero algunos endpoints/tenants también devuelven
+   * "TYPE_WHATSAPP_INBOUND" — nuestro matcher trata ambos como WhatsApp y
+   * usa este string para detectar inbound por substring (case-insensitive).
+   */
+  lastMessageType: string | null;
+  /** Cuántos mensajes inbound no leídos hay. Señal débil pero útil de "el lead respondió". */
+  unreadCount: number | null;
   raw: unknown;
 }
 
@@ -63,11 +81,22 @@ export interface GhlContact {
   contactName: string;
   /** Tags asociados — usamos esto para detectar "cliente" → status='cerrado'. */
   tags: string[];
+  /**
+   * GHL user id del vendedor asignado al contact (campo `assignedTo` en la API).
+   * Se traduce vía `ghl_user_mappings` a `team_member_id` del lead.
+   */
+  assignedTo: string | null;
   /** ISO timestamp de creación. */
   dateAdded: string | null;
   /** ISO timestamp de última modificación. */
   dateUpdated: string | null;
   raw: unknown;
+}
+
+/** Ref pública de un GHL user — usado por la UI de mapeo de vendedores. */
+export interface GhlUserRef {
+  id: string;
+  name: string;
 }
 
 export interface GhlFetchSuccess<T> {
@@ -331,17 +360,15 @@ export async function fetchGhlAppointments(
   return { ok: true, rows: deduped, meta };
 }
 
-interface GhlUserRef {
-  id: string;
-  name: string;
-}
-
 /**
  * Lista users del location. La API devuelve `{ users: [...] }`. Si el PIT no
  * tiene scope `View Users`, falla con 401/403 → propagamos como token_invalid
  * y el caller (appointments) corta.
+ *
+ * Export público: la UI de mapeo de vendedores (GHL user ↔ team_member) lo
+ * llama desde un Server Action para listar los users disponibles.
  */
-async function fetchGhlUsers(
+export async function fetchGhlUsers(
   token: string,
   locationId: string,
 ): Promise<GhlFetchResult<GhlUserRef>> {
@@ -400,11 +427,19 @@ export function parseAppointmentsBody(body: unknown): GhlAppointment[] {
     const id = strOrNull(evt.id);
     if (!id) continue;
 
+    // GHL emite el status en `appointmentStatus` (calendar/events v2).
+    // Algunos endpoints/versiones también usan `status` plano — probamos los
+    // dos para tolerar variaciones.
+    const status =
+      strOrNull(evt.appointmentStatus) ?? strOrNull(evt.status);
+
     rows.push({
       id,
+      contactId: strOrNull(evt.contactId),
       rawPhone: extractPhone(evt),
       contactName: extractContactName(evt),
       startTime: strOrNull(evt.startTime),
+      status,
       raw: evt,
     });
   }
@@ -540,6 +575,8 @@ export async function fetchGhlConversations(
         contactName: extractContactName(conv),
         type: lastMessageType ?? type,
         lastMessageDate: lastIso,
+        lastMessageType,
+        unreadCount: numOrNull(conv.unreadCount),
         raw: conv,
       });
     }
@@ -720,6 +757,7 @@ export async function fetchGhlContacts(
         email: strOrNull(c.email),
         contactName: extractContactName(c),
         tags,
+        assignedTo: strOrNull(c.assignedTo),
         dateAdded,
         dateUpdated,
         raw: c,
@@ -783,6 +821,8 @@ export function parseConversationsBody(
       contactName: extractContactName(conv),
       type,
       lastMessageDate: lastIso,
+      lastMessageType: strOrNull(conv.lastMessageType),
+      unreadCount: numOrNull(conv.unreadCount),
       raw: conv,
     });
   }
@@ -973,6 +1013,15 @@ function strOrNull(v: unknown): string | null {
   if (typeof v !== "string") return null;
   const trimmed = v.trim();
   return trimmed === "" ? null : trimmed;
+}
+
+function numOrNull(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
 }
 
 /**

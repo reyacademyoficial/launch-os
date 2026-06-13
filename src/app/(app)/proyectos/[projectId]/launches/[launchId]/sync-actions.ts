@@ -2,8 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 
+import { fetchGhlUsers } from "@/lib/integrations/ghl";
 import { syncLaunch, type SyncProviderId } from "@/lib/integrations/sync";
-import type { GhlSyncStage } from "@/lib/integrations/sync-ghl";
 import {
   requireCanEditLaunchesIn,
   requireSessionProfile,
@@ -24,6 +24,16 @@ import { createServiceClient } from "@/lib/supabase/service";
 
 export type SyncActionState = { ok: true } | { error: string } | null;
 
+// Cast laxo para queries contra tablas que el Database type generado todavía
+// no conoce (team_members, ghl_user_mappings). Mismo workaround que usan los
+// archivos de integraciones.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+type LooseClient = { from: (name: string) => any };
+function loose(svc: unknown): LooseClient {
+  return svc as LooseClient;
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 // ─── triggerSync ──────────────────────────────────────────────────────────
 
 export interface TriggerSyncResult {
@@ -43,8 +53,6 @@ export async function triggerSync(
   projectId: string,
   launchId: string,
   provider: SyncProviderId,
-  /** Solo para GHL: qué stage correr. Meta lo ignora. */
-  stage?: GhlSyncStage,
 ): Promise<TriggerSyncResult> {
   const profile = await requireCanEditLaunchesIn(projectId);
 
@@ -52,7 +60,6 @@ export async function triggerSync(
     launchId,
     provider,
     triggeredBy: profile.id,
-    stage,
   });
 
   revalidatePath(`/proyectos/${projectId}/launches/${launchId}`);
@@ -286,5 +293,138 @@ export async function copyConnectionsFromLaunch(
   }
 
   revalidatePath(`/proyectos/${projectId}/launches/${targetLaunchId}`);
+  return { ok: true };
+}
+
+// ─── GHL user mappings ────────────────────────────────────────────────────
+
+export interface GhlUserMappingsData {
+  /** Users que devuelve GHL para el location del launch. */
+  ghlUsers: ReadonlyArray<{ id: string; name: string }>;
+  /** Team members del proyecto (lo que va al lado del dropdown). */
+  teamMembers: ReadonlyArray<{ id: string; name: string }>;
+  /** Mappings actuales: ghl_user_id → team_member_id. */
+  currentMappings: ReadonlyArray<{ ghlUserId: string; teamMemberId: string }>;
+}
+
+/**
+ * Lista los GHL users del location del launch + los team_members del proyecto
+ * + los mappings ya guardados. Esto es lo que el modal necesita para armar la
+ * tabla de "GHL user → team_member".
+ *
+ * Si falta config (location_id o token) devuelve `{ error }` para que la UI
+ * muestre el cartel correspondiente.
+ */
+export async function listGhlUserMappings(
+  projectId: string,
+  launchId: string,
+): Promise<{ data: GhlUserMappingsData } | { error: string }> {
+  await requireCanEditLaunchesIn(projectId);
+  const service = createServiceClient();
+
+  // 1) location_id del launch
+  const launchRes = await service
+    .from("launches")
+    .select("integration_config")
+    .eq("id", launchId)
+    .maybeSingle();
+  const cfg = ((launchRes.data as { integration_config: unknown } | null)
+    ?.integration_config ?? {}) as Record<string, unknown>;
+  const ghlCfg = (cfg.ghl ?? {}) as Record<string, unknown>;
+  const locationId =
+    typeof ghlCfg.location_id === "string" ? ghlCfg.location_id : null;
+  if (!locationId) {
+    return { error: "Configurá el Location ID de GHL antes de mapear vendedores." };
+  }
+
+  // 2) token
+  const secretRes = await service
+    .from("launch_secrets")
+    .select("secret")
+    .eq("launch_id", launchId)
+    .eq("provider", "ghl")
+    .maybeSingle();
+  const token = (secretRes.data as { secret: string } | null)?.secret ?? null;
+  if (!token) {
+    return { error: "Falta el Private Integration Token de GHL." };
+  }
+
+  // 3) GHL users + team_members + mappings en paralelo
+  const [ghlUsersResult, teamRes, mappingsRes] = await Promise.all([
+    fetchGhlUsers(token, locationId),
+    loose(service)
+      .from("team_members")
+      .select("id, name, active")
+      .eq("project_id", projectId)
+      .eq("active", true)
+      .order("name"),
+    loose(service)
+      .from("ghl_user_mappings")
+      .select("ghl_user_id, team_member_id")
+      .eq("project_id", projectId),
+  ]);
+
+  if (!ghlUsersResult.ok) {
+    return {
+      error: `GHL: ${ghlUsersResult.message}. ${
+        ghlUsersResult.kind === "token_invalid"
+          ? "El PIT puede no tener scope 'View Users'."
+          : "Reintentá en unos minutos."
+      }`,
+    };
+  }
+
+  const ghlUsers = ghlUsersResult.rows.map((u) => ({ id: u.id, name: u.name }));
+  const teamMembers = ((teamRes.data ?? []) as Array<{ id: string; name: string }>).map(
+    (t) => ({ id: t.id, name: t.name }),
+  );
+  const currentMappings = (
+    (mappingsRes.data ?? []) as Array<{ ghl_user_id: string; team_member_id: string }>
+  ).map((m) => ({ ghlUserId: m.ghl_user_id, teamMemberId: m.team_member_id }));
+
+  return { data: { ghlUsers, teamMembers, currentMappings } };
+}
+
+/**
+ * Sobrescribe los mappings del proyecto con la lista recibida. Las entries
+ * con teamMemberId vacío se eliminan; el resto se upsertea. Atómico desde el
+ * punto de vista del usuario (no exponemos cada upsert).
+ */
+export async function saveGhlUserMappings(
+  projectId: string,
+  launchId: string,
+  mappings: ReadonlyArray<{ ghlUserId: string; teamMemberId: string | null }>,
+): Promise<{ ok: boolean; error?: string }> {
+  await requireCanEditLaunchesIn(projectId);
+  const service = createServiceClient();
+
+  const toDelete = mappings.filter((m) => !m.teamMemberId);
+  const toUpsert = mappings.filter(
+    (m): m is { ghlUserId: string; teamMemberId: string } => Boolean(m.teamMemberId),
+  );
+
+  if (toDelete.length > 0) {
+    const ghlIds = toDelete.map((m) => m.ghlUserId);
+    const del = await loose(service)
+      .from("ghl_user_mappings")
+      .delete()
+      .eq("project_id", projectId)
+      .in("ghl_user_id", ghlIds);
+    if (del.error) return { ok: false, error: del.error.message };
+  }
+
+  if (toUpsert.length > 0) {
+    const payload = toUpsert.map((m) => ({
+      project_id: projectId,
+      ghl_user_id: m.ghlUserId,
+      team_member_id: m.teamMemberId,
+    }));
+    const up = await loose(service)
+      .from("ghl_user_mappings")
+      .upsert(payload, { onConflict: "project_id,ghl_user_id" });
+    if (up.error) return { ok: false, error: up.error.message };
+  }
+
+  revalidatePath(`/proyectos/${projectId}/launches/${launchId}`);
   return { ok: true };
 }

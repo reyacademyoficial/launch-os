@@ -6,7 +6,6 @@ import { triggerSync } from "@/app/(app)/proyectos/[projectId]/launches/[launchI
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field-error";
 import type { SyncProviderId } from "@/lib/integrations/sync";
-import type { GhlSyncStage } from "@/lib/integrations/sync-ghl";
 
 /**
  * Botón "Sincronizar" para un provider puntual. Estado local: pending mientras
@@ -19,18 +18,12 @@ export function SyncButton({
   projectId,
   launchId,
   provider,
-  stage,
-  label,
   disabled,
   disabledReason,
 }: {
   readonly projectId: string;
   readonly launchId: string;
   readonly provider: SyncProviderId;
-  /** Solo para GHL: si se pasa, dispara esa stage; si no, default backend. */
-  readonly stage?: GhlSyncStage;
-  /** Override del texto del botón. Default: "Sincronizar". */
-  readonly label?: string;
   readonly disabled?: boolean;
   readonly disabledReason?: string;
 }) {
@@ -40,7 +33,7 @@ export function SyncButton({
   function handleClick() {
     setLastError(null);
     startTransition(async () => {
-      const result = await triggerSync(projectId, launchId, provider, stage);
+      const result = await triggerSync(projectId, launchId, provider);
       if (!result.ok) {
         setLastError(
           result.errorMessage ?? `Sync terminó con estado: ${result.status}`,
@@ -57,7 +50,7 @@ export function SyncButton({
         disabled={isPending || disabled}
         title={disabled ? disabledReason : undefined}
       >
-        {isPending ? "Sincronizando…" : (label ?? "Sincronizar")}
+        {isPending ? "Sincronizando…" : "Sincronizar"}
       </Button>
       {lastError && <FieldError>{lastError}</FieldError>}
     </div>

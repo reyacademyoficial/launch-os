@@ -11,7 +11,6 @@ import {
   type ConversationsMeta,
   type GhlAppointment,
   type GhlContact,
-  type GhlConversation,
   type GhlFetchFailure,
 } from "./ghl";
 import {
@@ -23,21 +22,23 @@ import {
 import type { createServiceClient } from "@/lib/supabase/service";
 
 /**
- * Orquesta el sync de GHL — UNA ETAPA POR CORRIDA.
+ * Orquesta el sync de GHL en UNA corrida combinada:
+ *   1) Carga mappings GHL user → team_member del proyecto.
+ *   2) Trae contacts + appointments + conversations (lista WhatsApp) en paralelo.
+ *   3) Arma un mapa contactId → tieneActividadInbound dentro de la ventana
+ *      compra+cierre (señal de tibio).
+ *   4) Apply contacts: status según tags/actividad/cliente + team_member del
+ *      mapping. parallelMap concurrency 10.
+ *   5) Apply appointments: solo los confirmed (no cancelled/noshow).
  *
- * Fase 3b post-mortem: las 3 etapas (appointments + conversations + contacts)
- * juntas excedían el timeout del Server Action en locations con mucho
- * histórico. Particionamos: un click del usuario = un stage. Cada stage tiene
- * su propio integration_run, su propio lastSuccessAt incremental, y termina
- * en pocos segundos.
+ * Una sola corrida → una fila en integration_runs (stage='all'). Si una sub-
+ * fase falla por token/rate, abortamos completo. La idempotencia la garantiza
+ * el unique parcial sobre (project_id, source, external_id) — re-correr
+ * completa sin duplicar.
  *
- * Optimización adicional: eliminamos `fetchGhlInboundMessageCount`. Antes
- * para clasificar WA frio vs tibio hacíamos hasta 10 páginas extra por
- * conversación — el cuello de botella principal. Ahora todos los WA nuevos
- * arrancan como 'frio'. La promoción a 'tibio' queda pendiente para una
- * mecánica futura (cron, botón aparte, etc.). El matcher NO degrada los
- * existentes en tibio, así que esto es seguro: solo demora la primera
- * promoción, no rompe el dato.
+ * Por qué no `fetchGhlInboundMessageCount` más: contaba mensajes 1 por 1, era
+ * el cuello de botella. Ahora la señal de tibio sale de `lastMessageDate +
+ * lastMessageType` o `unreadCount` de la lista de conversations — barato.
  */
 
 type ServiceClient = ReturnType<typeof createServiceClient>;
@@ -48,8 +49,6 @@ function loose(service: ServiceClient): LooseClient {
   return service as unknown as LooseClient;
 }
 
-export type GhlSyncStage = "appointments" | "conversations" | "contacts";
-
 interface StageCounts {
   fetched: number;
   created: number;
@@ -57,16 +56,26 @@ interface StageCounts {
   skipped: number;
 }
 
+export interface GhlCombinedCounts {
+  contacts: StageCounts;
+  appointments: StageCounts;
+}
+
 export type GhlRunSummary =
   | {
       status: "success";
-      stage: GhlSyncStage;
-      counts: StageCounts;
-      meta: AppointmentsMeta | ConversationsMeta | ContactsMeta;
+      counts: GhlCombinedCounts;
+      meta: {
+        contacts: ContactsMeta;
+        appointments: AppointmentsMeta;
+        conversations: ConversationsMeta;
+        warm_signals_seen: number;
+        mappings_applied: number;
+      };
     }
   | {
       status: "token_invalid" | "rate_limited" | "error";
-      stage: GhlSyncStage;
+      stage: "contacts" | "appointments" | "conversations" | "mappings";
       message: string;
       detail: Record<string, unknown>;
       retryAfterSeconds?: number | null;
@@ -79,173 +88,92 @@ export interface RunGhlSyncArgs {
   defaultCountry: string;
   projectId: string;
   launchId: string;
-  /** Cuál de las 3 etapas correr. Una por sync. */
-  stage: GhlSyncStage;
   /** Inicio de la ventana del launch (YYYY-MM-DD). */
   since: string;
   /** Fin de la ventana del launch (YYYY-MM-DD). */
   until: string;
   /**
-   * Sub-ventana para WhatsApp (etapa compra+cierre). Si null, conversations
-   * usa `[since, until]` como fallback.
+   * Sub-ventana compra+cierre. SOLO se usa para acotar la actividad inbound
+   * que cuenta como "tibio". Si null, fallback a `[since, until]`.
    */
-  conversationsWindow?: { start: string; end: string } | null;
-  /** ISO timestamp del último run exitoso DE ESTA STAGE. Null en la primera. */
+  warmWindow?: { start: string; end: string } | null;
+  /** ISO timestamp del último run exitoso (para el cutoff de paginación). */
   lastSuccessAt?: string | null;
 }
 
 export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
-  switch (args.stage) {
-    case "appointments":
-      return await runAppointmentsStage(args);
-    case "conversations":
-      return await runConversationsStage(args);
-    case "contacts":
-      return await runContactsStage(args);
-  }
-}
-
-// ─── stage: appointments ────────────────────────────────────────────────────
-
-async function runAppointmentsStage(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   const country = (args.defaultCountry || "AR") as CountryCode;
-
-  const apptResult = await fetchGhlAppointments({
-    token: args.token,
-    locationId: args.locationId,
-    since: args.since,
-    until: args.until,
-  });
-  if (!apptResult.ok) return propagateFailure(apptResult, "appointments");
-
-  // Pre-locate en paralelo. El apply también va paralelo — applyAction es
-  // self-contained y la DB aguanta concurrency 10 con holgura.
-  const located = await parallelMap(apptResult.rows, 10, async (e) => {
-    const phoneNormalized = normalize(e.rawPhone, country);
-    const existing = await locateLead({
-      service: args.service,
-      projectId: args.projectId,
-      source: "ghl",
-      externalId: e.id,
-      phoneNormalized,
-    });
-    return { evt: e, phoneNormalized, existing };
-  });
-
-  const counts = await applyAppointments(args, located);
-  return { status: "success", stage: "appointments", counts, meta: apptResult.meta };
-}
-
-async function applyAppointments(
-  args: RunGhlSyncArgs,
-  items: ReadonlyArray<LocatedAppointment>,
-): Promise<StageCounts> {
-  const summary: StageCounts = {
-    fetched: items.length,
-    created: 0,
-    updated: 0,
-    skipped: 0,
-  };
-  // Antes era un for sequential — con 500 appointments y 50ms por DB call
-  // eran 25s solo apply. Con concurrency 10 baja a 2-3s.
-  const results = await parallelMap(items, 10, async (item) => {
-    const action = resolveMatchAction({
-      eventKind: "appointment",
-      existing: item.existing,
-      externalId: item.evt.id,
-      contactName: item.evt.contactName,
-      phoneNormalized: item.phoneNormalized,
-      rawPhone: item.evt.rawPhone,
-    });
-    return await applyAction(args, action, buildAppointmentNotes(item.evt));
-  });
-  for (const r of results) accumulate(summary, r);
-  return summary;
-}
-
-// ─── stage: conversations (WhatsApp) ────────────────────────────────────────
-
-async function runConversationsStage(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
-  const country = (args.defaultCountry || "AR") as CountryCode;
-  const convWindow = args.conversationsWindow ?? {
-    start: args.since,
-    end: args.until,
-  };
+  const warmWindow = args.warmWindow ?? { start: args.since, end: args.until };
   const cutoffIso = args.lastSuccessAt ?? null;
 
-  const convResult = await fetchGhlConversations({
-    token: args.token,
-    locationId: args.locationId,
-    since: convWindow.start,
-    until: convWindow.end,
-    cutoffIso,
-  });
+  // 1) Mappings GHL user → team_member del proyecto.
+  const mappingRes = await loose(args.service)
+    .from("ghl_user_mappings")
+    .select("ghl_user_id, team_member_id")
+    .eq("project_id", args.projectId);
+  if (mappingRes.error) {
+    return {
+      status: "error",
+      stage: "mappings",
+      message: `No pude leer ghl_user_mappings: ${mappingRes.error.message}`,
+      detail: { code: mappingRes.error.code ?? null },
+    };
+  }
+  const mappings = new Map<string, string>(
+    ((mappingRes.data ?? []) as Array<{ ghl_user_id: string; team_member_id: string }>).map(
+      (m) => [m.ghl_user_id, m.team_member_id],
+    ),
+  );
+
+  // 2) Fetches en paralelo — independientes entre sí, cero razón para serializarlos.
+  const [contactsResult, apptResult, convResult] = await Promise.all([
+    fetchGhlContacts({
+      token: args.token,
+      locationId: args.locationId,
+      since: args.since,
+      until: args.until,
+      cutoffIso,
+    }),
+    fetchGhlAppointments({
+      token: args.token,
+      locationId: args.locationId,
+      since: args.since,
+      until: args.until,
+    }),
+    fetchGhlConversations({
+      token: args.token,
+      locationId: args.locationId,
+      since: warmWindow.start,
+      until: warmWindow.end,
+      cutoffIso,
+    }),
+  ]);
+  if (!contactsResult.ok) return propagateFailure(contactsResult, "contacts");
+  if (!apptResult.ok) return propagateFailure(apptResult, "appointments");
   if (!convResult.ok) return propagateFailure(convResult, "conversations");
 
-  const located = await parallelMap(convResult.rows, 10, async (c) => {
-    const phoneNormalized = normalize(c.rawPhone, country);
-    const existing = await locateLead({
-      service: args.service,
-      projectId: args.projectId,
-      source: "whatsapp",
-      externalId: c.id,
-      phoneNormalized,
-    });
-    return { conv: c, phoneNormalized, existing };
-  });
+  // 3) Tibio map: contactId → bool. "Tibio" si tiene conversación WhatsApp
+  // con lastMessageDate en warmWindow Y (lastMessageType es inbound O
+  // unreadCount > 0). lastMessageType de GHL puede emitir "TYPE_WHATSAPP_INBOUND"
+  // o variantes — chequeamos por substring "inbound" case-insensitive.
+  const warmStartMs = Date.parse(`${warmWindow.start}T00:00:00.000Z`);
+  const warmEndMs = Date.parse(`${warmWindow.end}T23:59:59.999Z`);
+  const warmByContact = new Map<string, boolean>();
+  for (const c of convResult.rows) {
+    if (!c.contactId) continue;
+    const ms = c.lastMessageDate ? Date.parse(c.lastMessageDate) : NaN;
+    if (!Number.isFinite(ms) || ms < warmStartMs || ms > warmEndMs) continue;
+    const isInboundLast =
+      typeof c.lastMessageType === "string" &&
+      c.lastMessageType.toLowerCase().includes("inbound");
+    const hasUnread = (c.unreadCount ?? 0) > 0;
+    if (isInboundLast || hasUnread) warmByContact.set(c.contactId, true);
+  }
 
-  const counts = await applyConversations(args, located);
-  return { status: "success", stage: "conversations", counts, meta: convResult.meta };
-}
-
-async function applyConversations(
-  args: RunGhlSyncArgs,
-  items: ReadonlyArray<LocatedConversation>,
-): Promise<StageCounts> {
-  const summary: StageCounts = {
-    fetched: items.length,
-    created: 0,
-    updated: 0,
-    skipped: 0,
-  };
-  // inboundMessageCount queda en null deliberadamente — ver doc del módulo.
-  // El matcher trata null como "asumir frio". Eso degrada un poco la
-  // clasificación inicial (un lead con 5 mensajes inbound entra como frio en
-  // vez de tibio), pero el matcher no degrada los existentes en tibio así
-  // que es safe: re-correr el sync no rompe el dato. La promoción a tibio
-  // queda como follow-up.
-  const results = await parallelMap(items, 10, async (item) => {
-    const action = resolveMatchAction({
-      eventKind: "whatsapp",
-      existing: item.existing,
-      externalId: item.conv.id,
-      contactName: item.conv.contactName,
-      phoneNormalized: item.phoneNormalized,
-      rawPhone: item.conv.rawPhone,
-      inboundMessageCount: null,
-    });
-    return await applyAction(args, action, buildConversationNotes(item.conv));
-  });
-  for (const r of results) accumulate(summary, r);
-  return summary;
-}
-
-// ─── stage: contacts (formulario / CRM general) ─────────────────────────────
-
-async function runContactsStage(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
-  const country = (args.defaultCountry || "AR") as CountryCode;
-  const cutoffIso = args.lastSuccessAt ?? null;
-
-  const contactsResult = await fetchGhlContacts({
-    token: args.token,
-    locationId: args.locationId,
-    since: args.since,
-    until: args.until,
-    cutoffIso,
-  });
-  if (!contactsResult.ok) return propagateFailure(contactsResult, "contacts");
-
-  const located = await parallelMap(contactsResult.rows, 10, async (c) => {
+  // 4) Apply contacts en paralelo.
+  let warmSignalsSeen = 0;
+  let mappingsApplied = 0;
+  const contactsLocated = await parallelMap(contactsResult.rows, 10, async (c) => {
     const phoneNormalized = normalize(c.rawPhone, country);
     const existing = await locateLead({
       service: args.service,
@@ -257,24 +185,23 @@ async function runContactsStage(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     return { contact: c, phoneNormalized, existing };
   });
 
-  const counts = await applyContacts(args, located);
-  return { status: "success", stage: "contacts", counts, meta: contactsResult.meta };
-}
-
-async function applyContacts(
-  args: RunGhlSyncArgs,
-  items: ReadonlyArray<LocatedContact>,
-): Promise<StageCounts> {
-  const summary: StageCounts = {
-    fetched: items.length,
-    created: 0,
-    updated: 0,
-    skipped: 0,
-  };
-  const results = await parallelMap(items, 10, async (item) => {
+  const contactsCounts = await parallelMap(contactsLocated, 10, async (item) => {
     const hasClientTag = item.contact.tags.some(
       (t) => t.toLowerCase() === "cliente",
     );
+    const hasTibioTag = item.contact.tags.some(
+      (t) => t.toLowerCase() === "tibio",
+    );
+    const hasWarmConv = warmByContact.get(item.contact.id) === true;
+    // Tag manual `tibio` O señal automática de WA → tibio.
+    const hasRecentInboundActivity = hasTibioTag || hasWarmConv;
+    if (hasRecentInboundActivity) warmSignalsSeen++;
+
+    const teamMemberId = item.contact.assignedTo
+      ? (mappings.get(item.contact.assignedTo) ?? null)
+      : null;
+    if (item.contact.assignedTo && teamMemberId) mappingsApplied++;
+
     const action = resolveMatchAction({
       eventKind: "contact",
       existing: item.existing,
@@ -284,40 +211,75 @@ async function applyContacts(
       rawPhone: item.contact.rawPhone,
       email: item.contact.email,
       hasClientTag,
+      hasRecentInboundActivity,
+      teamMemberId: item.contact.assignedTo ? teamMemberId : undefined,
     });
     return await applyAction(args, action, buildContactNotes(item.contact));
   });
-  for (const r of results) accumulate(summary, r);
-  return summary;
+  const contactsSummary = countCounts(contactsResult.rows.length, contactsCounts);
+
+  // 5) Apply appointments en paralelo. La traducción de vendedor sale del
+  // contact con el mismo contactId — pero appointments no trae assignedTo
+  // directo. Aceptable: el contact ya seteó el team_member_id en la fase
+  // anterior, el appointment solo escala el status a 'agendado'.
+  const apptLocated = await parallelMap(apptResult.rows, 10, async (e) => {
+    const phoneNormalized = normalize(e.rawPhone, country);
+    const existing = await locateLead({
+      service: args.service,
+      projectId: args.projectId,
+      source: "ghl",
+      externalId: e.id,
+      phoneNormalized,
+    });
+    return { evt: e, phoneNormalized, existing };
+  });
+
+  const apptCounts = await parallelMap(apptLocated, 10, async (item) => {
+    const action = resolveMatchAction({
+      eventKind: "appointment",
+      existing: item.existing,
+      externalId: item.evt.id,
+      contactName: item.evt.contactName,
+      phoneNormalized: item.phoneNormalized,
+      rawPhone: item.evt.rawPhone,
+      appointmentStatus: item.evt.status,
+    });
+    return await applyAction(args, action, buildAppointmentNotes(item.evt));
+  });
+  const apptSummary = countCounts(apptResult.rows.length, apptCounts);
+
+  return {
+    status: "success",
+    counts: { contacts: contactsSummary, appointments: apptSummary },
+    meta: {
+      contacts: contactsResult.meta,
+      appointments: apptResult.meta,
+      conversations: convResult.meta,
+      warm_signals_seen: warmSignalsSeen,
+      mappings_applied: mappingsApplied,
+    },
+  };
 }
 
-// ─── tipos located ─────────────────────────────────────────────────────────
+// ─── helpers ───────────────────────────────────────────────────────────────
 
-interface LocatedAppointment {
-  evt: GhlAppointment;
-  phoneNormalized: string | null;
-  existing: ExistingLeadView | null;
+function countCounts(
+  fetched: number,
+  results: ReadonlyArray<"created" | "updated" | "skipped">,
+): StageCounts {
+  const out: StageCounts = { fetched, created: 0, updated: 0, skipped: 0 };
+  for (const r of results) {
+    if (r === "created") out.created++;
+    else if (r === "updated") out.updated++;
+    else out.skipped++;
+  }
+  return out;
 }
-
-interface LocatedConversation {
-  conv: GhlConversation;
-  phoneNormalized: string | null;
-  existing: ExistingLeadView | null;
-}
-
-interface LocatedContact {
-  contact: GhlContact;
-  phoneNormalized: string | null;
-  existing: ExistingLeadView | null;
-}
-
-// ─── concurrency helper ────────────────────────────────────────────────────
 
 /**
- * Procesa `items` con `concurrency` workers en paralelo. Mantiene el orden
- * del array de salida (idx-based slotting). No usa `Promise.all` directo
- * porque para 1000+ items eso dispararía 1000 fetches simultáneos contra
- * GHL/Supabase y nos van a tirar 429/connection exhaustion en segundos.
+ * Procesa `items` con `concurrency` workers en paralelo. Mantiene orden por
+ * idx para no perder asociación caller-side. No usa Promise.all directo
+ * para evitar disparar 1000+ requests simultáneos contra GHL/Supabase.
  */
 async function parallelMap<T, R>(
   items: ReadonlyArray<T>,
@@ -337,8 +299,6 @@ async function parallelMap<T, R>(
   return out;
 }
 
-// ─── locate (external_id O phone) ──────────────────────────────────────────
-
 async function locateLead(args: {
   service: ServiceClient;
   projectId: string;
@@ -356,8 +316,6 @@ async function locateLead(args: {
   if (byExternal.data) return byExternal.data as ExistingLeadView;
 
   if (!args.phoneNormalized) return null;
-  // No filtramos por source — un lead puede haber entrado por import/manual
-  // y ahora vincularse a un evento de GHL.
   const byPhone = await loose(args.service)
     .from("leads")
     .select("id, status, pinned_to_kanban")
@@ -369,8 +327,6 @@ async function locateLead(args: {
   if (byPhone.data) return byPhone.data as ExistingLeadView;
   return null;
 }
-
-// ─── apply (INSERT / UPDATE) ───────────────────────────────────────────────
 
 async function applyAction(
   args: RunGhlSyncArgs,
@@ -402,14 +358,6 @@ async function applyAction(
   return "updated";
 }
 
-// ─── helpers ───────────────────────────────────────────────────────────────
-
-function accumulate(s: StageCounts, kind: "created" | "updated" | "skipped") {
-  if (kind === "created") s.created++;
-  else if (kind === "updated") s.updated++;
-  else s.skipped++;
-}
-
 function normalize(raw: string | null, country: CountryCode): string | null {
   if (!raw) return null;
   const trimmed = raw.trim();
@@ -424,11 +372,6 @@ function buildAppointmentNotes(e: GhlAppointment): string | null {
   return `GHL appointment ${e.id} — comienza ${e.startTime}`;
 }
 
-function buildConversationNotes(c: GhlConversation): string | null {
-  if (!c.lastMessageDate) return null;
-  return `GHL ${c.type ?? "WhatsApp"} conversación ${c.id} — último mensaje ${c.lastMessageDate}`;
-}
-
 function buildContactNotes(c: GhlContact): string | null {
   if (!c.dateAdded) return null;
   return `GHL contact ${c.id} — creado ${c.dateAdded}`;
@@ -436,7 +379,7 @@ function buildContactNotes(c: GhlContact): string | null {
 
 function propagateFailure(
   failure: GhlFetchFailure,
-  stage: GhlSyncStage,
+  stage: "contacts" | "appointments" | "conversations" | "mappings",
 ): GhlRunSummary {
   return {
     status: failure.kind,

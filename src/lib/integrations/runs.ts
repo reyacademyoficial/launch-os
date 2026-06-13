@@ -66,59 +66,36 @@ export type RunStatus =
   | "rate_limited"
   | "config_missing";
 
-/** Las stages que usa GHL. Otros providers tienen stage=null. */
-export type RunStage = "appointments" | "conversations" | "contacts";
-
-export interface StageStatus {
-  /** Status de la última corrida de esta stage (cualquier estado). */
-  lastRunStatus: RunStatus | null;
-  lastRunStartedAt: string | null;
-  /** Último OK de esta stage (sirve para el "Última sync OK" por stage). */
-  lastSuccessAt: string | null;
-  lastSuccessRowsWritten: number | null;
-}
+/**
+ * Stage histórico. Antes había 3 stages por GHL ('appointments' |
+ * 'conversations' | 'contacts'); ahora es atómico y queda como 'all'. Los
+ * runs viejos pueden tener cualquiera de los valores anteriores o NULL — el
+ * tipo los acepta para no romper la lectura de historial.
+ */
+export type RunStage =
+  | "all"
+  | "appointments"
+  | "conversations"
+  | "contacts";
 
 export interface IntegrationStatusForProvider {
   provider: string;
-  /** Status del run más reciente del provider (ignora stage). */
+  /** Status del run más reciente del provider. */
   lastRunStatus: RunStatus | null;
   /** ISO timestamp del run más reciente, sin importar el status. */
   lastRunStartedAt: string | null;
-  /** ISO timestamp del último run con status='success' (ignora stage). */
+  /** ISO timestamp del último run con status='success'. */
   lastSuccessAt: string | null;
   /** rows_written del último run con status='success'. */
   lastSuccessRowsWritten: number | null;
-  /**
-   * Estado granular por stage. Solo se popula para GHL — Meta deja todas
-   * las entradas vacías porque su sync no se particiona.
-   */
-  stages: Record<RunStage, StageStatus>;
 }
 
 interface RunRow {
   provider: string;
-  stage: RunStage | null;
   status: RunStatus | null;
   started_at: string;
   finished_at: string | null;
   rows_written: number | null;
-}
-
-function emptyStageStatus(): StageStatus {
-  return {
-    lastRunStatus: null,
-    lastRunStartedAt: null,
-    lastSuccessAt: null,
-    lastSuccessRowsWritten: null,
-  };
-}
-
-function emptyStages(): Record<RunStage, StageStatus> {
-  return {
-    appointments: emptyStageStatus(),
-    conversations: emptyStageStatus(),
-    contacts: emptyStageStatus(),
-  };
 }
 
 /**
@@ -137,11 +114,10 @@ export async function getLaunchIntegrationStatus(
 
   const supabase = await createClient();
   // Trae todos los runs del launch ordenados desc — agrupamos por provider
-  // (y por stage para los que tienen) en memoria. Volumen esperado: decenas,
-  // no miles.
+  // en memoria. Volumen esperado: decenas, no miles.
   const { data } = await supabase
     .from("integration_runs")
-    .select("provider, stage, status, started_at, finished_at, rows_written")
+    .select("provider, status, started_at, finished_at, rows_written")
     .eq("launch_id", launchId)
     .order("started_at", { ascending: false });
 
@@ -157,46 +133,21 @@ export async function getLaunchIntegrationStatus(
       ? "error"
       : row.status;
 
-    let entry = map.get(row.provider);
-    if (!entry) {
-      entry = {
+    const existing = map.get(row.provider);
+    if (!existing) {
+      map.set(row.provider, {
         provider: row.provider,
         lastRunStatus: effectiveStatus,
         lastRunStartedAt: row.started_at,
         lastSuccessAt: effectiveStatus === "success" ? row.started_at : null,
         lastSuccessRowsWritten:
           effectiveStatus === "success" ? row.rows_written : null,
-        stages: emptyStages(),
-      };
-      map.set(row.provider, entry);
-    } else if (
-      entry.lastSuccessAt === null &&
-      effectiveStatus === "success"
-    ) {
-      entry.lastSuccessAt = row.started_at;
-      entry.lastSuccessRowsWritten = row.rows_written;
+      });
+      continue;
     }
-
-    // Si tiene stage (solo GHL post-0020), también acumulamos en el bucket
-    // por stage. La primera fila vista para una stage es la más reciente
-    // (vienen ordenadas desc) así que ahí seteamos `lastRunStatus` por stage;
-    // las siguientes solo completan `lastSuccessAt` si todavía falta.
-    if (row.stage) {
-      const stageBucket = entry.stages[row.stage];
-      if (stageBucket.lastRunStatus === null) {
-        stageBucket.lastRunStatus = effectiveStatus;
-        stageBucket.lastRunStartedAt = row.started_at;
-        if (effectiveStatus === "success") {
-          stageBucket.lastSuccessAt = row.started_at;
-          stageBucket.lastSuccessRowsWritten = row.rows_written;
-        }
-      } else if (
-        stageBucket.lastSuccessAt === null &&
-        effectiveStatus === "success"
-      ) {
-        stageBucket.lastSuccessAt = row.started_at;
-        stageBucket.lastSuccessRowsWritten = row.rows_written;
-      }
+    if (existing.lastSuccessAt === null && effectiveStatus === "success") {
+      existing.lastSuccessAt = row.started_at;
+      existing.lastSuccessRowsWritten = row.rows_written;
     }
   }
 

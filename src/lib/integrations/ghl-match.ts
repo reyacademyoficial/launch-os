@@ -78,6 +78,7 @@ export type MatchAction =
         pinned_to_kanban: boolean;
         external_id: string;
         notes: string | null;
+        team_member_id: string | null;
       };
     }
   | {
@@ -87,6 +88,7 @@ export type MatchAction =
         status?: LeadStatus;
         pinned_to_kanban?: boolean;
         external_id?: string;
+        team_member_id?: string | null;
       };
     }
   | { kind: "noop"; reason: string };
@@ -103,7 +105,35 @@ export interface ResolveArgs {
   inboundMessageCount?: number | null;
   /** Solo para eventKind='contact'. Indica si el contact tiene tag 'cliente'. */
   hasClientTag?: boolean;
+  /**
+   * Solo para eventKind='contact'. Hay conversación WhatsApp con actividad
+   * inbound del lead dentro de la ventana compra+cierre del launch. Si true,
+   * arranca como 'tibio' (en vez de 'frio') para el lead nuevo, y promueve
+   * a tibio al existente que estaba frio.
+   */
+  hasRecentInboundActivity?: boolean;
+  /**
+   * Solo para eventKind='appointment'. Status del evento según GHL: cuando
+   * es 'cancelled' o 'noshow' tratamos al appointment como noop — el lead
+   * no pasa a 'agendado'.
+   */
+  appointmentStatus?: string | null;
+  /**
+   * Vendedor asignado en el sistema (resuelto del mapping GHL→team_member).
+   * Si null o undefined no toca team_member_id del lead. Si tiene valor,
+   * lo setea/actualiza.
+   */
+  teamMemberId?: string | null;
 }
+
+/** Status del appointment que NO deben crear/promover a 'agendado'. */
+const APPOINTMENT_INACTIVE_STATUSES: ReadonlySet<string> = new Set([
+  "cancelled",
+  "canceled", // tolerancia a la variante US
+  "noshow",
+  "no_show",
+  "invalid",
+]);
 
 export function resolveMatchAction(args: ResolveArgs): MatchAction {
   switch (args.eventKind) {
@@ -119,7 +149,17 @@ export function resolveMatchAction(args: ResolveArgs): MatchAction {
 // ─── appointment ────────────────────────────────────────────────────────────
 
 function resolveAppointment(args: ResolveArgs): MatchAction {
-  const { existing, externalId } = args;
+  const { existing, externalId, appointmentStatus, teamMemberId } = args;
+
+  // Appointments cancelados o noshow no agendan a nadie. Sin lead existente,
+  // tampoco creamos uno solo por un appointment fallido.
+  if (
+    appointmentStatus &&
+    APPOINTMENT_INACTIVE_STATUSES.has(appointmentStatus.toLowerCase())
+  ) {
+    return { kind: "noop", reason: `appointment_${appointmentStatus.toLowerCase()}` };
+  }
+
   if (existing) {
     if (TERMINAL_STATUSES.has(existing.status)) {
       return { kind: "noop", reason: "lead_terminal" };
@@ -131,6 +171,7 @@ function resolveAppointment(args: ResolveArgs): MatchAction {
         status: "agendado",
         pinned_to_kanban: true,
         external_id: externalId,
+        ...(teamMemberId !== undefined ? { team_member_id: teamMemberId } : {}),
       },
     };
   }
@@ -176,36 +217,66 @@ function resolveWhatsApp(args: ResolveArgs): MatchAction {
 // ─── contact (formulario / CRM general) ─────────────────────────────────────
 
 function resolveContact(args: ResolveArgs): MatchAction {
-  const { existing, externalId, hasClientTag } = args;
+  const { existing, externalId, hasClientTag, hasRecentInboundActivity, teamMemberId } = args;
 
-  if (hasClientTag) {
-    // Tag "cliente" → cerrado.
-    if (existing) {
-      if (TERMINAL_STATUSES.has(existing.status)) {
-        // Ya está en cerrado o perdido — no tocamos.
-        return { kind: "noop", reason: "lead_terminal" };
+  // Status objetivo según señales: cliente > actividad inbound reciente > default frio.
+  // El orden importa: si tiene tag 'cliente', va a cerrado aunque también haya
+  // respondido en WhatsApp.
+  let targetStatus: LeadStatus;
+  if (hasClientTag) targetStatus = "cerrado";
+  else if (hasRecentInboundActivity) targetStatus = "tibio";
+  else targetStatus = "frio";
+
+  // Pinned al kanban si tiene actividad real (tibio/cerrado/agendado). Los
+  // contacts frios sin actividad van a la tabla, no al kanban — mismo
+  // criterio que tenía la versión anterior.
+  const pinned = targetStatus !== "frio";
+
+  if (existing) {
+    if (TERMINAL_STATUSES.has(existing.status)) {
+      // 'cerrado' o 'perdido' nunca se reabre desde el sync. Refrescamos
+      // team_member_id si vino del mapping, nada más.
+      if (teamMemberId !== undefined) {
+        return {
+          kind: "update",
+          leadId: existing.id,
+          patch: { team_member_id: teamMemberId },
+        };
       }
+      return { kind: "noop", reason: "lead_terminal" };
+    }
+
+    const currentRank = STATUS_ORDER[existing.status];
+    const targetRank = STATUS_ORDER[targetStatus];
+
+    // Subir solo si el target es más caliente. Mantener (mismo o menor)
+    // no degrada — un lead 'agendado' no baja a 'tibio' ni a 'frio'.
+    if (targetRank > currentRank) {
       return {
         kind: "update",
         leadId: existing.id,
         patch: {
-          status: "cerrado",
+          status: targetStatus,
           pinned_to_kanban: true,
           external_id: externalId,
+          ...(teamMemberId !== undefined ? { team_member_id: teamMemberId } : {}),
         },
       };
     }
-    return createPayload(args, "ghl", "cerrado", true);
+
+    // No degradar: refrescar external_id y vendedor si vino, sin tocar el status.
+    return {
+      kind: "update",
+      leadId: existing.id,
+      patch: {
+        external_id: externalId,
+        ...(teamMemberId !== undefined ? { team_member_id: teamMemberId } : {}),
+      },
+    };
   }
 
-  // Sin tag cliente:
-  if (existing) {
-    // El lead ya existe en el sistema. El sync de WhatsApp/appointments es
-    // quien se encarga de moverlo si hay actividad. Acá no tocamos nada.
-    return { kind: "noop", reason: "contact_already_synced" };
-  }
-  // Lead nuevo del CRM / formulario sin actividad → frío, tabla (no pinned).
-  return createPayload(args, "ghl", "frio", false);
+  // Lead nuevo — status según señales, pinned según calor.
+  return createPayload(args, "ghl", targetStatus, pinned);
 }
 
 // ─── helper de create ──────────────────────────────────────────────────────
@@ -228,6 +299,7 @@ function createPayload(
       pinned_to_kanban: pinned,
       external_id: args.externalId,
       notes: null,
+      team_member_id: args.teamMemberId ?? null,
     },
   };
 }

@@ -235,13 +235,131 @@ describe("resolveMatchAction — contact sin tag cliente (formulario sin activid
     expect(action.payload.pinned_to_kanban).toBe(false);
   });
 
-  it("lead existente → noop (no toca; el sync de WA/appointments se encarga)", () => {
+  it("lead existente sin actividad nueva → update con external_id refresh (no degrada)", () => {
+    // Cambio post-refactor 0021: para mantener idempotencia con re-runs, el
+    // matcher refresca el external_id del lead existente aunque no cambie
+    // el status. Antes era noop; ahora un update minimal. No degrada el
+    // status del lead (lo de "no degradar" lo cubre la regla por rango).
     const action = resolveMatchAction({
       eventKind: "contact",
       existing: existing({ status: "tibio" }),
       hasClientTag: false,
       ...BASE_ARGS,
     });
+    expect(action.kind).toBe("update");
+    if (action.kind !== "update") return;
+    // El status NO está en el patch → no se toca, sigue tibio.
+    expect(action.patch.status).toBeUndefined();
+    expect(action.patch.external_id).toBe("ext-1");
+  });
+});
+
+// ─── Contact con señales nuevas (post-0021) ────────────────────────────────
+
+describe("resolveMatchAction — contact con hasRecentInboundActivity (señal tibio)", () => {
+  it("sin lead + actividad inbound en ventana → create tibio + pinned", () => {
+    const action = resolveMatchAction({
+      eventKind: "contact",
+      existing: null,
+      hasClientTag: false,
+      hasRecentInboundActivity: true,
+      ...BASE_ARGS,
+    });
+    expect(action.kind).toBe("create");
+    if (action.kind !== "create") return;
+    expect(action.payload.status).toBe("tibio");
+    expect(action.payload.pinned_to_kanban).toBe(true);
+  });
+
+  it("lead frío + actividad inbound → promueve a tibio", () => {
+    const action = resolveMatchAction({
+      eventKind: "contact",
+      existing: existing({ status: "frio" }),
+      hasClientTag: false,
+      hasRecentInboundActivity: true,
+      ...BASE_ARGS,
+    });
+    expect(action.kind).toBe("update");
+    if (action.kind !== "update") return;
+    expect(action.patch.status).toBe("tibio");
+    expect(action.patch.pinned_to_kanban).toBe(true);
+  });
+
+  it("lead agendado + actividad inbound → no degrada (sigue agendado)", () => {
+    const action = resolveMatchAction({
+      eventKind: "contact",
+      existing: existing({ status: "agendado" }),
+      hasClientTag: false,
+      hasRecentInboundActivity: true,
+      ...BASE_ARGS,
+    });
+    expect(action.kind).toBe("update");
+    if (action.kind !== "update") return;
+    // No se setea status → no cambia.
+    expect(action.patch.status).toBeUndefined();
+  });
+});
+
+describe("resolveMatchAction — contact con teamMemberId (mapping de vendedor)", () => {
+  it("sin lead → payload.team_member_id seteado", () => {
+    const action = resolveMatchAction({
+      eventKind: "contact",
+      existing: null,
+      hasClientTag: false,
+      teamMemberId: "tm-99",
+      ...BASE_ARGS,
+    });
+    expect(action.kind).toBe("create");
+    if (action.kind !== "create") return;
+    expect(action.payload.team_member_id).toBe("tm-99");
+  });
+
+  it("lead existente → patch.team_member_id seteado aunque status no cambie", () => {
+    const action = resolveMatchAction({
+      eventKind: "contact",
+      existing: existing({ status: "tibio" }),
+      hasClientTag: false,
+      teamMemberId: "tm-99",
+      ...BASE_ARGS,
+    });
+    expect(action.kind).toBe("update");
+    if (action.kind !== "update") return;
+    expect(action.patch.team_member_id).toBe("tm-99");
+  });
+});
+
+// ─── Appointment con status (post-0021) ────────────────────────────────────
+
+describe("resolveMatchAction — appointment con appointmentStatus", () => {
+  it("status='cancelled' → noop sin importar el lead", () => {
+    const action = resolveMatchAction({
+      eventKind: "appointment",
+      existing: existing({ status: "frio" }),
+      appointmentStatus: "cancelled",
+      ...BASE_ARGS,
+    });
     expect(action.kind).toBe("noop");
+  });
+
+  it("status='noshow' → noop", () => {
+    const action = resolveMatchAction({
+      eventKind: "appointment",
+      existing: null,
+      appointmentStatus: "noshow",
+      ...BASE_ARGS,
+    });
+    expect(action.kind).toBe("noop");
+  });
+
+  it("status='confirmed' → procesa normal", () => {
+    const action = resolveMatchAction({
+      eventKind: "appointment",
+      existing: existing({ status: "frio" }),
+      appointmentStatus: "confirmed",
+      ...BASE_ARGS,
+    });
+    expect(action.kind).toBe("update");
+    if (action.kind !== "update") return;
+    expect(action.patch.status).toBe("agendado");
   });
 });
