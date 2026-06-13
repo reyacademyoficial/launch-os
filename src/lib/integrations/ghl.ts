@@ -128,6 +128,12 @@ export interface ConversationsMeta {
   passed_window_filter: number;
   /** Si se cortó por fecha (cortocircuito incremental). */
   stopped_by_date_cutoff: boolean;
+  /**
+   * Si llegamos al MAX_PAGES sin que GHL devolviera "última página" (rows <
+   * PAGE_SIZE) ni cortocircuito por fecha. Indica que probablemente nos
+   * estemos perdiendo conversaciones más antiguas — diagnóstico de partial.
+   */
+  hit_max_pages: boolean;
 }
 
 export interface ContactsMeta {
@@ -139,6 +145,8 @@ export interface ContactsMeta {
   /** Cuántos contacts en ventana tenían tag "cliente". */
   with_client_tag: number;
   stopped_by_date_cutoff: boolean;
+  /** Idem ConversationsMeta.hit_max_pages — diagnóstico de truncado. */
+  hit_max_pages: boolean;
 }
 
 interface FetchArgs {
@@ -390,7 +398,11 @@ export interface ConversationsFetchArgs extends FetchArgs {
 }
 
 const PAGE_SIZE = 100;
-const MAX_PAGES = 50; // tope defensivo: 5000 conversaciones por sync
+// Tope defensivo de páginas. Estaba en 50 (5k items por sync). Subido a 200
+// (20k) — un location grande puede tener fácil 8-10k WhatsApps acumulados, y
+// el cap silencioso era una de las hipótesis del partial data. Si se alcanza,
+// `hit_max_pages = true` lo deja visible en error_detail para diagnóstico.
+const MAX_PAGES = 200;
 
 /**
  * Paginación de conversations con cortocircuito por fecha. GHL devuelve
@@ -425,6 +437,7 @@ export async function fetchGhlConversations(
     passed_type_filter: 0,
     passed_window_filter: 0,
     stopped_by_date_cutoff: false,
+    hit_max_pages: false,
   };
   const typesSet = new Set<string>();
   const lastTypesSet = new Set<string>();
@@ -510,6 +523,13 @@ export async function fetchGhlConversations(
       break;
     }
     if (rawItems.length < PAGE_SIZE) break; // última página parcial
+
+    // Si en la próxima iteración vamos a salir del for por agotar MAX_PAGES,
+    // marcamos el flag de truncado. Esto indica que probablemente GHL tenga
+    // más conversaciones que no llegamos a leer — datos incompletos.
+    if (page === MAX_PAGES - 1) {
+      meta.hit_max_pages = true;
+    }
   }
 
   meta.observed_types = Array.from(typesSet);
@@ -597,6 +617,7 @@ export async function fetchGhlContacts(
     observed_tags: [],
     with_client_tag: 0,
     stopped_by_date_cutoff: false,
+    hit_max_pages: false,
   };
   const tagsSet = new Set<string>();
   const out: GhlContact[] = [];
@@ -687,6 +708,12 @@ export async function fetchGhlContacts(
     startAfter = lastUpdatedMs;
     startAfterId = lastIdSeen;
     if (startAfter === null || startAfterId === null) break;
+
+    // Última iteración antes de agotar MAX_PAGES → señalamos truncado para
+    // que el diagnóstico del run lo refleje.
+    if (page === MAX_PAGES - 1) {
+      meta.hit_max_pages = true;
+    }
   }
 
   meta.observed_tags = Array.from(tagsSet);

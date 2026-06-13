@@ -7,6 +7,14 @@ import { userCanEditLaunchesIn } from "@/lib/supabase/auth";
 
 export const metadata: Metadata = { title: "Integraciones · Lanzamiento" };
 
+// El Server Action `triggerSync` se dispara desde esta ruta (formulario en el
+// botón Sincronizar). El default de Vercel/Fluid Compute es 300s; para syncs
+// pesados de GHL (locations con miles de contactos+conversaciones) el sync se
+// cortaba a mitad y dejaba la fila en `running`. El watchdog (0019) ya
+// desbloquea el botón, pero subir maxDuration al máximo permitido reduce la
+// frecuencia con la que el sync se corta a mitad y por ende los re-runs.
+export const maxDuration = 800;
+
 export default async function LaunchIntegrationsPage({
   params,
 }: {

@@ -29,6 +29,15 @@ import { runGhlSync, type GhlRunSummary } from "./sync-ghl";
 
 export type SyncProviderId = "meta" | "ghl";
 
+// La función `expire_stale_integration_runs` está fuera del Database type
+// generado — usamos un cast laxo para llamarla por nombre sin perder type
+// safety en el resto del archivo. Mismo patrón que usa sync-ghl.ts.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type LooseRpcClient = { rpc: (name: string, args?: Record<string, unknown>) => any };
+function loose(svc: unknown): LooseRpcClient {
+  return svc as LooseRpcClient;
+}
+
 export interface SyncLaunchInput {
   launchId: string;
   provider: SyncProviderId;
@@ -84,6 +93,14 @@ export async function syncLaunch(
   input: SyncLaunchInput,
 ): Promise<SyncLaunchResult> {
   const service = createServiceClient();
+
+  // 0) Watchdog: marcar como 'error' cualquier run colgado en 'running' más
+  // de 15 min. Si el sync anterior se cortó (timeout, pestaña cerrada), su
+  // fila quedó atascada y bloquea el botón. Limpiamos antes de empezar.
+  // No fallamos si el RPC falla — es un nice-to-have, no crítico.
+  await loose(service).rpc("expire_stale_integration_runs", {
+    p_threshold: "15 minutes",
+  });
 
   // 1) Cargar launch + verificar ventana / cerrado
   const launchRes = await service

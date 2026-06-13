@@ -39,7 +39,9 @@
       "Bash(npm test *)",
       "Bash(wait %%)",
       "Bash(npx next *)",
-      "Bash(npm audit *)"
+      "Bash(npm audit *)",
+      "Bash(xargs cat *)",
+      "Bash(xargs grep *)"
     ]
   }
 }
