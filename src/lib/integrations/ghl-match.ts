@@ -63,6 +63,16 @@ export interface ExistingLeadView {
   id: string;
   status: LeadStatus;
   pinned_to_kanban: boolean;
+  /**
+   * Campos opcionales agregados en el refactor bulk (Fase 3b post-mortem).
+   * Permiten que el caller detecte updates no-op (cuando el patch dice "setear
+   * external_id=X" y X ya es el valor actual) y los saltee. Si no se popula,
+   * se asume que el patch debe aplicarse igual.
+   */
+  external_id?: string | null;
+  source?: string | null;
+  phone_normalized?: string | null;
+  team_member_id?: string | null;
 }
 
 export type MatchAction =
