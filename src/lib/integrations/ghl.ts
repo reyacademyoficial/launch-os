@@ -62,13 +62,24 @@ export interface GhlConversation {
   /** ISO timestamp del último mensaje (útil para acotar al rango del launch). */
   lastMessageDate: string | null;
   /**
-   * Type del último mensaje. Sirve para inferir si el último mensaje fue
-   * inbound (lead respondió). GHL emite strings tipo "TYPE_WHATSAPP" para
-   * el canal, pero algunos endpoints/tenants también devuelven
-   * "TYPE_WHATSAPP_INBOUND" — nuestro matcher trata ambos como WhatsApp y
-   * usa este string para detectar inbound por substring (case-insensitive).
+   * Tipo del último mensaje. GHL emite strings tipo "TYPE_WHATSAPP" para
+   * el canal. ¡OJO! El "inbound/outbound" NO está acá — está en
+   * `lastMessageDirection`. Acá lo guardamos sólo como referencia/telemetría.
    */
   lastMessageType: string | null;
+  /**
+   * Dirección del último mensaje: 'inbound' (el lead escribió) o 'outbound'
+   * (el operador escribió). Esta es la señal autoritativa de "el lead
+   * respondió", no `lastMessageType`.
+   */
+  lastMessageDirection: "inbound" | "outbound" | null;
+  /**
+   * ISO timestamp del último mensaje INBOUND de WhatsApp. Si tiene valor,
+   * el lead escribió en algún momento — combinado con la ventana del launch
+   * nos dice si fue dentro de compra+cierre. Más confiable que
+   * `lastMessageDirection` porque no se pisa cuando el operador responde.
+   */
+  lastInboundWhatsappMessageDate: string | null;
   /** Cuántos mensajes inbound no leídos hay. Señal débil pero útil de "el lead respondió". */
   unreadCount: number | null;
   raw: unknown;
@@ -163,6 +174,8 @@ export interface ConversationsMeta {
    * estemos perdiendo conversaciones más antiguas — diagnóstico de partial.
    */
   hit_max_pages: boolean;
+  /** Valores distintos de `lastMessageDirection` que vimos — diagnóstico. */
+  observed_directions: string[];
 }
 
 export interface ContactsMeta {
@@ -504,9 +517,11 @@ export async function fetchGhlConversations(
     passed_window_filter: 0,
     stopped_by_date_cutoff: false,
     hit_max_pages: false,
+    observed_directions: [],
   };
   const typesSet = new Set<string>();
   const lastTypesSet = new Set<string>();
+  const directionsSet = new Set<string>();
   const out: GhlConversation[] = [];
 
   for (let page = 0; page < MAX_PAGES; page++) {
@@ -549,6 +564,9 @@ export async function fetchGhlConversations(
       if (typeof conv.lastMessageType === "string") {
         lastTypesSet.add(conv.lastMessageType);
       }
+      if (typeof conv.lastMessageDirection === "string") {
+        directionsSet.add(conv.lastMessageDirection);
+      }
 
       const type = strOrNull(conv.type);
       const lastMessageType = strOrNull(conv.lastMessageType);
@@ -576,6 +594,8 @@ export async function fetchGhlConversations(
         type: lastMessageType ?? type,
         lastMessageDate: lastIso,
         lastMessageType,
+        lastMessageDirection: parseDirection(conv.lastMessageDirection),
+        lastInboundWhatsappMessageDate: strOrNull(conv.lastInboundWhatsappMessageDate),
         unreadCount: numOrNull(conv.unreadCount),
         raw: conv,
       });
@@ -602,6 +622,7 @@ export async function fetchGhlConversations(
 
   meta.observed_types = Array.from(typesSet);
   meta.observed_last_message_types = Array.from(lastTypesSet);
+  meta.observed_directions = Array.from(directionsSet);
   return { ok: true, rows: out, meta };
 }
 
@@ -822,6 +843,8 @@ export function parseConversationsBody(
       type,
       lastMessageDate: lastIso,
       lastMessageType: strOrNull(conv.lastMessageType),
+      lastMessageDirection: parseDirection(conv.lastMessageDirection),
+      lastInboundWhatsappMessageDate: strOrNull(conv.lastInboundWhatsappMessageDate),
       unreadCount: numOrNull(conv.unreadCount),
       raw: conv,
     });
@@ -1013,6 +1036,14 @@ function strOrNull(v: unknown): string | null {
   if (typeof v !== "string") return null;
   const trimmed = v.trim();
   return trimmed === "" ? null : trimmed;
+}
+
+function parseDirection(v: unknown): "inbound" | "outbound" | null {
+  if (typeof v !== "string") return null;
+  const lower = v.toLowerCase();
+  if (lower === "inbound") return "inbound";
+  if (lower === "outbound") return "outbound";
+  return null;
 }
 
 function numOrNull(v: unknown): number | null {

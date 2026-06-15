@@ -76,7 +76,21 @@ export type GhlRunSummary =
         contacts: ContactsMeta;
         appointments: AppointmentsMeta;
         conversations: ConversationsMeta;
-        warm_signals_seen: number;
+        /**
+         * Cuántos contactos distintos tienen al menos una conversación con
+         * señal de tibio (inbound en ventana compra+cierre). Se calcula del
+         * fetch de conversations completo, sin importar si esos contactos
+         * vinieron o no en el fetch incremental de contacts.
+         */
+        warm_map_size: number;
+        /** Contacts del fetch que matchearon una señal warm → tibio durante el apply. */
+        warm_signals_applied_to_fetched: number;
+        /**
+         * Leads que se promovieron a tibio por la vía "orphan": tienen señal
+         * warm en conversations pero su contact NO entró al sync incremental
+         * (porque su dateUpdated no se movió). Se buscan por external_id.
+         */
+        warm_orphan_promotions: number;
         mappings_applied: number;
       };
     }
@@ -159,23 +173,44 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   if (!apptResult.ok) return propagateFailure(apptResult, "appointments");
   if (!convResult.ok) return propagateFailure(convResult, "conversations");
 
-  // 3) Warm map (contactId → bool) a partir de conversaciones en compra+cierre.
+  // 3) Warm map (contactId → bool): el contact escribió por WhatsApp dentro
+  // de la ventana compra+cierre. Tres señales en orden de confiabilidad:
+  //
+  //   (a) `lastInboundWhatsappMessageDate ∈ ventana` — autoritativa: GHL
+  //       trackea explícitamente el último mensaje INBOUND de WA. Si tiene
+  //       valor y cae en ventana, el lead escribió. No se pisa cuando el
+  //       operador responde después.
+  //   (b) `lastMessageDirection === 'inbound'` + `lastMessageDate ∈ ventana`
+  //       — fallback si (a) no viene; menos confiable porque si el operador
+  //       contesta después de la ventana, deja de ser "inbound".
+  //   (c) `unreadCount > 0` + `lastMessageDate ∈ ventana` — señal débil
+  //       (hay mensajes sin leer del lead, sin importar el último).
+  //
+  // ANTES (bug): mirábamos si `lastMessageType.includes("inbound")` — pero
+  // GHL solo emite "TYPE_WHATSAPP" ahí, no "TYPE_WHATSAPP_INBOUND". Resultado:
+  // warm_signals_seen = 0 siempre.
   const warmStartMs = Date.parse(`${warmWindow.start}T00:00:00.000Z`);
   const warmEndMs = Date.parse(`${warmWindow.end}T23:59:59.999Z`);
+  const inWindow = (iso: string | null): boolean => {
+    if (!iso) return false;
+    const ms = Date.parse(iso);
+    return Number.isFinite(ms) && ms >= warmStartMs && ms <= warmEndMs;
+  };
   const warmByContact = new Map<string, boolean>();
   for (const c of convResult.rows) {
     if (!c.contactId) continue;
-    const ms = c.lastMessageDate ? Date.parse(c.lastMessageDate) : NaN;
-    if (!Number.isFinite(ms) || ms < warmStartMs || ms > warmEndMs) continue;
-    const isInboundLast =
-      typeof c.lastMessageType === "string" &&
-      c.lastMessageType.toLowerCase().includes("inbound");
-    const hasUnread = (c.unreadCount ?? 0) > 0;
-    if (isInboundLast || hasUnread) warmByContact.set(c.contactId, true);
+    const inboundInWindow = inWindow(c.lastInboundWhatsappMessageDate);
+    const lastIsInbound =
+      c.lastMessageDirection === "inbound" && inWindow(c.lastMessageDate);
+    const hasUnreadInWindow =
+      (c.unreadCount ?? 0) > 0 && inWindow(c.lastMessageDate);
+    if (inboundInWindow || lastIsInbound || hasUnreadInWindow) {
+      warmByContact.set(c.contactId, true);
+    }
   }
 
   // 4) Preparar items de contacts (normalización de phones).
-  let warmSignalsSeen = 0;
+  let warmSignalsAppliedToFetched = 0;
   let mappingsApplied = 0;
 
   const contactItems: PreparedContactItem[] = contactsResult.rows.map((c) => {
@@ -184,7 +219,7 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     const hasTibioTag = c.tags.some((t) => t.toLowerCase() === "tibio");
     const hasWarmConv = warmByContact.get(c.id) === true;
     const hasRecentInboundActivity = hasTibioTag || hasWarmConv;
-    if (hasRecentInboundActivity) warmSignalsSeen++;
+    if (hasRecentInboundActivity) warmSignalsAppliedToFetched++;
 
     let teamMemberId: string | null | undefined = undefined;
     if (c.assignedTo) {
@@ -266,6 +301,59 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   });
   const apptCounts = await applyBulk(args, apptActions);
 
+  // 8) Orphan warm: leads cuyo contact NO entró al fetch incremental pero sí
+  // tienen conversation con señal de tibio dentro de la ventana compra+cierre.
+  // GHL no siempre actualiza `dateUpdated` del contact cuando llega un mensaje,
+  // así que un contact existente puede pasar de frio a tibio sin que el sync
+  // incremental de contacts lo detecte. Acá lo cerramos: por cada contactId
+  // con warm signal que NO está entre los procesados, buscamos su lead por
+  // external_id y si está en 'frio' lo subimos a 'tibio'.
+  const contactsAlreadyProcessed = new Set(
+    contactItems.map((i) => i.contact.id),
+  );
+  const orphanContactIds: string[] = [];
+  for (const contactId of warmByContact.keys()) {
+    if (!contactsAlreadyProcessed.has(contactId)) {
+      orphanContactIds.push(contactId);
+    }
+  }
+
+  let warmOrphanPromotions = 0;
+  if (orphanContactIds.length > 0) {
+    const orphanLookup = await buildLeadLookup({
+      service: args.service,
+      projectId: args.projectId,
+      source: "ghl",
+      externalIds: orphanContactIds,
+      phoneNormalizeds: [], // no necesitamos phone, ya tenemos el contactId
+    });
+    const orphanUpdates: Array<{ leadId: string; patch: Record<string, unknown> }> = [];
+    for (const contactId of orphanContactIds) {
+      const lead = orphanLookup.byExternalKey.get(`ghl:${contactId}`);
+      if (!lead) continue; // contact que ni siquiera está sincronizado todavía
+      // Solo promovemos de frio a tibio. Tibio/agendado/cerrado/perdido no
+      // se tocan — "no degradar" sigue siendo la regla.
+      if (lead.status !== "frio") continue;
+      orphanUpdates.push({
+        leadId: lead.id,
+        patch: { status: "tibio", pinned_to_kanban: true },
+      });
+    }
+    if (orphanUpdates.length > 0) {
+      await parallelMap(orphanUpdates, UPDATE_CONCURRENCY, async (u) => {
+        const { error } = await loose(args.service)
+          .from("leads")
+          .update(u.patch)
+          .eq("id", u.leadId);
+        if (error) throw new Error(`GHL orphan warm update: ${error.message}`);
+        return true;
+      });
+      warmOrphanPromotions = orphanUpdates.length;
+      // Sumamos a contacts.updated para que el rows_written final lo refleje.
+      contactsCounts.updated += orphanUpdates.length;
+    }
+  }
+
   return {
     status: "success",
     counts: { contacts: contactsCounts, appointments: apptCounts },
@@ -273,7 +361,9 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
       contacts: contactsResult.meta,
       appointments: apptResult.meta,
       conversations: convResult.meta,
-      warm_signals_seen: warmSignalsSeen,
+      warm_map_size: warmByContact.size,
+      warm_signals_applied_to_fetched: warmSignalsAppliedToFetched,
+      warm_orphan_promotions: warmOrphanPromotions,
       mappings_applied: mappingsApplied,
     },
   };
