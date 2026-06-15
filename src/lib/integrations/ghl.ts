@@ -430,6 +430,55 @@ async function fetchGhlCalendars(
   return { ok: true, rows };
 }
 
+/**
+ * Trae las conversaciones de UN contact específico. Endpoint dedicado para la
+ * detección de tibio en el sync: por cada contact incremental hacemos UNA
+ * sola request acotada al contactId — barata, no requiere paginar 20k.
+ *
+ * GHL responde un array de conversations del contact (típicamente 1-3:
+ * WhatsApp + email + SMS). No paginamos: limit=100 es más que suficiente.
+ *
+ * El consumer usa `lastInboundWhatsappMessageDate` (que viene en cada
+ * conversation) para decidir si el lead respondió en la ventana del launch.
+ */
+export async function fetchGhlContactConversations(
+  token: string,
+  locationId: string,
+  contactId: string,
+): Promise<GhlFetchResult<GhlConversation>> {
+  const params = new URLSearchParams({
+    locationId,
+    contactId,
+    limit: "100",
+  });
+  const url = `${GHL_API_BASE}/conversations/search?${params.toString()}`;
+  const result = await ghlFetch(url, token);
+  if (!result.ok) return result;
+
+  const rawItems = extractArray(result.body, ["conversations"]);
+  const rows: GhlConversation[] = [];
+  for (const item of rawItems) {
+    if (typeof item !== "object" || item === null) continue;
+    const conv = item as Record<string, unknown>;
+    const id = strOrNull(conv.id);
+    if (!id) continue;
+    rows.push({
+      id,
+      contactId: strOrNull(conv.contactId),
+      rawPhone: extractPhone(conv),
+      contactName: extractContactName(conv),
+      type: strOrNull(conv.type) ?? strOrNull(conv.lastMessageType),
+      lastMessageDate: strOrNull(conv.lastMessageDate),
+      lastMessageType: strOrNull(conv.lastMessageType),
+      lastMessageDirection: parseDirection(conv.lastMessageDirection),
+      lastInboundWhatsappMessageDate: strOrNull(conv.lastInboundWhatsappMessageDate),
+      unreadCount: numOrNull(conv.unreadCount),
+      raw: conv,
+    });
+  }
+  return { ok: true, rows };
+}
+
 /** Pure function — testeable contra fixtures sin mockear fetch. */
 export function parseAppointmentsBody(body: unknown): GhlAppointment[] {
   const events = extractArray(body, ["events"]);
@@ -896,6 +945,26 @@ async function ghlFetch(
   // que el orchestrator, al hacer merge con su propio `message`, no pise lo
   // que GHL haya mandado en el cuerpo.
   if (res.status === 401 || res.status === 403) {
+    const body = await safeJson(res);
+    // Diferenciar token roto vs hipo de red. GHL a veces devuelve 401 con
+    // body { message: "Command timed out", ... } cuando se les cayó un
+    // backend interno — NO es problema del token. Si lo clasificamos como
+    // token_invalid, la UI marca la conexión como "Reconectar" y obliga al
+    // usuario a regenerar el PIT por nada. Tratamos esos como 'error'
+    // transient para que la UI muestre "Error, reintentá".
+    if (isTransientUpstreamMessage(body)) {
+      return {
+        ok: false,
+        kind: "error",
+        message: `GHL respondió ${res.status} con error transient (${describeTransient(body)})`,
+        detail: {
+          httpStatus: res.status,
+          url,
+          responseBody: body,
+          cause: "upstream_transient",
+        },
+      };
+    }
     return {
       ok: false,
       kind: "token_invalid",
@@ -903,7 +972,7 @@ async function ghlFetch(
       detail: {
         httpStatus: res.status,
         url,
-        responseBody: await safeJson(res),
+        responseBody: body,
       },
     };
   }
@@ -953,6 +1022,35 @@ async function ghlFetch(
     };
   }
   return { ok: true, body };
+}
+
+/**
+ * Heurística para detectar 401/403 que en realidad son fallos transient del
+ * backend de GHL, no problemas de credencial. Si el body contiene "timed out",
+ * "timeout" o "command timeout", tratamos como error transient — el token
+ * sigue siendo válido, el próximo intento probablemente ande.
+ *
+ * Tokens realmente inválidos devuelven mensajes tipo "Invalid token",
+ * "Unauthorized", "expired", etc. — esos pasan al path token_invalid.
+ */
+function isTransientUpstreamMessage(body: Record<string, unknown>): boolean {
+  const msg = extractMessage(body)?.toLowerCase();
+  if (!msg) return false;
+  return (
+    msg.includes("timed out") ||
+    msg.includes("timeout") ||
+    msg.includes("command timeout")
+  );
+}
+
+function describeTransient(body: Record<string, unknown>): string {
+  return extractMessage(body) ?? "upstream transient";
+}
+
+function extractMessage(body: Record<string, unknown>): string | null {
+  const m = body.message;
+  if (typeof m === "string" && m.length > 0) return m;
+  return null;
 }
 
 async function safeJson(res: Response): Promise<Record<string, unknown>> {

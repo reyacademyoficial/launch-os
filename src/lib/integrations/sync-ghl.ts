@@ -4,11 +4,10 @@ import { parsePhoneNumberFromString, type CountryCode } from "libphonenumber-js"
 
 import {
   fetchGhlAppointments,
+  fetchGhlContactConversations,
   fetchGhlContacts,
-  fetchGhlConversations,
   type AppointmentsMeta,
   type ContactsMeta,
-  type ConversationsMeta,
   type GhlAppointment,
   type GhlContact,
   type GhlFetchFailure,
@@ -24,12 +23,7 @@ import type { createServiceClient } from "@/lib/supabase/service";
 /**
  * Orquesta el sync de GHL en UNA corrida combinada con BULK operations.
  *
- * Razón del refactor (post-postmortem): a volumen alto (20k contacts) el sync
- * anterior hacía 2 queries de locate POR item + 1 insert/update POR item =
- * ~60k round-trips a Supabase. Aún con concurrency 10 eso tarda 5-10 min y
- * supera el timeout del Server Action.
- *
- * Ahora:
+ * Diseño post-cierre 3b:
  *   1) UNA query por external_id IN (...) + UNA por phone IN (...) → Map en memoria
  *   2) BULK upsert por batches de 500 para los inserts (onConflict ignora duplicados).
  *   3) Updates individuales en paralelo, pero salteando los no-op (patch que
@@ -39,9 +33,16 @@ import type { createServiceClient } from "@/lib/supabase/service";
  * El segundo locate ve los leads recién creados por el primero, evitando que
  * un appointment del mismo contacto cree un lead duplicado.
  *
- * Reglas de clasificación (sin cambios respecto a la versión anterior):
+ * Detección de tibio (cierre 3b): para cada contact del fetch incremental,
+ * UNA llamada a `/conversations/search?contactId=...` para leer
+ * `lastInboundWhatsappMessageDate`. Si cae en compra+cierre → tibio. Sin
+ * paginar las 20k conversaciones del location. Cap defensivo de 2000 contacts
+ * por corrida: si la corrida supera, se salta el lookup de tibio en esa
+ * corrida (queda como follow-up natural en las siguientes incrementales).
+ *
+ * Reglas de clasificación (ver INTEGRATIONS_GHL.md):
  *   - tag 'cliente' → cerrado
- *   - tag 'tibio' O conversación WA con inbound reciente → tibio
+ *   - conversación WA con `lastInboundWhatsappMessageDate` en compra+cierre → tibio
  *   - default → frio
  *   - appointment confirmed → agendado (cancelled/noshow → noop)
  *   - assignedTo de GHL → team_member_id via ghl_user_mappings
@@ -75,28 +76,33 @@ export type GhlRunSummary =
       meta: {
         contacts: ContactsMeta;
         appointments: AppointmentsMeta;
-        conversations: ConversationsMeta;
         /**
-         * Cuántos contactos distintos tienen al menos una conversación con
-         * señal de tibio (inbound en ventana compra+cierre). Se calcula del
-         * fetch de conversations completo, sin importar si esos contactos
-         * vinieron o no en el fetch incremental de contacts.
+         * Cuántos contacts del fetch incremental se clasificaron como tibio
+         * (señal `lastInboundWhatsappMessageDate ∈ compra+cierre`).
          */
-        warm_map_size: number;
-        /** Contacts del fetch que matchearon una señal warm → tibio durante el apply. */
-        warm_signals_applied_to_fetched: number;
+        warm_signals_detected: number;
         /**
-         * Leads que se promovieron a tibio por la vía "orphan": tienen señal
-         * warm en conversations pero su contact NO entró al sync incremental
-         * (porque su dateUpdated no se movió). Se buscan por external_id.
+         * Cuántos contacts del fetch tenían al menos una conversación
+         * inspeccionada (numerador esperado: <= contactItems.length).
          */
-        warm_orphan_promotions: number;
+        warm_lookup_contacts_inspected: number;
+        /**
+         * True si la corrida superó el cap defensivo (`WARM_LOOKUP_CAP`) y se
+         * saltó la detección de tibio. La próxima corrida incremental, más
+         * chica, debería procesarlos.
+         */
+        warm_lookup_skipped_due_to_volume: boolean;
+        /**
+         * Errores durante el lookup individual (rate limit, timeout). El sync
+         * continúa con los demás, marcando esos contacts sin señal warm.
+         */
+        warm_lookup_errors: number;
         mappings_applied: number;
       };
     }
   | {
       status: "token_invalid" | "rate_limited" | "error";
-      stage: "contacts" | "appointments" | "conversations" | "mappings";
+      stage: "contacts" | "appointments" | "warm_lookup" | "mappings";
       message: string;
       detail: Record<string, unknown>;
       retryAfterSeconds?: number | null;
@@ -121,6 +127,15 @@ export interface RunGhlSyncArgs {
 
 const BULK_BATCH = 500;
 const UPDATE_CONCURRENCY = 10;
+const WARM_LOOKUP_CONCURRENCY = 10;
+/**
+ * Tope defensivo de contacts que disparan lookup de conversaciones por
+ * contactId. Cada contact son ~200ms con concurrency 10 → 2000 contacts = ~40s.
+ * Si la corrida trae más (típicamente la primera vez de un launch grande),
+ * salteamos el lookup en esa corrida. Las siguientes incrementales (mucho
+ * más chicas) los van a clasificar.
+ */
+const WARM_LOOKUP_CAP = 2000;
 
 export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   const country = (args.defaultCountry || "AR") as CountryCode;
@@ -146,8 +161,11 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     ),
   );
 
-  // 2) Fetches GHL en paralelo.
-  const [contactsResult, apptResult, convResult] = await Promise.all([
+  // 2) Fetches GHL en paralelo. Solo contacts + appointments — el fetch
+  // masivo de conversations se eliminó en el cierre 3b (cuello de botella de
+  // 60-90s sin clasificación confiable). La señal de tibio ahora se hace
+  // contact-by-contact más abajo.
+  const [contactsResult, apptResult] = await Promise.all([
     fetchGhlContacts({
       token: args.token,
       locationId: args.locationId,
@@ -161,34 +179,17 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
       since: args.since,
       until: args.until,
     }),
-    fetchGhlConversations({
-      token: args.token,
-      locationId: args.locationId,
-      since: warmWindow.start,
-      until: warmWindow.end,
-      cutoffIso,
-    }),
   ]);
   if (!contactsResult.ok) return propagateFailure(contactsResult, "contacts");
   if (!apptResult.ok) return propagateFailure(apptResult, "appointments");
-  if (!convResult.ok) return propagateFailure(convResult, "conversations");
 
-  // 3) Warm map (contactId → bool): el contact escribió por WhatsApp dentro
-  // de la ventana compra+cierre. Tres señales en orden de confiabilidad:
+  // 3) Lookup de tibio POR CONTACT (no masivo). Por cada contact del fetch
+  // incremental, una request a `/conversations/search?contactId=...` para
+  // leer `lastInboundWhatsappMessageDate`. Si cae en compra+cierre → tibio.
   //
-  //   (a) `lastInboundWhatsappMessageDate ∈ ventana` — autoritativa: GHL
-  //       trackea explícitamente el último mensaje INBOUND de WA. Si tiene
-  //       valor y cae en ventana, el lead escribió. No se pisa cuando el
-  //       operador responde después.
-  //   (b) `lastMessageDirection === 'inbound'` + `lastMessageDate ∈ ventana`
-  //       — fallback si (a) no viene; menos confiable porque si el operador
-  //       contesta después de la ventana, deja de ser "inbound".
-  //   (c) `unreadCount > 0` + `lastMessageDate ∈ ventana` — señal débil
-  //       (hay mensajes sin leer del lead, sin importar el último).
-  //
-  // ANTES (bug): mirábamos si `lastMessageType.includes("inbound")` — pero
-  // GHL solo emite "TYPE_WHATSAPP" ahí, no "TYPE_WHATSAPP_INBOUND". Resultado:
-  // warm_signals_seen = 0 siempre.
+  // Cap defensivo: si el fetch trae más de WARM_LOOKUP_CAP, salteamos el
+  // lookup y todos quedan sin señal warm. La próxima corrida incremental,
+  // mucho más chica, los va a clasificar.
   const warmStartMs = Date.parse(`${warmWindow.start}T00:00:00.000Z`);
   const warmEndMs = Date.parse(`${warmWindow.end}T23:59:59.999Z`);
   const inWindow = (iso: string | null): boolean => {
@@ -196,30 +197,47 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     const ms = Date.parse(iso);
     return Number.isFinite(ms) && ms >= warmStartMs && ms <= warmEndMs;
   };
+
   const warmByContact = new Map<string, boolean>();
-  for (const c of convResult.rows) {
-    if (!c.contactId) continue;
-    const inboundInWindow = inWindow(c.lastInboundWhatsappMessageDate);
-    const lastIsInbound =
-      c.lastMessageDirection === "inbound" && inWindow(c.lastMessageDate);
-    const hasUnreadInWindow =
-      (c.unreadCount ?? 0) > 0 && inWindow(c.lastMessageDate);
-    if (inboundInWindow || lastIsInbound || hasUnreadInWindow) {
-      warmByContact.set(c.contactId, true);
+  let warmLookupSkippedDueToVolume = false;
+  let warmLookupContactsInspected = 0;
+  let warmLookupErrors = 0;
+
+  if (contactsResult.rows.length > WARM_LOOKUP_CAP) {
+    warmLookupSkippedDueToVolume = true;
+  } else if (contactsResult.rows.length > 0) {
+    const lookupResults = await parallelMap(
+      contactsResult.rows,
+      WARM_LOOKUP_CONCURRENCY,
+      async (c) => {
+        const res = await fetchGhlContactConversations(
+          args.token,
+          args.locationId,
+          c.id,
+        );
+        if (!res.ok) return { contactId: c.id, warm: false, ok: false };
+        const hasWarm = res.rows.some((conv) =>
+          inWindow(conv.lastInboundWhatsappMessageDate),
+        );
+        return { contactId: c.id, warm: hasWarm, ok: true };
+      },
+    );
+    for (const r of lookupResults) {
+      warmLookupContactsInspected++;
+      if (!r.ok) warmLookupErrors++;
+      if (r.warm) warmByContact.set(r.contactId, true);
     }
   }
 
   // 4) Preparar items de contacts (normalización de phones).
-  let warmSignalsAppliedToFetched = 0;
+  let warmSignalsDetected = 0;
   let mappingsApplied = 0;
 
   const contactItems: PreparedContactItem[] = contactsResult.rows.map((c) => {
     const phoneNormalized = normalize(c.rawPhone, country);
     const hasClientTag = c.tags.some((t) => t.toLowerCase() === "cliente");
-    const hasTibioTag = c.tags.some((t) => t.toLowerCase() === "tibio");
-    const hasWarmConv = warmByContact.get(c.id) === true;
-    const hasRecentInboundActivity = hasTibioTag || hasWarmConv;
-    if (hasRecentInboundActivity) warmSignalsAppliedToFetched++;
+    const hasRecentInboundActivity = warmByContact.get(c.id) === true;
+    if (hasRecentInboundActivity) warmSignalsDetected++;
 
     let teamMemberId: string | null | undefined = undefined;
     if (c.assignedTo) {
@@ -301,58 +319,11 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   });
   const apptCounts = await applyBulk(args, apptActions);
 
-  // 8) Orphan warm: leads cuyo contact NO entró al fetch incremental pero sí
-  // tienen conversation con señal de tibio dentro de la ventana compra+cierre.
-  // GHL no siempre actualiza `dateUpdated` del contact cuando llega un mensaje,
-  // así que un contact existente puede pasar de frio a tibio sin que el sync
-  // incremental de contacts lo detecte. Acá lo cerramos: por cada contactId
-  // con warm signal que NO está entre los procesados, buscamos su lead por
-  // external_id y si está en 'frio' lo subimos a 'tibio'.
-  const contactsAlreadyProcessed = new Set(
-    contactItems.map((i) => i.contact.id),
-  );
-  const orphanContactIds: string[] = [];
-  for (const contactId of warmByContact.keys()) {
-    if (!contactsAlreadyProcessed.has(contactId)) {
-      orphanContactIds.push(contactId);
-    }
-  }
-
-  let warmOrphanPromotions = 0;
-  if (orphanContactIds.length > 0) {
-    const orphanLookup = await buildLeadLookup({
-      service: args.service,
-      projectId: args.projectId,
-      source: "ghl",
-      externalIds: orphanContactIds,
-      phoneNormalizeds: [], // no necesitamos phone, ya tenemos el contactId
-    });
-    const orphanUpdates: Array<{ leadId: string; patch: Record<string, unknown> }> = [];
-    for (const contactId of orphanContactIds) {
-      const lead = orphanLookup.byExternalKey.get(`ghl:${contactId}`);
-      if (!lead) continue; // contact que ni siquiera está sincronizado todavía
-      // Solo promovemos de frio a tibio. Tibio/agendado/cerrado/perdido no
-      // se tocan — "no degradar" sigue siendo la regla.
-      if (lead.status !== "frio") continue;
-      orphanUpdates.push({
-        leadId: lead.id,
-        patch: { status: "tibio", pinned_to_kanban: true },
-      });
-    }
-    if (orphanUpdates.length > 0) {
-      await parallelMap(orphanUpdates, UPDATE_CONCURRENCY, async (u) => {
-        const { error } = await loose(args.service)
-          .from("leads")
-          .update(u.patch)
-          .eq("id", u.leadId);
-        if (error) throw new Error(`GHL orphan warm update: ${error.message}`);
-        return true;
-      });
-      warmOrphanPromotions = orphanUpdates.length;
-      // Sumamos a contacts.updated para que el rows_written final lo refleje.
-      contactsCounts.updated += orphanUpdates.length;
-    }
-  }
+  // 8) Orphan warm REMOVIDO en el cierre 3b: requería el fetch masivo de
+  // conversations (60-90s, sin clasificación confiable). Trade-off: si GHL
+  // no actualiza `dateUpdated` del contact cuando llega un mensaje, un lead
+  // existente puede tardar una corrida más en subir a tibio (hasta que un
+  // tag/edit del contact lo modifique y reentre al incremental). Aceptable.
 
   return {
     status: "success",
@@ -360,10 +331,10 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     meta: {
       contacts: contactsResult.meta,
       appointments: apptResult.meta,
-      conversations: convResult.meta,
-      warm_map_size: warmByContact.size,
-      warm_signals_applied_to_fetched: warmSignalsAppliedToFetched,
-      warm_orphan_promotions: warmOrphanPromotions,
+      warm_signals_detected: warmSignalsDetected,
+      warm_lookup_contacts_inspected: warmLookupContactsInspected,
+      warm_lookup_skipped_due_to_volume: warmLookupSkippedDueToVolume,
+      warm_lookup_errors: warmLookupErrors,
       mappings_applied: mappingsApplied,
     },
   };
@@ -707,7 +678,7 @@ function buildContactNotes(c: GhlContact): string | null {
 
 function propagateFailure(
   failure: GhlFetchFailure,
-  stage: "contacts" | "appointments" | "conversations" | "mappings",
+  stage: "contacts" | "appointments" | "warm_lookup" | "mappings",
 ): GhlRunSummary {
   return {
     status: failure.kind,

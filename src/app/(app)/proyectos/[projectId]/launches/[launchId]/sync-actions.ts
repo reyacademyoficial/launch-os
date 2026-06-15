@@ -76,8 +76,8 @@ export async function triggerSync(
 // ─── saveIntegrationConfig ────────────────────────────────────────────────
 
 interface AdsConfigPayload {
-  ad_account_id: string;
-  campaign_ids: string[];
+  /** Shape multi-account: 1+ cuentas, cada una con sus campañas. */
+  ad_accounts: Array<{ ad_account_id: string; campaign_ids: string[] }>;
 }
 interface GhlConfigPayload {
   location_id: string;
@@ -112,29 +112,76 @@ export async function saveIntegrationConfig(
       String(formData.get("default_country") ?? "AR").trim() || "AR";
     payload = { location_id: locationId, default_country: defaultCountry };
   } else {
-    const adAccountId = String(formData.get("ad_account_id") ?? "").trim();
-    const campaignIdsRaw = String(formData.get("campaign_ids") ?? "").trim();
-
-    if (!adAccountId) return { error: "Tenés que ingresar el Ad Account ID." };
-    if (provider === "meta" && !adAccountId.startsWith("act_")) {
+    // Multi-account: la UI envía un JSON serializado con las entradas. Cada
+    // entrada es { ad_account_id, campaign_ids } y necesitamos al menos una
+    // con campañas válidas.
+    const accountsJson = String(formData.get("ad_accounts_json") ?? "").trim();
+    if (!accountsJson) {
       return {
-        error:
-          "El Ad Account ID de Meta arranca con 'act_'. Revisalo (sale del Business Manager).",
+        error: "Configurá al menos una cuenta publicitaria con sus campañas.",
+      };
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(accountsJson);
+    } catch {
+      return { error: "Config malformada — recargá el modal y volvé a guardar." };
+    }
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      return {
+        error: "Agregá al menos una cuenta publicitaria con sus campañas.",
       };
     }
 
-    const campaignIds = campaignIdsRaw
-      .split(/[\s,]+/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-    if (campaignIds.length === 0) {
+    const accounts: Array<{ ad_account_id: string; campaign_ids: string[] }> = [];
+    for (let i = 0; i < parsed.length; i++) {
+      const entry = parsed[i];
+      if (entry === null || typeof entry !== "object") continue;
+      const rec = entry as Record<string, unknown>;
+      const adAccountId =
+        typeof rec.ad_account_id === "string" ? rec.ad_account_id.trim() : "";
+      const campaignIds = Array.isArray(rec.campaign_ids)
+        ? rec.campaign_ids
+            .filter((c): c is string => typeof c === "string")
+            .map((c) => c.trim())
+            .filter((c) => c.length > 0)
+        : [];
+
+      if (!adAccountId) {
+        return { error: `Cuenta ${i + 1}: falta el Ad Account ID.` };
+      }
+      if (provider === "meta" && !adAccountId.startsWith("act_")) {
+        return {
+          error: `Cuenta ${i + 1}: el Ad Account ID de Meta arranca con 'act_'.`,
+        };
+      }
+      if (campaignIds.length === 0) {
+        return {
+          error: `Cuenta ${i + 1} (${adAccountId}): asociá al menos una campaña.`,
+        };
+      }
+      accounts.push({ ad_account_id: adAccountId, campaign_ids: campaignIds });
+    }
+
+    if (accounts.length === 0) {
       return {
-        error:
-          "Asociá al menos una campaña — el sync filtra por campañas para no mezclar gastos.",
+        error: "No reconocí ninguna cuenta válida — revisá los campos.",
       };
     }
 
-    payload = { ad_account_id: adAccountId, campaign_ids: campaignIds };
+    // Defensa: ad accounts duplicados en el mismo launch no tienen sentido
+    // (las campañas del segundo se agregarían al primero y se vuelve confuso).
+    const seen = new Set<string>();
+    for (const a of accounts) {
+      if (seen.has(a.ad_account_id)) {
+        return {
+          error: `Cuenta ${a.ad_account_id} aparece dos veces — unificá sus campañas en una sola entrada.`,
+        };
+      }
+      seen.add(a.ad_account_id);
+    }
+
+    payload = { ad_accounts: accounts };
   }
 
   const service = createServiceClient();

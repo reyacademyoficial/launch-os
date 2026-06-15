@@ -22,8 +22,13 @@ import type { SyncProviderId } from "@/lib/integrations/sync";
  *
  * El usuario puede guardar token sin tocar config y viceversa.
  */
+export interface InitialAdAccountEntry {
+  adAccountId: string;
+  campaignIds: readonly string[];
+}
+
 export type InitialConfig =
-  | { kind: "ads"; adAccountId: string; campaignIds: readonly string[] }
+  | { kind: "ads"; adAccounts: ReadonlyArray<InitialAdAccountEntry> }
   | { kind: "ghl"; locationId: string; defaultCountry: string };
 
 export function ConfigModal({
@@ -203,52 +208,162 @@ export function ConfigModal({
                   </div>
                 </form>
               ) : (
-                <form action={configAction} className="space-y-3">
-                  <div>
-                    <Label htmlFor="ad_account_id">Ad Account ID</Label>
-                    <Input
-                      id="ad_account_id"
-                      name="ad_account_id"
-                      type="text"
-                      autoComplete="off"
-                      placeholder="act_1234567890"
-                      defaultValue={initialConfig.adAccountId}
-                    />
-                    <p className="mt-1 text-xs text-fg-subtle">
-                      Arranca con <code className="text-fg">act_</code>.
-                    </p>
-                  </div>
-                  <div>
-                    <Label htmlFor="campaign_ids">
-                      Campaign IDs{" "}
-                      <span className="text-xs text-fg-subtle">(al menos 1)</span>
-                    </Label>
-                    <Input
-                      id="campaign_ids"
-                      name="campaign_ids"
-                      type="text"
-                      autoComplete="off"
-                      placeholder="120203456789 120204567891"
-                      defaultValue={initialConfig.campaignIds.join(" ")}
-                    />
-                    <p className="mt-1 text-xs text-fg-subtle">
-                      Separados por coma o espacio. Sin esto no podemos atribuir el gasto a este lanzamiento.
-                    </p>
-                  </div>
-                  <div className="flex items-center justify-end gap-3">
-                    {configState && "error" in configState && (
-                      <FieldError>{configState.error}</FieldError>
-                    )}
-                    <Button type="submit" disabled={configPending}>
-                      {configPending ? "Guardando…" : "Guardar config"}
-                    </Button>
-                  </div>
-                </form>
+                <AdsMultiAccountForm
+                  formAction={configAction}
+                  pending={configPending}
+                  error={
+                    configState && "error" in configState ? configState.error : null
+                  }
+                  initialAccounts={initialConfig.adAccounts}
+                />
               )}
             </div>
           </div>
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Form de Meta/Google/TikTok con UI dinámica para múltiples ad accounts. El
+ * estado se serializa a un hidden input `ad_accounts_json` que el server action
+ * parsea y valida. Cada fila tiene su account_id + textarea de campañas.
+ *
+ * Diseño:
+ *  - Estado local React: array de entries (account_id + campaign string).
+ *  - El campaign string se trabaja como texto libre (separado por espacios
+ *    o comas) y solo se split al serializar — más cómodo para tipear.
+ *  - Al menos 1 entry siempre. "Quitar" desaparece si solo queda una.
+ */
+function AdsMultiAccountForm({
+  formAction,
+  pending,
+  error,
+  initialAccounts,
+}: {
+  readonly formAction: (formData: FormData) => void;
+  readonly pending: boolean;
+  readonly error: string | null;
+  readonly initialAccounts: ReadonlyArray<InitialAdAccountEntry>;
+}) {
+  interface Row {
+    adAccountId: string;
+    campaignsText: string;
+  }
+
+  const [rows, setRows] = useState<Row[]>(() => {
+    if (initialAccounts.length === 0) {
+      return [{ adAccountId: "", campaignsText: "" }];
+    }
+    return initialAccounts.map((a) => ({
+      adAccountId: a.adAccountId,
+      campaignsText: a.campaignIds.join(" "),
+    }));
+  });
+
+  function update(idx: number, patch: Partial<Row>) {
+    setRows((prev) =>
+      prev.map((row, i) => (i === idx ? { ...row, ...patch } : row)),
+    );
+  }
+  function addRow() {
+    setRows((prev) => [...prev, { adAccountId: "", campaignsText: "" }]);
+  }
+  function removeRow(idx: number) {
+    setRows((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  // Serialización para el hidden input. Sanea entradas vacías; el server hace
+  // su propia validación, esto solo evita ruido obvio.
+  const serialized = JSON.stringify(
+    rows
+      .filter((r) => r.adAccountId.trim().length > 0)
+      .map((r) => ({
+        ad_account_id: r.adAccountId.trim(),
+        campaign_ids: r.campaignsText
+          .split(/[\s,]+/)
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0),
+      })),
+  );
+
+  return (
+    <form action={formAction} className="space-y-4">
+      <input type="hidden" name="ad_accounts_json" value={serialized} />
+
+      <div className="space-y-3">
+        {rows.map((row, idx) => (
+          <div
+            key={idx}
+            className="rounded-md border border-border bg-surface/40 p-3 space-y-2"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-fg-subtle">
+                Cuenta {idx + 1}
+              </span>
+              {rows.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => removeRow(idx)}
+                  className="text-xs text-error hover:underline"
+                >
+                  Quitar
+                </button>
+              )}
+            </div>
+            <div>
+              <Label htmlFor={`ad_account_id_${idx}`}>Ad Account ID</Label>
+              <Input
+                id={`ad_account_id_${idx}`}
+                type="text"
+                autoComplete="off"
+                placeholder="act_1234567890"
+                value={row.adAccountId}
+                onChange={(e) => update(idx, { adAccountId: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label htmlFor={`campaign_ids_${idx}`}>
+                Campaign IDs{" "}
+                <span className="text-xs text-fg-subtle">(al menos 1)</span>
+              </Label>
+              <Input
+                id={`campaign_ids_${idx}`}
+                type="text"
+                autoComplete="off"
+                placeholder="120203456789 120204567891"
+                value={row.campaignsText}
+                onChange={(e) => update(idx, { campaignsText: e.target.value })}
+              />
+              <p className="mt-1 text-xs text-fg-subtle">
+                Separados por coma o espacio.
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <Button
+        type="button"
+        variant="secondary"
+        onClick={addRow}
+        className="!px-3 !py-1.5 !text-xs"
+      >
+        + Agregar otra cuenta
+      </Button>
+
+      <p className="text-xs text-fg-subtle">
+        Todas las cuentas tienen que estar bajo el mismo Business Manager (un solo
+        token las cubre).
+      </p>
+
+      <div className="flex items-center justify-end gap-3 border-t border-border pt-3">
+        {error && <FieldError>{error}</FieldError>}
+        <Button type="submit" disabled={pending}>
+          {pending ? "Guardando…" : "Guardar config"}
+        </Button>
+      </div>
+    </form>
   );
 }

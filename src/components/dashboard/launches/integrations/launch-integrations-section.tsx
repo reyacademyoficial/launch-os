@@ -44,7 +44,14 @@ const SOON_PROVIDERS: ReadonlyArray<{ id: string; label: string }> = [
   { id: "tiktok", label: "TikTok Ads" },
 ];
 
+interface MetaAdAccountShape {
+  ad_account_id?: string;
+  campaign_ids?: string[];
+}
 interface MetaConfigShape {
+  // Shape nuevo
+  ad_accounts?: MetaAdAccountShape[];
+  // Shape legacy (1 cuenta suelta) — toleramos para no romper launches viejos
   ad_account_id?: string;
   campaign_ids?: string[];
 }
@@ -259,34 +266,66 @@ export async function LaunchIntegrationsSection({
  * Shape común que el card y el modal consumen. `initialConfig` se pasa al
  * ConfigModal para que sepa qué campos prellenar (es polimórfica por provider).
  */
+interface AdAccountEntry {
+  adAccountId: string;
+  campaignIds: string[];
+}
+
 interface ProviderDisplay {
   hasConfig: boolean;
   missingMessage: string;
   fields: ReadonlyArray<{ label: string; value: string; code?: boolean }>;
   initialConfig:
-    | { kind: "ads"; adAccountId: string; campaignIds: string[] }
+    | { kind: "ads"; adAccounts: AdAccountEntry[] }
     | { kind: "ghl"; locationId: string; defaultCountry: string };
 }
 
+/**
+ * Normaliza la config almacenada (que puede venir en shape nuevo o legacy) a
+ * una lista plana de entries que el modal y el display consumen igual.
+ */
+function readAdAccounts(cfg: MetaConfigShape): AdAccountEntry[] {
+  if (Array.isArray(cfg.ad_accounts)) {
+    const out: AdAccountEntry[] = [];
+    for (const item of cfg.ad_accounts) {
+      const id = item.ad_account_id ?? "";
+      const campaigns = Array.isArray(item.campaign_ids) ? item.campaign_ids : [];
+      if (!id || campaigns.length === 0) continue;
+      out.push({ adAccountId: id, campaignIds: campaigns });
+    }
+    return out;
+  }
+  // Legacy
+  const legacyId = cfg.ad_account_id ?? "";
+  const legacyCampaigns = cfg.campaign_ids ?? [];
+  if (legacyId && legacyCampaigns.length > 0) {
+    return [{ adAccountId: legacyId, campaignIds: legacyCampaigns }];
+  }
+  return [];
+}
+
 function buildAdsDisplay(cfg: MetaConfigShape): ProviderDisplay {
-  const adAccount = cfg.ad_account_id ?? "";
-  const campaigns = cfg.campaign_ids ?? [];
-  const hasConfig =
-    adAccount.length > 0 && Array.isArray(campaigns) && campaigns.length > 0;
+  const adAccounts = readAdAccounts(cfg);
+  const hasConfig = adAccounts.length > 0;
+  const totalCampaigns = adAccounts.reduce((acc, a) => acc + a.campaignIds.length, 0);
 
   return {
     hasConfig,
-    missingMessage: "Falta ad_account_id o campañas",
+    missingMessage: "Falta al menos una cuenta con campañas",
     fields: hasConfig
       ? [
-          { label: "Ad account", value: adAccount, code: true },
           {
-            label: "Campañas",
-            value: `${campaigns.length} configurada${campaigns.length === 1 ? "" : "s"}`,
+            label: "Cuentas",
+            value: `${adAccounts.length}: ${adAccounts.map((a) => a.adAccountId).join(", ")}`,
+            code: true,
+          },
+          {
+            label: "Campañas totales",
+            value: `${totalCampaigns} en ${adAccounts.length} cuenta${adAccounts.length === 1 ? "" : "s"}`,
           },
         ]
       : [],
-    initialConfig: { kind: "ads", adAccountId: adAccount, campaignIds: campaigns },
+    initialConfig: { kind: "ads", adAccounts },
   };
 }
 

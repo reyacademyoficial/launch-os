@@ -4,7 +4,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 
 import { tryComputeLaunchCalendar } from "@/lib/launches/calendar";
 
-import { fetchMetaInsights, type MetaInsightDay, type MetaSyncResult } from "./meta";
+import { fetchMetaInsights, type MetaInsightDay } from "./meta";
 import { runGhlSync, type GhlRunSummary } from "./sync-ghl";
 
 /**
@@ -71,9 +71,27 @@ interface LaunchSnapshot {
   integration_config: Record<string, unknown>;
 }
 
+/**
+ * Config de Meta para un launch. Soporta múltiples ad accounts dentro del
+ * MISMO Business Manager (un solo token los cubre a todos).
+ *
+ * Shape vivo en `launches.integration_config.meta`:
+ *   {
+ *     "ad_accounts": [
+ *       { "ad_account_id": "act_111", "campaign_ids": ["c1", "c2"] },
+ *       { "ad_account_id": "act_222", "campaign_ids": ["c3"] }
+ *     ]
+ *   }
+ *
+ * Shape legacy (pre multi-account): { ad_account_id, campaign_ids }.
+ * `readProviderConfig` lo normaliza al shape nuevo (array de 1) sin romper.
+ */
+interface MetaAdAccountEntry {
+  ad_account_id: string;
+  campaign_ids: string[];
+}
 interface MetaProviderConfig {
-  ad_account_id?: string;
-  campaign_ids?: string[];
+  ad_accounts: MetaAdAccountEntry[];
 }
 
 interface GhlProviderConfig {
@@ -164,27 +182,14 @@ export async function syncLaunch(
 
   // 2b) Meta: cargar config + secret
   const providerConfig = readProviderConfig(launch.integration_config, input.provider);
-  if (!providerConfig.ad_account_id) {
+  if (providerConfig.ad_accounts.length === 0) {
     return await recordTerminalRun(
       service,
       input,
       launch,
       "config_missing",
-      "Falta el ad_account_id en la config del launch.",
-      { cause: "missing_ad_account_id" },
-    );
-  }
-  if (
-    !Array.isArray(providerConfig.campaign_ids) ||
-    providerConfig.campaign_ids.length === 0
-  ) {
-    return await recordTerminalRun(
-      service,
-      input,
-      launch,
-      "config_missing",
-      "Hay que asociar al menos una campaña al lanzamiento antes de sincronizar.",
-      { cause: "missing_campaigns" },
+      "Configurá al menos una cuenta publicitaria con al menos una campaña antes de sincronizar.",
+      { cause: "missing_ad_accounts" },
     );
   }
 
@@ -232,29 +237,48 @@ export async function syncLaunch(
     };
   }
 
-  // 4) Llamar al adapter Meta — la rama GHL ya retornó antes (2a).
-  const result: MetaSyncResult = await fetchMetaInsights({
-    token,
-    adAccountId: providerConfig.ad_account_id,
-    campaignIds: providerConfig.campaign_ids,
-    since: launch.date_start,
-    until: launch.date_end,
-  });
+  // 4) Llamar al adapter Meta por cada ad_account (mismo token cubre a todos
+  // dentro del mismo BM). Acumulamos todos los rows; `mergeInsightsByDate`
+  // más abajo se encarga de sumar entre cuentas Y entre campañas por fecha.
+  // En paralelo: las 3 cuentas y sus 3 campañas son requests independientes,
+  // no hay razón para serializar. Si una falla con token_invalid/rate_limited
+  // abortamos completo (no tiene sentido seguir con las otras).
+  const accountResults = await Promise.all(
+    providerConfig.ad_accounts.map((entry) =>
+      fetchMetaInsights({
+        token,
+        adAccountId: entry.ad_account_id,
+        campaignIds: entry.campaign_ids,
+        since: launch.date_start!,
+        until: launch.date_end!,
+      }),
+    ),
+  );
 
-  // 5) Manejar el resultado
-  if (!result.ok) {
-    const detail = {
-      ...result.detail,
-      message: result.message,
-      retryAfterSeconds: result.retryAfterSeconds ?? null,
-    };
-    return await finalizeRun(service, runId, result.kind, 0, detail);
+  // 5) Si alguna falló, propagamos la primera falla con detalle de qué cuenta.
+  const allRows: MetaInsightDay[] = [];
+  for (let i = 0; i < accountResults.length; i++) {
+    const r = accountResults[i]!;
+    if (!r.ok) {
+      const accountId = providerConfig.ad_accounts[i]?.ad_account_id ?? "?";
+      const detail = {
+        ...r.detail,
+        message: r.message,
+        retryAfterSeconds: r.retryAfterSeconds ?? null,
+        failed_ad_account_id: accountId,
+      };
+      return await finalizeRun(service, runId, r.kind, 0, detail);
+    }
+    allRows.push(...r.rows);
   }
 
-  // 6) Filtrar a la ventana del launch y upsert
+  // 6) Filtrar a la ventana del launch y agrupar por fecha.
+  // `mergeInsightsByDate` suma todas las filas con el mismo `date` —
+  // funciona tanto para "N campañas en una cuenta" como para "M cuentas
+  // con sus campañas".
   const startDate = launch.date_start;
   const endDate = launch.date_end;
-  const inWindow = result.rows.filter(
+  const inWindow = allRows.filter(
     (r) => r.date >= startDate && r.date <= endDate,
   );
 
@@ -262,7 +286,10 @@ export async function syncLaunch(
     return await finalizeRun(service, runId, "success", 0, null);
   }
 
-  const rowsToWrite = inWindow.map((day) => buildAdsRow(launch.id, input.provider, day));
+  const mergedByDate = mergeInsightsByDate(inWindow);
+  const rowsToWrite = mergedByDate.map((day) =>
+    buildAdsRow(launch.id, input.provider, day),
+  );
   const upsert = await service
     .from("launch_daily_ads")
     .upsert(rowsToWrite as never, { onConflict: "launch_id,date,provider" });
@@ -274,27 +301,64 @@ export async function syncLaunch(
     });
   }
 
-  return await finalizeRun(service, runId, "success", inWindow.length, null);
+  // rows_written = filas escritas en launch_daily_ads, que después del merge
+  // es 1 por (launch, date, provider) — usamos mergedByDate.length, no
+  // inWindow.length (que cuenta las filas antes de agrupar por cuenta+campaña).
+  return await finalizeRun(service, runId, "success", mergedByDate.length, null);
 }
 
 // ─── helpers internos ───────────────────────────────────────────────────────
 
+/**
+ * Lee la config del provider de ads y la normaliza al shape multi-account.
+ *
+ * Acepta dos formatos:
+ *  1) `{ ad_accounts: [{ad_account_id, campaign_ids}, ...] }` (nuevo)
+ *  2) `{ ad_account_id, campaign_ids }` (legacy, se convierte a array de 1)
+ *
+ * Filtra defensivamente: solo entradas con `ad_account_id` string y al menos
+ * un `campaign_id` string sobreviven. Lo que queda inválido se descarta
+ * silenciosamente — el caller chequea `ad_accounts.length === 0` para
+ * decidir si reportar `config_missing`.
+ */
 function readProviderConfig(
   configBlob: unknown,
   provider: SyncProviderId,
 ): MetaProviderConfig {
-  if (configBlob === null || typeof configBlob !== "object") return {};
+  if (configBlob === null || typeof configBlob !== "object") {
+    return { ad_accounts: [] };
+  }
   const cfg = (configBlob as Record<string, unknown>)[provider];
-  if (cfg === null || typeof cfg !== "object") return {};
+  if (cfg === null || typeof cfg !== "object") return { ad_accounts: [] };
   const record = cfg as Record<string, unknown>;
-  const acct = record.ad_account_id;
-  const campaigns = record.campaign_ids;
-  return {
-    ad_account_id: typeof acct === "string" ? acct : undefined,
-    campaign_ids: Array.isArray(campaigns)
-      ? campaigns.filter((c): c is string => typeof c === "string")
-      : undefined,
-  };
+
+  // Shape nuevo: array de entries.
+  if (Array.isArray(record.ad_accounts)) {
+    const entries: MetaAdAccountEntry[] = [];
+    for (const item of record.ad_accounts) {
+      const entry = sanitizeEntry(item);
+      if (entry) entries.push(entry);
+    }
+    return { ad_accounts: entries };
+  }
+
+  // Shape legacy: ad_account_id + campaign_ids sueltos.
+  const legacy = sanitizeEntry(record);
+  return { ad_accounts: legacy ? [legacy] : [] };
+}
+
+function sanitizeEntry(item: unknown): MetaAdAccountEntry | null {
+  if (item === null || typeof item !== "object") return null;
+  const rec = item as Record<string, unknown>;
+  const acct = rec.ad_account_id;
+  const campaigns = rec.campaign_ids;
+  if (typeof acct !== "string" || acct.length === 0) return null;
+  if (!Array.isArray(campaigns)) return null;
+  const filtered = campaigns.filter(
+    (c): c is string => typeof c === "string" && c.length > 0,
+  );
+  if (filtered.length === 0) return null;
+  return { ad_account_id: acct, campaign_ids: filtered };
 }
 
 function readGhlConfig(configBlob: unknown): GhlProviderConfig {
@@ -490,6 +554,50 @@ function buildAdsRow(
     raw: day.raw,
     synced_at: new Date().toISOString(),
   };
+}
+
+/**
+ * Agrupa MetaInsightDay por `date` sumando spend/impressions/clicks/leads.
+ * Necesario cuando Meta devuelve `level=campaign` con varias campañas: hay
+ * N filas con la misma `date`, una por campaña, y el upsert no puede aplicar
+ * UPDATE varias veces a la misma fila (launch_id, date, provider).
+ *
+ * El `raw` resultante guarda `{ items: [raw1, raw2, ...] }` con los originales
+ * de cada campaña, para que el dashboard pueda inspeccionarlos individualmente
+ * si hace falta.
+ */
+function mergeInsightsByDate(
+  rows: ReadonlyArray<MetaInsightDay>,
+): MetaInsightDay[] {
+  const byDate = new Map<string, MetaInsightDay & { rawList: unknown[] }>();
+  for (const row of rows) {
+    const existing = byDate.get(row.date);
+    if (!existing) {
+      byDate.set(row.date, {
+        date: row.date,
+        spend: row.spend,
+        impressions: row.impressions,
+        clicks: row.clicks,
+        leads: row.leads,
+        raw: row.raw,
+        rawList: [row.raw],
+      });
+      continue;
+    }
+    existing.spend += row.spend;
+    existing.impressions += row.impressions;
+    existing.clicks += row.clicks;
+    existing.leads += row.leads;
+    existing.rawList.push(row.raw);
+  }
+  return Array.from(byDate.values()).map((day) => ({
+    date: day.date,
+    spend: day.spend,
+    impressions: day.impressions,
+    clicks: day.clicks,
+    leads: day.leads,
+    raw: day.rawList.length === 1 ? day.rawList[0] : { items: day.rawList },
+  }));
 }
 
 type ServiceClient = ReturnType<typeof createServiceClient>;

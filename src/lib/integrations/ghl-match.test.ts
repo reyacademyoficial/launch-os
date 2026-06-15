@@ -3,23 +3,24 @@ import { describe, it, expect } from "vitest";
 import { resolveMatchAction, type ExistingLeadView } from "./ghl-match";
 
 /**
- * Reglas Fase 3b:
+ * Reglas Fase 3b (post-cierre):
+ *  - Appointment + status cancelled/noshow → noop.
  *  - Appointment + lead no-terminal → agendado + pin.
  *  - Appointment + lead terminal → noop.
  *  - Appointment sin match → create source='ghl', agendado, pinned.
  *
- *  - WhatsApp 1 msg + sin lead → create source='whatsapp', frio, pinned.
- *  - WhatsApp 2+ msgs + sin lead → create source='whatsapp', tibio, pinned.
- *  - WhatsApp 1 msg + lead frio → queda frío (no degrada).
- *  - WhatsApp 2+ msgs + lead frio → sube a tibio.
- *  - WhatsApp 1 msg + lead tibio → no degrada.
- *  - WhatsApp + lead terminal → noop.
- *
  *  - Contact con tag 'cliente' + sin lead → create source='ghl', cerrado, pinned.
  *  - Contact con tag 'cliente' + lead no-terminal → cerrado + pin.
  *  - Contact con tag 'cliente' + lead terminal → noop.
- *  - Contact sin tag 'cliente' + sin lead → create source='ghl', frio, NO pinned.
- *  - Contact sin tag 'cliente' + lead existente → noop.
+ *  - Contact con hasRecentInboundActivity + sin lead → create tibio + pin.
+ *  - Contact con hasRecentInboundActivity + lead frio → sube a tibio.
+ *  - Contact con hasRecentInboundActivity + lead agendado → no degrada.
+ *  - Contact sin señales + sin lead → create source='ghl', frio, NO pinned.
+ *  - Contact sin señales + lead existente → update mínimo (refresca external_id).
+ *  - Contact con teamMemberId → setea en create y update.
+ *
+ * El path `eventKind: 'whatsapp'` se eliminó en el cierre de 3b. La señal
+ * de tibio se inyecta vía `hasRecentInboundActivity` desde el sync.
  */
 
 const BASE_ARGS = {
@@ -87,95 +88,6 @@ describe("resolveMatchAction — appointment", () => {
     expect(action.payload.source).toBe("ghl");
     expect(action.payload.status).toBe("agendado");
     expect(action.payload.pinned_to_kanban).toBe(true);
-  });
-});
-
-// ─── WhatsApp ────────────────────────────────────────────────────────────────
-
-describe("resolveMatchAction — whatsapp con conteo de mensajes inbound", () => {
-  it("1 mensaje + sin lead → create frio pinned", () => {
-    const action = resolveMatchAction({
-      eventKind: "whatsapp",
-      existing: null,
-      inboundMessageCount: 1,
-      ...BASE_ARGS,
-    });
-    expect(action.kind).toBe("create");
-    if (action.kind !== "create") return;
-    expect(action.payload.status).toBe("frio");
-    expect(action.payload.pinned_to_kanban).toBe(true);
-    expect(action.payload.source).toBe("whatsapp");
-  });
-
-  it("2 mensajes + sin lead → create tibio pinned", () => {
-    const action = resolveMatchAction({
-      eventKind: "whatsapp",
-      existing: null,
-      inboundMessageCount: 2,
-      ...BASE_ARGS,
-    });
-    expect(action.kind).toBe("create");
-    if (action.kind !== "create") return;
-    expect(action.payload.status).toBe("tibio");
-  });
-
-  it("count=null → fallback a frio", () => {
-    const action = resolveMatchAction({
-      eventKind: "whatsapp",
-      existing: null,
-      inboundMessageCount: null,
-      ...BASE_ARGS,
-    });
-    expect(action.kind).toBe("create");
-    if (action.kind !== "create") return;
-    expect(action.payload.status).toBe("frio");
-  });
-
-  it("1 mensaje + lead frio → no toca status, solo pin + external_id", () => {
-    const action = resolveMatchAction({
-      eventKind: "whatsapp",
-      existing: existing({ status: "frio" }),
-      inboundMessageCount: 1,
-      ...BASE_ARGS,
-    });
-    expect(action.kind).toBe("update");
-    if (action.kind !== "update") return;
-    expect(action.patch.status).toBeUndefined();
-    expect(action.patch.pinned_to_kanban).toBe(true);
-  });
-
-  it("2 mensajes + lead frio → sube a tibio", () => {
-    const action = resolveMatchAction({
-      eventKind: "whatsapp",
-      existing: existing({ status: "frio" }),
-      inboundMessageCount: 2,
-      ...BASE_ARGS,
-    });
-    expect(action.kind).toBe("update");
-    if (action.kind !== "update") return;
-    expect(action.patch.status).toBe("tibio");
-  });
-
-  it("1 mensaje + lead tibio → NO degrada", () => {
-    const action = resolveMatchAction({
-      eventKind: "whatsapp",
-      existing: existing({ status: "tibio" }),
-      inboundMessageCount: 1,
-      ...BASE_ARGS,
-    });
-    expect(action.kind).toBe("update");
-    if (action.kind !== "update") return;
-    expect(action.patch.status).toBeUndefined(); // queda tibio
-  });
-
-  it("lead cerrado → noop", () => {
-    const action = resolveMatchAction({
-      eventKind: "whatsapp",
-      existing: existing({ status: "cerrado" }),
-      inboundMessageCount: 3,
-      ...BASE_ARGS,
-    });
-    expect(action.kind).toBe("noop");
   });
 });
 

@@ -7,37 +7,42 @@ import type { LeadStatus } from "@/lib/leads/types";
  * Función pura: recibe el lead actual + el contexto del evento y devuelve qué
  * acción ejecutar. El orchestrator hace el INSERT/UPDATE.
  *
- * Modelo Fase 3b (decisiones del usuario):
+ * Modelo Fase 3b (cierre):
  *
  *   Appointment (calendar event de GHL):
+ *     - status cancelled/canceled/noshow/no_show/invalid → noop.
+ *     - lead existente terminal (cerrado/perdido) → noop.
  *     - lead existente no terminal → status='agendado', pinned.
- *     - lead terminal (cerrado/perdido) → noop.
  *     - sin match → create source='ghl', status='agendado', pinned.
- *
- *   WhatsApp con 1 mensaje INBOUND:
- *     - sin lead → create source='whatsapp', status='frio', pinned.
- *     - lead existente con status menor (frio) → queda frio.
- *     - lead existente con status mayor → no toca (tibio sigue tibio, etc).
- *
- *   WhatsApp con 2+ mensajes INBOUND:
- *     - sin lead → create source='whatsapp', status='tibio', pinned.
- *     - lead existente no terminal con status menor → sube a tibio + pinned.
- *     - lead existente terminal → noop.
  *
  *   Contact con tag 'cliente':
  *     - sin lead → create source='ghl', status='cerrado', pinned.
  *     - lead existente no terminal → status='cerrado', pinned.
- *     - lead existente terminal → noop (ya estaba en estado final).
+ *     - lead existente terminal → noop (refresca team_member si vino).
  *
- *   Contact sin tag 'cliente' (formulario sin actividad):
+ *   Contact con señal `hasRecentInboundActivity` (un mensaje WhatsApp
+ *   inbound dentro de la ventana compra+cierre del launch):
+ *     - sin lead → create source='ghl', status='tibio', pinned.
+ *     - lead frio → sube a tibio + pinned.
+ *     - lead más caliente (tibio/agendado/cerrado/perdido) → no degrada.
+ *
+ *   Contact default (sin tag cliente, sin actividad inbound):
  *     - sin lead → create source='ghl', status='frio', pinned=FALSE
- *       (a la tabla, no al kanban — el brief diferencia esto explícitamente).
- *     - lead existente → noop (ya está en el sistema; el sync de WhatsApp/
- *       appointments se va a encargar de moverlo si corresponde).
+ *       (a la tabla, no al kanban).
+ *     - lead existente → update mínimo (refresca external_id + team_member_id),
+ *       no toca status.
+ *
+ * Regla "no degradar": un status superior nunca baja por una señal inferior
+ * (`STATUS_ORDER`).
  *
  * Idempotencia: si el `external_id` del evento ya está vinculado a un lead
  * con el mismo `source`, el orchestrator detecta el conflict del unique
  * parcial y NO crea duplicado.
+ *
+ * El path `eventKind: "whatsapp"` se eliminó en el cierre de 3b. La
+ * detección de tibio ahora vive en `eventKind: "contact"` vía
+ * `hasRecentInboundActivity`, alimentado por el contact lookup de
+ * conversaciones por contactId (ver sync-ghl.ts).
  */
 
 const TERMINAL_STATUSES: ReadonlySet<LeadStatus> = new Set<LeadStatus>([
@@ -47,7 +52,7 @@ const TERMINAL_STATUSES: ReadonlySet<LeadStatus> = new Set<LeadStatus>([
 
 /**
  * Orden de "calor" del status. Usamos esto para no degradar un lead: si ya
- * está en tibio y entra un evento de un solo mensaje, no lo bajamos a frio.
+ * está en tibio y entra una señal de frio, no lo bajamos.
  */
 const STATUS_ORDER: Record<LeadStatus, number> = {
   frio: 0,
@@ -57,7 +62,7 @@ const STATUS_ORDER: Record<LeadStatus, number> = {
   perdido: 3,
 };
 
-export type EventKind = "appointment" | "whatsapp" | "contact";
+export type EventKind = "appointment" | "contact";
 
 export interface ExistingLeadView {
   id: string;
@@ -83,7 +88,7 @@ export type MatchAction =
         phone_normalized: string | null;
         contact: string | null;
         email: string | null;
-        source: "ghl" | "whatsapp";
+        source: "ghl";
         status: LeadStatus;
         pinned_to_kanban: boolean;
         external_id: string;
@@ -111,8 +116,6 @@ export interface ResolveArgs {
   phoneNormalized: string | null;
   rawPhone: string | null;
   email?: string | null;
-  /** Solo para eventKind='whatsapp'. Si null, fallback a tratar como frío. */
-  inboundMessageCount?: number | null;
   /** Solo para eventKind='contact'. Indica si el contact tiene tag 'cliente'. */
   hasClientTag?: boolean;
   /**
@@ -149,8 +152,6 @@ export function resolveMatchAction(args: ResolveArgs): MatchAction {
   switch (args.eventKind) {
     case "appointment":
       return resolveAppointment(args);
-    case "whatsapp":
-      return resolveWhatsApp(args);
     case "contact":
       return resolveContact(args);
   }
@@ -185,43 +186,7 @@ function resolveAppointment(args: ResolveArgs): MatchAction {
       },
     };
   }
-  return createPayload(args, "ghl", "agendado", true);
-}
-
-// ─── whatsapp ───────────────────────────────────────────────────────────────
-
-function resolveWhatsApp(args: ResolveArgs): MatchAction {
-  const { existing, externalId, inboundMessageCount } = args;
-  // Frío si 0-1 mensajes del lead, tibio si 2+.
-  const count = inboundMessageCount ?? 0;
-  const targetStatus: LeadStatus = count >= 2 ? "tibio" : "frio";
-
-  if (existing) {
-    if (TERMINAL_STATUSES.has(existing.status)) {
-      return { kind: "noop", reason: "lead_terminal" };
-    }
-    // No degradamos: si ya está más caliente, no lo bajamos.
-    const currentRank = STATUS_ORDER[existing.status];
-    const targetRank = STATUS_ORDER[targetStatus];
-    if (targetRank > currentRank) {
-      return {
-        kind: "update",
-        leadId: existing.id,
-        patch: {
-          status: targetStatus,
-          pinned_to_kanban: true,
-          external_id: externalId,
-        },
-      };
-    }
-    // Mismo o menor calor → solo refrescar external_id y asegurar pinned.
-    return {
-      kind: "update",
-      leadId: existing.id,
-      patch: { pinned_to_kanban: true, external_id: externalId },
-    };
-  }
-  return createPayload(args, "whatsapp", targetStatus, true);
+  return createPayload(args, "agendado", true);
 }
 
 // ─── contact (formulario / CRM general) ─────────────────────────────────────
@@ -286,14 +251,13 @@ function resolveContact(args: ResolveArgs): MatchAction {
   }
 
   // Lead nuevo — status según señales, pinned según calor.
-  return createPayload(args, "ghl", targetStatus, pinned);
+  return createPayload(args, targetStatus, pinned);
 }
 
 // ─── helper de create ──────────────────────────────────────────────────────
 
 function createPayload(
   args: ResolveArgs,
-  source: "ghl" | "whatsapp",
   status: LeadStatus,
   pinned: boolean,
 ): MatchAction {
@@ -304,7 +268,7 @@ function createPayload(
       phone_normalized: args.phoneNormalized,
       contact: args.phoneNormalized ? null : args.rawPhone,
       email: args.email ?? null,
-      source,
+      source: "ghl",
       status,
       pinned_to_kanban: pinned,
       external_id: args.externalId,

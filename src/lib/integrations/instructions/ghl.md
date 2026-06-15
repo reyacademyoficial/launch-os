@@ -38,7 +38,7 @@ Este token es lo que Launch OS va a usar para llamar a la API de GHL en nombre d
    - `View Calendars`
    - `View Calendar Events`
    - `View Conversations`
-   - `View Conversation Messages`
+   - `View Users`
 
    No marques permisos de edición. Launch OS **solo lee** — no modifica contactos ni envía mensajes desde acá.
 
@@ -62,10 +62,16 @@ Este token es lo que Launch OS va a usar para llamar a la API de GHL en nombre d
 
 ## Qué se va a sincronizar
 
-- **Agendados**: los eventos del calendario del subaccount cuya fecha de comienzo esté dentro de la ventana del lanzamiento. Cada agendado se cruza con los leads del proyecto **por teléfono normalizado**. Si matchea uno existente y el lead no está cerrado/perdido, pasa a estado *agendado* y se promueve al kanban. Si no matchea ninguno, se crea un lead nuevo con origen `ghl` directamente en *agendado*.
-- **Conversaciones de WhatsApp**: las conversaciones del canal WhatsApp con último mensaje dentro de la ventana del lanzamiento. Mismo cruce por teléfono. Si matchea, el lead se promueve al kanban sin cambiar el estado. Si no matchea, se crea uno nuevo con origen `whatsapp`.
+Un solo botón **Sincronizar** trae todo junto en una corrida:
 
-El sync es **idempotente**: si lo corrés dos veces, no duplica ni vuelve a mover leads que ya procesó.
+- **Contactos**: los contactos del subaccount con `dateUpdated` dentro de la ventana del lanzamiento. Se cruzan con los leads del proyecto por `external_id` y por teléfono normalizado.
+  - Sin tags relevantes → entra como **frío** (a la tabla, no al kanban).
+  - Con tag `cliente` → **cerrado** + va al kanban.
+  - Si tiene conversación WhatsApp con mensaje inbound durante compra+cierre → **tibio** + va al kanban.
+  - Si tiene `assignedTo`, se mapea con el vendedor del equipo via el modal "Mapear vendedores".
+- **Agendados**: eventos del calendario del subaccount cuya fecha de comienzo esté dentro de la ventana del lanzamiento. Se cruzan con leads por teléfono. Si matchea → pasa a **agendado** + va al kanban. Si no matchea → se crea un lead nuevo con origen `ghl` directamente en *agendado*. Los appointments cancelados o noshow no agendan a nadie.
+
+El sync es **idempotente**: correrlo dos veces no duplica ni reprocesa lo ya hecho. Es **incremental**: cada corrida arranca desde el último sync exitoso, no del principio del launch.
 
 ---
 
