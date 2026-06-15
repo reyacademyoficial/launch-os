@@ -7,6 +7,11 @@ import {
   listDailyForLaunch,
 } from "@/lib/launch-daily/list";
 import { mergeDailyData } from "@/lib/launch-daily/merge";
+import {
+  aggregateOpportunities,
+  EMPTY_SALES_AGGREGATE,
+} from "@/lib/launch-opportunities/aggregate";
+import { listOpportunitiesForLaunch } from "@/lib/launch-opportunities/list";
 import { tryComputeLaunchCalendar } from "@/lib/launches/calendar";
 import { getLaunch } from "@/lib/launches/get";
 import {
@@ -44,7 +49,7 @@ export async function GET(
   }
 
   const supabase = await createClient();
-  const [projectRes, daily, ads] = await Promise.all([
+  const [projectRes, daily, ads, opportunities] = await Promise.all([
     supabase
       .from("projects")
       .select("name, business_name")
@@ -52,6 +57,7 @@ export async function GET(
       .maybeSingle(),
     listDailyForLaunch(launchId),
     listAdsForLaunch(launchId),
+    listOpportunitiesForLaunch(launchId),
   ]);
 
   const project = projectRes.data as
@@ -63,7 +69,14 @@ export async function GET(
 
   const mergedDaily = mergeDailyData(daily, ads);
   const adsAggregate = aggregateMergedDaily(mergedDaily);
-  const kpi = calculateLaunchKPIs(launch, { adsAggregate });
+  const salesAggregate =
+    launch.date_start && launch.date_end
+      ? aggregateOpportunities(opportunities, {
+          date_start: launch.date_start,
+          date_end: launch.date_end,
+        })
+      : EMPTY_SALES_AGGREGATE;
+  const kpi = calculateLaunchKPIs(launch, { adsAggregate, salesAggregate });
 
   const calendar = tryComputeLaunchCalendar({
     launchDate: launch.launch_date ?? undefined,

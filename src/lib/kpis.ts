@@ -16,6 +16,7 @@
  */
 
 import type { DailyAggregate } from "./launch-daily/aggregate";
+import type { SalesAggregate } from "./launch-opportunities/aggregate";
 
 export const safeNumber = (v: unknown, fallback = 0): number => {
   const n = typeof v === "number" ? v : parseFloat(v as string);
@@ -58,6 +59,17 @@ export interface LaunchKPIOptions {
    * al estático.
    */
   adsAggregate?: DailyAggregate;
+  /**
+   * Agregado de `launch_opportunities` (GHL Opportunities). Cuando
+   * `hasData=true`, `ventas` y `revenue` salen de acá y se ignoran las
+   * columnas `launches.ventas_total` / `launches.revenue`. Cuando no, fallback
+   * a las columnas estáticas (mismo principio que adsAggregate).
+   *
+   * `ingresos_whatsapp` queda siempre manual en v1 (decisión 1.c). El split
+   * WhatsApp/Otros se agregará cuando exista UI para mapear pipelines de GHL
+   * a "pipeline de WhatsApp" a nivel proyecto.
+   */
+  salesAggregate?: SalesAggregate;
 }
 
 export interface LaunchKPIs {
@@ -137,11 +149,19 @@ export function calculateLaunchKPIs(
   const tiktokLeads = useAggregate ? agg!.tiktokLeads : safeInt(l.tiktok_leads);
   const contactosAPI = safeInt(l.contactos_api);
   const whatsappRevenue = safeNumber(l.ingresos_whatsapp);
-  const revenue = safeNumber(l.revenue);
+  // Si el sync de GHL Opportunities trajo data (hasData=true), `ventas` y
+  // `revenue` salen del agregado. Si no, fallback al form manual. Mismo
+  // patrón que ads — nunca se mezclan las dos fuentes.
+  const useSales = opts.salesAggregate?.hasData ?? false;
+  const revenue = useSales
+    ? opts.salesAggregate!.wonRevenue
+    : safeNumber(l.revenue);
+  const ventas = useSales
+    ? opts.salesAggregate!.wonCount
+    : safeInt(l.ventas_total);
   const registrados = safeInt(l.registrados);
   const asistentes = safeInt(l.asistentes);
   const hastaPitch = safeInt(l.hasta_pitch);
-  const ventas = safeInt(l.ventas_total);
 
   const totalLeads = metaLeads + googleLeads + tiktokLeads;
   const totalInvestment = metaInv + googleInv + tiktokInv;

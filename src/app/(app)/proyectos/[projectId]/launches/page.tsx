@@ -6,6 +6,11 @@ import { StatusBadge } from "@/components/dashboard/launches/status-badge";
 import { fmtLaunchWindow, fmtMoney, fmtMultiplier } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import { listAggregatesForProject } from "@/lib/launch-daily/list";
+import {
+  aggregateOpportunities,
+  EMPTY_SALES_AGGREGATE,
+  listOpportunityRowsByLaunchForProject,
+} from "@/lib/launch-opportunities/list";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { userCanEditProject } from "@/lib/supabase/auth";
 
@@ -19,11 +24,13 @@ export default async function LaunchesPage({
   readonly params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const [launches, canEdit, adsAggregates] = await Promise.all([
-    listLaunchesForProject(projectId),
-    userCanEditProject(projectId),
-    listAggregatesForProject(projectId),
-  ]);
+  const [launches, canEdit, adsAggregates, opportunityRowsByLaunch] =
+    await Promise.all([
+      listLaunchesForProject(projectId),
+      userCanEditProject(projectId),
+      listAggregatesForProject(projectId),
+      listOpportunityRowsByLaunchForProject(projectId),
+    ]);
 
   const createAction = createLaunch.bind(null, projectId);
   // El select "Copiar conexiones de" en el modal de crear listea launches
@@ -94,8 +101,16 @@ export default async function LaunchesPage({
           </thead>
           <tbody>
             {launches.map((l) => {
+              const salesAggregate =
+                l.date_start && l.date_end
+                  ? aggregateOpportunities(
+                      opportunityRowsByLaunch.get(l.id) ?? [],
+                      { date_start: l.date_start, date_end: l.date_end },
+                    )
+                  : EMPTY_SALES_AGGREGATE;
               const kpi = calculateLaunchKPIs(l, {
                 adsAggregate: adsAggregates.get(l.id),
+                salesAggregate,
               });
               const profitColor =
                 kpi.profit > 0

@@ -1,5 +1,6 @@
 import { safeDiv, safePercent } from "@/lib/kpis";
 import type { DailyAggregate } from "@/lib/launch-daily/aggregate";
+import type { SalesAggregate } from "@/lib/launch-opportunities/aggregate";
 import type { LaunchRow } from "@/lib/launches/types";
 
 /**
@@ -35,6 +36,7 @@ export interface ProjectAggregates {
 export function aggregateProjectKPIs(
   launches: readonly LaunchRow[],
   aggregatesByLaunch?: ReadonlyMap<string, DailyAggregate>,
+  salesByLaunch?: ReadonlyMap<string, SalesAggregate>,
 ): ProjectAggregates {
   let revenue = 0;
   let investment = 0;
@@ -46,7 +48,13 @@ export function aggregateProjectKPIs(
   let finalized = 0;
 
   for (const l of launches) {
-    revenue += Number(l.revenue) || 0;
+    // Para revenue + ventas: si hay salesAggregate con datos, gana sobre el
+    // form manual. Mismo principio que ads — por launch, una fuente o la otra,
+    // nunca mezcladas.
+    const salesAgg = salesByLaunch?.get(l.id);
+    const useSales = salesAgg?.hasData ?? false;
+    revenue += useSales ? salesAgg!.wonRevenue : Number(l.revenue) || 0;
+    ventas += useSales ? salesAgg!.wonCount : (l.ventas_total ?? 0);
 
     const adsAgg = aggregatesByLaunch?.get(l.id);
     const useAggregate = (adsAgg?.daysCovered ?? 0) > 0;
@@ -63,7 +71,6 @@ export function aggregateProjectKPIs(
         (l.meta_leads ?? 0) + (l.google_leads ?? 0) + (l.tiktok_leads ?? 0);
     }
 
-    ventas += l.ventas_total ?? 0;
     registrados += l.registrados ?? 0;
     asistentes += l.asistentes ?? 0;
     if (l.status === "Activo") active++;

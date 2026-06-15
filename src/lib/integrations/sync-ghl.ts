@@ -6,11 +6,14 @@ import {
   fetchGhlAppointments,
   fetchGhlContactConversations,
   fetchGhlContacts,
+  fetchGhlOpportunities,
   type AppointmentsMeta,
   type ContactsMeta,
   type GhlAppointment,
   type GhlContact,
   type GhlFetchFailure,
+  type GhlOpportunity,
+  type OpportunitiesMeta,
 } from "./ghl";
 import {
   resolveMatchAction,
@@ -67,6 +70,7 @@ interface StageCounts {
 export interface GhlCombinedCounts {
   contacts: StageCounts;
   appointments: StageCounts;
+  opportunities: StageCounts;
 }
 
 export type GhlRunSummary =
@@ -76,6 +80,7 @@ export type GhlRunSummary =
       meta: {
         contacts: ContactsMeta;
         appointments: AppointmentsMeta;
+        opportunities: OpportunitiesMeta;
         /**
          * Cuántos contacts del fetch incremental se clasificaron como tibio
          * (señal `lastInboundWhatsappMessageDate ∈ compra+cierre`).
@@ -102,7 +107,12 @@ export type GhlRunSummary =
     }
   | {
       status: "token_invalid" | "rate_limited" | "error";
-      stage: "contacts" | "appointments" | "warm_lookup" | "mappings";
+      stage:
+        | "contacts"
+        | "appointments"
+        | "opportunities"
+        | "warm_lookup"
+        | "mappings";
       message: string;
       detail: Record<string, unknown>;
       retryAfterSeconds?: number | null;
@@ -161,11 +171,11 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     ),
   );
 
-  // 2) Fetches GHL en paralelo. Solo contacts + appointments — el fetch
-  // masivo de conversations se eliminó en el cierre 3b (cuello de botella de
-  // 60-90s sin clasificación confiable). La señal de tibio ahora se hace
-  // contact-by-contact más abajo.
-  const [contactsResult, apptResult] = await Promise.all([
+  // 2) Fetches GHL en paralelo. Contacts + appointments + opportunities.
+  // El fetch masivo de conversations se eliminó en el cierre 3b (cuello de
+  // botella de 60-90s sin clasificación confiable). La señal de tibio ahora
+  // se hace contact-by-contact más abajo.
+  const [contactsResult, apptResult, oppsResult] = await Promise.all([
     fetchGhlContacts({
       token: args.token,
       locationId: args.locationId,
@@ -179,9 +189,17 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
       since: args.since,
       until: args.until,
     }),
+    fetchGhlOpportunities({
+      token: args.token,
+      locationId: args.locationId,
+      since: args.since,
+      until: args.until,
+      cutoffIso,
+    }),
   ]);
   if (!contactsResult.ok) return propagateFailure(contactsResult, "contacts");
   if (!apptResult.ok) return propagateFailure(apptResult, "appointments");
+  if (!oppsResult.ok) return propagateFailure(oppsResult, "opportunities");
 
   // 3) Lookup de tibio POR CONTACT (no masivo). Por cada contact del fetch
   // incremental, una request a `/conversations/search?contactId=...` para
@@ -319,7 +337,15 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   });
   const apptCounts = await applyBulk(args, apptActions);
 
-  // 8) Orphan warm REMOVIDO en el cierre 3b: requería el fetch masivo de
+  // 8) Opportunities → launch_opportunities. Bulk upsert por (project_id,
+  // external_id). A diferencia de leads, la "patch" siempre sobrescribe
+  // todos los campos (la fuente autoritativa es GHL), entonces el upsert es
+  // directo: no hay clasificación create/update/noop intermedia. Para
+  // distinguir created vs updated en el conteo, hacemos un lookup previo
+  // por external_id IN (...) — el volumen típico es <500 por corrida.
+  const opportunitiesCounts = await syncOpportunities(args, oppsResult.rows);
+
+  // 9) Orphan warm REMOVIDO en el cierre 3b: requería el fetch masivo de
   // conversations (60-90s, sin clasificación confiable). Trade-off: si GHL
   // no actualiza `dateUpdated` del contact cuando llega un mensaje, un lead
   // existente puede tardar una corrida más en subir a tibio (hasta que un
@@ -327,10 +353,15 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
 
   return {
     status: "success",
-    counts: { contacts: contactsCounts, appointments: apptCounts },
+    counts: {
+      contacts: contactsCounts,
+      appointments: apptCounts,
+      opportunities: opportunitiesCounts,
+    },
     meta: {
       contacts: contactsResult.meta,
       appointments: apptResult.meta,
+      opportunities: oppsResult.meta,
       warm_signals_detected: warmSignalsDetected,
       warm_lookup_contacts_inspected: warmLookupContactsInspected,
       warm_lookup_skipped_due_to_volume: warmLookupSkippedDueToVolume,
@@ -338,6 +369,85 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
       mappings_applied: mappingsApplied,
     },
   };
+}
+
+/**
+ * Upsert masivo de opportunities a `launch_opportunities`. Idempotente por
+ * (project_id, external_id). El `launch_id` del row se reescribe con el
+ * launch actual — si la misma opp aparece en ventana de dos launches del
+ * mismo proyecto, el último sync se la queda (mismo trade-off documentado
+ * para leads, ver INTEGRATIONS_GHL.md §1).
+ *
+ * No hay detección de no-op: para opps el patch es "todo" (status, monetary,
+ * pipeline, won_at), entonces siempre que GHL devuelva la opp se reescribe
+ * la fila completa. Es barato: lookup por id (1 query), upsert (N/500 queries).
+ */
+async function syncOpportunities(
+  args: RunGhlSyncArgs,
+  rows: ReadonlyArray<GhlOpportunity>,
+): Promise<StageCounts> {
+  const counts: StageCounts = {
+    fetched: rows.length,
+    created: 0,
+    updated: 0,
+    skipped: 0,
+  };
+  if (rows.length === 0) return counts;
+
+  // Lookup existentes por external_id IN (...). Volumen típico chico.
+  const externalIds = rows.map((r) => r.id);
+  const existingIds = new Set<string>();
+  for (const idsChunk of chunk(uniqueStr(externalIds), 1000)) {
+    const res = await loose(args.service)
+      .from("launch_opportunities")
+      .select("external_id")
+      .eq("project_id", args.projectId)
+      .in("external_id", idsChunk);
+    if (res.error) {
+      throw new Error(
+        `GHL opportunities lookup: ${res.error.message ?? "unknown"}`,
+      );
+    }
+    for (const r of (res.data ?? []) as Array<{ external_id: string }>) {
+      existingIds.add(r.external_id);
+    }
+  }
+
+  const nowIso = new Date().toISOString();
+  const payloads: Record<string, unknown>[] = rows.map((opp) => ({
+    project_id: args.projectId,
+    launch_id: args.launchId,
+    external_id: opp.id,
+    contact_external_id: opp.contactId,
+    assigned_to_ghl_user: opp.assignedTo,
+    status: opp.status,
+    monetary_value: opp.monetaryValue,
+    source: opp.source,
+    pipeline_id: opp.pipelineId,
+    pipeline_stage_id: opp.pipelineStageId,
+    won_at: opp.wonAt,
+    created_at_ghl: opp.createdAt,
+    updated_at_ghl: opp.updatedAt,
+    raw: opp.raw,
+    synced_at: nowIso,
+  }));
+
+  for (const batch of chunk(payloads, BULK_BATCH)) {
+    const res = await loose(args.service)
+      .from("launch_opportunities")
+      .upsert(batch, { onConflict: "project_id,external_id" });
+    if (res.error) {
+      throw new Error(
+        `GHL opportunities upsert: ${res.error.message ?? "unknown"}`,
+      );
+    }
+  }
+
+  for (const r of rows) {
+    if (existingIds.has(r.id)) counts.updated++;
+    else counts.created++;
+  }
+  return counts;
 }
 
 // ─── tipos auxiliares ──────────────────────────────────────────────────────
@@ -678,7 +788,12 @@ function buildContactNotes(c: GhlContact): string | null {
 
 function propagateFailure(
   failure: GhlFetchFailure,
-  stage: "contacts" | "appointments" | "warm_lookup" | "mappings",
+  stage:
+    | "contacts"
+    | "appointments"
+    | "opportunities"
+    | "warm_lookup"
+    | "mappings",
 ): GhlRunSummary {
   return {
     status: failure.kind,

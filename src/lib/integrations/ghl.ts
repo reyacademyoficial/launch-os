@@ -191,6 +191,49 @@ export interface ContactsMeta {
   hit_max_pages: boolean;
 }
 
+export interface GhlOpportunity {
+  id: string;
+  contactId: string | null;
+  pipelineId: string | null;
+  pipelineStageId: string | null;
+  /** GHL emite cuatro valores discretos. Cualquier otro lo mapeamos a null y la fila se descarta arriba. */
+  status: "open" | "won" | "lost" | "abandoned";
+  /** Valor monetario crudo de GHL. Null si la opp no tiene valor asignado. */
+  monetaryValue: number | null;
+  /** `source` textual de GHL (ej. "whatsapp", "facebook", "manual"). Para v2 del split. */
+  source: string | null;
+  /** GHL user id del closer. Mismo flujo que contact.assignedTo → ghl_user_mappings. */
+  assignedTo: string | null;
+  /**
+   * ISO timestamp del momento en que la opp pasó a `status='won'`. Derivado de
+   * `lastStatusChangeAt` solo cuando el status final es 'won' — para cualquier
+   * otro status queda null. Usado por el agregado para decidir si la opp cae
+   * en la ventana del launch (decisión 2.a).
+   */
+  wonAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  raw: unknown;
+}
+
+export interface OpportunitiesMeta {
+  pages_fetched: number;
+  raw_total: number;
+  sample_opp_keys: string[];
+  /** Status crudos observados — sirve para detectar si GHL agrega valores nuevos. */
+  observed_statuses: string[];
+  /** Sources crudos — para mapear el v2 del split WhatsApp. */
+  observed_sources: string[];
+  /** Pipelines distintos — útil para el config futuro "cuál pipeline = WhatsApp". */
+  observed_pipeline_ids: string[];
+  /** Cuántas opps del fetch están en `status='won'` y dentro de la ventana del launch. */
+  won_in_window: number;
+  /** Suma de `monetaryValue` de las won_in_window. */
+  won_revenue_in_window: number;
+  stopped_by_date_cutoff: boolean;
+  hit_max_pages: boolean;
+}
+
 interface FetchArgs {
   token: string;
   locationId: string;
@@ -857,6 +900,223 @@ export async function fetchGhlContacts(
 
   meta.observed_tags = Array.from(tagsSet);
   return { ok: true, rows: out, meta };
+}
+
+// ─── Opportunities (pipelines de venta) ────────────────────────────────────
+
+export interface OpportunitiesFetchArgs extends FetchArgs {
+  cutoffIso?: string | null;
+}
+
+/**
+ * Lista opportunities del location ordenadas por `date_updated desc`. Pagina
+ * con `page`/`limit` (GHL no usa cursor en este endpoint, paginación numérica).
+ * Cortocircuito por `updatedAt < cutoffEfectivo`.
+ *
+ * Ventana: NO filtramos server-side por fecha — la `won_at` de una opp puede
+ * estar dentro de la ventana del launch aunque `dateUpdated` no (ej. opp won
+ * hace 3 meses, status cambió hace 1 día y el filtro updated la captura, pero
+ * won_at sigue siendo viejo). Filtramos client-side al agregar.
+ *
+ * Idempotencia/incremental: igual que contacts. Sin cutoff trae todo el
+ * histórico paginado (primera corrida); con cutoff corta al cruzar el último
+ * `updatedAt` ya procesado.
+ *
+ * Endpoint param: GHL v2 usa `location_id` snake_case acá (inconsistente con
+ * `locationId` camelCase del resto del API — verificable en `array_keys_observed`).
+ */
+export async function fetchGhlOpportunities(
+  args: OpportunitiesFetchArgs,
+): Promise<
+  | { ok: true; rows: GhlOpportunity[]; meta: OpportunitiesMeta }
+  | GhlFetchFailure
+> {
+  const sinceMs = dateToEpochStart(args.since);
+  const untilMs = dateToEpochEnd(args.until);
+  const cutoffMs = args.cutoffIso ? Date.parse(args.cutoffIso) : null;
+  // Para opportunities el cutoff NO debe acotar a `sinceMs`: necesitamos ver
+  // opps con dateUpdated cualquiera para que el agregado decida con `won_at`.
+  // Si hay cutoff (corrida incremental), respetarlo; si no, traemos todo.
+  const effectiveCutoff =
+    cutoffMs !== null && Number.isFinite(cutoffMs) ? cutoffMs : null;
+
+  const meta: OpportunitiesMeta = {
+    pages_fetched: 0,
+    raw_total: 0,
+    sample_opp_keys: [],
+    observed_statuses: [],
+    observed_sources: [],
+    observed_pipeline_ids: [],
+    won_in_window: 0,
+    won_revenue_in_window: 0,
+    stopped_by_date_cutoff: false,
+    hit_max_pages: false,
+  };
+  const statusesSet = new Set<string>();
+  const sourcesSet = new Set<string>();
+  const pipelinesSet = new Set<string>();
+  const out: GhlOpportunity[] = [];
+
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const params = new URLSearchParams({
+      location_id: args.locationId,
+      limit: String(PAGE_SIZE),
+      page: String(page),
+      sort: "date_updated",
+      sort_direction: "desc",
+      status: "all",
+    });
+    const url = `${GHL_API_BASE}/opportunities/search?${params.toString()}`;
+    const result = await ghlFetch(url, args.token);
+    if (!result.ok) return result;
+
+    const rawItems = extractArray(result.body, ["opportunities"]);
+    meta.pages_fetched++;
+    meta.raw_total += rawItems.length;
+
+    if (meta.sample_opp_keys.length === 0 && rawItems[0]) {
+      meta.sample_opp_keys = Object.keys(
+        rawItems[0] as Record<string, unknown>,
+      );
+    }
+
+    if (rawItems.length === 0) break;
+
+    // Parseo puro (reutilizable y testeable). Meta + cortocircuito se hacen
+    // a partir del row ya parseado.
+    const parsed = parseOpportunitiesBody({ opportunities: rawItems });
+    let oldestThisPageMs = Number.POSITIVE_INFINITY;
+
+    for (let i = 0; i < parsed.length; i++) {
+      const row = parsed[i]!;
+      const raw = row.raw as Record<string, unknown>;
+
+      const statusRaw = strOrNull(raw.status);
+      if (statusRaw) statusesSet.add(statusRaw);
+      if (row.source) sourcesSet.add(row.source);
+      if (row.pipelineId) pipelinesSet.add(row.pipelineId);
+
+      if (row.updatedAt) {
+        const updatedMs = Date.parse(row.updatedAt);
+        if (Number.isFinite(updatedMs)) {
+          oldestThisPageMs = Math.min(oldestThisPageMs, updatedMs);
+        }
+      }
+
+      out.push(row);
+
+      // Contador en-window — feed para el summary del run (no se pisa con el
+      // agregado del KPI page, que lee directo de DB; este es solo telemetría).
+      if (row.wonAt) {
+        const wonMs = Date.parse(row.wonAt);
+        if (
+          Number.isFinite(wonMs) &&
+          wonMs >= sinceMs &&
+          wonMs <= untilMs
+        ) {
+          meta.won_in_window++;
+          if (row.monetaryValue !== null) {
+            meta.won_revenue_in_window += row.monetaryValue;
+          }
+        }
+      }
+    }
+
+    if (
+      effectiveCutoff !== null &&
+      Number.isFinite(oldestThisPageMs) &&
+      oldestThisPageMs < effectiveCutoff
+    ) {
+      meta.stopped_by_date_cutoff = true;
+      break;
+    }
+    if (rawItems.length < PAGE_SIZE) break;
+    if (page === MAX_PAGES) {
+      meta.hit_max_pages = true;
+    }
+  }
+
+  meta.observed_statuses = Array.from(statusesSet);
+  meta.observed_sources = Array.from(sourcesSet);
+  meta.observed_pipeline_ids = Array.from(pipelinesSet);
+  return { ok: true, rows: out, meta };
+}
+
+/**
+ * Pure function — testeable contra fixtures sin mockear fetch. Mismo patrón
+ * que `parseAppointmentsBody` y `parseConversationsBody`. NO aplica filtro de
+ * ventana ni cutoff incremental — eso vive en `fetchGhlOpportunities`.
+ */
+export function parseOpportunitiesBody(body: unknown): GhlOpportunity[] {
+  const items = extractArray(body, ["opportunities"]);
+  const rows: GhlOpportunity[] = [];
+  for (const item of items) {
+    if (typeof item !== "object" || item === null) continue;
+    const o = item as Record<string, unknown>;
+    const id = strOrNull(o.id);
+    if (!id) continue;
+
+    const status = parseOpportunityStatus(o.status);
+    if (!status) continue;
+
+    const lastStatusChange =
+      strOrNull(o.lastStatusChangeAt) ??
+      strOrNull(o.lastStatusChangeDate) ??
+      strOrNull(o.last_status_change_date);
+
+    rows.push({
+      id,
+      contactId: strOrNull(o.contactId) ?? strOrNull(o.contact_id),
+      pipelineId: strOrNull(o.pipelineId) ?? strOrNull(o.pipeline_id),
+      pipelineStageId:
+        strOrNull(o.pipelineStageId) ?? strOrNull(o.pipeline_stage_id),
+      status,
+      monetaryValue: numOrNullLoose(o.monetaryValue),
+      source: strOrNull(o.source),
+      assignedTo: strOrNull(o.assignedTo) ?? strOrNull(o.assigned_to),
+      wonAt: status === "won" ? lastStatusChange : null,
+      createdAt:
+        strOrNull(o.createdAt) ??
+        strOrNull(o.dateAdded) ??
+        strOrNull(o.created_at),
+      updatedAt:
+        strOrNull(o.updatedAt) ??
+        strOrNull(o.dateUpdated) ??
+        strOrNull(o.updated_at),
+      raw: o,
+    });
+  }
+  return rows;
+}
+
+function parseOpportunityStatus(
+  v: unknown,
+): GhlOpportunity["status"] | null {
+  if (typeof v !== "string") return null;
+  const lower = v.trim().toLowerCase();
+  if (
+    lower === "open" ||
+    lower === "won" ||
+    lower === "lost" ||
+    lower === "abandoned"
+  ) {
+    return lower;
+  }
+  return null;
+}
+
+/**
+ * Variante de numOrNull que también acepta números fraccionarios (decimales).
+ * `numOrNull` usa `parseInt` y trunca; los `monetaryValue` de GHL pueden venir
+ * con decimales (ej. 1499.99) y no queremos perder centavos.
+ */
+function numOrNullLoose(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
 }
 
 /** Pure function — testeable contra fixtures sin mockear fetch. */

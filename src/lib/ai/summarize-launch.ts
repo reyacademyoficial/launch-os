@@ -12,6 +12,11 @@ import { aggregateMergedDaily } from "@/lib/launch-daily/aggregate";
 import { mergeDailyData, type AdsDailyRow } from "@/lib/launch-daily/merge";
 import type { LaunchDailyRow } from "@/lib/launch-daily/types";
 import { DAILY_CHANNELS, CHANNEL_LABELS } from "@/lib/launch-daily/types";
+import {
+  aggregateOpportunities,
+  EMPTY_SALES_AGGREGATE,
+  type LaunchOpportunityRow,
+} from "@/lib/launch-opportunities/aggregate";
 import type { LaunchRow } from "@/lib/launches/types";
 
 import { generateText } from "./client";
@@ -47,13 +52,21 @@ export async function summarizeLaunch(
   launch: LaunchRow,
   daily: readonly LaunchDailyRow[],
   ads: readonly AdsDailyRow[] = [],
+  opportunities: readonly LaunchOpportunityRow[] = [],
 ): Promise<string> {
   // Mismo derive que el resto de los call sites — el resumen IA tiene que
   // ver los mismos números que el KPI grid del detalle, sino el modelo
   // analiza un launch fantasma.
   const merged = mergeDailyData(daily, ads);
   const adsAggregate = aggregateMergedDaily(merged);
-  const kpi = calculateLaunchKPIs(launch, { adsAggregate });
+  const salesAggregate =
+    launch.date_start && launch.date_end
+      ? aggregateOpportunities(opportunities, {
+          date_start: launch.date_start,
+          date_end: launch.date_end,
+        })
+      : EMPTY_SALES_AGGREGATE;
+  const kpi = calculateLaunchKPIs(launch, { adsAggregate, salesAggregate });
   const prompt = buildUserPrompt(launch, daily, kpi);
   return generateText({ system: SYSTEM_PROMPT, user: prompt });
 }

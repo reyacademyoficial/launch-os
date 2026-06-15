@@ -125,6 +125,10 @@ export async function LaunchIntegrationsSection({
               ? buildGhlDisplay(config.ghl ?? {})
               : buildAdsDisplay(config[p.id] ?? {});
 
+          // Para GHL extra: stats del último sync exitoso (incluye opps).
+          const ghlSummary =
+            p.id === "ghl" ? readGhlLastSummary(runs) : null;
+
           const disabled =
             isClosed || !hasSecret || !display.hasConfig || status?.lastRunStatus === "running";
           const disabledReason = isClosed
@@ -174,6 +178,31 @@ export async function LaunchIntegrationsSection({
                             minute: "2-digit",
                           })}
                         </span>
+                      </div>
+                    )}
+                    {ghlSummary && (
+                      <div>
+                        Opportunities:{" "}
+                        <span className="text-fg">
+                          {ghlSummary.fetched} sincronizadas
+                        </span>
+                        {ghlSummary.wonInWindow > 0 && (
+                          <>
+                            {" · "}
+                            <span className="text-fg">
+                              {ghlSummary.wonInWindow} ganadas (
+                              {ghlSummary.wonRevenueInWindow.toLocaleString(
+                                "es-AR",
+                                {
+                                  style: "currency",
+                                  currency: "USD",
+                                  maximumFractionDigits: 0,
+                                },
+                              )}
+                              )
+                            </span>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
@@ -327,6 +356,44 @@ function buildAdsDisplay(cfg: MetaConfigShape): ProviderDisplay {
       : [],
     initialConfig: { kind: "ads", adAccounts },
   };
+}
+
+/**
+ * Lee del `error_detail` del último run exitoso de GHL los contadores de
+ * opportunities. El sync persiste `{ cause: 'ghl_summary', counts, meta }` —
+ * acá extraemos solo los 3 campos que el card muestra. Defensivo: cualquier
+ * shape inesperado devuelve null y la línea no se renderiza.
+ */
+function readGhlLastSummary(
+  runs: ReadonlyArray<{ provider: string; status: string | null; errorDetail: unknown }>,
+): { fetched: number; wonInWindow: number; wonRevenueInWindow: number } | null {
+  const last = runs.find((r) => r.provider === "ghl" && r.status === "success");
+  if (!last || !last.errorDetail || typeof last.errorDetail !== "object") {
+    return null;
+  }
+  const detail = last.errorDetail as Record<string, unknown>;
+  const counts = detail.counts as Record<string, unknown> | undefined;
+  const opps = counts?.opportunities as Record<string, unknown> | undefined;
+  const meta = detail.meta as Record<string, unknown> | undefined;
+  const oppsMeta = meta?.opportunities as Record<string, unknown> | undefined;
+
+  // Si la corrida es vieja (anterior a este feature), el shape no trae
+  // opportunities. Sin datos, no mostramos línea.
+  if (!opps && !oppsMeta) return null;
+
+  const fetched = numOr0(opps?.fetched);
+  const wonInWindow = numOr0(oppsMeta?.won_in_window);
+  const wonRevenueInWindow = numOr0(oppsMeta?.won_revenue_in_window);
+  return { fetched, wonInWindow, wonRevenueInWindow };
+}
+
+function numOr0(v: unknown): number {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
 }
 
 function buildGhlDisplay(cfg: GhlConfigShape): ProviderDisplay {

@@ -4,7 +4,11 @@ import appointmentsHappy from "./__fixtures__/ghl/appointments_happy.json";
 import conversationsHappy from "./__fixtures__/ghl/conversations_happy.json";
 import emptyFixture from "./__fixtures__/ghl/empty.json";
 
-import { parseAppointmentsBody, parseConversationsBody } from "./ghl";
+import {
+  parseAppointmentsBody,
+  parseConversationsBody,
+  parseOpportunitiesBody,
+} from "./ghl";
 
 /**
  * Tests del adapter de GHL. Mismo patrón que `meta.test.ts`: probamos los
@@ -146,5 +150,121 @@ describe("ghl.parseConversationsBody — defensivo", () => {
     );
     expect(rows).toHaveLength(1);
     expect(rows[0]!.lastMessageDate).toBe("fecha-invalida");
+  });
+});
+
+// ─── opportunities ─────────────────────────────────────────────────────────
+
+describe("ghl.parseOpportunitiesBody — happy path", () => {
+  it("mapea status, monetaryValue y deriva won_at solo cuando status='won'", () => {
+    const rows = parseOpportunitiesBody({
+      opportunities: [
+        {
+          id: "opp_1",
+          status: "won",
+          monetaryValue: 1500.5,
+          lastStatusChangeAt: "2026-06-15T10:00:00Z",
+          contactId: "c_1",
+          pipelineId: "p_a",
+          pipelineStageId: "stage_won",
+          source: "whatsapp",
+          assignedTo: "user_x",
+          createdAt: "2026-06-01T00:00:00Z",
+          updatedAt: "2026-06-15T10:00:00Z",
+        },
+        {
+          id: "opp_2",
+          status: "lost",
+          monetaryValue: 800,
+          lastStatusChangeAt: "2026-06-20T11:00:00Z",
+        },
+        {
+          id: "opp_3",
+          status: "open",
+          monetaryValue: 2000,
+          lastStatusChangeAt: "2026-06-25T12:00:00Z",
+        },
+      ],
+    });
+    expect(rows).toHaveLength(3);
+
+    expect(rows[0]!.id).toBe("opp_1");
+    expect(rows[0]!.status).toBe("won");
+    expect(rows[0]!.monetaryValue).toBe(1500.5);
+    expect(rows[0]!.wonAt).toBe("2026-06-15T10:00:00Z");
+    expect(rows[0]!.source).toBe("whatsapp");
+    expect(rows[0]!.assignedTo).toBe("user_x");
+    expect(rows[0]!.pipelineId).toBe("p_a");
+
+    // status=lost o open NUNCA tienen wonAt — aunque GHL devuelva
+    // lastStatusChangeAt, lo ignoramos porque no representa una venta.
+    expect(rows[1]!.wonAt).toBeNull();
+    expect(rows[2]!.wonAt).toBeNull();
+  });
+
+  it("monetaryValue como string (postgrest/GHL inconsistencia) se parsea como float", () => {
+    const rows = parseOpportunitiesBody({
+      opportunities: [
+        {
+          id: "opp_1",
+          status: "won",
+          monetaryValue: "1499.99",
+          lastStatusChangeAt: "2026-06-15T10:00:00Z",
+        },
+      ],
+    });
+    expect(rows[0]!.monetaryValue).toBeCloseTo(1499.99, 2);
+  });
+
+  it("acepta snake_case (pipeline_id / contact_id / last_status_change_date) como fallback", () => {
+    const rows = parseOpportunitiesBody({
+      opportunities: [
+        {
+          id: "opp_1",
+          status: "won",
+          monetaryValue: 100,
+          contact_id: "c_snake",
+          pipeline_id: "p_snake",
+          last_status_change_date: "2026-06-15T10:00:00Z",
+        },
+      ],
+    });
+    expect(rows[0]!.contactId).toBe("c_snake");
+    expect(rows[0]!.pipelineId).toBe("p_snake");
+    expect(rows[0]!.wonAt).toBe("2026-06-15T10:00:00Z");
+  });
+});
+
+describe("ghl.parseOpportunitiesBody — defensivo", () => {
+  it("body vacío o no-objeto devuelve array vacío", () => {
+    expect(parseOpportunitiesBody(null)).toEqual([]);
+    expect(parseOpportunitiesBody({})).toEqual([]);
+    expect(parseOpportunitiesBody({ opportunities: [] })).toEqual([]);
+  });
+
+  it("filas sin id o con status desconocido se descartan silenciosamente", () => {
+    const rows = parseOpportunitiesBody({
+      opportunities: [
+        { id: "ok", status: "won", monetaryValue: 100, lastStatusChangeAt: "2026-06-15T10:00:00Z" },
+        { status: "won", monetaryValue: 200 }, // sin id → descartar
+        { id: "bad-status", status: "pending", monetaryValue: 300 }, // status no canónico → descartar
+        { id: "", status: "won", monetaryValue: 400 }, // id vacío → descartar
+      ],
+    });
+    expect(rows.map((r) => r.id)).toEqual(["ok"]);
+  });
+
+  it("monetaryValue null queda como null (no se fuerza a 0)", () => {
+    const rows = parseOpportunitiesBody({
+      opportunities: [
+        {
+          id: "opp_1",
+          status: "won",
+          monetaryValue: null,
+          lastStatusChangeAt: "2026-06-15T10:00:00Z",
+        },
+      ],
+    });
+    expect(rows[0]!.monetaryValue).toBeNull();
   });
 });

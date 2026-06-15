@@ -12,6 +12,12 @@ import {
   fmtPercent,
 } from "@/lib/format";
 import { listAggregatesForProject } from "@/lib/launch-daily/list";
+import {
+  aggregateOpportunities,
+  EMPTY_SALES_AGGREGATE,
+  listOpportunityRowsByLaunchForProject,
+  type SalesAggregate,
+} from "@/lib/launch-opportunities/list";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { aggregateProjectKPIs } from "@/lib/projects/aggregates";
 import { createClient } from "@/lib/supabase/server";
@@ -31,7 +37,13 @@ export default async function OverviewPage({
   const { projectId } = await params;
   const supabase = await createClient();
 
-  const [{ data: projectRaw }, launches, canEdit, adsAggregates] = await Promise.all([
+  const [
+    { data: projectRaw },
+    launches,
+    canEdit,
+    adsAggregates,
+    opportunityRowsByLaunch,
+  ] = await Promise.all([
     supabase
       .from("projects")
       .select("name, business_name")
@@ -40,11 +52,26 @@ export default async function OverviewPage({
     listLaunchesForProject(projectId),
     userCanEditProject(projectId),
     listAggregatesForProject(projectId),
+    listOpportunityRowsByLaunchForProject(projectId),
   ]);
 
   const project = projectRaw as { name: string; business_name: string | null } | null;
   const name = project?.name ?? "Proyecto";
-  const agg = aggregateProjectKPIs(launches, adsAggregates);
+  const salesAggregates = new Map<string, SalesAggregate>();
+  for (const l of launches) {
+    if (!l.date_start || !l.date_end) {
+      salesAggregates.set(l.id, EMPTY_SALES_AGGREGATE);
+      continue;
+    }
+    salesAggregates.set(
+      l.id,
+      aggregateOpportunities(opportunityRowsByLaunch.get(l.id) ?? [], {
+        date_start: l.date_start,
+        date_end: l.date_end,
+      }),
+    );
+  }
+  const agg = aggregateProjectKPIs(launches, adsAggregates, salesAggregates);
   const createAction = createLaunch.bind(null, projectId);
   const copyableLaunches = launches.map((l) => ({ id: l.id, name: l.name }));
 

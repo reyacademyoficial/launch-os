@@ -10,6 +10,11 @@ import { calculateLaunchKPIs } from "@/lib/kpis";
 import { aggregateMergedDaily } from "@/lib/launch-daily/aggregate";
 import { listAdsForLaunch, listDailyForLaunch } from "@/lib/launch-daily/list";
 import { mergeDailyData } from "@/lib/launch-daily/merge";
+import {
+  aggregateOpportunities,
+  EMPTY_SALES_AGGREGATE,
+} from "@/lib/launch-opportunities/aggregate";
+import { listOpportunitiesForLaunch } from "@/lib/launch-opportunities/list";
 import { getLaunch } from "@/lib/launches/get";
 import { userCanEditLaunchesIn } from "@/lib/supabase/auth";
 
@@ -29,18 +34,29 @@ export default async function LaunchKpiPage({
 }) {
   const { projectId, launchId } = await params;
 
-  const [launch, canEditLaunchValue, daily, ads] = await Promise.all([
-    getLaunch(launchId),
-    userCanEditLaunchesIn(projectId),
-    listDailyForLaunch(launchId),
-    listAdsForLaunch(launchId),
-  ]);
+  const [launch, canEditLaunchValue, daily, ads, opportunities] =
+    await Promise.all([
+      getLaunch(launchId),
+      userCanEditLaunchesIn(projectId),
+      listDailyForLaunch(launchId),
+      listAdsForLaunch(launchId),
+      listOpportunitiesForLaunch(launchId),
+    ]);
 
   if (!launch || launch.project_id !== projectId) notFound();
 
   const mergedDaily = mergeDailyData(daily, ads);
   const adsAggregate = aggregateMergedDaily(mergedDaily);
-  const kpi = calculateLaunchKPIs(launch, { adsAggregate });
+  // Si el launch no tiene fechas (estado raro pero posible), el agregado de
+  // ventas queda vacío y kpis cae a los campos manuales — no rompe la página.
+  const salesAggregate =
+    launch.date_start && launch.date_end
+      ? aggregateOpportunities(opportunities, {
+          date_start: launch.date_start,
+          date_end: launch.date_end,
+        })
+      : EMPTY_SALES_AGGREGATE;
+  const kpi = calculateLaunchKPIs(launch, { adsAggregate, salesAggregate });
   const isClosed = launch.closed_at !== null;
   const addDailyAction = createDailyEntry.bind(null, projectId, launchId);
 
