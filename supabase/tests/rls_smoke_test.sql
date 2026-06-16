@@ -181,7 +181,7 @@ on conflict (id) do nothing;
 -- - UPDATE/DELETE bloqueado por USING → fila se filtra silencioso, 0 filas.
 --   Lo testeamos con `is_empty(WITH ... RETURNING 1)`.
 --
-insert into _smoke_results(result) values (plan(55));
+insert into _smoke_results(result) values (plan(62));
 
 -- 1) cliente NO puede insertar launches (WITH CHECK falla) → 42501
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
@@ -876,6 +876,111 @@ insert into _smoke_results(result) values (pg_temp.throws_ok(
          'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
   '42501'::text, null::text,
   'cliente_role NO accede a leads.team_member_id (columna no grantada)'::text
+));
+
+-- ── Tests de notificaciones (post-0024 — Fase 7a) ─────────────────────────
+-- Seed via service-role-equivalent (postgres) usando el helper RPC. Cada
+-- insert pasa por `create_notification` (SECURITY DEFINER), igual que en
+-- runtime. La dedup_key del test 62 fuerza colisión para validar el ON
+-- CONFLICT.
+reset role;
+delete from public.notifications where project_id in (
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+);
+
+-- Notif al equipo del Proyecto A (target_role='team').
+select public.create_notification(
+  p_project_id  := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  p_type        := 'sync_failed',
+  p_title       := 'Sync meta falló',
+  p_severity    := 'error',
+  p_body        := null,
+  p_target_role := 'team',
+  p_dedup_key   := 'sync_failed:test:meta:2026-06-16'
+);
+
+-- Notif al cliente del Proyecto A (target_role='cliente').
+select public.create_notification(
+  p_project_id  := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  p_type        := 'launch_started',
+  p_title       := 'Tu lanzamiento arrancó',
+  p_severity    := 'info',
+  p_body        := null,
+  p_target_role := 'cliente',
+  p_dedup_key   := 'launch_started:test:launch1'
+);
+
+-- Notif personal al admin del Proyecto A (target_user_id).
+select public.create_notification(
+  p_project_id     := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  p_type           := 'test_personal',
+  p_title          := 'Ping para admin',
+  p_target_user_id := '22222222-2222-2222-2222-222222222222'
+);
+
+-- 56) operador SÍ ve la notif target_role='team' de su proyecto.
+select pg_temp.login_as('44444444-4444-4444-4444-444444444444');
+insert into _smoke_results(result) values (isnt_empty(
+  $sql$select 1 from public.notifications
+        where type = 'sync_failed'$sql$,
+  'operador (team) ve notif target_role=team'
+));
+
+-- 57) operador NO ve la notif target_role='cliente' (su rol no matchea).
+insert into _smoke_results(result) values (is_empty(
+  $sql$select 1 from public.notifications
+        where type = 'launch_started'$sql$,
+  'operador NO ve notif target_role=cliente'
+));
+
+-- 58) cliente SÍ ve la notif target_role='cliente' de su proyecto.
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+insert into _smoke_results(result) values (isnt_empty(
+  $sql$select 1 from public.notifications
+        where type = 'launch_started'$sql$,
+  'cliente ve notif target_role=cliente'
+));
+
+-- 59) cliente NO ve la notif target_role='team' (cocina del equipo).
+insert into _smoke_results(result) values (is_empty(
+  $sql$select 1 from public.notifications
+        where type = 'sync_failed'$sql$,
+  'cliente NO ve notif target_role=team (frontera dura)'
+));
+
+-- 60) admin SÍ ve su notif target_user_id propia.
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+insert into _smoke_results(result) values (isnt_empty(
+  $sql$select 1 from public.notifications
+        where type = 'test_personal'$sql$,
+  'admin ve notif personal (target_user_id)'
+));
+
+-- 61) operador NO ve la notif personal del admin (target_user_id ajeno).
+select pg_temp.login_as('44444444-4444-4444-4444-444444444444');
+insert into _smoke_results(result) values (is_empty(
+  $sql$select 1 from public.notifications
+        where type = 'test_personal'$sql$,
+  'operador NO ve notif personal de otro usuario'
+));
+
+-- 62) dedup_key bloquea el segundo insert con la misma clave. ON CONFLICT
+--     DO NOTHING absorbe — no lanza excepción, devuelve NULL. Comprobamos
+--     que la cantidad de filas con esa key sigue en 1.
+reset role;
+select public.create_notification(
+  p_project_id  := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  p_type        := 'sync_failed',
+  p_title       := 'duplicado',
+  p_target_role := 'team',
+  p_dedup_key   := 'sync_failed:test:meta:2026-06-16'
+);
+insert into _smoke_results(result) values (is(
+  (select count(*)::int from public.notifications
+    where dedup_key = 'sync_failed:test:meta:2026-06-16'),
+  1,
+  'dedup_key bloquea segundo insert (ON CONFLICT absorbe)'
 ));
 
 insert into _smoke_results(result) select * from finish();

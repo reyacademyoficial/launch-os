@@ -1,3 +1,4 @@
+import { NotificationBell } from "@/components/notifications/notification-bell";
 import type { SessionProfile } from "@/lib/supabase/auth";
 import type { Theme } from "@/lib/theme";
 
@@ -28,7 +29,8 @@ export function ClientTopbar({
     <header className="flex items-center gap-3 border-b border-border bg-bg-elevated px-4 py-3 sm:gap-4 sm:px-8">
       <SidebarToggle />
       <ClientProjectSwitcher projects={projects} />
-      <div className="ml-auto">
+      <div className="ml-auto flex items-center gap-2">
+        <NotificationBell />
         <UserMenu profile={profile} theme={theme} configHref="/portal/configuracion" />
       </div>
     </header>

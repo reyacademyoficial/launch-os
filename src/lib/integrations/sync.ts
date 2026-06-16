@@ -641,6 +641,17 @@ async function recordTerminalRun(
     .maybeSingle();
   const runId = (inserted.data as { id: string } | null)?.id ?? "";
 
+  // 7a: avisar al equipo de un sync que ni siquiera arrancó por falta de
+  // config. Dedup por (launch, provider, YYYY-MM-DD) para no spamear cuando
+  // el mismo usuario aprieta el botón varias veces el mismo día.
+  await notifySyncEvent(service, {
+    projectId: launch.project_id,
+    launchId: launch.id,
+    provider: input.provider,
+    status,
+    message,
+  });
+
   return {
     runId,
     status,
@@ -669,6 +680,26 @@ async function finalizeRun(
 
   await service.from("integration_runs").update(payload).eq("id", runId);
 
+  // 7a: avisar al equipo si el sync terminó en estado no exitoso. Necesitamos
+  // joinear con launches para obtener project_id — el run en sí solo tiene
+  // launch_id. Si la query falla, swallow (la notificación es nice-to-have,
+  // no critical path del sync).
+  if (status !== "success") {
+    const ctx = await fetchLaunchContext(service, runId);
+    if (ctx) {
+      await notifySyncEvent(service, {
+        projectId: ctx.project_id,
+        launchId: ctx.launch_id,
+        provider: ctx.provider,
+        status,
+        message:
+          errorDetail && typeof errorDetail.message === "string"
+            ? (errorDetail.message as string)
+            : null,
+      });
+    }
+  }
+
   return {
     runId,
     status,
@@ -678,4 +709,126 @@ async function finalizeRun(
         ? (errorDetail.message as string)
         : null,
   };
+}
+
+// ─── 7a — notificaciones de sistema ─────────────────────────────────────────
+
+/**
+ * Trae project_id + launch_id + provider del run para componer la notif.
+ * Si el run no existe (edge case post-DELETE), devuelve null y el caller
+ * se saltea la notificación.
+ */
+async function fetchLaunchContext(
+  service: ServiceClient,
+  runId: string,
+): Promise<{
+  project_id: string;
+  launch_id: string;
+  provider: string;
+} | null> {
+  const res = await loose(service)
+    .from("integration_runs")
+    .select("provider, launch_id, launches!inner(project_id)")
+    .eq("id", runId)
+    .maybeSingle();
+  const row = res.data as
+    | {
+        provider: string;
+        launch_id: string;
+        launches: { project_id: string } | null;
+      }
+    | null;
+  if (!row || !row.launches) return null;
+  return {
+    project_id: row.launches.project_id,
+    launch_id: row.launch_id,
+    provider: row.provider,
+  };
+}
+
+/**
+ * Inserta una notificación al equipo cuando un sync termina mal. Mapea cada
+ * estado terminal a un (type, severity, dedup_key) coherente:
+ *
+ *   - error           → severity error, dedup por ventana del sync.
+ *   - token_invalid   → severity warning, dedup por día (recurrente hasta que
+ *                       alguien rote el token).
+ *   - rate_limited    → severity warning, dedup por hora (rate-limit transient).
+ *   - partial         → severity warning, dedup por ventana.
+ *   - config_missing  → severity warning, dedup por día.
+ *
+ * La llamada va al helper SQL `create_notification` (SECURITY DEFINER) que
+ * absorbe duplicados via ON CONFLICT — la UI nunca ve la misma notif dos
+ * veces aunque el usuario apriete el botón en loop.
+ */
+async function notifySyncEvent(
+  service: ServiceClient,
+  args: {
+    projectId: string;
+    launchId: string;
+    provider: string;
+    status: SyncLaunchResult["status"];
+    message: string | null;
+  },
+): Promise<void> {
+  const { projectId, launchId, provider, status, message } = args;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const hourBucket = new Date().toISOString().slice(0, 13); // YYYY-MM-DDTHH
+
+  let type: string;
+  let severity: "info" | "warning" | "error";
+  let title: string;
+  let dedupKey: string;
+  switch (status) {
+    case "error":
+      type = "sync_failed";
+      severity = "error";
+      title = `Sync ${provider} falló`;
+      dedupKey = `sync_failed:${launchId}:${provider}:${today}`;
+      break;
+    case "token_invalid":
+      type = "sync_token_invalid";
+      severity = "warning";
+      title = `Token de ${provider} inválido`;
+      dedupKey = `sync_token_invalid:${launchId}:${provider}:${today}`;
+      break;
+    case "rate_limited":
+      type = "sync_rate_limited";
+      severity = "warning";
+      title = `${provider} aplicó rate limit`;
+      dedupKey = `sync_rate_limited:${launchId}:${provider}:${hourBucket}`;
+      break;
+    case "partial":
+      type = "sync_partial";
+      severity = "warning";
+      title = `Sync ${provider} terminó parcial`;
+      dedupKey = `sync_partial:${launchId}:${provider}:${today}`;
+      break;
+    case "config_missing":
+      type = "sync_config_missing";
+      severity = "warning";
+      title = `Falta configuración para ${provider}`;
+      dedupKey = `sync_config_missing:${launchId}:${provider}:${today}`;
+      break;
+    default:
+      return;
+  }
+
+  try {
+    await loose(service).rpc("create_notification", {
+      p_project_id: projectId,
+      p_type: type,
+      p_title: title,
+      p_severity: severity,
+      p_body: message,
+      p_target_role: "team",
+      p_target_user_id: null,
+      p_launch_id: launchId,
+      p_dedup_key: dedupKey,
+      p_metadata: { provider, status },
+    });
+  } catch {
+    // Swallow — la notificación es nice-to-have, el sync ya cerró su run.
+  }
 }
