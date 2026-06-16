@@ -41,7 +41,8 @@
       "Bash(npx next *)",
       "Bash(npm audit *)",
       "Bash(xargs cat *)",
-      "Bash(xargs grep *)"
+      "Bash(xargs grep *)",
+      "Bash(grep -c \"'::text$\" supabase/tests/rls_smoke_test.sql)"
     ]
   }
 }

@@ -15,7 +15,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-set local search_path = extensions, public, pg_temp;
+set local search_path = pg_temp, extensions, public;
 
 -- Helper: "loguearse" como un usuario autenticado (rol + claim sub del JWT).
 --
@@ -48,6 +48,45 @@ begin
 end;
 $$;
 
+-- Wrapper local de `throws_ok`. La versión de pgtap embebida en este Supabase
+-- declara `throws_ok` con CHAR(5) para el sqlstate; algunos casts (`text`,
+-- `character`) no resuelven entre las firmas disponibles y postgres tira
+-- "function does not exist" antes de poder ejecutar. Definir un override en
+-- pg_temp con firma fija (text, text, text, text) — y poner `pg_temp`
+-- primero en el search_path — hace que TODAS las llamadas `throws_ok(...)`
+-- caigan acá sin importar la versión de pgtap. Internamente ejecutamos el
+-- SQL, capturamos el SQLSTATE y emitimos un `ok()` con el verdict (mismo
+-- TAP que las demás aserciones).
+create or replace function pg_temp.throws_ok(
+  p_sql      text,
+  p_sqlstate text,
+  p_errmsg   text,
+  p_desc     text
+) returns text language plpgsql as $$
+declare
+  got_sqlstate text;
+  raised       boolean := false;
+begin
+  begin
+    execute p_sql;
+  exception when others then
+    got_sqlstate := SQLSTATE;
+    raised := true;
+  end;
+
+  if not raised then
+    return extensions.ok(false, p_desc || ' — esperaba excepción, no hubo');
+  end if;
+  if p_sqlstate is not null and got_sqlstate <> p_sqlstate then
+    return extensions.ok(
+      false,
+      p_desc || ' — SQLSTATE esperado ' || p_sqlstate || ', obtuve ' || got_sqlstate
+    );
+  end if;
+  return extensions.ok(true, p_desc);
+end;
+$$;
+
 -- Tabla temporal que captura el output de cada aserción para que Studio lo
 -- muestre. Grants explícitos porque los inserts corren como `authenticated`.
 create temporary table _smoke_results (
@@ -57,6 +96,17 @@ create temporary table _smoke_results (
 
 grant insert, select on _smoke_results to authenticated;
 grant usage on sequence _smoke_results_n_seq to authenticated;
+-- Post-0023: los tests del cliente corren bajo `cliente_role`, que no hereda
+-- nada de `authenticated`. Sin estos grants, el primer insert al log de
+-- resultados (test 1) lanza 42501 porque el rol activo no tiene permisos
+-- sobre la tabla temp.
+grant insert, select on _smoke_results to cliente_role;
+grant usage on sequence _smoke_results_n_seq to cliente_role;
+-- pgtap vive en el schema `extensions`. Las llamadas a `plan`, `is`,
+-- `isnt_empty`, `is_empty`, `lives_ok` y `extensions.ok` (que el wrapper
+-- pg_temp.throws_ok invoca al final) requieren USAGE sobre el schema. El
+-- rol authenticated lo tiene por bootstrap de Supabase; cliente_role no.
+grant usage on schema extensions to cliente_role;
 
 -- =====================  SEED (como postgres / owner)  =====================
 -- UUIDs fijos para legibilidad
@@ -135,11 +185,11 @@ insert into _smoke_results(result) values (plan(55));
 
 -- 1) cliente NO puede insertar launches (WITH CHECK falla) → 42501
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format('insert into public.launches (project_id, name) values (%L, %L)',
          'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Launch del cliente'),
-  '42501', null,
-  'cliente NO puede insertar launches'
+  '42501'::text, null::text,
+  'cliente NO puede insertar launches'::text
 ));
 
 -- 2) admin SÍ puede insertar launches en su proyecto
@@ -217,11 +267,11 @@ insert into _smoke_results(result) values (lives_ok(
 ));
 
 -- 11) operador NO puede crear launches (WITH CHECK falla) → 42501
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format('insert into public.launches (project_id, name) values (%L, %L)',
          'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'launch del operador'),
-  '42501', null,
-  'operador NO puede crear launches'
+  '42501'::text, null::text,
+  'operador NO puede crear launches'::text
 ));
 
 -- 12) operador NO puede borrar launches (USING filtra → 0 filas)
@@ -254,13 +304,13 @@ insert into _smoke_results(result) values (is_empty(
 --     tiene grant UPDATE on launches → permission denied (42501) ANTES de RLS.
 --     La frontera es pre-policy (grant), no la cláusula USING.
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
     'update public.launches set name = ''cliente edit'' where id = %L',
     'cccccccc-cccc-cccc-cccc-cccccccccccc'
   ),
-  '42501', null,
-  'cliente_role NO edita launches (no grant UPDATE)'
+  '42501'::text, null::text,
+  'cliente_role NO edita launches (no grant UPDATE)'::text
 ));
 
 -- ── Tests del calendario (post-0011) ─────────────────────────────────────
@@ -332,32 +382,32 @@ insert into _smoke_results(result) values (isnt_empty(
 -- 19) cliente NO ve launch_secrets. Post-0023 cliente_role tampoco tiene
 --     grant SELECT en launch_secrets → permission denied. Doble blindaje:
 --     grant ausente + RLS sin policies.
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format('select 1 from public.launch_secrets where launch_id = %L',
          'cccccccc-cccc-cccc-cccc-cccccccccccc'),
-  '42501', null,
-  'cliente_role NO accede a launch_secrets (no grant)'
+  '42501'::text, null::text,
+  'cliente_role NO accede a launch_secrets (no grant)'::text
 ));
 
 -- 20) cliente NO puede insertar en launch_daily_ads (sin policy de write)
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
     'insert into public.launch_daily_ads (launch_id, date, provider, leads) values (%L, ''2026-07-11'', ''meta'', 99)',
     'cccccccc-cccc-cccc-cccc-cccccccccccc'
   ),
-  '42501', null,
-  'launch_daily_ads INSERT blindado para authenticated'
+  '42501'::text, null::text,
+  'launch_daily_ads INSERT blindado para authenticated'::text
 ));
 
 -- 21) cliente NO ve integration_runs. Post-0023 cliente_role NO tiene grant
 --     SELECT en integration_runs — el cliente no le interesa el "ultima sync"
 --     de las integraciones (cocina del equipo). El equipo (authenticated)
 --     sigue leyendo via has_project_access en su rol propio.
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format('select 1 from public.integration_runs where launch_id = %L',
          'cccccccc-cccc-cccc-cccc-cccccccccccc'),
-  '42501', null,
-  'cliente_role NO accede a integration_runs (no grant)'
+  '42501'::text, null::text,
+  'cliente_role NO accede a integration_runs (no grant)'::text
 ));
 
 -- ── Tests de CRM (post-0013): team_members + leads ────────────────────────
@@ -400,24 +450,24 @@ insert into _smoke_results(result) values (lives_ok(
 
 -- 24) analista NO inserta team_members (gate = can_edit_launches_in)
 select pg_temp.login_as('55555555-5555-5555-5555-555555555555');
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
     'insert into public.team_members (project_id, name, role) values (%L, %L, %L)',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Hack', 'setter'
   ),
-  '42501', null,
-  'analista NO inserta team_members'
+  '42501'::text, null::text,
+  'analista NO inserta team_members'::text
 ));
 
 -- 25) cliente NO inserta team_members
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
     'insert into public.team_members (project_id, name, role) values (%L, %L, %L)',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Hack cliente', 'setter'
   ),
-  '42501', null,
-  'cliente NO inserta team_members'
+  '42501'::text, null::text,
+  'cliente NO inserta team_members'::text
 ));
 
 -- 26) cliente NO lee team_members. Post-0023 (frontera-cliente) team_members
@@ -425,11 +475,11 @@ insert into _smoke_results(result) values (throws_ok(
 --     Antes era lectura libre via has_project_access; ahora la barrera es
 --     pre-RLS y dura. Mismo razonamiento que para commission_rules y
 --     payment_modalities (tests 47/48).
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format('select 1 from public.team_members where project_id = %L',
          'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
-  '42501', null,
-  'cliente_role NO accede a team_members (no grant)'
+  '42501'::text, null::text,
+  'cliente_role NO accede a team_members (no grant)'::text
 ));
 
 -- 27) cliente sigue sin acceso a team_members aun cross-tenant. Sanity check
@@ -441,11 +491,11 @@ insert into public.team_members (project_id, name, role) values
   ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Cross-tenant setter', 'setter');
 
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format('select 1 from public.team_members where project_id = %L',
          'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'),
-  '42501', null,
-  'cliente_role NO accede a team_members ni cross-tenant'
+  '42501'::text, null::text,
+  'cliente_role NO accede a team_members ni cross-tenant'::text
 ));
 
 -- 28) operador SÍ inserta lead en su proyecto (source default = manual)
@@ -506,13 +556,13 @@ insert into _smoke_results(result) values (lives_ok(
 
 -- 31) operador NO inserta modalidad (gate = can_edit_project, no _launches_in)
 select pg_temp.login_as('44444444-4444-4444-4444-444444444444');
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
     'insert into public.payment_modalities (project_id, name) values (%L, %L)',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Hack del operador'
   ),
-  '42501', null,
-  'operador NO inserta payment_modality (es admin-only)'
+  '42501'::text, null::text,
+  'operador NO inserta payment_modality (es admin-only)'::text
 ));
 
 -- 32) admin SÍ inserta commission_rule (% sobre Pago total, sin launch)
@@ -530,7 +580,7 @@ insert into _smoke_results(result) values (lives_ok(
 
 -- 33) operador NO inserta commission_rule
 select pg_temp.login_as('44444444-4444-4444-4444-444444444444');
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
     $sql$insert into public.commission_rules (project_id, payment_modality_id, type, value)
          select %L, id, 'fixed', 500 from public.payment_modalities
@@ -538,14 +588,14 @@ insert into _smoke_results(result) values (throws_ok(
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
   ),
-  '42501', null,
-  'operador NO inserta commission_rule'
+  '42501'::text, null::text,
+  'operador NO inserta commission_rule'::text
 ));
 
 -- 34) UNIQUE NULLS NOT DISTINCT: NO se puede insertar otra rule default
 --     (launch_id NULL) para la misma modalidad
 select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
     $sql$insert into public.commission_rules (project_id, payment_modality_id, type, value)
          select %L, id, 'fixed', 999 from public.payment_modalities
@@ -553,8 +603,8 @@ insert into _smoke_results(result) values (throws_ok(
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
   ),
-  '23505', null,
-  'UNIQUE NULLS NOT DISTINCT bloquea segunda rule default por modalidad'
+  '23505'::text, null::text,
+  'UNIQUE NULLS NOT DISTINCT bloquea segunda rule default por modalidad'::text
 ));
 
 -- 35) operador SÍ inserta sale (can_edit_launches_in). Necesita un lead +
@@ -577,7 +627,7 @@ insert into _smoke_results(result) values (lives_ok(
 
 -- 36) analista NO inserta sale
 select pg_temp.login_as('55555555-5555-5555-5555-555555555555');
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
     $sql$insert into public.sales (project_id, lead_id, payment_modality_id, total_amount)
          select %L,
@@ -588,8 +638,8 @@ insert into _smoke_results(result) values (throws_ok(
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
   ),
-  '42501', null,
-  'analista NO inserta sale'
+  '42501'::text, null::text,
+  'analista NO inserta sale'::text
 ));
 
 -- 37) operador SÍ inserta payment (carga cobros día a día)
@@ -604,14 +654,14 @@ insert into _smoke_results(result) values (lives_ok(
 ));
 
 -- 38) check amount > 0 → 0 o negativo rechaza
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
     $sql$insert into public.payments (sale_id, amount)
          select id, 0 from public.sales where project_id = %L limit 1$sql$,
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
   ),
-  '23514', null,
-  'payments.amount > 0 (check rechaza 0)'
+  '23514'::text, null::text,
+  'payments.amount > 0 (check rechaza 0)'::text
 ));
 
 -- 39) cliente lee sales de su proyecto. Post-0023 cliente_role tiene grant
@@ -684,15 +734,15 @@ insert into _smoke_results(result) values (lives_ok(
 
 -- 43) analista NO inserta ai_run (no es can_edit_launches_in)
 select pg_temp.login_as('55555555-5555-5555-5555-555555555555');
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
     $sql$insert into public.ai_runs (launch_id, project_id, model, output_text)
          values (%L, %L, 'gpt-test', 'hack')$sql$,
     'cccccccc-cccc-cccc-cccc-cccccccccccc',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
   ),
-  '42501', null,
-  'analista NO inserta ai_run'
+  '42501'::text, null::text,
+  'analista NO inserta ai_run'::text
 ));
 
 -- 44) cliente lee ai_runs de su proyecto
@@ -704,14 +754,14 @@ insert into _smoke_results(result) values (isnt_empty(
 ));
 
 -- 45) historial inmutable: UPDATE no tiene GRANT → permission denied 42501
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
     $sql$update public.ai_runs set output_text = 'tampered'
          where project_id = %L$sql$,
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
   ),
-  '42501', null,
-  'ai_runs UPDATE blindado (historial inmutable)'
+  '42501'::text, null::text,
+  'ai_runs UPDATE blindado (historial inmutable)'::text
 ));
 
 -- 46) operador NO puede DELETE (es can_edit_project) → USING filtra a 0
@@ -735,30 +785,30 @@ insert into _smoke_results(result) values (is_empty(
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
 
 -- 47) cliente_role NO accede a commission_rules (no grant)
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format('select 1 from public.commission_rules where project_id = %L',
          'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
-  '42501', null,
-  'cliente_role NO accede a commission_rules (no grant)'
+  '42501'::text, null::text,
+  'cliente_role NO accede a commission_rules (no grant)'::text
 ));
 
 -- 48) cliente_role NO accede a payment_modalities (no grant)
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format('select 1 from public.payment_modalities where project_id = %L',
          'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
-  '42501', null,
-  'cliente_role NO accede a payment_modalities (no grant)'
+  '42501'::text, null::text,
+  'cliente_role NO accede a payment_modalities (no grant)'::text
 ));
 
 -- 49) cliente_role NO puede pedir sales.team_member_id (frontera de COLUMNA).
 --     El grant column-level a cliente_role omite team_member_id; pedirlo
 --     explícito lanza permission denied. La RLS de fila igual lo dejaría
 --     pasar — esta barrera es el grant.
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format('select team_member_id from public.sales where project_id = %L',
          'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
-  '42501', null,
-  'cliente_role NO accede a sales.team_member_id (columna no grantada)'
+  '42501'::text, null::text,
+  'cliente_role NO accede a sales.team_member_id (columna no grantada)'::text
 ));
 
 -- 50) cliente_role SÍ lee total_amount / closed_at de su proyecto.
@@ -802,30 +852,30 @@ insert into _smoke_results(result) values (is_empty(
 ));
 
 -- 53) cliente_role NO puede INSERT en launches (no grant) → 42501.
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format('insert into public.launches (project_id, name) values (%L, %L)',
          'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'launch del cliente'),
-  '42501', null,
-  'cliente_role NO inserta launches (no grant)'
+  '42501'::text, null::text,
+  'cliente_role NO inserta launches (no grant)'::text
 ));
 
 -- 54) cliente_role NO puede INSERT en leads (no grant) → 42501.
 --     Frontera pre-RLS: ni siquiera lleva la request a evaluar can_edit_*.
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format('insert into public.leads (project_id, name) values (%L, %L)',
          'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'lead del cliente'),
-  '42501', null,
-  'cliente_role NO inserta leads (no grant)'
+  '42501'::text, null::text,
+  'cliente_role NO inserta leads (no grant)'::text
 ));
 
 -- 55) cliente_role NO puede pedir leads.team_member_id (frontera de columna).
 --     Mismo patrón que el test 49 sobre sales: la asignación setter/closer es
 --     "cocina interna" y el grant column-level la omite.
-insert into _smoke_results(result) values (throws_ok(
+insert into _smoke_results(result) values (pg_temp.throws_ok(
   format('select team_member_id from public.leads where project_id = %L',
          'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
-  '42501', null,
-  'cliente_role NO accede a leads.team_member_id (columna no grantada)'
+  '42501'::text, null::text,
+  'cliente_role NO accede a leads.team_member_id (columna no grantada)'::text
 ));
 
 insert into _smoke_results(result) select * from finish();
