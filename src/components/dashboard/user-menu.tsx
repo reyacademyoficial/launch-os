@@ -11,9 +11,16 @@ import { type Theme, THEMES } from "@/lib/theme";
 export function UserMenu({
   profile,
   theme,
+  configHref = "/configuracion",
 }: {
   readonly profile: SessionProfile;
   readonly theme: Theme;
+  /**
+   * Path al destino de "Configuración". El shell del cliente vive bajo
+   * `/portal/…`, así que pasa `/portal/configuracion`. Default cubre el shell
+   * del equipo sin pedir el prop.
+   */
+  readonly configHref?: string;
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -72,7 +79,7 @@ export function UserMenu({
           </div>
 
           <Link
-            href="/configuracion"
+            href={configHref}
             role="menuitem"
             onClick={() => setOpen(false)}
             className="block px-3 py-2 text-sm text-fg-muted transition-colors hover:bg-surface hover:text-fg"

@@ -958,12 +958,15 @@ export async function fetchGhlOpportunities(
   const out: GhlOpportunity[] = [];
 
   for (let page = 1; page <= MAX_PAGES; page++) {
+    // GHL v2 `/opportunities/search` NO acepta `sort` ni `sort_direction`
+    // (rechaza con 422 "property sort should not exist" / "property
+    // sort_direction should not exist"). El default del endpoint ordena por
+    // `date_updated desc`, que es exactamente lo que el cortocircuito por
+    // `effectiveCutoff` espera más abajo — no hace falta forzarlo.
     const params = new URLSearchParams({
       location_id: args.locationId,
       limit: String(PAGE_SIZE),
       page: String(page),
-      sort: "date_updated",
-      sort_direction: "desc",
       status: "all",
     });
     const url = `${GHL_API_BASE}/opportunities/search?${params.toString()}`;

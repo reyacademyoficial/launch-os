@@ -80,7 +80,20 @@ export type GhlRunSummary =
       meta: {
         contacts: ContactsMeta;
         appointments: AppointmentsMeta;
-        opportunities: OpportunitiesMeta;
+        /**
+         * Null cuando el fetch de opportunities falló (ej. 422 por params no
+         * soportados, 401 por scope faltante). En ese caso el run NO se aborta
+         * — contacts + appointments + warm lookup siguen — y el detalle del
+         * fallo queda en `opportunities_error`. KPIs de ventas se quedan con
+         * los datos del fallback manual hasta que se vuelva a sincronizar.
+         */
+        opportunities: OpportunitiesMeta | null;
+        opportunities_error: {
+          kind: string;
+          message: string;
+          httpStatus: number | null;
+          responseBody: unknown;
+        } | null;
         /**
          * Cuántos contacts del fetch incremental se clasificaron como tibio
          * (señal `lastInboundWhatsappMessageDate ∈ compra+cierre`).
@@ -102,6 +115,27 @@ export type GhlRunSummary =
          * continúa con los demás, marcando esos contacts sin señal warm.
          */
         warm_lookup_errors: number;
+        /**
+         * TEMP DIAG — muestras crudas del warm lookup para diagnosticar por qué
+         * `warm_signals_detected` da 0. `errors` lleva hasta 5 fallos con su
+         * httpStatus + responseBody; `successes` lleva hasta 5 contacts cuyo
+         * lookup OK trajo al menos 1 conversation, con el objeto RAW completo
+         * de cada conversation tal cual GHL la devolvió. Quitar una vez que
+         * sepamos cómo viene el campo de "último mensaje entrante".
+         */
+        warm_samples: {
+          errors: Array<{
+            contactId: string;
+            kind: string;
+            httpStatus: number | null;
+            responseBody: unknown;
+          }>;
+          successes: Array<{
+            contactId: string;
+            conversationCount: number;
+            rawConversations: unknown[];
+          }>;
+        };
         mappings_applied: number;
       };
     }
@@ -199,7 +233,28 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   ]);
   if (!contactsResult.ok) return propagateFailure(contactsResult, "contacts");
   if (!apptResult.ok) return propagateFailure(apptResult, "appointments");
-  if (!oppsResult.ok) return propagateFailure(oppsResult, "opportunities");
+  // Opportunities NO bloquea — si falla (422/401/etc), capturamos el detalle
+  // y seguimos con contacts + appointments + warm lookup. La sub-meta de opps
+  // queda en null y `opportunities_error` lleva el detalle del fallo.
+  const opportunitiesRows: ReadonlyArray<GhlOpportunity> = oppsResult.ok
+    ? oppsResult.rows
+    : [];
+  const opportunitiesMetaForSummary: OpportunitiesMeta | null = oppsResult.ok
+    ? oppsResult.meta
+    : null;
+  const opportunitiesError = oppsResult.ok
+    ? null
+    : (() => {
+        const detail = (oppsResult.detail ?? {}) as Record<string, unknown>;
+        const httpStatusRaw = detail.httpStatus;
+        return {
+          kind: oppsResult.kind,
+          message: oppsResult.message,
+          httpStatus:
+            typeof httpStatusRaw === "number" ? httpStatusRaw : null,
+          responseBody: detail.responseBody ?? null,
+        };
+      })();
 
   // 3) Lookup de tibio POR CONTACT (no masivo). Por cada contact del fetch
   // incremental, una request a `/conversations/search?contactId=...` para
@@ -220,6 +275,19 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   let warmLookupSkippedDueToVolume = false;
   let warmLookupContactsInspected = 0;
   let warmLookupErrors = 0;
+  // TEMP DIAG — samples crudos para entender por qué warm_signals_detected = 0.
+  const warmErrorSamples: Array<{
+    contactId: string;
+    kind: string;
+    httpStatus: number | null;
+    responseBody: unknown;
+  }> = [];
+  const warmSuccessSamples: Array<{
+    contactId: string;
+    conversationCount: number;
+    rawConversations: unknown[];
+  }> = [];
+  const WARM_SAMPLE_LIMIT = 5;
 
   if (contactsResult.rows.length > WARM_LOOKUP_CAP) {
     warmLookupSkippedDueToVolume = true;
@@ -233,17 +301,59 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
           args.locationId,
           c.id,
         );
-        if (!res.ok) return { contactId: c.id, warm: false, ok: false };
+        if (!res.ok) {
+          const detail = (res.detail ?? {}) as Record<string, unknown>;
+          const httpStatusRaw = detail.httpStatus;
+          return {
+            contactId: c.id,
+            ok: false as const,
+            warm: false,
+            failure: {
+              kind: res.kind,
+              httpStatus:
+                typeof httpStatusRaw === "number" ? httpStatusRaw : null,
+              responseBody: detail.responseBody ?? null,
+            },
+          };
+        }
         const hasWarm = res.rows.some((conv) =>
           inWindow(conv.lastInboundWhatsappMessageDate),
         );
-        return { contactId: c.id, warm: hasWarm, ok: true };
+        return {
+          contactId: c.id,
+          ok: true as const,
+          warm: hasWarm,
+          rawConversations: res.rows.map((r) => r.raw),
+        };
       },
     );
     for (const r of lookupResults) {
       warmLookupContactsInspected++;
-      if (!r.ok) warmLookupErrors++;
+      if (!r.ok) {
+        warmLookupErrors++;
+        if (warmErrorSamples.length < WARM_SAMPLE_LIMIT) {
+          warmErrorSamples.push({
+            contactId: r.contactId,
+            kind: r.failure.kind,
+            httpStatus: r.failure.httpStatus,
+            responseBody: r.failure.responseBody,
+          });
+        }
+        continue;
+      }
       if (r.warm) warmByContact.set(r.contactId, true);
+      // Solo nos interesa samplear contacts que SÍ tenían conversaciones
+      // (los que no, no aportan info de shape).
+      if (
+        warmSuccessSamples.length < WARM_SAMPLE_LIMIT &&
+        r.rawConversations.length > 0
+      ) {
+        warmSuccessSamples.push({
+          contactId: r.contactId,
+          conversationCount: r.rawConversations.length,
+          rawConversations: r.rawConversations,
+        });
+      }
     }
   }
 
@@ -343,7 +453,9 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   // directo: no hay clasificación create/update/noop intermedia. Para
   // distinguir created vs updated en el conteo, hacemos un lookup previo
   // por external_id IN (...) — el volumen típico es <500 por corrida.
-  const opportunitiesCounts = await syncOpportunities(args, oppsResult.rows);
+  // Si el fetch de opportunities falló, `opportunitiesRows` es [] y
+  // `syncOpportunities` devuelve counts en cero — no toca DB.
+  const opportunitiesCounts = await syncOpportunities(args, opportunitiesRows);
 
   // 9) Orphan warm REMOVIDO en el cierre 3b: requería el fetch masivo de
   // conversations (60-90s, sin clasificación confiable). Trade-off: si GHL
@@ -361,11 +473,16 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     meta: {
       contacts: contactsResult.meta,
       appointments: apptResult.meta,
-      opportunities: oppsResult.meta,
+      opportunities: opportunitiesMetaForSummary,
+      opportunities_error: opportunitiesError,
       warm_signals_detected: warmSignalsDetected,
       warm_lookup_contacts_inspected: warmLookupContactsInspected,
       warm_lookup_skipped_due_to_volume: warmLookupSkippedDueToVolume,
       warm_lookup_errors: warmLookupErrors,
+      warm_samples: {
+        errors: warmErrorSamples,
+        successes: warmSuccessSamples,
+      },
       mappings_applied: mappingsApplied,
     },
   };

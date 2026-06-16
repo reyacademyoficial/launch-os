@@ -17,14 +17,32 @@ create extension if not exists pgtap with schema extensions;
 
 set local search_path = extensions, public, pg_temp;
 
--- Helper: "loguearse" como un usuario autenticado (rol + claim sub del JWT)
+-- Helper: "loguearse" como un usuario autenticado (rol + claim sub del JWT).
+--
+-- Post-0023 hay dos roles PostgREST: `authenticated` (super/admin/operador/
+-- analista) y `cliente_role` (cliente). El access_token_hook reescribe
+-- claims.role según profiles.role; replicamos ese mapping acá para que los
+-- tests reflejen el comportamiento real en runtime.
+--
+-- `reset role` al inicio es crítico: tras un `set local role X`, current_user
+-- queda en X. Postgres (session_user, superuser) puede revertir y luego
+-- setear cualquier role; un rol no-superuser no. Sin el reset, una segunda
+-- llamada login_as falla cuando cambia entre authenticated y cliente_role.
 create or replace function pg_temp.login_as(p_uid uuid)
 returns void language plpgsql as $$
+declare
+  v_profile_role text;
+  v_pg_role      text := 'authenticated';
 begin
-  execute 'set local role authenticated';
+  reset role;
+  select role into v_profile_role from public.profiles where id = p_uid;
+  if v_profile_role = 'cliente' then
+    v_pg_role := 'cliente_role';
+  end if;
+  execute format('set local role %I', v_pg_role);
   perform set_config(
     'request.jwt.claims',
-    json_build_object('sub', p_uid, 'role', 'authenticated')::text,
+    json_build_object('sub', p_uid, 'role', v_pg_role)::text,
     true
   );
 end;
@@ -113,7 +131,7 @@ on conflict (id) do nothing;
 -- - UPDATE/DELETE bloqueado por USING → fila se filtra silencioso, 0 filas.
 --   Lo testeamos con `is_empty(WITH ... RETURNING 1)`.
 --
-insert into _smoke_results(result) values (plan(46));
+insert into _smoke_results(result) values (plan(55));
 
 -- 1) cliente NO puede insertar launches (WITH CHECK falla) → 42501
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
@@ -232,14 +250,17 @@ insert into _smoke_results(result) values (is_empty(
   'analista NO edita launches'
 ));
 
--- 15) cliente NO escribe launches (USING filtra UPDATE → 0 filas)
+-- 15) cliente NO escribe launches. Post-0023 entra con cliente_role que NO
+--     tiene grant UPDATE on launches → permission denied (42501) ANTES de RLS.
+--     La frontera es pre-policy (grant), no la cláusula USING.
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
-insert into _smoke_results(result) values (is_empty(
+insert into _smoke_results(result) values (throws_ok(
   format(
-    'with u as (update public.launches set name = ''cliente edit'' where id = %L returning 1) select * from u',
+    'update public.launches set name = ''cliente edit'' where id = %L',
     'cccccccc-cccc-cccc-cccc-cccccccccccc'
   ),
-  'cliente NO edita launches'
+  '42501', null,
+  'cliente_role NO edita launches (no grant UPDATE)'
 ));
 
 -- ── Tests del calendario (post-0011) ─────────────────────────────────────
@@ -308,11 +329,14 @@ insert into _smoke_results(result) values (isnt_empty(
   'cliente lee launch_daily_ads de su proyecto'
 ));
 
--- 19) cliente NO ve launch_secrets (blindada — RLS sin policies)
-insert into _smoke_results(result) values (is_empty(
+-- 19) cliente NO ve launch_secrets. Post-0023 cliente_role tampoco tiene
+--     grant SELECT en launch_secrets → permission denied. Doble blindaje:
+--     grant ausente + RLS sin policies.
+insert into _smoke_results(result) values (throws_ok(
   format('select 1 from public.launch_secrets where launch_id = %L',
          'cccccccc-cccc-cccc-cccc-cccccccccccc'),
-  'launch_secrets blindada — cliente ve 0 filas'
+  '42501', null,
+  'cliente_role NO accede a launch_secrets (no grant)'
 ));
 
 -- 20) cliente NO puede insertar en launch_daily_ads (sin policy de write)
@@ -325,11 +349,15 @@ insert into _smoke_results(result) values (throws_ok(
   'launch_daily_ads INSERT blindado para authenticated'
 ));
 
--- 21) cliente lee integration_runs de su proyecto → ✅
-insert into _smoke_results(result) values (isnt_empty(
+-- 21) cliente NO ve integration_runs. Post-0023 cliente_role NO tiene grant
+--     SELECT en integration_runs — el cliente no le interesa el "ultima sync"
+--     de las integraciones (cocina del equipo). El equipo (authenticated)
+--     sigue leyendo via has_project_access en su rol propio.
+insert into _smoke_results(result) values (throws_ok(
   format('select 1 from public.integration_runs where launch_id = %L',
          'cccccccc-cccc-cccc-cccc-cccccccccccc'),
-  'cliente lee integration_runs de su proyecto'
+  '42501', null,
+  'cliente_role NO accede a integration_runs (no grant)'
 ));
 
 -- ── Tests de CRM (post-0013): team_members + leads ────────────────────────
@@ -392,26 +420,32 @@ insert into _smoke_results(result) values (throws_ok(
   'cliente NO inserta team_members'
 ));
 
--- 26) cliente SÍ lee team_members de su proyecto (los 2 insertados arriba)
-insert into _smoke_results(result) values (is(
-  (select count(*)::int
-     from public.team_members
-    where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
-  2,
-  'cliente ve los 2 team_members de su proyecto'
+-- 26) cliente NO lee team_members. Post-0023 (frontera-cliente) team_members
+--     es cocina interna del equipo — cliente_role no tiene grant SELECT.
+--     Antes era lectura libre via has_project_access; ahora la barrera es
+--     pre-RLS y dura. Mismo razonamiento que para commission_rules y
+--     payment_modalities (tests 47/48).
+insert into _smoke_results(result) values (throws_ok(
+  format('select 1 from public.team_members where project_id = %L',
+         'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  '42501', null,
+  'cliente_role NO accede a team_members (no grant)'
 ));
 
--- 27) cliente NO ve team_members de proyecto ajeno (Proyecto B vacío igual,
---     pero seedeamos uno con postgres para validar el cross-tenant filter)
+-- 27) cliente sigue sin acceso a team_members aun cross-tenant. Sanity check
+--     del mismo permission denied — no importa el project_id, el rol no
+--     accede a la tabla en absoluto. Seedeamos uno en Proyecto B para que
+--     queden datos disponibles para los tests cross-tenant posteriores.
 reset role;
 insert into public.team_members (project_id, name, role) values
   ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Cross-tenant setter', 'setter');
 
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
-insert into _smoke_results(result) values (is_empty(
+insert into _smoke_results(result) values (throws_ok(
   format('select 1 from public.team_members where project_id = %L',
          'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'),
-  'cliente NO ve team_members de proyecto ajeno'
+  '42501', null,
+  'cliente_role NO accede a team_members ni cross-tenant'
 ));
 
 -- 28) operador SÍ inserta lead en su proyecto (source default = manual)
@@ -580,12 +614,15 @@ insert into _smoke_results(result) values (throws_ok(
   'payments.amount > 0 (check rechaza 0)'
 ));
 
--- 39) cliente lee sales de su proyecto (es read por has_project_access)
+-- 39) cliente lee sales de su proyecto. Post-0023 cliente_role tiene grant
+--     SELECT en columnas seguras (sin team_member_id); pedimos `id` para
+--     verificar que el grant column-level está y la policy SELECT lo deja
+--     pasar. La frontera de columna se prueba en el test 49.
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
 insert into _smoke_results(result) values (isnt_empty(
-  format('select 1 from public.sales where project_id = %L',
+  format('select id from public.sales where project_id = %L',
          'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
-  'cliente lee sales de su proyecto'
+  'cliente_role lee sales (columnas safe) de su proyecto'
 ));
 
 -- 40) cliente NO ve sales de proyecto ajeno (seed en B como postgres)
@@ -602,9 +639,9 @@ insert into public.sales (project_id, lead_id, payment_modality_id, total_amount
 
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
 insert into _smoke_results(result) values (is_empty(
-  format('select 1 from public.sales where project_id = %L',
+  format('select id from public.sales where project_id = %L',
          'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'),
-  'cliente NO ve sales de proyecto ajeno'
+  'cliente_role NO ve sales de proyecto ajeno (RLS filtra)'
 ));
 
 -- 41) cliente NO ve payments de proyecto ajeno (project_of_sale resuelve B)
@@ -685,6 +722,110 @@ insert into _smoke_results(result) values (is_empty(
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
   ),
   'operador NO borra ai_runs (es admin-only)'
+));
+
+-- ── Tests de frontera-cliente (post-0023) ─────────────────────────────────
+-- Bloque dedicado a las garantías nuevas del rol PostgREST `cliente_role`:
+--   - "cocina interna" (commission_rules, payment_modalities) inaccesible.
+--   - sales.team_member_id imposible de pedir aun con grant column-level.
+--   - sales.total_amount sí legible.
+--   - projections: cliente CRUDea las suyas, no las ajenas.
+--   - launches/leads: sin grant INSERT al cliente_role.
+
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+
+-- 47) cliente_role NO accede a commission_rules (no grant)
+insert into _smoke_results(result) values (throws_ok(
+  format('select 1 from public.commission_rules where project_id = %L',
+         'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  '42501', null,
+  'cliente_role NO accede a commission_rules (no grant)'
+));
+
+-- 48) cliente_role NO accede a payment_modalities (no grant)
+insert into _smoke_results(result) values (throws_ok(
+  format('select 1 from public.payment_modalities where project_id = %L',
+         'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  '42501', null,
+  'cliente_role NO accede a payment_modalities (no grant)'
+));
+
+-- 49) cliente_role NO puede pedir sales.team_member_id (frontera de COLUMNA).
+--     El grant column-level a cliente_role omite team_member_id; pedirlo
+--     explícito lanza permission denied. La RLS de fila igual lo dejaría
+--     pasar — esta barrera es el grant.
+insert into _smoke_results(result) values (throws_ok(
+  format('select team_member_id from public.sales where project_id = %L',
+         'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  '42501', null,
+  'cliente_role NO accede a sales.team_member_id (columna no grantada)'
+));
+
+-- 50) cliente_role SÍ lee total_amount / closed_at de su proyecto.
+insert into _smoke_results(result) values (isnt_empty(
+  format('select total_amount, closed_at from public.sales where project_id = %L',
+         'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  'cliente_role SÍ lee total_amount/closed_at (columnas safe)'
+));
+
+-- 51) cliente_role SÍ inserta projection propia (created_by = auth.uid()).
+--     La policy projections_insert acepta cuando created_by = auth.uid() AND
+--     has_project_access(project_id). cliente1 es miembro de Proyecto A.
+insert into _smoke_results(result) values (lives_ok(
+  format(
+    $sql$insert into public.projections (project_id, created_by, name, mode)
+         values (%L, %L, 'Proyección cliente', 'forward')$sql$,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    '33333333-3333-3333-3333-333333333333'
+  ),
+  'cliente_role inserta projection propia'
+));
+
+-- 52) cliente_role NO actualiza projection ajena (created_by ≠ auth.uid()).
+--     Seedeamos una projection de admin1 como postgres. La policy update
+--     filtra: cliente no es admin (can_edit_project=false) y created_by ≠ uid
+--     → USING devuelve false → UPDATE no toca filas (silencioso 0 filas).
+reset role;
+insert into public.projections (project_id, created_by, name, mode) values
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+   '22222222-2222-2222-2222-222222222222',
+   'Proyección de admin', 'forward');
+
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+insert into _smoke_results(result) values (is_empty(
+  $sql$with u as (
+    update public.projections set name = 'hack'
+     where created_by = '22222222-2222-2222-2222-222222222222'
+     returning 1
+  ) select * from u$sql$,
+  'cliente_role NO edita projections ajenas (RLS filtra)'
+));
+
+-- 53) cliente_role NO puede INSERT en launches (no grant) → 42501.
+insert into _smoke_results(result) values (throws_ok(
+  format('insert into public.launches (project_id, name) values (%L, %L)',
+         'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'launch del cliente'),
+  '42501', null,
+  'cliente_role NO inserta launches (no grant)'
+));
+
+-- 54) cliente_role NO puede INSERT en leads (no grant) → 42501.
+--     Frontera pre-RLS: ni siquiera lleva la request a evaluar can_edit_*.
+insert into _smoke_results(result) values (throws_ok(
+  format('insert into public.leads (project_id, name) values (%L, %L)',
+         'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'lead del cliente'),
+  '42501', null,
+  'cliente_role NO inserta leads (no grant)'
+));
+
+-- 55) cliente_role NO puede pedir leads.team_member_id (frontera de columna).
+--     Mismo patrón que el test 49 sobre sales: la asignación setter/closer es
+--     "cocina interna" y el grant column-level la omite.
+insert into _smoke_results(result) values (throws_ok(
+  format('select team_member_id from public.leads where project_id = %L',
+         'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  '42501', null,
+  'cliente_role NO accede a leads.team_member_id (columna no grantada)'
 ));
 
 insert into _smoke_results(result) select * from finish();
