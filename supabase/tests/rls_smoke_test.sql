@@ -181,7 +181,7 @@ on conflict (id) do nothing;
 -- - UPDATE/DELETE bloqueado por USING → fila se filtra silencioso, 0 filas.
 --   Lo testeamos con `is_empty(WITH ... RETURNING 1)`.
 --
-insert into _smoke_results(result) values (plan(62));
+insert into _smoke_results(result) values (plan(70));
 
 -- 1) cliente NO puede insertar launches (WITH CHECK falla) → 42501
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
@@ -981,6 +981,107 @@ insert into _smoke_results(result) values (is(
     where dedup_key = 'sync_failed:test:meta:2026-06-16'),
   1,
   'dedup_key bloquea segundo insert (ON CONFLICT absorbe)'
+));
+
+-- ── Tests de alert_rules (post-0025 — Fase 7b) ────────────────────────────
+-- Pre-seed limpio para que los conteos sean deterministas.
+reset role;
+delete from public.alert_rules where launch_id in (
+  'cccccccc-cccc-cccc-cccc-cccccccccccc',
+  'dddddddd-dddd-dddd-dddd-dddddddddddd'
+);
+
+-- 63) admin SÍ inserta alert_rule en launch de su proyecto.
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+insert into _smoke_results(result) values (lives_ok(
+  format(
+    $sql$insert into public.alert_rules (launch_id, metric, operator, threshold)
+         values (%L, 'cpl', '>', 25)$sql$,
+    'cccccccc-cccc-cccc-cccc-cccccccccccc'
+  ),
+  'admin inserta alert_rule (can_edit_launches_in)'
+));
+
+-- 64) operador SÍ inserta alert_rule (mismo gate que admin).
+select pg_temp.login_as('44444444-4444-4444-4444-444444444444');
+insert into _smoke_results(result) values (lives_ok(
+  format(
+    $sql$insert into public.alert_rules (launch_id, metric, operator, threshold)
+         values (%L, 'inversion', '>', 500)$sql$,
+    'cccccccc-cccc-cccc-cccc-cccccccccccc'
+  ),
+  'operador inserta alert_rule'
+));
+
+-- 65) analista NO inserta alert_rule — can_edit_launches_in es false.
+select pg_temp.login_as('55555555-5555-5555-5555-555555555555');
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  format(
+    $sql$insert into public.alert_rules (launch_id, metric, operator, threshold)
+         values (%L, 'cpl', '>', 99)$sql$,
+    'cccccccc-cccc-cccc-cccc-cccccccccccc'
+  ),
+  '42501'::text, null::text,
+  'analista NO inserta alert_rule (RLS WITH CHECK)'::text
+));
+
+-- 66) analista SÍ lee alert_rules de su proyecto (has_project_access).
+insert into _smoke_results(result) values (isnt_empty(
+  format('select 1 from public.alert_rules where launch_id = %L',
+         'cccccccc-cccc-cccc-cccc-cccccccccccc'),
+  'analista lee alert_rules de su proyecto'
+));
+
+-- 67) UNIQUE (launch_id, metric, operator, threshold) bloquea duplicado.
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  format(
+    $sql$insert into public.alert_rules (launch_id, metric, operator, threshold)
+         values (%L, 'cpl', '>', 25)$sql$,
+    'cccccccc-cccc-cccc-cccc-cccccccccccc'
+  ),
+  '23505'::text, null::text,
+  'UNIQUE bloquea segunda regla idéntica'::text
+));
+
+-- 68) cliente_role NO accede a alert_rules (no grant en 0025 — frontera dura).
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  format('select 1 from public.alert_rules where launch_id = %L',
+         'cccccccc-cccc-cccc-cccc-cccccccccccc'),
+  '42501'::text, null::text,
+  'cliente_role NO accede a alert_rules (no grant)'::text
+));
+
+-- 69) cliente_role NO inserta alert_rules (no grant insert).
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  format(
+    $sql$insert into public.alert_rules (launch_id, metric, operator, threshold)
+         values (%L, 'cpl', '>', 1)$sql$,
+    'cccccccc-cccc-cccc-cccc-cccccccccccc'
+  ),
+  '42501'::text, null::text,
+  'cliente_role NO inserta alert_rules (no grant)'::text
+));
+
+-- 70) admin NO inserta alert_rule de un launch ajeno (proyecto B sin miembros
+--     no es accesible). RLS WITH CHECK bloquea.
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+reset role;
+insert into public.launches (id, project_id, name) values
+  ('ffffffff-ffff-ffff-ffff-ffffffffffff',
+   'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+   'Launch ajeno B')
+on conflict (id) do nothing;
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  format(
+    $sql$insert into public.alert_rules (launch_id, metric, operator, threshold)
+         values (%L, 'cpl', '>', 25)$sql$,
+    'ffffffff-ffff-ffff-ffff-ffffffffffff'
+  ),
+  '42501'::text, null::text,
+  'admin NO inserta alert_rule en launch de proyecto ajeno'::text
 ));
 
 insert into _smoke_results(result) select * from finish();

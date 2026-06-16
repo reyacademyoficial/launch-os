@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { evaluateAlertsForLaunch } from "@/lib/alerts/evaluate";
 import { DAILY_CHANNELS } from "@/lib/launch-daily/types";
 import { requireCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -148,6 +149,10 @@ export async function createDailyEntry(
     return { error: error.message };
   }
 
+  // 7b: el dato cambió → re-evaluar reglas (sin_leads, cpl, inversion). Si
+  // falla, swallow — la alerta es nice-to-have, el daily ya quedó persistido.
+  await evaluateAlertsForLaunch(launchId);
+
   revalidatePath(`/proyectos/${projectId}/launches/${launchId}`);
   return { ok: true };
 }
@@ -188,6 +193,8 @@ export async function updateDailyEntry(
     }
     return { error: error.message };
   }
+
+  await evaluateAlertsForLaunch(launchId);
 
   revalidatePath(`/proyectos/${projectId}/launches/${launchId}`);
   return { ok: true };

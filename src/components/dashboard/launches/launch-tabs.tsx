@@ -14,6 +14,7 @@ const TABS: ReadonlyArray<{ slug: string; label: string }> = [
   { slug: "kpi", label: "KPI" },
   { slug: "calendario", label: "Calendario" },
   { slug: "integraciones", label: "Integraciones" },
+  { slug: "alertas", label: "Alertas" },
   { slug: "ia", label: "IA" },
 ];
 

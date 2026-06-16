@@ -1,8 +1,8 @@
 import "server-only";
 
-import { createServiceClient } from "@/lib/supabase/service";
-
+import { evaluateAlertsForLaunch } from "@/lib/alerts/evaluate";
 import { tryComputeLaunchCalendar } from "@/lib/launches/calendar";
+import { createServiceClient } from "@/lib/supabase/service";
 
 import { fetchMetaInsights, type MetaInsightDay } from "./meta";
 import { runGhlSync, type GhlRunSummary } from "./sync-ghl";
@@ -684,20 +684,24 @@ async function finalizeRun(
   // joinear con launches para obtener project_id — el run en sí solo tiene
   // launch_id. Si la query falla, swallow (la notificación es nice-to-have,
   // no critical path del sync).
-  if (status !== "success") {
-    const ctx = await fetchLaunchContext(service, runId);
-    if (ctx) {
-      await notifySyncEvent(service, {
-        projectId: ctx.project_id,
-        launchId: ctx.launch_id,
-        provider: ctx.provider,
-        status,
-        message:
-          errorDetail && typeof errorDetail.message === "string"
-            ? (errorDetail.message as string)
-            : null,
-      });
-    }
+  const ctx = await fetchLaunchContext(service, runId);
+  if (status !== "success" && ctx) {
+    await notifySyncEvent(service, {
+      projectId: ctx.project_id,
+      launchId: ctx.launch_id,
+      provider: ctx.provider,
+      status,
+      message:
+        errorDetail && typeof errorDetail.message === "string"
+          ? (errorDetail.message as string)
+          : null,
+    });
+  }
+
+  // 7b: si el sync terminó OK, los datos cambiaron — re-evaluar reglas de
+  // alerta. Fire-and-forget; un evaluator roto NO debe propagar al sync.
+  if (status === "success" && ctx) {
+    await evaluateAlertsForLaunch(ctx.launch_id);
   }
 
   return {
