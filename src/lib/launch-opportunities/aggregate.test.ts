@@ -27,14 +27,17 @@ describe("aggregateOpportunities", () => {
     expect(aggregateOpportunities([], WINDOW).hasData).toBe(false);
   });
 
-  it("solo opps abiertas/lost/abandoned → hasData=true, wonCount=0", () => {
+  it("solo opps abiertas/lost/abandoned → hasData=false (walk-back 2026-06-16)", () => {
+    // Walk-back: antes `hasData=true` con cualquier fila, lo que tapaba el
+    // manual cuando GHL traía opps abiertas sin ventas cerradas. Ahora
+    // hasData=false cuando wonCount=0, y el KPI cae al form manual.
     const rows = [
       row({ status: "open", monetary_value: 1000 }),
       row({ status: "lost", monetary_value: 500, won_at: "2026-06-15T12:00:00Z" }),
       row({ status: "abandoned", monetary_value: 200 }),
     ];
     const agg = aggregateOpportunities(rows, WINDOW);
-    expect(agg.hasData).toBe(true);
+    expect(agg.hasData).toBe(false);
     expect(agg.wonCount).toBe(0);
     expect(agg.wonRevenue).toBe(0);
   });
@@ -100,17 +103,31 @@ describe("aggregateOpportunities", () => {
     expect(agg.wonRevenue).toBe(200);
   });
 
-  it("opp con cualquier status pero hasData=true (sigue siendo signal de sync exitoso)", () => {
-    // Una location con GHL configurado pero sin won todavía: tabla con rows
-    // de status='open'. El KPI debe mostrar 0 (no fallback al manual).
+  it("GHL trajo opps abiertas pero ninguna won → hasData=false → KPI usa manual", () => {
+    // Walk-back 2026-06-16: antes este caso devolvía hasData=true (pisando
+    // launches.revenue cargado a mano con 0). Ahora hasData se ata a
+    // wonCount > 0 — si no hay nada ganado en ventana, el form manual gana.
     const rows = [
       row({ status: "open", monetary_value: 1500 }),
       row({ status: "open", monetary_value: 2000 }),
     ];
     const agg = aggregateOpportunities(rows, WINDOW);
-    expect(agg.hasData).toBe(true);
+    expect(agg.hasData).toBe(false);
     expect(agg.wonCount).toBe(0);
     expect(agg.wonRevenue).toBe(0);
+  });
+
+  it("mix de opps abiertas + 1 won en ventana → hasData=true", () => {
+    // Confirma la regla nueva: basta UNA won en ventana para que el agregado
+    // se considere autoritativo. wonCount=1, wonRevenue=500.
+    const rows = [
+      row({ status: "open", monetary_value: 9999 }),
+      row({ status: "won", monetary_value: 500, won_at: "2026-06-15T12:00:00Z" }),
+    ];
+    const agg = aggregateOpportunities(rows, WINDOW);
+    expect(agg.hasData).toBe(true);
+    expect(agg.wonCount).toBe(1);
+    expect(agg.wonRevenue).toBe(500);
   });
 
   it("ventana inclusiva: won_at exactamente en date_start o date_end cuenta", () => {

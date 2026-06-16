@@ -10,15 +10,19 @@
  * histórico para auditoría o agregados futuros.
  *
  * Regla de fallback (decisión 3, simétrica con `adsAggregate.daysCovered`):
- *   - `hasData = rows.length > 0` → el caller usa este agregado y descarta
+ *   - `hasData = wonCount > 0` → el caller usa este agregado y descarta
  *     `launches.ventas_total` / `launches.revenue`.
  *   - `hasData = false` → el caller usa los valores manuales del form.
  *   - NUNCA se mezclan agregado y valor manual.
  *
- * Una location con GHL configurada pero sin Opportunities activas mantiene
- * `hasData = false` (tabla vacía) y los KPIs siguen leyendo el form manual.
- * En el momento en que el cliente crea su primera opp en GHL y sincroniza,
- * el KPI bascula automáticamente a la fuente del sync.
+ * Walk-back 2026-06-16: antes la regla era `hasData = rows.length > 0`. Eso
+ * tenía un bug — un sync que traía solo opps `open` (estado normal al inicio
+ * del launch, sin ventas cerradas todavía) ponía `hasData=true` con
+ * `wonRevenue=0` y le tapaba el `launches.revenue` cargado manualmente.
+ * Ahora la regla pregunta específicamente "¿hay al menos 1 venta cerrada en
+ * ventana?". Si solo hay opps abiertas, hasData sigue false y el KPI usa el
+ * manual. Cuando aparezca la primera 'won' en ventana, hasData bascula a
+ * true y el KPI pasa a derivarse del sync.
  */
 
 export interface LaunchOpportunityRow {
@@ -38,9 +42,9 @@ export interface LaunchWindow {
 
 export interface SalesAggregate {
   /**
-   * True si hay al menos 1 fila en `launch_opportunities` para este launch
-   * (independiente de status o ventana). Sirve de signal "el sync trajo
-   * data, no uses fallback manual".
+   * True si hay al menos 1 opp con status='won' Y won_at en la ventana del
+   * launch. "Hay sync trayendo datos pero todavía nada cerrado" → false →
+   * el KPI cae al form manual.
    */
   hasData: boolean;
   /** Cantidad de opps con status='won' Y won_at en la ventana del launch. */
@@ -84,5 +88,5 @@ export function aggregateOpportunities(
     if (Number.isFinite(v)) wonRevenue += v;
   }
 
-  return { hasData: true, wonCount, wonRevenue };
+  return { hasData: wonCount > 0, wonCount, wonRevenue };
 }

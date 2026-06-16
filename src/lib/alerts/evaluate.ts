@@ -1,5 +1,10 @@
 import "server-only";
 
+import { calculateLaunchKPIs } from "@/lib/kpis";
+import { aggregateMergedDaily } from "@/lib/launch-daily/aggregate";
+import { mergeDailyData, type AdsDailyRow } from "@/lib/launch-daily/merge";
+import type { LaunchDailyRow } from "@/lib/launch-daily/types";
+import type { LaunchRow } from "@/lib/launches/types";
 import { createServiceClient } from "@/lib/supabase/service";
 
 import type { AlertMetric, AlertOperator, AlertRuleRow } from "./types";
@@ -16,27 +21,33 @@ import { ALERT_METRIC_LABELS } from "./types";
  *
  * Decisiones de cálculo (estables, documentadas):
  *
- *   - **cpl**: CPL ACUMULADO desde date_start hasta el día más reciente
- *     con datos = sum(spend) / sum(leads). Más estable que CPL diario:
- *     un día con pocos leads no dispara falsos positivos. Si no hay leads
- *     todavía, CPL no se calcula y no dispara.
+ *   - **cpl**: CPL ACUMULADO = totalInvestment / totalLeads, usando la
+ *     MISMA lógica que `calculateLaunchKPIs` (lib/kpis.ts). Eso significa
+ *     que respeta el fallback documentado del KPI grid: si hay sync
+ *     (`adsAggregate.daysCovered > 0`) usa los datos sincronizados; si no,
+ *     fallback a `launches.meta_investment/leads + google_*/leads +
+ *     tiktok_*/leads` (los campos manuales del form del launch). El usuario
+ *     ve un solo número de CPL en pantalla — la alerta usa ese mismo.
  *
- *   - **inversion**: spend SOLO del día más reciente con datos. El uso
- *     intencionado es "alertame si gastaste más que X un día puntual".
- *     Suma los 3 providers (meta+google+tiktok) del día.
+ *     Walk-back 2026-06-16: antes el evaluator leía SOLO `launch_daily_ads`.
+ *     Eso ignoraba los campos manuales del form, lo que volvía la alerta
+ *     CPL inútil para launches sin sync (CPL=0/0 siempre).
  *
- *   - **sin_leads**: cuenta de días consecutivos sin leads (cualquier
- *     canal: ads + manual). El "umbral" es la cantidad de días. Si nunca
- *     hubo leads, cuenta desde date_start. Si no arrancó todavía (today
- *     < date_start), no dispara. operator se ignora — siempre evalúa
- *     `días_sin_leads >= threshold`.
+ *   - **inversion**: spend del día más reciente con datos sincronizados.
+ *     Mantiene su semántica original ("alertame si un día puntual gastaste
+ *     más que X"), pero ahora si NO hay sync, fallback al total manual del
+ *     form. Eso pierde la noción "del día" en el caso manual — documentado
+ *     en la UI con el hint "Spend del día más reciente con datos de ads
+ *     cargados". Si nunca cargaste ads, el threshold se compara contra el
+ *     total manual.
  *
- * Idempotencia: cada cruce produce 1 notificación por (launch, rule, día
- * UTC). Si el evaluator corre 10 veces el mismo día y la condición sigue
- * cruzada, la dedup_key absorbe las 9 repetidas.
+ *   - **sin_leads**: días consecutivos sin leads (ads ∪ manual). Si nunca
+ *     hubo leads, cuenta desde date_start. Si no arrancó todavía, no
+ *     dispara. operator se ignora — siempre evalúa `días >= threshold`.
  *
- * Errores: si falla la query o el insert, swallow. La alerta es nice-to-
- * have; un evaluator roto NO debe romper el sync o el daily.
+ * Idempotencia: 1 notif por (launch, rule, día UTC). Dedup_key absorbe.
+ *
+ * Errores: try/catch global. Un evaluator roto no rompe sync ni daily.
  */
 
 type ServiceClient = ReturnType<typeof createServiceClient>;
@@ -54,15 +65,19 @@ export async function evaluateAlertsForLaunch(launchId: string): Promise<void> {
   try {
     const service = createServiceClient();
 
+    // Traemos el launch ENTERO — los campos manuales (meta_investment, etc.)
+    // los usa `calculateLaunchKPIs` como fallback cuando no hay sync.
     const launchRes = await loose(service)
       .from("launches")
-      .select("project_id, date_start, date_end")
+      .select("*, projects!inner(name)")
       .eq("id", launchId)
       .maybeSingle();
     const launch = launchRes.data as
-      | { project_id: string; date_start: string | null; date_end: string | null }
+      | (LaunchRow & { projects: { name: string } | null })
       | null;
     if (!launch) return;
+    const projectName = launch.projects?.name ?? "Proyecto";
+    const launchName = launch.name ?? "Lanzamiento";
 
     const rulesRes = await loose(service)
       .from("alert_rules")
@@ -74,7 +89,7 @@ export async function evaluateAlertsForLaunch(launchId: string): Promise<void> {
     >;
     if (rules.length === 0) return;
 
-    const snapshot = await collectSnapshot(service, launchId, launch.date_start);
+    const snapshot = await collectSnapshot(service, launch);
 
     const today = new Date().toISOString().slice(0, 10);
 
@@ -88,7 +103,7 @@ export async function evaluateAlertsForLaunch(launchId: string): Promise<void> {
         p_type: "alert_crossed",
         p_title: `Alerta: ${ALERT_METRIC_LABELS[rule.metric]} ${rule.operator} ${rule.threshold}`,
         p_severity: "warning",
-        p_body: `Valor actual: ${value}.`,
+        p_body: `${projectName} · ${launchName}\nValor actual: ${value}.`,
         p_target_role: "team",
         p_target_user_id: null,
         p_launch_id: launchId,
@@ -98,6 +113,8 @@ export async function evaluateAlertsForLaunch(launchId: string): Promise<void> {
           metric: rule.metric,
           operator: rule.operator,
           threshold: rule.threshold,
+          project_name: projectName,
+          launch_name: launchName,
         },
       });
     }
@@ -109,78 +126,77 @@ export async function evaluateAlertsForLaunch(launchId: string): Promise<void> {
 // ─── snapshot del estado actual del launch ─────────────────────────────────
 
 interface AlertSnapshot {
-  cumulativeSpend: number;
-  cumulativeLeadsAds: number;
-  /** Spend del día más reciente con datos de ads (suma 3 providers). */
+  /** Inversión total (acumulada) — usa el mismo fallback que el KPI grid. */
+  totalInvestment: number;
+  /** Leads totales de ads (acumulados) — mismo fallback. */
+  totalLeadsAds: number;
+  /**
+   * Spend del día más reciente con datos sincronizados, si hay. Si no, cae
+   * a `totalInvestment` (sin noción "del día").
+   */
   lastDaySpend: number;
+  /** True si `lastDaySpend` se calculó sobre un día real del sync. */
+  hasSyncDay: boolean;
   /** Días consecutivos sin leads (ads ∪ manual) hasta hoy. */
   daysSinceLastLead: number | null;
 }
 
 const EMPTY_SNAPSHOT: AlertSnapshot = {
-  cumulativeSpend: 0,
-  cumulativeLeadsAds: 0,
+  totalInvestment: 0,
+  totalLeadsAds: 0,
   lastDaySpend: 0,
+  hasSyncDay: false,
   daysSinceLastLead: null,
 };
 
 async function collectSnapshot(
   service: ServiceClient,
-  launchId: string,
-  dateStart: string | null,
+  launch: LaunchRow,
 ): Promise<AlertSnapshot> {
-  // Ads diarios sincronizados
-  const adsRes = await loose(service)
-    .from("launch_daily_ads")
-    .select("date, spend, leads")
-    .eq("launch_id", launchId)
-    .order("date", { ascending: true });
-  const ads = (adsRes.data ?? []) as Array<{
-    date: string;
-    spend: number;
-    leads: number;
-  }>;
-
-  // Leads diarios manuales (cualquier canal)
+  // Daily manual (launch_daily) — para mergeDailyData + sin_leads.
   const manualRes = await loose(service)
     .from("launch_daily")
-    .select("date, meta_ads, google_ads, tiktok_ads, organico, whatsapp, referidos, otro")
-    .eq("launch_id", launchId)
+    .select("*")
+    .eq("launch_id", launch.id)
     .order("date", { ascending: true });
-  const manual = (manualRes.data ?? []) as Array<{
-    date: string;
-    meta_ads: number;
-    google_ads: number;
-    tiktok_ads: number;
-    organico: number;
-    whatsapp: number;
-    referidos: number;
-    otro: number;
-  }>;
+  const manual = (manualRes.data ?? []) as LaunchDailyRow[];
+
+  // Ads sincronizados (launch_daily_ads) — para mergeDailyData + lastDay.
+  const adsRes = await loose(service)
+    .from("launch_daily_ads")
+    .select("date, provider, spend, impressions, clicks, leads")
+    .eq("launch_id", launch.id)
+    .order("date", { ascending: true });
+  const ads = (adsRes.data ?? []) as AdsDailyRow[];
+
+  // Misma cadena que el KPI grid:
+  //   merge(manual, ads) → aggregateMergedDaily → calculateLaunchKPIs.
+  // El KPI ya respeta el fallback "si daysCovered > 0 usa agregado, sino
+  // usa los campos manuales del form del launch".
+  const merged = mergeDailyData(manual, ads);
+  const adsAggregate = aggregateMergedDaily(merged);
+  const kpi = calculateLaunchKPIs(launch, { adsAggregate });
 
   const snap: AlertSnapshot = { ...EMPTY_SNAPSHOT };
+  snap.totalInvestment = kpi.totalInvestment;
+  snap.totalLeadsAds = kpi.totalLeads;
 
-  // CPL acumulado: suma spend / suma leads de ads.
-  let totalSpend = 0;
-  let totalLeadsAds = 0;
-  for (const r of ads) {
-    totalSpend += Number(r.spend) || 0;
-    totalLeadsAds += Number(r.leads) || 0;
-  }
-  snap.cumulativeSpend = totalSpend;
-  snap.cumulativeLeadsAds = totalLeadsAds;
-
-  // Spend del día más reciente — suma de los 3 providers ese día (si el
-  // sync persistió 3 filas, una por provider, para la misma fecha).
+  // lastDaySpend: si hay días sincronizados, suma el spend del día más
+  // reciente (puede haber N filas para esa fecha — 1 por provider). Si no,
+  // fallback al total manual (semántica del threshold cambia en este caso,
+  // ver doc del modulo).
   if (ads.length > 0) {
     const lastDate = ads[ads.length - 1]!.date;
     snap.lastDaySpend = ads
       .filter((r) => r.date === lastDate)
       .reduce((acc, r) => acc + (Number(r.spend) || 0), 0);
+    snap.hasSyncDay = true;
+  } else {
+    snap.lastDaySpend = kpi.totalInvestment;
+    snap.hasSyncDay = false;
   }
 
-  // Días sin leads: comparar el "último día con leads" (ads o manual) contra
-  // hoy. Si no hubo leads nunca, contamos desde date_start.
+  // sin_leads: días consecutivos sin leads contando ads ∪ manual.
   const datesWithLeads = new Set<string>();
   for (const r of ads) {
     if ((Number(r.leads) || 0) > 0) datesWithLeads.add(r.date);
@@ -197,14 +213,12 @@ async function collectSnapshot(
     if (total > 0) datesWithLeads.add(r.date);
   }
 
-  const today = new Date();
-  const todayStr = today.toISOString().slice(0, 10);
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const dateStart = launch.date_start;
 
-  // Si el launch no arrancó, no aplica.
   if (dateStart && todayStr < dateStart) {
     snap.daysSinceLastLead = null;
   } else if (datesWithLeads.size === 0) {
-    // Nunca hubo leads — contamos desde date_start (o desde hoy si no hay).
     if (dateStart) {
       snap.daysSinceLastLead = diffDays(dateStart, todayStr);
     }
@@ -234,8 +248,8 @@ function evaluateRule(
 ): boolean {
   switch (metric) {
     case "cpl": {
-      if (snap.cumulativeLeadsAds <= 0) return false;
-      const cpl = snap.cumulativeSpend / snap.cumulativeLeadsAds;
+      if (snap.totalLeadsAds <= 0) return false;
+      const cpl = snap.totalInvestment / snap.totalLeadsAds;
       return compare(cpl, operator, threshold);
     }
     case "inversion": {
@@ -268,8 +282,8 @@ function compare(value: number, operator: AlertOperator, threshold: number): boo
 function formatValue(metric: AlertMetric, snap: AlertSnapshot): string {
   switch (metric) {
     case "cpl": {
-      if (snap.cumulativeLeadsAds <= 0) return "—";
-      const cpl = snap.cumulativeSpend / snap.cumulativeLeadsAds;
+      if (snap.totalLeadsAds <= 0) return "—";
+      const cpl = snap.totalInvestment / snap.totalLeadsAds;
       return `$${cpl.toFixed(2)}`;
     }
     case "inversion":

@@ -751,6 +751,38 @@ async function fetchLaunchContext(
 }
 
 /**
+ * Trae los nombres legibles del proyecto y del launch para componer el body
+ * de las notifs ("Proyecto X · Launch Y"). Dos queries baratas — proyecto y
+ * launch son rows individuales con PK lookup. Si alguna falla, devolvemos
+ * placeholder así la notif igual sale (no bloqueamos por nombres bonitos).
+ */
+async function fetchNotifDisplayNames(
+  service: ServiceClient,
+  projectId: string,
+  launchId: string,
+): Promise<{ projectName: string; launchName: string }> {
+  const [projRes, launchRes] = await Promise.all([
+    loose(service).from("projects").select("name").eq("id", projectId).maybeSingle(),
+    loose(service).from("launches").select("name").eq("id", launchId).maybeSingle(),
+  ]);
+  const projectName =
+    (projRes.data as { name?: string } | null)?.name ?? "Proyecto";
+  const launchName =
+    (launchRes.data as { name?: string } | null)?.name ?? "Lanzamiento";
+  return { projectName, launchName };
+}
+
+/**
+ * Header uniforme "Proyecto X · Launch Y" para el body de cualquier notif
+ * del equipo. Lo precedemos con un newline para que en la UI quede arriba
+ * del mensaje específico — el panel de la campanita renderiza body con
+ * `line-clamp-2` así que las dos primeras líneas son las que cuentan.
+ */
+function buildNotifBodyHeader(projectName: string, launchName: string): string {
+  return `${projectName} · ${launchName}`;
+}
+
+/**
  * Inserta una notificación al equipo cuando un sync termina mal. Mapea cada
  * estado terminal a un (type, severity, dedup_key) coherente:
  *
@@ -779,6 +811,14 @@ async function notifySyncEvent(
 
   const today = new Date().toISOString().slice(0, 10);
   const hourBucket = new Date().toISOString().slice(0, 13); // YYYY-MM-DDTHH
+
+  const { projectName, launchName } = await fetchNotifDisplayNames(
+    service,
+    projectId,
+    launchId,
+  );
+  const header = buildNotifBodyHeader(projectName, launchName);
+  const body = message ? `${header}\n${message}` : header;
 
   let type: string;
   let severity: "info" | "warning" | "error";
@@ -825,12 +865,12 @@ async function notifySyncEvent(
       p_type: type,
       p_title: title,
       p_severity: severity,
-      p_body: message,
+      p_body: body,
       p_target_role: "team",
       p_target_user_id: null,
       p_launch_id: launchId,
       p_dedup_key: dedupKey,
-      p_metadata: { provider, status },
+      p_metadata: { provider, status, project_name: projectName, launch_name: launchName },
     });
   } catch {
     // Swallow — la notificación es nice-to-have, el sync ya cerró su run.
