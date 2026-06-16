@@ -181,7 +181,7 @@ on conflict (id) do nothing;
 -- - UPDATE/DELETE bloqueado por USING → fila se filtra silencioso, 0 filas.
 --   Lo testeamos con `is_empty(WITH ... RETURNING 1)`.
 --
-insert into _smoke_results(result) values (plan(70));
+insert into _smoke_results(result) values (plan(75));
 
 -- 1) cliente NO puede insertar launches (WITH CHECK falla) → 42501
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
@@ -1082,6 +1082,81 @@ insert into _smoke_results(result) values (pg_temp.throws_ok(
   ),
   '42501'::text, null::text,
   'admin NO inserta alert_rule en launch de proyecto ajeno'::text
+));
+
+-- ── Tests de notificaciones al cliente (post-0026 — Fase 7c) ──────────────
+-- Limpieza previa para conteos deterministas.
+reset role;
+delete from public.notifications where launch_id = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+update public.launches set status = null where id = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+
+-- 71) AFTER UPDATE OF status a 'Activo' crea notif `launch_started` para
+--     cliente. Disparamos el UPDATE como postgres (bypass RLS); el trigger
+--     corre con SECURITY DEFINER y el create_notification también.
+update public.launches set status = 'Activo'
+ where id = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+
+insert into _smoke_results(result) values (is(
+  (select count(*)::int from public.notifications
+    where type = 'launch_started'
+      and launch_id = 'cccccccc-cccc-cccc-cccc-cccccccccccc'),
+  1,
+  'AFTER UPDATE status=Activo crea notif launch_started'
+));
+
+-- 72) cliente_role SÍ ve la notif launch_started de su proyecto.
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+insert into _smoke_results(result) values (isnt_empty(
+  $sql$select 1 from public.notifications
+        where type = 'launch_started'$sql$,
+  'cliente ve notif launch_started (target_role=cliente)'
+));
+
+-- 73) operador NO ve la notif launch_started (es del scope cliente).
+select pg_temp.login_as('44444444-4444-4444-4444-444444444444');
+insert into _smoke_results(result) values (is_empty(
+  $sql$select 1 from public.notifications
+        where type = 'launch_started'$sql$,
+  'operador NO ve notif launch_started (frontera cliente)'
+));
+
+-- 74) Reabrir (Activo → Finalizado → Activo) NO genera segunda notif —
+--     dedup_key 'launch_started:<launch_id>' absorbe.
+reset role;
+update public.launches set status = 'Finalizado'
+ where id = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+update public.launches set status = 'Activo'
+ where id = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+
+insert into _smoke_results(result) values (is(
+  (select count(*)::int from public.notifications
+    where type = 'launch_started'
+      and launch_id = 'cccccccc-cccc-cccc-cccc-cccccccccccc'),
+  1,
+  'reabrir launch NO duplica notif (dedup_key absorbe)'
+));
+
+-- 75) AFTER INSERT ai_runs status=success crea notif `ai_summary_ready` al
+--     cliente. INSERT como postgres (bypass RLS) para no pelearnos con la
+--     RLS de ai_runs_insert.
+reset role;
+delete from public.ai_runs where launch_id = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+delete from public.notifications
+ where type = 'ai_summary_ready'
+   and launch_id = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+
+insert into public.ai_runs (launch_id, project_id, user_id, model, status, output_text)
+values ('cccccccc-cccc-cccc-cccc-cccccccccccc',
+        'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        '22222222-2222-2222-2222-222222222222',
+        'gpt-test', 'success', 'Resumen de prueba 7c');
+
+insert into _smoke_results(result) values (is(
+  (select count(*)::int from public.notifications
+    where type = 'ai_summary_ready'
+      and launch_id = 'cccccccc-cccc-cccc-cccc-cccccccccccc'),
+  1,
+  'AFTER INSERT ai_run success crea notif ai_summary_ready'
 ));
 
 insert into _smoke_results(result) select * from finish();
