@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import { calculateLaunchKPIs, type LaunchKPIInput } from "./kpis";
+import type { CommunityAggregate } from "./launch-community/aggregate";
 import type { DailyAggregate } from "./launch-daily/aggregate";
 import type { SalesAggregate } from "./launch-opportunities/aggregate";
 
@@ -122,5 +123,120 @@ describe("calculateLaunchKPIs — fallback salesAggregate vs manual", () => {
     expect(k.revenue).toBe(10000);
     // Profit = 10000 - 1000 = 9000
     expect(k.profit).toBe(9000);
+  });
+});
+
+describe("calculateLaunchKPIs — community (SendFlow)", () => {
+  it("sin communityAggregate → counts en 0, rates en null", () => {
+    const k = calculateLaunchKPIs(BASELINE);
+    expect(k.enteredCommunity).toBe(0);
+    expect(k.leftCommunity).toBe(0);
+    expect(k.communityClicks).toBe(0);
+    expect(k.retentionRate).toBeNull();
+    expect(k.enteredCommunityRate).toBeNull();
+  });
+
+  it("hasData=true: retentionRate = (entered - removed) / entered", () => {
+    const community: CommunityAggregate = {
+      hasData: true,
+      entered: 100,
+      removed: 20,
+      clicks: 540,
+    };
+    const ads: DailyAggregate = {
+      ...EMPTY_ADS,
+      metaLeads: 400,
+      daysCovered: 1,
+    };
+    const k = calculateLaunchKPIs(BASELINE, {
+      adsAggregate: ads,
+      communityAggregate: community,
+    });
+    expect(k.enteredCommunity).toBe(100);
+    expect(k.leftCommunity).toBe(20);
+    expect(k.communityClicks).toBe(540);
+    // (100 - 20) / 100 = 0.8
+    expect(k.retentionRate).toBe(0.8);
+    // 100 / 400 = 0.25
+    expect(k.enteredCommunityRate).toBe(0.25);
+  });
+
+  it("entered=0 → retentionRate null (no hay base)", () => {
+    const community: CommunityAggregate = {
+      hasData: false,
+      entered: 0,
+      removed: 0,
+      clicks: 50,
+    };
+    const k = calculateLaunchKPIs(BASELINE, {
+      communityAggregate: community,
+    });
+    expect(k.retentionRate).toBeNull();
+  });
+
+  it("totalLeads=0 → enteredCommunityRate null (sin denominador)", () => {
+    const community: CommunityAggregate = {
+      hasData: true,
+      entered: 100,
+      removed: 20,
+      clicks: 540,
+    };
+    // BASELINE no tiene leads (todas las columnas en 0) → totalLeads = 0.
+    const k = calculateLaunchKPIs(BASELINE, {
+      communityAggregate: community,
+    });
+    expect(k.enteredCommunityRate).toBeNull();
+    // retentionRate sí se puede calcular porque entered > 0.
+    expect(k.retentionRate).toBe(0.8);
+  });
+
+  it("removed > entered → retentionRate negativa (no clamp, lo que es)", () => {
+    // Edge: si más gente sale que entra en la ventana, la fórmula da
+    // negativo. Lo dejamos pasar — la UI puede formatear; matemáticamente
+    // es lo que pide la fórmula. Si después decidimos clampear a 0, se
+    // cambia acá.
+    const community: CommunityAggregate = {
+      hasData: true,
+      entered: 10,
+      removed: 25,
+      clicks: 50,
+    };
+    const k = calculateLaunchKPIs(BASELINE, {
+      communityAggregate: community,
+    });
+    // (10 - 25) / 10 = -1.5
+    expect(k.retentionRate).toBe(-1.5);
+  });
+
+  it("community convive con ads + sales sin interferencia", () => {
+    const ads: DailyAggregate = {
+      ...EMPTY_ADS,
+      metaSpend: 1000,
+      metaLeads: 200,
+      daysCovered: 1,
+    };
+    const sales: SalesAggregate = {
+      hasData: true,
+      wonCount: 10,
+      wonRevenue: 5000,
+    };
+    const community: CommunityAggregate = {
+      hasData: true,
+      entered: 50,
+      removed: 5,
+      clicks: 300,
+    };
+    const k = calculateLaunchKPIs(BASELINE, {
+      adsAggregate: ads,
+      salesAggregate: sales,
+      communityAggregate: community,
+    });
+    expect(k.metaInv).toBe(1000);
+    expect(k.metaLeads).toBe(200);
+    expect(k.ventas).toBe(10);
+    expect(k.revenue).toBe(5000);
+    // Comunidad: 45/50 = 0.9, 50/200 = 0.25
+    expect(k.retentionRate).toBe(0.9);
+    expect(k.enteredCommunityRate).toBe(0.25);
   });
 });

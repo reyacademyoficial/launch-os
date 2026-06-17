@@ -29,7 +29,8 @@ export interface InitialAdAccountEntry {
 
 export type InitialConfig =
   | { kind: "ads"; adAccounts: ReadonlyArray<InitialAdAccountEntry> }
-  | { kind: "ghl"; locationId: string; defaultCountry: string };
+  | { kind: "ghl"; locationId: string; defaultCountry: string }
+  | { kind: "sendflow"; releaseIds: ReadonlyArray<string> };
 
 export function ConfigModal({
   projectId,
@@ -103,7 +104,9 @@ export function ConfigModal({
                 <p className="mt-1 text-xs text-fg-subtle">
                   {provider === "ghl"
                     ? "Necesitás el Private Integration Token + el Location ID del subaccount."
-                    : "Necesitás el access token + el ad_account_id + al menos una campaña."}
+                    : provider === "sendflow"
+                      ? "Necesitás la API Key de SendAPI + el ID de cada comunidad (release)."
+                      : "Necesitás el access token + el ad_account_id + al menos una campaña."}
                 </p>
               </div>
               <button
@@ -122,7 +125,9 @@ export function ConfigModal({
                   <Label htmlFor="secret">
                     {provider === "ghl"
                       ? "Private Integration Token"
-                      : "Access token (System User)"}{" "}
+                      : provider === "sendflow"
+                        ? "API Key (SendAPI)"
+                        : "Access token (System User)"}{" "}
                     {hasSecret && (
                       <span className="ml-2 text-xs text-success">· guardado</span>
                     )}
@@ -137,14 +142,18 @@ export function ConfigModal({
                         ? "Dejá vacío para no cambiarlo · pegá uno nuevo para reconectar"
                         : provider === "ghl"
                           ? "pit-... (pegá el token completo)"
-                          : "EAAB... (pegá el token completo)"
+                          : provider === "sendflow"
+                            ? "sf_... (pegá la API Key completa)"
+                            : "EAAB... (pegá el token completo)"
                     }
                   />
                   <p className="mt-1 text-xs text-fg-subtle">
                     Nunca lo vamos a mostrar de nuevo. Si lo perdés,{" "}
                     {provider === "ghl"
                       ? "borrá el viejo en GHL y generá uno nuevo desde Settings → Private Integrations."
-                      : "generás uno nuevo desde Meta Business Manager."}
+                      : provider === "sendflow"
+                        ? "generá una nueva en SendFlow → SendAPI."
+                        : "generás uno nuevo desde Meta Business Manager."}
                   </p>
                 </div>
                 <div className="flex items-center justify-end gap-3">
@@ -196,6 +205,35 @@ export function ConfigModal({
                     </select>
                     <p className="mt-1 text-xs text-fg-subtle">
                       Usado para normalizar los teléfonos de GHL antes del match con leads.
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-end gap-3">
+                    {configState && "error" in configState && (
+                      <FieldError>{configState.error}</FieldError>
+                    )}
+                    <Button type="submit" disabled={configPending}>
+                      {configPending ? "Guardando…" : "Guardar config"}
+                    </Button>
+                  </div>
+                </form>
+              ) : initialConfig.kind === "sendflow" ? (
+                <form action={configAction} className="space-y-3">
+                  <div>
+                    <Label htmlFor="release_ids_text">
+                      Release IDs{" "}
+                      <span className="text-xs text-fg-subtle">(al menos 1)</span>
+                    </Label>
+                    <Input
+                      id="release_ids_text"
+                      name="release_ids_text"
+                      type="text"
+                      autoComplete="off"
+                      placeholder="rel_abc123 rel_def456"
+                      defaultValue={initialConfig.releaseIds.join(" ")}
+                    />
+                    <p className="mt-1 text-xs text-fg-subtle">
+                      Separados por coma o espacio. El sync suma las métricas de todas las
+                      comunidades del lanzamiento.
                     </p>
                   </div>
                   <div className="flex items-center justify-end gap-3">

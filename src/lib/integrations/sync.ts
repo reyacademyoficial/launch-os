@@ -5,6 +5,10 @@ import { tryComputeLaunchCalendar } from "@/lib/launches/calendar";
 import { createServiceClient } from "@/lib/supabase/service";
 
 import { fetchMetaInsights, type MetaInsightDay } from "./meta";
+import {
+  fetchSendflowAnalytics,
+  type SendflowAnalyticsSuccess,
+} from "./sendflow";
 import { runGhlSync, type GhlRunSummary } from "./sync-ghl";
 
 /**
@@ -27,7 +31,7 @@ import { runGhlSync, type GhlRunSummary } from "./sync-ghl";
  *    `config_missing` y termina.
  */
 
-export type SyncProviderId = "meta" | "ghl";
+export type SyncProviderId = "meta" | "ghl" | "sendflow";
 
 // Cast laxo para llamar a `expire_stale_integration_runs` (RPC fuera del
 // Database type generado) y para queries contra columnas nuevas que el
@@ -109,6 +113,20 @@ interface GhlProviderConfig {
 }
 
 /**
+ * Config de SendFlow para un launch.
+ *
+ * Shape vivo en `launches.integration_config.sendflow`:
+ *   { "release_ids": ["abc123", "def456", ...] }
+ *
+ * Un launch puede tener N comunidades (releases). El sync llama
+ * /releases/{id}/analytics por cada una y suma `add/remove/clicks` acotados
+ * a la ventana [date_start, date_end] del launch. Mínimo 1 release.
+ */
+interface SendflowProviderConfig {
+  release_ids: string[];
+}
+
+/**
  * Orquesta una corrida completa para `(launchId, provider)`. Idempotente —
  * llamarla 2 veces seguidas devuelve el mismo estado final.
  */
@@ -170,6 +188,21 @@ export async function syncLaunch(
   //     Lee config + secret + ejecuta match adentro y devuelve directo.
   if (input.provider === "ghl") {
     return await runGhlBranch({
+      service,
+      input,
+      launchId: launch.id,
+      projectId: launch.project_id,
+      dateStart: launch.date_start,
+      dateEnd: launch.date_end,
+      integrationConfig: launch.integration_config,
+    });
+  }
+
+  // 2a.bis) SendFlow: provider read-only de métricas de comunidad. Modelo
+  //         (entered/removed/clicks por ventana) y errores (sin rate-limit
+  //         documentado) son distintos a Meta, va por rama propia.
+  if (input.provider === "sendflow") {
+    return await runSendflowBranch({
       service,
       input,
       launchId: launch.id,
@@ -374,6 +407,25 @@ function readGhlConfig(configBlob: unknown): GhlProviderConfig {
 }
 
 /**
+ * Lee la config de SendFlow del blob. Filtra defensivamente — solo strings
+ * no vacíos sobreviven. El caller chequea `release_ids.length === 0` para
+ * decidir `config_missing`.
+ */
+function readSendflowConfig(configBlob: unknown): SendflowProviderConfig {
+  if (configBlob === null || typeof configBlob !== "object") {
+    return { release_ids: [] };
+  }
+  const cfg = (configBlob as Record<string, unknown>).sendflow;
+  if (cfg === null || typeof cfg !== "object") return { release_ids: [] };
+  const record = cfg as Record<string, unknown>;
+  if (!Array.isArray(record.release_ids)) return { release_ids: [] };
+  const ids = record.release_ids.filter(
+    (x): x is string => typeof x === "string" && x.length > 0,
+  );
+  return { release_ids: ids };
+}
+
+/**
  * Bifurcación del orchestrator para GHL. Una corrida = UNA stage. Cada stage
  * se persiste con su propio integration_run (incluye columna `stage`), lleva
  * su propio `lastSuccessAt` incremental y vive dentro del timeout del Server
@@ -538,6 +590,216 @@ async function runGhlBranch(args: {
     counts: summary.counts,
     meta: summary.meta,
   });
+}
+
+/**
+ * Bifurcación del orchestrator para SendFlow. Itera releases (1+), llama
+ * /releases/{id}/analytics por cada una, suma `entered/removed/clicks`
+ * acotados a la ventana del launch y upsertea UNA fila en
+ * `launch_community_metrics` con conflict key (launch_id, provider,
+ * window_start, window_end) — re-sync no duplica.
+ *
+ * Tolerancia a fallas parciales:
+ *   - token_invalid en cualquier release → abort total (la key es la misma
+ *     para todas las releases).
+ *   - error/release_not_found en algunas releases pero otras OK → escribimos
+ *     lo que sí tenemos y marcamos `partial` con detalle de cuáles fallaron.
+ *   - Todas fallan → `error` (o `token_invalid` si todas fueron auth_failed).
+ */
+async function runSendflowBranch(args: {
+  service: ServiceClient;
+  input: SyncLaunchInput;
+  launchId: string;
+  projectId: string;
+  dateStart: string;
+  dateEnd: string;
+  integrationConfig: Record<string, unknown>;
+}): Promise<SyncLaunchResult> {
+  const { service, input } = args;
+  const launchSnapshot: LaunchSnapshot = {
+    id: args.launchId,
+    project_id: args.projectId,
+    date_start: args.dateStart,
+    date_end: args.dateEnd,
+    closed_at: null,
+    integration_config: args.integrationConfig,
+  };
+
+  const cfg = readSendflowConfig(args.integrationConfig);
+  if (cfg.release_ids.length === 0) {
+    return await recordTerminalRun(
+      service,
+      input,
+      launchSnapshot,
+      "config_missing",
+      "Configurá al menos una comunidad (release) de SendFlow antes de sincronizar.",
+      { cause: "missing_release_ids" },
+    );
+  }
+
+  const secretRes = await service
+    .from("launch_secrets")
+    .select("secret")
+    .eq("launch_id", args.launchId)
+    .eq("provider", "sendflow")
+    .maybeSingle();
+  const token = (secretRes.data as { secret: string } | null)?.secret ?? null;
+  if (!token) {
+    return await recordTerminalRun(
+      service,
+      input,
+      launchSnapshot,
+      "config_missing",
+      "Falta la API Key de SendFlow. Pegala en la sección de integraciones del launch.",
+      { cause: "missing_token" },
+    );
+  }
+
+  // 1 fila en integration_runs (mismo patrón que Meta — sin stage)
+  const runPayload = {
+    launch_id: args.launchId,
+    provider: "sendflow",
+    triggered_by: input.triggeredBy,
+    status: "running",
+    window_start: args.dateStart,
+    window_end: args.dateEnd,
+  } as never;
+
+  const runInsert = await service
+    .from("integration_runs")
+    .insert(runPayload)
+    .select("id")
+    .maybeSingle();
+  const runId = (runInsert.data as { id: string } | null)?.id;
+  if (!runId) {
+    return {
+      runId: "",
+      status: "error",
+      rowsWritten: 0,
+      errorMessage:
+        runInsert.error?.message ?? "No pude insertar el integration_run inicial",
+    };
+  }
+
+  // Fetch en paralelo — releases son independientes y la API no documenta
+  // throttling por concurrencia para reads. Si en producción aparece rate
+  // limit, secuenciamos en 3c.
+  const results = await Promise.all(
+    cfg.release_ids.map((releaseId) =>
+      fetchSendflowAnalytics({
+        token,
+        releaseId,
+        windowStart: args.dateStart,
+        windowEnd: args.dateEnd,
+      }),
+    ),
+  );
+
+  // Si TODAS las releases fallaron con token_invalid → abort.
+  const allTokenInvalid =
+    results.length > 0 && results.every((r) => !r.ok && r.kind === "token_invalid");
+  if (allTokenInvalid) {
+    const first = results[0]!;
+    if (!first.ok) {
+      return await finalizeRun(service, runId, "token_invalid", 0, {
+        ...first.detail,
+        message: first.message,
+      });
+    }
+  }
+
+  // Cualquier release con token_invalid (aunque no sea todas) → abort, porque
+  // la key es compartida. No tiene sentido escribir parcial con auth dudoso.
+  const anyTokenInvalid = results.find((r) => !r.ok && r.kind === "token_invalid");
+  if (anyTokenInvalid && !anyTokenInvalid.ok) {
+    return await finalizeRun(service, runId, "token_invalid", 0, {
+      ...anyTokenInvalid.detail,
+      message: anyTokenInvalid.message,
+    });
+  }
+
+  // Separar éxitos de fallas (que no sean token_invalid — ya abortamos arriba).
+  const successes: SendflowAnalyticsSuccess[] = [];
+  const failures: Array<{ releaseId: string; message: string; detail: Record<string, unknown> }> = [];
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i]!;
+    const releaseId = cfg.release_ids[i]!;
+    if (r.ok) {
+      successes.push(r);
+    } else {
+      failures.push({ releaseId, message: r.message, detail: r.detail });
+    }
+  }
+
+  // Si NADA funcionó (y no fue token_invalid), `error`.
+  if (successes.length === 0) {
+    return await finalizeRun(service, runId, "error", 0, {
+      cause: "all_releases_failed",
+      failures,
+    });
+  }
+
+  // Suma acumulada de los éxitos.
+  let entered = 0;
+  let removed = 0;
+  let clicks = 0;
+  const rawReleases: Array<{
+    release_id: string;
+    entered: number;
+    removed: number;
+    clicks: number;
+  }> = [];
+  for (const r of successes) {
+    entered += r.entered;
+    removed += r.removed;
+    clicks += r.clicks;
+    rawReleases.push({
+      release_id: r.releaseId,
+      entered: r.entered,
+      removed: r.removed,
+      clicks: r.clicks,
+    });
+  }
+
+  // Upsert por (launch, provider, ventana). 1 fila por sync.
+  const row = {
+    launch_id: args.launchId,
+    provider: "sendflow",
+    window_start: args.dateStart,
+    window_end: args.dateEnd,
+    entered,
+    removed,
+    clicks,
+    raw: { releases: rawReleases },
+    synced_at: new Date().toISOString(),
+  } as never;
+
+  // launch_community_metrics fue agregada en migration 0029 — el Database
+  // type generado aún no la conoce hasta que el usuario regenere. Usamos el
+  // helper loose() (mismo workaround que sync-ghl.ts para stage).
+  const upsert = await loose(service)
+    .from("launch_community_metrics")
+    .upsert(row, {
+      onConflict: "launch_id,provider,window_start,window_end",
+    });
+
+  if (upsert.error) {
+    return await finalizeRun(service, runId, "error", 0, {
+      cause: "upsert_failed",
+      message: upsert.error.message,
+    });
+  }
+
+  // Algunas releases fallaron pero otras escribieron → partial.
+  if (failures.length > 0) {
+    return await finalizeRun(service, runId, "partial", 1, {
+      cause: "some_releases_failed",
+      failed_releases: failures,
+      written_releases: rawReleases.map((r) => r.release_id),
+    });
+  }
+
+  return await finalizeRun(service, runId, "success", 1, null);
 }
 
 function buildAdsRow(

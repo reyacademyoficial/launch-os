@@ -83,6 +83,9 @@ interface GhlConfigPayload {
   location_id: string;
   default_country: string;
 }
+interface SendflowConfigPayload {
+  release_ids: string[];
+}
 
 /**
  * Guarda la config de un provider en `launches.integration_config`. Hace
@@ -101,9 +104,35 @@ export async function saveIntegrationConfig(
 ): Promise<SyncActionState> {
   await requireCanEditLaunchesIn(projectId);
 
-  let payload: AdsConfigPayload | GhlConfigPayload;
+  let payload: AdsConfigPayload | GhlConfigPayload | SendflowConfigPayload;
 
-  if (provider === "ghl") {
+  if (provider === "sendflow") {
+    // Release IDs separados por coma o espacio (mismo UX que campaign_ids de
+    // Meta). Trimeamos cada uno; descartamos vacíos. Mínimo 1.
+    const raw = String(formData.get("release_ids_text") ?? "").trim();
+    if (!raw) {
+      return {
+        error: "Pegá al menos un Release ID (separá con coma o espacio si hay varios).",
+      };
+    }
+    const releaseIds = raw
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (releaseIds.length === 0) {
+      return { error: "No reconocí ningún Release ID válido — revisalos." };
+    }
+    // Defensa: duplicados explícitos confunden y se sumarían dos veces. Dedupe
+    // preservando orden de aparición.
+    const seen = new Set<string>();
+    const uniq: string[] = [];
+    for (const id of releaseIds) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      uniq.push(id);
+    }
+    payload = { release_ids: uniq };
+  } else if (provider === "ghl") {
     const locationId = String(formData.get("location_id") ?? "").trim();
     if (!locationId) {
       return { error: "Tenés que ingresar el Location ID del subaccount." };

@@ -37,6 +37,7 @@ const AVAILABLE_PROVIDERS: ReadonlyArray<{
 }> = [
   { id: "meta", label: "Meta Ads" },
   { id: "ghl", label: "Go High Level" },
+  { id: "sendflow", label: "SendFlow" },
 ];
 
 const SOON_PROVIDERS: ReadonlyArray<{ id: string; label: string }> = [
@@ -59,11 +60,15 @@ interface GhlConfigShape {
   location_id?: string;
   default_country?: string;
 }
+interface SendflowConfigShape {
+  release_ids?: string[];
+}
 interface IntegrationConfigShape {
   meta?: MetaConfigShape;
   ghl?: GhlConfigShape;
   google?: MetaConfigShape;
   tiktok?: MetaConfigShape;
+  sendflow?: SendflowConfigShape;
 }
 
 export async function LaunchIntegrationsSection({
@@ -119,11 +124,13 @@ export async function LaunchIntegrationsSection({
           const instructions = getInstructions(p.id);
 
           // Meta/Google/TikTok comparten el shape de ad-account + campaigns.
-          // GHL usa location_id (sin campañas).
+          // GHL usa location_id. SendFlow usa release_ids.
           const display =
             p.id === "ghl"
               ? buildGhlDisplay(config.ghl ?? {})
-              : buildAdsDisplay(config[p.id] ?? {});
+              : p.id === "sendflow"
+                ? buildSendflowDisplay(config.sendflow ?? {})
+                : buildAdsDisplay((config[p.id] ?? {}) as MetaConfigShape);
 
           // Para GHL extra: stats del último sync exitoso (incluye opps).
           const ghlSummary =
@@ -306,7 +313,8 @@ interface ProviderDisplay {
   fields: ReadonlyArray<{ label: string; value: string; code?: boolean }>;
   initialConfig:
     | { kind: "ads"; adAccounts: AdAccountEntry[] }
-    | { kind: "ghl"; locationId: string; defaultCountry: string };
+    | { kind: "ghl"; locationId: string; defaultCountry: string }
+    | { kind: "sendflow"; releaseIds: string[] };
 }
 
 /**
@@ -411,6 +419,28 @@ function buildGhlDisplay(cfg: GhlConfigShape): ProviderDisplay {
         ]
       : [],
     initialConfig: { kind: "ghl", locationId, defaultCountry },
+  };
+}
+
+function buildSendflowDisplay(cfg: SendflowConfigShape): ProviderDisplay {
+  const releaseIds = Array.isArray(cfg.release_ids)
+    ? cfg.release_ids.filter((s): s is string => typeof s === "string" && s.length > 0)
+    : [];
+  const hasConfig = releaseIds.length > 0;
+
+  return {
+    hasConfig,
+    missingMessage: "Falta al menos un Release ID",
+    fields: hasConfig
+      ? [
+          {
+            label: "Comunidades",
+            value: `${releaseIds.length}: ${releaseIds.join(", ")}`,
+            code: true,
+          },
+        ]
+      : [],
+    initialConfig: { kind: "sendflow", releaseIds },
   };
 }
 

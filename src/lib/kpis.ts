@@ -15,6 +15,7 @@
  * NUNCA se mezclan agregado y columna estática: o uno o el otro.
  */
 
+import type { CommunityAggregate } from "./launch-community/aggregate";
 import type { DailyAggregate } from "./launch-daily/aggregate";
 import type { SalesAggregate } from "./launch-opportunities/aggregate";
 
@@ -70,6 +71,13 @@ export interface LaunchKPIOptions {
    * a "pipeline de WhatsApp" a nivel proyecto.
    */
   salesAggregate?: SalesAggregate;
+  /**
+   * Agregado de `launch_community_metrics` (SendFlow). Cuando `hasData=true`,
+   * derivamos los KPIs de comunidad (% retención + % que entró). Si no, los
+   * KPIs salen `null` — la UI muestra "—" porque no hay valor manual de
+   * fallback para comunidad.
+   */
+  communityAggregate?: CommunityAggregate;
 }
 
 export interface LaunchKPIs {
@@ -97,6 +105,20 @@ export interface LaunchKPIs {
   showRate: number;
   closeRate: number;
   profit: number;
+  /** Counts crudos de comunidad WhatsApp (SendFlow). 0 si no hay sync. */
+  enteredCommunity: number;
+  leftCommunity: number;
+  communityClicks: number;
+  /**
+   * (entered - removed) / entered. `null` cuando entered = 0 (sin entradas
+   * en la ventana, no hay base para calcular retención). UI muestra "—".
+   */
+  retentionRate: number | null;
+  /**
+   * entered / totalLeads. `null` cuando totalLeads = 0 (sin leads del lado
+   * de ads para usar como denominador). UI muestra "—".
+   */
+  enteredCommunityRate: number | null;
 }
 
 export function calculateLaunchKPIs(
@@ -129,6 +151,11 @@ export function calculateLaunchKPIs(
       showRate: 0,
       closeRate: 0,
       profit: 0,
+      enteredCommunity: 0,
+      leftCommunity: 0,
+      communityClicks: 0,
+      retentionRate: null,
+      enteredCommunityRate: null,
     };
   }
 
@@ -166,6 +193,22 @@ export function calculateLaunchKPIs(
   const totalLeads = metaLeads + googleLeads + tiktokLeads;
   const totalInvestment = metaInv + googleInv + tiktokInv;
 
+  // Comunidad (SendFlow). Si no hay sync escrito, queda en 0 y los rates
+  // en null (UI muestra "—"). Misma regla simétrica que ads/ventas pero sin
+  // fallback manual — comunidad no tiene columna estática en `launches`.
+  const community = opts.communityAggregate;
+  const enteredCommunity = community?.entered ?? 0;
+  const leftCommunity = community?.removed ?? 0;
+  const communityClicks = community?.clicks ?? 0;
+  const retentionRate =
+    enteredCommunity > 0
+      ? (enteredCommunity - leftCommunity) / enteredCommunity
+      : null;
+  const enteredCommunityRate =
+    totalLeads > 0 && community?.hasData
+      ? enteredCommunity / totalLeads
+      : null;
+
   return {
     metaInv,
     metaLeads,
@@ -191,5 +234,10 @@ export function calculateLaunchKPIs(
     showRate: safePercent(asistentes, registrados),
     closeRate: safePercent(ventas, asistentes),
     profit: revenue - totalInvestment,
+    enteredCommunity,
+    leftCommunity,
+    communityClicks,
+    retentionRate,
+    enteredCommunityRate,
   };
 }
