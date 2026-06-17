@@ -86,16 +86,8 @@ export function LaunchForm({
   // cuando el flag está prendido. El check del DB exige `is_evergreen=true`
   // cuando `recycle_target_launch_id` está seteado, así que en la action
   // forzamos `target=null` si el flag está apagado — esto es coherente.
-  // Cast laxo a `LaunchEvergreenInitial` mientras el regen de types no
-  // incluye `is_evergreen` / `recycle_target_launch_id` (0028 las agrega).
-  const initialEvergreen = initial as
-    | (LaunchRow & {
-        is_evergreen?: boolean | null;
-        recycle_target_launch_id?: string | null;
-      })
-    | undefined;
   const [isEvergreen, setIsEvergreen] = useState<boolean>(
-    initialEvergreen?.is_evergreen ?? false,
+    initial?.is_evergreen ?? false,
   );
 
   const calendar = tryComputeLaunchCalendar({
@@ -272,7 +264,7 @@ export function LaunchForm({
             <Select
               id="recycle_target_launch_id"
               name="recycle_target_launch_id"
-              defaultValue={initialEvergreen?.recycle_target_launch_id ?? ""}
+              defaultValue={initial?.recycle_target_launch_id ?? ""}
             >
               <option value="">— Sin destino —</option>
               {(recycleTargetOptions ?? []).map((l) => (

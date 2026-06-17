@@ -62,18 +62,21 @@ export function AnalyticsFilters({
   }
 
   function toggleLaunch(id: string, checked: boolean) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(id);
-      else next.delete(id);
-      commitLaunches(next);
-      return next;
-    });
+    // Importante: calcular `next` ANTES de setSelected. El updater de
+    // useState debe ser puro — meter `commitLaunches` adentro (que dispara
+    // `startTransition`) lanza "Cannot call startTransition while rendering"
+    // porque React puede re-ejecutar el updater durante el render.
+    const next = new Set(selected);
+    if (checked) next.add(id);
+    else next.delete(id);
+    setSelected(next);
+    commitLaunches(next);
   }
 
   function clearLaunches() {
-    setSelected(new Set());
-    commitLaunches(new Set());
+    const empty = new Set<string>();
+    setSelected(empty);
+    commitLaunches(empty);
   }
 
   return (

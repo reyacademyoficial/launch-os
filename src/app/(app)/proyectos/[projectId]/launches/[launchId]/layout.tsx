@@ -61,15 +61,8 @@ export default async function LaunchLayout({
   const isClosed = launch.closed_at !== null;
   const showAnyAction = canEditLaunchValue || canEditProjectValue;
 
-  // Cast laxo: las columnas de 0028 (`is_evergreen`,
-  // `recycle_target_launch_id`) todavía no están en el Database type
-  // generado. Patrón consistente con sync.ts.
-  const launchEvergreen = launch as typeof launch & {
-    is_evergreen?: boolean | null;
-    recycle_target_launch_id?: string | null;
-  };
-  const isEvergreen = launchEvergreen.is_evergreen ?? false;
-  const targetLaunchId = launchEvergreen.recycle_target_launch_id ?? null;
+  const isEvergreen = launch.is_evergreen ?? false;
+  const targetLaunchId = launch.recycle_target_launch_id ?? null;
   const targetLaunch = targetLaunchId
     ? allLaunches.find((l) => l.id === targetLaunchId) ?? null
     : null;

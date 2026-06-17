@@ -53,19 +53,41 @@ export function DailyChart({ rows }: { readonly rows: readonly DailyChartRow[] }
   return (
     <div className="h-72 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+        <LineChart
+          data={data}
+          margin={{ top: 8, right: 16, left: 16, bottom: 36 }}
+        >
           <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
           <XAxis
             dataKey="date"
             stroke="var(--color-fg-muted)"
             tick={{ fontSize: 11 }}
             tickMargin={6}
+            label={{
+              value: "Fecha",
+              position: "insideBottom",
+              // offset negativo grande para que el label quede DEBAJO de los
+              // ticks y por encima de la Legend (que renderizamos arriba a
+              // la derecha para no chocar con esto).
+              offset: -16,
+              fill: "var(--color-fg-muted)",
+              fontSize: 12,
+            }}
           />
           <YAxis
             stroke="var(--color-fg-muted)"
             tick={{ fontSize: 11 }}
             allowDecimals={false}
-            width={32}
+            width={48}
+            label={{
+              value: "Leads",
+              angle: -90,
+              position: "insideLeft",
+              offset: 8,
+              fill: "var(--color-fg-muted)",
+              fontSize: 12,
+              style: { textAnchor: "middle" },
+            }}
           />
           <Tooltip
             contentStyle={{
@@ -77,7 +99,12 @@ export function DailyChart({ rows }: { readonly rows: readonly DailyChartRow[] }
             labelStyle={{ color: "var(--color-fg)" }}
             itemStyle={{ color: "var(--color-fg)" }}
           />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Legend
+            verticalAlign="top"
+            align="right"
+            height={28}
+            wrapperStyle={{ fontSize: 12 }}
+          />
           {activeChannels.map((ch) => (
             <Line
               key={ch}

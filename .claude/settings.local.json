@@ -42,7 +42,9 @@
       "Bash(npm audit *)",
       "Bash(xargs cat *)",
       "Bash(xargs grep *)",
-      "Bash(grep -c \"'::text$\" supabase/tests/rls_smoke_test.sql)"
+      "Bash(grep -c \"'::text$\" supabase/tests/rls_smoke_test.sql)",
+      "Bash(xxd)",
+      "Bash(iconv -f UTF-16LE -t UTF-8 src/lib/types/database.ts)"
     ]
   }
 }

@@ -93,13 +93,9 @@ export default async function LeadsPage({
     active: m.active,
   }));
   const launchesForForm = launches.map((l) => ({ id: l.id, name: l.name }));
-  // Subset de evergreens para el filtro "Reciclado de" de la tabla. Cast
-  // laxo hasta el regen de types (la columna está en 0028).
+  // Subset de evergreens para el filtro "Reciclado de" de la tabla.
   const evergreenLaunchesForFilter = launches
-    .filter(
-      (l) =>
-        (l as typeof l & { is_evergreen?: boolean }).is_evergreen === true,
-    )
+    .filter((l) => l.is_evergreen === true)
     .map((l) => ({ id: l.id, name: l.name }));
 
   const salesByLeadId = new Map<string, SaleRow>(sales.map((s) => [s.lead_id, s]));

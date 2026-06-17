@@ -39,6 +39,101 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_runs: {
+        Row: {
+          created_at: string
+          error_detail: Json | null
+          id: string
+          launch_id: string
+          model: string
+          output_text: string | null
+          project_id: string
+          status: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          error_detail?: Json | null
+          id?: string
+          launch_id: string
+          model: string
+          output_text?: string | null
+          project_id: string
+          status?: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          error_detail?: Json | null
+          id?: string
+          launch_id?: string
+          model?: string
+          output_text?: string | null
+          project_id?: string
+          status?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_runs_launch_id_fkey"
+            columns: ["launch_id"]
+            isOneToOne: false
+            referencedRelation: "launches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_runs_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      alert_rules: {
+        Row: {
+          active: boolean
+          created_at: string
+          created_by: string | null
+          id: string
+          launch_id: string
+          metric: string
+          operator: string
+          threshold: number
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          launch_id: string
+          metric: string
+          operator: string
+          threshold: number
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          launch_id?: string
+          metric?: string
+          operator?: string
+          threshold?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "alert_rules_launch_id_fkey"
+            columns: ["launch_id"]
+            isOneToOne: false
+            referencedRelation: "launches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       audit_log: {
         Row: {
           action: string
@@ -74,84 +169,99 @@ export type Database = {
           },
         ]
       }
-      launch_daily_ads: {
+      commission_rules: {
         Row: {
-          clicks: number
-          date: string
+          created_at: string
           id: string
-          impressions: number
-          launch_id: string
-          leads: number
-          provider: string
-          raw: Json
-          spend: number
-          synced_at: string
+          launch_id: string | null
+          payment_modality_id: string
+          project_id: string
+          type: string
+          updated_at: string
+          value: number
         }
         Insert: {
-          clicks?: number
-          date: string
+          created_at?: string
           id?: string
-          impressions?: number
-          launch_id: string
-          leads?: number
-          provider: string
-          raw?: Json
-          spend?: number
-          synced_at?: string
+          launch_id?: string | null
+          payment_modality_id: string
+          project_id: string
+          type: string
+          updated_at?: string
+          value: number
         }
         Update: {
-          clicks?: number
-          date?: string
+          created_at?: string
           id?: string
-          impressions?: number
-          launch_id?: string
-          leads?: number
-          provider?: string
-          raw?: Json
-          spend?: number
-          synced_at?: string
+          launch_id?: string | null
+          payment_modality_id?: string
+          project_id?: string
+          type?: string
+          updated_at?: string
+          value?: number
         }
         Relationships: [
           {
-            foreignKeyName: "launch_daily_ads_launch_id_fkey"
+            foreignKeyName: "commission_rules_launch_id_fkey"
             columns: ["launch_id"]
             isOneToOne: false
             referencedRelation: "launches"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "commission_rules_payment_modality_id_fkey"
+            columns: ["payment_modality_id"]
+            isOneToOne: false
+            referencedRelation: "payment_modalities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commission_rules_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
         ]
       }
-      launch_secrets: {
+      ghl_user_mappings: {
         Row: {
           created_at: string
+          ghl_user_id: string
           id: string
-          launch_id: string
-          provider: string
-          secret: string
+          project_id: string
+          team_member_id: string
           updated_at: string
         }
         Insert: {
           created_at?: string
+          ghl_user_id: string
           id?: string
-          launch_id: string
-          provider: string
-          secret: string
+          project_id: string
+          team_member_id: string
           updated_at?: string
         }
         Update: {
           created_at?: string
+          ghl_user_id?: string
           id?: string
-          launch_id?: string
-          provider?: string
-          secret?: string
+          project_id?: string
+          team_member_id?: string
           updated_at?: string
         }
         Relationships: [
           {
-            foreignKeyName: "launch_secrets_launch_id_fkey"
-            columns: ["launch_id"]
+            foreignKeyName: "ghl_user_mappings_project_id_fkey"
+            columns: ["project_id"]
             isOneToOne: false
-            referencedRelation: "launches"
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ghl_user_mappings_team_member_id_fkey"
+            columns: ["team_member_id"]
+            isOneToOne: false
+            referencedRelation: "team_members"
             referencedColumns: ["id"]
           },
         ]
@@ -164,6 +274,7 @@ export type Database = {
           launch_id: string
           provider: string
           rows_written: number | null
+          stage: string | null
           started_at: string
           status: string
           triggered_by: string | null
@@ -177,6 +288,7 @@ export type Database = {
           launch_id: string
           provider: string
           rows_written?: number | null
+          stage?: string | null
           started_at?: string
           status: string
           triggered_by?: string | null
@@ -190,6 +302,7 @@ export type Database = {
           launch_id?: string
           provider?: string
           rows_written?: number | null
+          stage?: string | null
           started_at?: string
           status?: string
           triggered_by?: string | null
@@ -259,6 +372,166 @@ export type Database = {
           },
         ]
       }
+      launch_daily_ads: {
+        Row: {
+          clicks: number
+          date: string
+          id: string
+          impressions: number
+          launch_id: string
+          leads: number
+          provider: string
+          raw: Json
+          spend: number
+          synced_at: string
+        }
+        Insert: {
+          clicks?: number
+          date: string
+          id?: string
+          impressions?: number
+          launch_id: string
+          leads?: number
+          provider: string
+          raw?: Json
+          spend?: number
+          synced_at?: string
+        }
+        Update: {
+          clicks?: number
+          date?: string
+          id?: string
+          impressions?: number
+          launch_id?: string
+          leads?: number
+          provider?: string
+          raw?: Json
+          spend?: number
+          synced_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "launch_daily_ads_launch_id_fkey"
+            columns: ["launch_id"]
+            isOneToOne: false
+            referencedRelation: "launches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      launch_opportunities: {
+        Row: {
+          assigned_to_ghl_user: string | null
+          contact_external_id: string | null
+          created_at: string
+          created_at_ghl: string | null
+          external_id: string
+          id: string
+          launch_id: string
+          monetary_value: number | null
+          pipeline_id: string | null
+          pipeline_stage_id: string | null
+          project_id: string
+          raw: Json
+          source: string | null
+          status: string
+          synced_at: string
+          updated_at: string
+          updated_at_ghl: string | null
+          won_at: string | null
+        }
+        Insert: {
+          assigned_to_ghl_user?: string | null
+          contact_external_id?: string | null
+          created_at?: string
+          created_at_ghl?: string | null
+          external_id: string
+          id?: string
+          launch_id: string
+          monetary_value?: number | null
+          pipeline_id?: string | null
+          pipeline_stage_id?: string | null
+          project_id: string
+          raw?: Json
+          source?: string | null
+          status: string
+          synced_at?: string
+          updated_at?: string
+          updated_at_ghl?: string | null
+          won_at?: string | null
+        }
+        Update: {
+          assigned_to_ghl_user?: string | null
+          contact_external_id?: string | null
+          created_at?: string
+          created_at_ghl?: string | null
+          external_id?: string
+          id?: string
+          launch_id?: string
+          monetary_value?: number | null
+          pipeline_id?: string | null
+          pipeline_stage_id?: string | null
+          project_id?: string
+          raw?: Json
+          source?: string | null
+          status?: string
+          synced_at?: string
+          updated_at?: string
+          updated_at_ghl?: string | null
+          won_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "launch_opportunities_launch_id_fkey"
+            columns: ["launch_id"]
+            isOneToOne: false
+            referencedRelation: "launches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "launch_opportunities_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      launch_secrets: {
+        Row: {
+          created_at: string
+          id: string
+          launch_id: string
+          provider: string
+          secret: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          launch_id: string
+          provider: string
+          secret: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          launch_id?: string
+          provider?: string
+          secret?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "launch_secrets_launch_id_fkey"
+            columns: ["launch_id"]
+            isOneToOne: false
+            referencedRelation: "launches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       launches: {
         Row: {
           asistentes: number | null
@@ -279,6 +552,7 @@ export type Database = {
           id: string
           ingresos_whatsapp: number | null
           integration_config: Json
+          is_evergreen: boolean
           launch_date: string | null
           meta_clicks: number | null
           meta_investment: number | null
@@ -286,6 +560,7 @@ export type Database = {
           name: string
           platforms: string[]
           project_id: string
+          recycle_target_launch_id: string | null
           registrados: number | null
           revenue: number | null
           sources: Json
@@ -305,6 +580,8 @@ export type Database = {
           contactos_api?: number | null
           created_at?: string
           date?: string | null
+          date_end?: string | null
+          date_start?: string | null
           dur_calentamiento?: number
           dur_captacion?: number
           dur_cierre?: number
@@ -316,6 +593,7 @@ export type Database = {
           id?: string
           ingresos_whatsapp?: number | null
           integration_config?: Json
+          is_evergreen?: boolean
           launch_date?: string | null
           meta_clicks?: number | null
           meta_investment?: number | null
@@ -323,6 +601,7 @@ export type Database = {
           name: string
           platforms?: string[]
           project_id: string
+          recycle_target_launch_id?: string | null
           registrados?: number | null
           revenue?: number | null
           sources?: Json
@@ -342,6 +621,8 @@ export type Database = {
           contactos_api?: number | null
           created_at?: string
           date?: string | null
+          date_end?: string | null
+          date_start?: string | null
           dur_calentamiento?: number
           dur_captacion?: number
           dur_cierre?: number
@@ -353,6 +634,7 @@ export type Database = {
           id?: string
           ingresos_whatsapp?: number | null
           integration_config?: Json
+          is_evergreen?: boolean
           launch_date?: string | null
           meta_clicks?: number | null
           meta_investment?: number | null
@@ -360,6 +642,7 @@ export type Database = {
           name?: string
           platforms?: string[]
           project_id?: string
+          recycle_target_launch_id?: string | null
           registrados?: number | null
           revenue?: number | null
           sources?: Json
@@ -381,11 +664,241 @@ export type Database = {
             referencedRelation: "projects"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "launches_recycle_target_launch_id_fkey"
+            columns: ["recycle_target_launch_id"]
+            isOneToOne: false
+            referencedRelation: "launches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      leads: {
+        Row: {
+          contact: string | null
+          created_at: string
+          email: string | null
+          external_id: string | null
+          id: string
+          launch_id: string | null
+          name: string
+          notes: string | null
+          phone_normalized: string | null
+          pinned_to_kanban: boolean
+          project_id: string
+          recycled_from_launch_id: string | null
+          source: string
+          status: string
+          team_member_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          contact?: string | null
+          created_at?: string
+          email?: string | null
+          external_id?: string | null
+          id?: string
+          launch_id?: string | null
+          name: string
+          notes?: string | null
+          phone_normalized?: string | null
+          pinned_to_kanban?: boolean
+          project_id: string
+          recycled_from_launch_id?: string | null
+          source?: string
+          status?: string
+          team_member_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          contact?: string | null
+          created_at?: string
+          email?: string | null
+          external_id?: string | null
+          id?: string
+          launch_id?: string | null
+          name?: string
+          notes?: string | null
+          phone_normalized?: string | null
+          pinned_to_kanban?: boolean
+          project_id?: string
+          recycled_from_launch_id?: string | null
+          source?: string
+          status?: string
+          team_member_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "leads_launch_id_fkey"
+            columns: ["launch_id"]
+            isOneToOne: false
+            referencedRelation: "launches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "leads_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "leads_recycled_from_launch_id_fkey"
+            columns: ["recycled_from_launch_id"]
+            isOneToOne: false
+            referencedRelation: "launches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "leads_team_member_id_fkey"
+            columns: ["team_member_id"]
+            isOneToOne: false
+            referencedRelation: "team_members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notifications: {
+        Row: {
+          body: string | null
+          created_at: string
+          dedup_key: string | null
+          id: string
+          launch_id: string | null
+          metadata: Json
+          project_id: string
+          read_at: string | null
+          severity: string
+          target_role: string | null
+          target_user_id: string | null
+          title: string
+          type: string
+        }
+        Insert: {
+          body?: string | null
+          created_at?: string
+          dedup_key?: string | null
+          id?: string
+          launch_id?: string | null
+          metadata?: Json
+          project_id: string
+          read_at?: string | null
+          severity?: string
+          target_role?: string | null
+          target_user_id?: string | null
+          title: string
+          type: string
+        }
+        Update: {
+          body?: string | null
+          created_at?: string
+          dedup_key?: string | null
+          id?: string
+          launch_id?: string | null
+          metadata?: Json
+          project_id?: string
+          read_at?: string | null
+          severity?: string
+          target_role?: string | null
+          target_user_id?: string | null
+          title?: string
+          type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notifications_launch_id_fkey"
+            columns: ["launch_id"]
+            isOneToOne: false
+            referencedRelation: "launches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payment_modalities: {
+        Row: {
+          active: boolean
+          created_at: string
+          id: string
+          name: string
+          project_id: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          name: string
+          project_id: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          name?: string
+          project_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_modalities_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payments: {
+        Row: {
+          amount: number
+          created_at: string
+          id: string
+          notes: string | null
+          paid_at: string
+          sale_id: string
+          updated_at: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          id?: string
+          notes?: string | null
+          paid_at?: string
+          sale_id: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          id?: string
+          notes?: string | null
+          paid_at?: string
+          sale_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payments_sale_id_fkey"
+            columns: ["sale_id"]
+            isOneToOne: false
+            referencedRelation: "sales"
+            referencedColumns: ["id"]
+          },
         ]
       }
       profiles: {
         Row: {
           created_at: string
+          deleted_at: string | null
           full_name: string | null
           id: string
           role: string
@@ -393,6 +906,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          deleted_at?: string | null
           full_name?: string | null
           id: string
           role?: string
@@ -400,6 +914,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          deleted_at?: string | null
           full_name?: string | null
           id?: string
           role?: string
@@ -583,6 +1098,112 @@ export type Database = {
         }
         Relationships: []
       }
+      sales: {
+        Row: {
+          closed_at: string
+          created_at: string
+          id: string
+          lead_id: string
+          payment_modality_id: string
+          project_id: string
+          team_member_id: string | null
+          total_amount: number
+          updated_at: string
+        }
+        Insert: {
+          closed_at?: string
+          created_at?: string
+          id?: string
+          lead_id: string
+          payment_modality_id: string
+          project_id: string
+          team_member_id?: string | null
+          total_amount: number
+          updated_at?: string
+        }
+        Update: {
+          closed_at?: string
+          created_at?: string
+          id?: string
+          lead_id?: string
+          payment_modality_id?: string
+          project_id?: string
+          team_member_id?: string | null
+          total_amount?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: true
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_payment_modality_id_fkey"
+            columns: ["payment_modality_id"]
+            isOneToOne: false
+            referencedRelation: "payment_modalities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_team_member_id_fkey"
+            columns: ["team_member_id"]
+            isOneToOne: false
+            referencedRelation: "team_members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      team_members: {
+        Row: {
+          active: boolean
+          commission_rate: number | null
+          created_at: string
+          id: string
+          name: string
+          project_id: string
+          role: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          commission_rate?: number | null
+          created_at?: string
+          id?: string
+          name: string
+          project_id: string
+          role: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          commission_rate?: number | null
+          created_at?: string
+          id?: string
+          name?: string
+          project_id?: string
+          role?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "team_members_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -590,9 +1211,38 @@ export type Database = {
     Functions: {
       can_edit_launches_in: { Args: { p_project_id: string }; Returns: boolean }
       can_edit_project: { Args: { p_project_id: string }; Returns: boolean }
+      create_notification: {
+        Args: {
+          p_body?: string
+          p_dedup_key?: string
+          p_launch_id?: string
+          p_metadata?: Json
+          p_project_id: string
+          p_severity?: string
+          p_target_role?: string
+          p_target_user_id?: string
+          p_title: string
+          p_type: string
+        }
+        Returns: string
+      }
+      custom_access_token_hook: { Args: { event: Json }; Returns: Json }
+      expire_stale_integration_runs: {
+        Args: { p_threshold?: string }
+        Returns: number
+      }
       has_project_access: { Args: { p_project_id: string }; Returns: boolean }
+      is_cliente: { Args: never; Returns: boolean }
       is_superadmin: { Args: never; Returns: boolean }
       project_of_launch: { Args: { p_launch_id: string }; Returns: string }
+      project_of_sale: { Args: { p_sale_id: string }; Returns: string }
+      recycle_evergreen_leads: {
+        Args: { p_launch_id: string }
+        Returns: number
+      }
+      show_limit: { Args: never; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
+      user_role_is_team: { Args: never; Returns: boolean }
     }
     Enums: {
       [_ in never]: never

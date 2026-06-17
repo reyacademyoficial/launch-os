@@ -27,15 +27,23 @@ export function DailyTable({
   // Sorted ascending in the helper for the chart; flip for table read order.
   const sorted = [...rows].sort((a, b) => b.date.localeCompare(a.date));
 
+  // Solo mostramos columnas de canal que tengan al menos 1 valor > 0 en el
+  // rango. Esto evita una tabla llena de "—" cuando el launch solo usa un
+  // canal (ej. solo Meta). Si en algún momento se carga un día con otro
+  // canal, la columna aparece sola sin tocar el componente.
+  const activeChannels = DAILY_CHANNELS.filter((ch) =>
+    rows.some((r) => r[ch] > 0),
+  );
+
   return (
     <div className="overflow-x-auto rounded-md border border-border">
-      <table className="w-full min-w-[720px] text-sm">
+      <table className="w-full min-w-[480px] text-sm">
         <thead className="bg-surface text-left text-xs uppercase tracking-wide text-fg-subtle">
           <tr>
             <th scope="col" className="px-3 py-2 font-medium">
               Fecha
             </th>
-            {DAILY_CHANNELS.map((ch) => (
+            {activeChannels.map((ch) => (
               <th
                 key={ch}
                 scope="col"
@@ -64,7 +72,7 @@ export function DailyTable({
                 <td className="whitespace-nowrap px-3 py-2 text-fg-muted">
                   {fmtDate(row.date)}
                 </td>
-                {DAILY_CHANNELS.map((ch) => (
+                {activeChannels.map((ch) => (
                   <td
                     key={ch}
                     className="px-3 py-2 text-right tabular-nums text-fg"

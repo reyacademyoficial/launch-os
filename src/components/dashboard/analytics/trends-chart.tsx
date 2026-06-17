@@ -14,6 +14,20 @@ import {
 import { fmtMoney, fmtPercent } from "@/lib/format";
 
 /**
+ * Tick formatter compacto para el eje Y de moneda. Recharts solo pinta
+ * los ticks en el ancho dado por `width`; si los strings son largos
+ * ("$1,500,000") se cortan o solapan. Formato compacto deja
+ * "$1.5M" / "$120K" — el tooltip sigue mostrando el monto completo
+ * con `fmtMoney`.
+ */
+function fmtMoneyCompact(n: number): string {
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
+  return `$${Math.round(n)}`;
+}
+
+/**
  * Tendencias entre lanzamientos. Eje X = launches ordenados por date_start
  * ascendente (los más viejos a la izquierda). Líneas:
  *   - Revenue, Profit, CPL agregado (moneda — eje Y izquierdo)
@@ -53,18 +67,23 @@ export function TrendsChart({ points }: { readonly points: ReadonlyArray<TrendsP
   return (
     <div className="h-96 rounded-md border border-border bg-surface/40 p-4">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={points as TrendsPoint[]}>
+        <LineChart
+          data={points as TrendsPoint[]}
+          margin={{ top: 10, right: 20, bottom: 10, left: 10 }}
+        >
           <CartesianGrid strokeDasharray="3 3" stroke="rgb(255 255 255 / 0.05)" />
           <XAxis dataKey="name" stroke="rgb(255 255 255 / 0.5)" />
           <YAxis
             yAxisId="money"
             stroke="rgb(255 255 255 / 0.5)"
-            tickFormatter={(v) => fmtMoney(v as number)}
+            width={70}
+            tickFormatter={(v) => fmtMoneyCompact(v as number)}
           />
           <YAxis
             yAxisId="pct"
             orientation="right"
             stroke="rgb(255 255 255 / 0.5)"
+            width={55}
             tickFormatter={(v) => fmtPercent(v as number)}
           />
           <Tooltip
