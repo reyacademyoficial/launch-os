@@ -110,13 +110,15 @@ export interface LaunchKPIs {
   leftCommunity: number;
   communityClicks: number;
   /**
-   * (entered - removed) / entered. `null` cuando entered = 0 (sin entradas
-   * en la ventana, no hay base para calcular retención). UI muestra "—".
+   * Porcentaje 0–100. `((entered - removed) / entered) * 100`. `null` cuando
+   * entered = 0 (sin base para calcular retención). UI muestra "—".
+   * Consistente con showRate / closeRate / whatsappRevenueShare que también
+   * son 0–100, no 0–1.
    */
   retentionRate: number | null;
   /**
-   * entered / totalLeads. `null` cuando totalLeads = 0 (sin leads del lado
-   * de ads para usar como denominador). UI muestra "—".
+   * Porcentaje 0–100. `(entered / totalLeads) * 100`. `null` cuando
+   * totalLeads = 0 o cuando communityAggregate.hasData = false.
    */
   enteredCommunityRate: number | null;
 }
@@ -202,11 +204,11 @@ export function calculateLaunchKPIs(
   const communityClicks = community?.clicks ?? 0;
   const retentionRate =
     enteredCommunity > 0
-      ? (enteredCommunity - leftCommunity) / enteredCommunity
+      ? ((enteredCommunity - leftCommunity) / enteredCommunity) * 100
       : null;
   const enteredCommunityRate =
     totalLeads > 0 && community?.hasData
-      ? enteredCommunity / totalLeads
+      ? (enteredCommunity / totalLeads) * 100
       : null;
 
   return {

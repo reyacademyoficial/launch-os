@@ -155,10 +155,10 @@ describe("calculateLaunchKPIs — community (SendFlow)", () => {
     expect(k.enteredCommunity).toBe(100);
     expect(k.leftCommunity).toBe(20);
     expect(k.communityClicks).toBe(540);
-    // (100 - 20) / 100 = 0.8
-    expect(k.retentionRate).toBe(0.8);
-    // 100 / 400 = 0.25
-    expect(k.enteredCommunityRate).toBe(0.25);
+    // ((100 - 20) / 100) * 100 = 80
+    expect(k.retentionRate).toBe(80);
+    // (100 / 400) * 100 = 25
+    expect(k.enteredCommunityRate).toBe(25);
   });
 
   it("entered=0 → retentionRate null (no hay base)", () => {
@@ -187,7 +187,7 @@ describe("calculateLaunchKPIs — community (SendFlow)", () => {
     });
     expect(k.enteredCommunityRate).toBeNull();
     // retentionRate sí se puede calcular porque entered > 0.
-    expect(k.retentionRate).toBe(0.8);
+    expect(k.retentionRate).toBe(80);
   });
 
   it("removed > entered → retentionRate negativa (no clamp, lo que es)", () => {
@@ -204,8 +204,8 @@ describe("calculateLaunchKPIs — community (SendFlow)", () => {
     const k = calculateLaunchKPIs(BASELINE, {
       communityAggregate: community,
     });
-    // (10 - 25) / 10 = -1.5
-    expect(k.retentionRate).toBe(-1.5);
+    // ((10 - 25) / 10) * 100 = -150
+    expect(k.retentionRate).toBe(-150);
   });
 
   it("community convive con ads + sales sin interferencia", () => {
@@ -235,8 +235,8 @@ describe("calculateLaunchKPIs — community (SendFlow)", () => {
     expect(k.metaLeads).toBe(200);
     expect(k.ventas).toBe(10);
     expect(k.revenue).toBe(5000);
-    // Comunidad: 45/50 = 0.9, 50/200 = 0.25
-    expect(k.retentionRate).toBe(0.9);
-    expect(k.enteredCommunityRate).toBe(0.25);
+    // Comunidad: (45/50)*100 = 90, (50/200)*100 = 25
+    expect(k.retentionRate).toBe(90);
+    expect(k.enteredCommunityRate).toBe(25);
   });
 });

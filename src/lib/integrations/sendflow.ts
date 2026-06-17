@@ -307,30 +307,34 @@ export async function fetchSendflowAnalytics(
     };
   }
 
-  if (response.status === 401) {
-    return {
-      ok: false,
-      kind: "token_invalid",
-      message: "API Key de SendFlow rechazada (401)",
-      detail: {
-        http_status: 401,
-        cause: "auth_failed",
-        release_id: args.releaseId,
-      },
-    };
-  }
-  if (response.status === 403) {
-    // 403 = la key es válida pero ESE release puntual no es accesible
-    // (no pertenece a la cuenta del token, fue borrado, cambió de owner).
-    // NO aborta el sync — otras releases del lanzamiento pueden seguir.
+  if (response.status === 401 || response.status === 403) {
+    // Leemos el body como TEXT (puede ser HTML, JSON o vacío) para guardar
+    // el mensaje literal de SendFlow en error_detail. Útil para diagnosticar
+    // 403 confusos donde la key es válida pero el server rechaza igual.
+    const upstreamBody = await safeReadText(response);
+
+    if (response.status === 401) {
+      return {
+        ok: false,
+        kind: "token_invalid",
+        message: "API Key de SendFlow rechazada (401)",
+        detail: {
+          http_status: 401,
+          cause: "auth_failed",
+          release_id: args.releaseId,
+          upstream_body: upstreamBody,
+        },
+      };
+    }
     return {
       ok: false,
       kind: "error",
-      message: `SendFlow no autoriza el release ${args.releaseId} para esta API Key (403). Confirmá que el ID corresponde a una comunidad de esta cuenta.`,
+      message: `SendFlow rechazó el release ${args.releaseId} con 403. Body upstream guardado en error_detail.upstream_body.`,
       detail: {
         http_status: 403,
         cause: "release_forbidden",
         release_id: args.releaseId,
+        upstream_body: upstreamBody,
       },
     };
   }
@@ -541,6 +545,20 @@ function hasAnyBranch(shape: Record<string, unknown>): boolean {
     (shape.remove !== undefined && shape.remove !== null) ||
     (shape.clicks !== undefined && shape.clicks !== null)
   );
+}
+
+/**
+ * Lee el body como text sin propagar excepciones. Si el server no devolvió
+ * body, devuelve string vacío. Se trunca a 2KB para no inflar error_detail
+ * con respuestas HTML grandes (página de error completa de un proxy/CDN).
+ */
+async function safeReadText(response: Response): Promise<string> {
+  try {
+    const text = await response.text();
+    return text.length > 2048 ? text.slice(0, 2048) + "…[truncated]" : text;
+  } catch {
+    return "";
+  }
 }
 
 function toInt(v: unknown): number {

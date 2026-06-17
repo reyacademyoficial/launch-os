@@ -7,6 +7,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { fetchMetaInsights, type MetaInsightDay } from "./meta";
 import {
   fetchSendflowAnalytics,
+  type SendflowAnalyticsResult,
   type SendflowAnalyticsSuccess,
 } from "./sendflow";
 import { runGhlSync, type GhlRunSummary } from "./sync-ghl";
@@ -681,19 +682,22 @@ async function runSendflowBranch(args: {
     };
   }
 
-  // Fetch en paralelo — releases son independientes y la API no documenta
-  // throttling por concurrencia para reads. Si en producción aparece rate
-  // limit, secuenciamos en 3c.
-  const results = await Promise.all(
-    cfg.release_ids.map((releaseId) =>
-      fetchSendflowAnalytics({
-        token,
-        releaseId,
-        windowStart: args.dateStart,
-        windowEnd: args.dateEnd,
-      }),
-    ),
-  );
+  // Fetch SECUENCIAL (no Promise.all). SendFlow rechaza con 403 al segundo
+  // request concurrente con la misma key — bug observado 2026-06-17 con dos
+  // releases válidas que funcionaban por separado pero una de las dos
+  // fallaba al pegarles juntas. Probable rate-limit por concurrencia o
+  // sesión mono-thread por token; no está documentado por SendFlow.
+  // Con N pequeño (1-3 releases típico) el costo extra es despreciable.
+  const results: SendflowAnalyticsResult[] = [];
+  for (const releaseId of cfg.release_ids) {
+    const r = await fetchSendflowAnalytics({
+      token,
+      releaseId,
+      windowStart: args.dateStart,
+      windowEnd: args.dateEnd,
+    });
+    results.push(r);
+  }
 
   // Si TODAS las releases fallaron con token_invalid → abort.
   const allTokenInvalid =

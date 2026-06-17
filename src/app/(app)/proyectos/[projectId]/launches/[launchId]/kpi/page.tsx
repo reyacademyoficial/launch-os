@@ -1,12 +1,15 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
+import { CommunityKpiBlock } from "@/components/dashboard/launches/community-kpi-block";
 import { DailyChart } from "@/components/dashboard/launches/daily/daily-chart";
 import { DailyFormModal } from "@/components/dashboard/launches/daily/daily-form-modal";
 import { DailyTable } from "@/components/dashboard/launches/daily/daily-table";
 import { RealtimeProbe } from "@/components/dashboard/launches/integrations/realtime-probe";
 import { KpiGrid } from "@/components/dashboard/launches/kpi-grid";
 import { calculateLaunchKPIs } from "@/lib/kpis";
+import { aggregateCommunityMetrics } from "@/lib/launch-community/aggregate";
+import { listCommunityMetricsForLaunch } from "@/lib/launch-community/list";
 import { aggregateMergedDaily } from "@/lib/launch-daily/aggregate";
 import { listAdsForLaunch, listDailyForLaunch } from "@/lib/launch-daily/list";
 import { mergeDailyData } from "@/lib/launch-daily/merge";
@@ -34,13 +37,14 @@ export default async function LaunchKpiPage({
 }) {
   const { projectId, launchId } = await params;
 
-  const [launch, canEditLaunchValue, daily, ads, opportunities] =
+  const [launch, canEditLaunchValue, daily, ads, opportunities, community] =
     await Promise.all([
       getLaunch(launchId),
       userCanEditLaunchesIn(projectId),
       listDailyForLaunch(launchId),
       listAdsForLaunch(launchId),
       listOpportunitiesForLaunch(launchId),
+      listCommunityMetricsForLaunch(launchId),
     ]);
 
   if (!launch || launch.project_id !== projectId) notFound();
@@ -56,13 +60,20 @@ export default async function LaunchKpiPage({
           date_end: launch.date_end,
         })
       : EMPTY_SALES_AGGREGATE;
-  const kpi = calculateLaunchKPIs(launch, { adsAggregate, salesAggregate });
+  const communityAggregate = aggregateCommunityMetrics(community);
+  const kpi = calculateLaunchKPIs(launch, {
+    adsAggregate,
+    salesAggregate,
+    communityAggregate,
+  });
   const isClosed = launch.closed_at !== null;
   const addDailyAction = createDailyEntry.bind(null, projectId, launchId);
 
   return (
     <div className="space-y-10">
       <KpiGrid kpi={kpi} />
+
+      <CommunityKpiBlock kpi={kpi} />
 
       <section className="space-y-4">
         <header className="flex items-center justify-between gap-4">
