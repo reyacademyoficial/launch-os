@@ -6,6 +6,7 @@ import { LaunchFormModal } from "@/components/dashboard/launches/launch-form-mod
 import { LaunchTabs } from "@/components/dashboard/launches/launch-tabs";
 import { StatusBadge } from "@/components/dashboard/launches/status-badge";
 import { fmtDate, fmtLaunchWindow } from "@/lib/format";
+import { listEvergreensTargeting } from "@/lib/launches/evergreen";
 import { getLaunch } from "@/lib/launches/get";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { userCanEditLaunchesIn, userCanEditProject } from "@/lib/supabase/auth";
@@ -36,13 +37,19 @@ export default async function LaunchLayout({
 }) {
   const { projectId, launchId } = await params;
 
-  const [launch, canEditLaunchValue, canEditProjectValue, allLaunches] =
-    await Promise.all([
-      getLaunch(launchId),
-      userCanEditLaunchesIn(projectId),
-      userCanEditProject(projectId),
-      listLaunchesForProject(projectId),
-    ]);
+  const [
+    launch,
+    canEditLaunchValue,
+    canEditProjectValue,
+    allLaunches,
+    evergreenSources,
+  ] = await Promise.all([
+    getLaunch(launchId),
+    userCanEditLaunchesIn(projectId),
+    userCanEditProject(projectId),
+    listLaunchesForProject(projectId),
+    listEvergreensTargeting(launchId),
+  ]);
 
   if (!launch || launch.project_id !== projectId) notFound();
 
@@ -121,6 +128,22 @@ export default async function LaunchLayout({
               </>
             )}
           </div>
+          {evergreenSources.length > 0 && (
+            <p className="pt-1 text-xs text-fg-muted">
+              ↩ Recibe reciclado de{" "}
+              {evergreenSources.map((src, i) => (
+                <span key={src.id}>
+                  <Link
+                    href={`/proyectos/${projectId}/launches/${src.id}`}
+                    className="text-accent hover:underline"
+                  >
+                    {src.name}
+                  </Link>
+                  {i < evergreenSources.length - 1 ? ", " : ""}
+                </span>
+              ))}
+            </p>
+          )}
           {launch.platforms.length > 0 && (
             <div className="flex flex-wrap gap-2 pt-1">
               {launch.platforms.map((p) => (

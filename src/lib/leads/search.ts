@@ -40,6 +40,14 @@ export interface LeadFilters {
   dateTo?: string;
   /** Cuando es `true`, solo los pinneados al kanban. `undefined` = todos. */
   pinnedToKanban?: boolean;
+  /**
+   * Filtro por evergreen origen (0028). Tres modos:
+   *   - uuid     → solo reciclados desde ese evergreen específico.
+   *   - "any"    → cualquier lead reciclado (recycled_from IS NOT NULL).
+   *   - "none"   → solo no-reciclados (recycled_from IS NULL).
+   *   - undefined → sin filtrar.
+   */
+  recycledFrom?: string | "any" | "none";
 }
 
 export interface LeadSearchParams {
@@ -82,6 +90,13 @@ export async function listLeadsPaginated(
   }
   if (typeof f.pinnedToKanban === "boolean") {
     query = query.eq("pinned_to_kanban", f.pinnedToKanban);
+  }
+  if (f.recycledFrom === "any") {
+    query = query.not("recycled_from_launch_id", "is", null);
+  } else if (f.recycledFrom === "none") {
+    query = query.is("recycled_from_launch_id", null);
+  } else if (f.recycledFrom) {
+    query = query.eq("recycled_from_launch_id", f.recycledFrom);
   }
 
   // Búsqueda parcial: ilike en cualquiera de los 3 campos. Postgrest acepta
@@ -169,6 +184,13 @@ export async function listLeadsForExport(
   if (f.dateTo) query = query.lte("created_at", `${f.dateTo}T23:59:59.999Z`);
   if (typeof f.pinnedToKanban === "boolean") {
     query = query.eq("pinned_to_kanban", f.pinnedToKanban);
+  }
+  if (f.recycledFrom === "any") {
+    query = query.not("recycled_from_launch_id", "is", null);
+  } else if (f.recycledFrom === "none") {
+    query = query.is("recycled_from_launch_id", null);
+  } else if (f.recycledFrom) {
+    query = query.eq("recycled_from_launch_id", f.recycledFrom);
   }
 
   const q = params.search.trim();

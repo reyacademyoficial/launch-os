@@ -45,6 +45,7 @@ export function LeadsTable({
   initialSort,
   teamMembers,
   launches,
+  evergreenLaunches,
 }: {
   readonly projectId: string;
   readonly rows: ReadonlyArray<LeadRow>;
@@ -60,10 +61,12 @@ export function LeadsTable({
     launchId: string;
     dateFrom: string;
     dateTo: string;
+    recycledFrom: string;
   };
   readonly initialSort: { column: SortableColumn; direction: SortDirection };
   readonly teamMembers: ReadonlyArray<Pick<TeamMemberRow, "id" | "name" | "active">>;
   readonly launches: ReadonlyArray<{ id: string; name: string }>;
+  readonly evergreenLaunches: ReadonlyArray<{ id: string; name: string }>;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -172,6 +175,17 @@ export function LeadsTable({
           options={[
             { value: "", label: "Todos" },
             ...launches.map((l) => ({ value: l.id, label: l.name })),
+          ]}
+        />
+        <FilterSelect
+          label="Reciclado de"
+          value={initialFilters.recycledFrom}
+          onChange={(v) => updateUrl({ recycled: v })}
+          options={[
+            { value: "", label: "Todos" },
+            { value: "any", label: "Cualquier reciclado" },
+            { value: "none", label: "No reciclados" },
+            ...evergreenLaunches.map((l) => ({ value: l.id, label: l.name })),
           ]}
         />
         <DateRange

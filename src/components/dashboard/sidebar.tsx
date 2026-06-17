@@ -33,6 +33,9 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
         </NavLink>
         <NavLink scopedSuffix="/launches">Lanzamientos</NavLink>
         {showCrm && (
+          <NavLink scopedSuffix="/analitica">Analítica</NavLink>
+        )}
+        {showCrm && (
           <NavGroup
             label="Ventas"
             scopedSuffixes={[

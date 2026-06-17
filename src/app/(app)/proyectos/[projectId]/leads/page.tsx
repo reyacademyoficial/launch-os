@@ -93,6 +93,14 @@ export default async function LeadsPage({
     active: m.active,
   }));
   const launchesForForm = launches.map((l) => ({ id: l.id, name: l.name }));
+  // Subset de evergreens para el filtro "Reciclado de" de la tabla. Cast
+  // laxo hasta el regen de types (la columna está en 0028).
+  const evergreenLaunchesForFilter = launches
+    .filter(
+      (l) =>
+        (l as typeof l & { is_evergreen?: boolean }).is_evergreen === true,
+    )
+    .map((l) => ({ id: l.id, name: l.name }));
 
   const salesByLeadId = new Map<string, SaleRow>(sales.map((s) => [s.lead_id, s]));
   const paymentsBySaleId = new Map<string, PaymentRow[]>();
@@ -180,6 +188,7 @@ export default async function LeadsPage({
           searchParams={sp}
           teamForForm={teamForForm}
           launchesForForm={launchesForForm}
+          evergreenLaunches={evergreenLaunchesForFilter}
         />
       )}
     </section>
@@ -222,11 +231,13 @@ async function TablaTab({
   searchParams,
   teamForForm,
   launchesForForm,
+  evergreenLaunches,
 }: {
   readonly projectId: string;
   readonly searchParams: Record<string, string | string[] | undefined>;
   readonly teamForForm: ReadonlyArray<{ id: string; name: string; active: boolean }>;
   readonly launchesForForm: ReadonlyArray<{ id: string; name: string }>;
+  readonly evergreenLaunches: ReadonlyArray<{ id: string; name: string }>;
 }) {
   const page = parsePositiveInt(readString(searchParams.page)) ?? 1;
   const search = readString(searchParams.q) ?? "";
@@ -242,6 +253,16 @@ async function TablaTab({
   const launchId = readString(searchParams.launch);
   const dateFrom = readString(searchParams.from);
   const dateTo = readString(searchParams.to);
+  // `recycled` admite: uuid de evergreen, "any" (cualquier reciclado), "none"
+  // (no reciclado), o vacío. Cualquier otro string se ignora (vuelve a
+  // "todos") — defensa contra URL tampering.
+  const recycledRaw = readString(searchParams.recycled);
+  const recycledFrom =
+    recycledRaw === "any" || recycledRaw === "none"
+      ? recycledRaw
+      : recycledRaw && /^[0-9a-f-]{36}$/i.test(recycledRaw)
+        ? recycledRaw
+        : undefined;
   const sortColumn = (filterLiteral(
     readString(searchParams.sort),
     SORTABLE_COLUMNS as ReadonlyArray<string>,
@@ -265,6 +286,7 @@ async function TablaTab({
       launchId: launchId || undefined,
       dateFrom: dateFrom || undefined,
       dateTo: dateTo || undefined,
+      recycledFrom,
     },
   });
 
@@ -284,10 +306,12 @@ async function TablaTab({
         launchId: launchId ?? "",
         dateFrom: dateFrom ?? "",
         dateTo: dateTo ?? "",
+        recycledFrom: recycledFrom ?? "",
       }}
       initialSort={{ column: sortColumn, direction: sortDirection }}
       teamMembers={teamForForm}
       launches={launchesForForm}
+      evergreenLaunches={evergreenLaunches}
     />
   );
 }
