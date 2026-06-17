@@ -40,10 +40,15 @@ export type SendflowDateFormat = "DDMMYYYY" | "MMDDYYYY";
 /**
  * Mismo enum que el CHECK de `integration_runs.status` (modulo
  * success/partial/config_missing/running que son responsabilidad del
- * orchestrator). SendFlow no documenta rate-limits explícitos — si aparecen
- * en producción los clasificamos en 3c. Por ahora 429 = error genérico.
+ * orchestrator).
+ *
+ * Nota sobre rate-limit (descubierto 2026-06-17): SendFlow rate-limita a
+ * ~1 req/seg por API Key y devuelve **HTTP 403** con body JSON
+ * `{"code":"rate-limit-exceeded","retryAfterMs":1000}`. Usar 403 para rate
+ * limit es no-estándar (debería ser 429); por eso miramos el body para
+ * distinguir "key rechazada" de "frená un toque".
  */
-export type SendflowSyncErrorKind = "token_invalid" | "error";
+export type SendflowSyncErrorKind = "token_invalid" | "rate_limited" | "error";
 
 export interface SendflowSyncFailure {
   ok: false;
@@ -51,6 +56,12 @@ export interface SendflowSyncFailure {
   message: string;
   /** Pieza estructurada para guardar en `integration_runs.error_detail`. */
   detail: Record<string, unknown>;
+  /**
+   * Solo cuando `kind === 'rate_limited'`: segundos sugeridos antes de
+   * reintentar (parseado de `retryAfterMs` del body de SendFlow). null si
+   * el body no trajo el campo.
+   */
+  retryAfterSeconds?: number | null;
 }
 
 // ─── parser de fechas ───────────────────────────────────────────────────────
@@ -307,11 +318,27 @@ export async function fetchSendflowAnalytics(
     };
   }
 
-  if (response.status === 401 || response.status === 403) {
-    // Leemos el body como TEXT (puede ser HTML, JSON o vacío) para guardar
-    // el mensaje literal de SendFlow en error_detail. Útil para diagnosticar
-    // 403 confusos donde la key es válida pero el server rechaza igual.
+  if (response.status === 401 || response.status === 403 || response.status === 429) {
+    // Leemos el body para distinguir rate-limit (SendFlow lo devuelve como
+    // 403 con body JSON específico) de auth real. El body se trunca y se
+    // guarda en error_detail aunque ya hayamos clasificado.
     const upstreamBody = await safeReadText(response);
+    const rateLimit = detectRateLimit(upstreamBody);
+
+    if (rateLimit !== null) {
+      return {
+        ok: false,
+        kind: "rate_limited",
+        message: `SendFlow aplicó rate limit (${response.status}). Esperá ~${rateLimit.retryAfterMs}ms antes de reintentar.`,
+        detail: {
+          http_status: response.status,
+          cause: "rate_limit_exceeded",
+          release_id: args.releaseId,
+          upstream_body: upstreamBody,
+        },
+        retryAfterSeconds: rateLimit.retryAfterMs / 1000,
+      };
+    }
 
     if (response.status === 401) {
       return {
@@ -329,9 +356,9 @@ export async function fetchSendflowAnalytics(
     return {
       ok: false,
       kind: "error",
-      message: `SendFlow rechazó el release ${args.releaseId} con 403. Body upstream guardado en error_detail.upstream_body.`,
+      message: `SendFlow rechazó el release ${args.releaseId} con ${response.status}. Confirmá que el release pertenece a esta cuenta.`,
       detail: {
-        http_status: 403,
+        http_status: response.status,
         cause: "release_forbidden",
         release_id: args.releaseId,
         upstream_body: upstreamBody,
@@ -545,6 +572,31 @@ function hasAnyBranch(shape: Record<string, unknown>): boolean {
     (shape.remove !== undefined && shape.remove !== null) ||
     (shape.clicks !== undefined && shape.clicks !== null)
   );
+}
+
+/**
+ * Detecta si un body upstream es un rate-limit explícito de SendFlow.
+ * Esperado: `{"code":"rate-limit-exceeded","retryAfterMs":1000,...}`.
+ *
+ * Devuelve `{retryAfterMs}` si el body matchea, null si no. Defensivo:
+ * si JSON.parse falla o las keys no están, devuelve null (caer al
+ * camino de auth/error como antes).
+ */
+export function detectRateLimit(
+  upstreamBody: string,
+): { retryAfterMs: number } | null {
+  if (!upstreamBody) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(upstreamBody);
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== "object") return null;
+  const rec = parsed as Record<string, unknown>;
+  if (rec.code !== "rate-limit-exceeded") return null;
+  const ms = typeof rec.retryAfterMs === "number" ? rec.retryAfterMs : 1000;
+  return { retryAfterMs: ms };
 }
 
 /**

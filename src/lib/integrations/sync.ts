@@ -48,6 +48,10 @@ function loose(svc: unknown): LooseClient {
   return svc as LooseClient;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export interface SyncLaunchInput {
   launchId: string;
   provider: SyncProviderId;
@@ -682,20 +686,42 @@ async function runSendflowBranch(args: {
     };
   }
 
-  // Fetch SECUENCIAL (no Promise.all). SendFlow rechaza con 403 al segundo
-  // request concurrente con la misma key — bug observado 2026-06-17 con dos
-  // releases válidas que funcionaban por separado pero una de las dos
-  // fallaba al pegarles juntas. Probable rate-limit por concurrencia o
-  // sesión mono-thread por token; no está documentado por SendFlow.
-  // Con N pequeño (1-3 releases típico) el costo extra es despreciable.
+  // Fetch SECUENCIAL con pacing — SendFlow rate-limita a ~1 req/seg por API
+  // Key y responde 403 con body `code: 'rate-limit-exceeded'` (descubierto
+  // 2026-06-17, no documentado por SendFlow). Esquema:
+  //
+  //   - Sleep 1.1s ENTRE releases (no antes del primero) para no gatillar
+  //     el rate-limit en flujo normal.
+  //   - Si igual cae rate_limited (ej. otro proceso recién consumió la
+  //     cuota), retry inline UNA vez después de esperar retryAfterSeconds.
+  //   - Si persiste tras el retry, lo propagamos como falla; el orchestrator
+  //     marcará el sync como rate_limited o partial según corresponda.
   const results: SendflowAnalyticsResult[] = [];
-  for (const releaseId of cfg.release_ids) {
-    const r = await fetchSendflowAnalytics({
+  for (let i = 0; i < cfg.release_ids.length; i++) {
+    const releaseId = cfg.release_ids[i]!;
+    if (i > 0) await sleep(1_100);
+
+    let r = await fetchSendflowAnalytics({
       token,
       releaseId,
       windowStart: args.dateStart,
       windowEnd: args.dateEnd,
     });
+
+    if (!r.ok && r.kind === "rate_limited") {
+      const waitMs = Math.max(
+        500,
+        Math.round((r.retryAfterSeconds ?? 1) * 1000) + 200,
+      );
+      await sleep(waitMs);
+      r = await fetchSendflowAnalytics({
+        token,
+        releaseId,
+        windowStart: args.dateStart,
+        windowEnd: args.dateEnd,
+      });
+    }
+
     results.push(r);
   }
 
@@ -720,6 +746,23 @@ async function runSendflowBranch(args: {
       ...anyTokenInvalid.detail,
       message: anyTokenInvalid.message,
     });
+  }
+
+  // Si TODAS las releases cayeron en rate_limited (incluso tras el retry
+  // inline), marcamos el sync como rate_limited — la UI puede sugerir
+  // reintentar en unos segundos. Si solo algunas cayeron, lo trataremos
+  // como partial más abajo (otras escribieron datos válidos).
+  const allRateLimited =
+    results.length > 0 && results.every((r) => !r.ok && r.kind === "rate_limited");
+  if (allRateLimited) {
+    const first = results[0]!;
+    if (!first.ok) {
+      return await finalizeRun(service, runId, "rate_limited", 0, {
+        ...first.detail,
+        message: first.message,
+        retryAfterSeconds: first.retryAfterSeconds ?? null,
+      });
+    }
   }
 
   // Separar éxitos de fallas (que no sean token_invalid — ya abortamos arriba).

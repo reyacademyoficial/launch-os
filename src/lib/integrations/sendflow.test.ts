@@ -4,6 +4,7 @@ import analyticsHappy from "./__fixtures__/sendflow/analytics_happy.json";
 import releasesHappy from "./__fixtures__/sendflow/releases_happy.json";
 
 import {
+  detectRateLimit,
   fetchSendflowAnalytics,
   parseAnalyticsBody,
   parseReleasesBody,
@@ -266,7 +267,7 @@ describe("fetchSendflowAnalytics — clasificación 401 vs 403 (bug 2026-06-17)"
     expect(result.detail.cause).toBe("auth_failed");
   });
 
-  it("HTTP 403 → error con cause=release_forbidden (NO token_invalid)", async () => {
+  it("HTTP 403 con body genérico → error/release_forbidden (NO token_invalid)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -279,6 +280,63 @@ describe("fetchSendflowAnalytics — clasificación 401 vs 403 (bug 2026-06-17)"
     expect(result.kind).toBe("error");
     expect(result.detail.cause).toBe("release_forbidden");
     expect(result.detail.release_id).toBe("rel_xyz");
+  });
+
+  it("HTTP 403 con body rate-limit-exceeded → rate_limited (no release_forbidden)", async () => {
+    // SendFlow devuelve 403 para rate limit (no 429). Lo distinguimos por el
+    // body. Esto evita que el sync se rinda confundido como si el release no
+    // fuera accesible — el orchestrator puede retry o marcar rate_limited.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            code: "rate-limit-exceeded",
+            message: "rate-limit-exceeded",
+            retryAfterMs: 1000,
+            success: false,
+          }),
+          { status: 403 },
+        ),
+      ),
+    );
+    const result = await fetchSendflowAnalytics(args);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.kind).toBe("rate_limited");
+    expect(result.detail.cause).toBe("rate_limit_exceeded");
+    expect(result.retryAfterSeconds).toBe(1);
+  });
+
+  it("HTTP 429 con body rate-limit → rate_limited (cubrimos por las dudas)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ code: "rate-limit-exceeded", retryAfterMs: 1500 }),
+          { status: 429 },
+        ),
+      ),
+    );
+    const result = await fetchSendflowAnalytics(args);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.kind).toBe("rate_limited");
+    expect(result.retryAfterSeconds).toBe(1.5);
+  });
+
+  it("detectRateLimit reconoce el body de SendFlow", () => {
+    expect(
+      detectRateLimit(
+        '{"code":"rate-limit-exceeded","message":"rate-limit-exceeded","retryAfterMs":1000,"success":false}',
+      ),
+    ).toEqual({ retryAfterMs: 1000 });
+  });
+
+  it("detectRateLimit devuelve null para otros bodies", () => {
+    expect(detectRateLimit('{"code":"forbidden"}')).toBeNull();
+    expect(detectRateLimit("")).toBeNull();
+    expect(detectRateLimit("not json")).toBeNull();
   });
 
   it("HTTP 404 → error con cause=release_not_found", async () => {
