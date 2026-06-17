@@ -7,6 +7,10 @@
  *
  * `import` (0016) marca leads que entraron por el wizard de xlsx masivo, para
  * distinguirlos de los cargados a mano (`manual`) — útil para auditar/filtrar.
+ *
+ * NOTA: el reciclado de evergreen (0028) NO crea un source 'evergreen'.
+ * Mueve el lead preservando su source original. La traza vive en la
+ * columna `recycled_from_launch_id`.
  */
 export type LeadSource =
   | "manual"
@@ -50,6 +54,8 @@ export interface LeadRow {
   source: LeadSource;
   status: LeadStatus;
   notes: string | null;
+  /** Origen evergreen (0028). Null si el lead no entró por reciclado. */
+  recycled_from_launch_id: string | null;
   created_at: string;
   updated_at: string;
 }

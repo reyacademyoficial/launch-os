@@ -34,6 +34,7 @@ export function LaunchFormModal({
   action,
   initial,
   copyableLaunches,
+  recycleTargetOptions,
 }: {
   readonly triggerLabel: string;
   readonly triggerVariant?: "primary" | "secondary";
@@ -43,6 +44,7 @@ export function LaunchFormModal({
   readonly action: FormAction;
   readonly initial?: LaunchRow;
   readonly copyableLaunches?: ReadonlyArray<{ id: string; name: string }>;
+  readonly recycleTargetOptions?: ReadonlyArray<{ id: string; name: string }>;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -91,6 +93,7 @@ export function LaunchFormModal({
                 submitLabel={submitLabel}
                 onSuccess={() => setOpen(false)}
                 copyableLaunches={copyableLaunches}
+                recycleTargetOptions={recycleTargetOptions}
               />
             </div>
           </div>

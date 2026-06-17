@@ -71,6 +71,7 @@ export default async function LaunchesPage({
             submitLabel="Crear lanzamiento"
             action={createAction}
             copyableLaunches={copyableLaunches}
+            recycleTargetOptions={copyableLaunches}
           />
         )}
       </header>

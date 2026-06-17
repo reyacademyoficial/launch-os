@@ -181,7 +181,7 @@ on conflict (id) do nothing;
 -- - UPDATE/DELETE bloqueado por USING → fila se filtra silencioso, 0 filas.
 --   Lo testeamos con `is_empty(WITH ... RETURNING 1)`.
 --
-insert into _smoke_results(result) values (plan(75));
+insert into _smoke_results(result) values (plan(82));
 
 -- 1) cliente NO puede insertar launches (WITH CHECK falla) → 42501
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
@@ -1157,6 +1157,181 @@ insert into _smoke_results(result) values (is(
       and launch_id = 'cccccccc-cccc-cccc-cccc-cccccccccccc'),
   1,
   'AFTER INSERT ai_run success crea notif ai_summary_ready'
+));
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Fase 8a — Reciclado de leads evergreen
+--
+-- Setup local del test (en proj_a, como postgres para evitar RLS).
+-- Usamos NAMES para localizar los launches/leads (sin uuids hardcoded) para
+-- evitar cualquier colisión accidental por uuid pre-existente. Las
+-- variables temporales guardan los uuids generados para reusarlos.
+-- ═══════════════════════════════════════════════════════════════════════════
+reset role;
+
+-- Limpieza defensiva — si una corrida previa dejó datos sueltos (no debería
+-- por el ROLLBACK, pero por las dudas), borramos primero.
+delete from public.sales
+ where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+   and lead_id in (
+     select id from public.leads
+      where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        and name in ('Lead 8a Uno', 'Lead 8a Dos', 'Lead 8a Tres')
+   );
+delete from public.leads
+ where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+   and name in ('Lead 8a Uno', 'Lead 8a Dos', 'Lead 8a Tres');
+delete from public.launches
+ where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+   and name in ('Evergreen 8a origen', 'Target 8a grande');
+delete from public.payment_modalities
+ where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+   and name = 'Pago total 8a';
+
+-- Crear target primero (FK del evergreen apunta acá), después evergreen,
+-- después modality, después leads, después sale para L3.
+insert into public.launches (project_id, name, is_evergreen)
+values
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Target 8a grande', false);
+
+insert into public.launches (project_id, name, is_evergreen, recycle_target_launch_id)
+values
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+   'Evergreen 8a origen', true,
+   (select id from public.launches
+     where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+       and name = 'Target 8a grande'));
+
+insert into public.payment_modalities (project_id, name)
+values
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Pago total 8a');
+
+-- L1, L2, L3 en evergreen. Phones distintos para no chocar el unique parcial.
+insert into public.leads (project_id, launch_id, name, phone_normalized, source, status)
+select 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+       (select id from public.launches
+         where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+           and name = 'Evergreen 8a origen'),
+       n, p, 'manual', s
+from (values
+        ('Lead 8a Uno',  '+5491100000001'::text, 'frio'::text),
+        ('Lead 8a Dos',  '+5491100000002'::text, 'frio'::text),
+        ('Lead 8a Tres', '+5491100000003'::text, 'cerrado'::text)
+     ) as v(n, p, s);
+
+-- Sale para L3 — esto lo excluye del reciclado (NOT EXISTS sale).
+insert into public.sales (project_id, lead_id, payment_modality_id, total_amount)
+select 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+       (select id from public.leads
+         where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+           and name = 'Lead 8a Tres'),
+       (select id from public.payment_modalities
+         where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+           and name = 'Pago total 8a'),
+       1000;
+
+-- 76) recycle_evergreen_leads sobre un launch NO evergreen (target launch
+--     mismo) → 0 y nada se inserta. Confirma el guard silencioso.
+insert into _smoke_results(result) values (is(
+  (select public.recycle_evergreen_leads(
+    (select id from public.launches
+      where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        and name = 'Target 8a grande')
+  )),
+  0,
+  '8a: recycle sobre launch no-evergreen devuelve 0 (no-op)'
+));
+
+-- 77) Diagnóstico — confirma que el seed creó los 3 leads en el evergreen.
+--     Si esto falla, el problema está en el seed (no en el RPC).
+insert into _smoke_results(result) values (is(
+  (select count(*)::int from public.leads
+    where launch_id = (
+      select id from public.launches
+       where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+         and name = 'Evergreen 8a origen'
+    )),
+  3,
+  '8a [diag]: el evergreen tiene 3 leads tras el seed'
+));
+
+-- 78) Diagnóstico — confirma que 2 de esos leads NO tienen sale (L1 + L2).
+--     Si esto falla, alguna sale extra está pegada y el RPC ve menos
+--     candidatos.
+insert into _smoke_results(result) values (is(
+  (select count(*)::int from public.leads l
+    where l.launch_id = (
+      select id from public.launches
+       where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+         and name = 'Evergreen 8a origen'
+    )
+      and not exists (select 1 from public.sales s where s.lead_id = l.id)),
+  2,
+  '8a [diag]: 2 leads del evergreen están sin sale (candidatos a reciclar)'
+));
+
+-- 79) Llamada al recycle del evergreen real → devuelve 2 (L1 + L2 movidos).
+insert into _smoke_results(result) values (is(
+  (select public.recycle_evergreen_leads(
+    (select id from public.launches
+      where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        and name = 'Evergreen 8a origen')
+  )),
+  2,
+  '8a: recycle de evergreen transfiere exactamente 2 leads sin venta'
+));
+
+-- 80) El target quedó con 2 leads cuyo recycled_from apunta al evergreen.
+--     La traza vive en `recycled_from_launch_id` (source NO se pisa: L1/L2
+--     mantienen su source original 'manual').
+insert into _smoke_results(result) values (is(
+  (select count(*)::int from public.leads
+    where launch_id = (
+      select id from public.launches
+       where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+         and name = 'Target 8a grande'
+    )
+      and recycled_from_launch_id = (
+        select id from public.launches
+         where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+           and name = 'Evergreen 8a origen'
+      )),
+  2,
+  '8a: target recibió 2 leads con traza al evergreen origen'
+));
+
+-- 81) L3 (con sale) NO se transfirió — sigue colgando del evergreen.
+insert into _smoke_results(result) values (is(
+  (select launch_id from public.leads
+    where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+      and name = 'Lead 8a Tres'),
+  (select id from public.launches
+    where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+      and name = 'Evergreen 8a origen'),
+  '8a: lead con venta cerrada NO se mueve, queda en el evergreen'
+));
+
+-- 82) Idempotencia: segunda llamada filtra `recycled_from IS NULL` así que
+--     no re-mueve nada. Target sigue con 2 leads.
+select public.recycle_evergreen_leads(
+  (select id from public.launches
+    where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+      and name = 'Evergreen 8a origen')
+);
+insert into _smoke_results(result) values (is(
+  (select count(*)::int from public.leads
+    where launch_id = (
+      select id from public.launches
+       where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+         and name = 'Target 8a grande'
+    )
+      and recycled_from_launch_id = (
+        select id from public.launches
+         where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+           and name = 'Evergreen 8a origen'
+      )),
+  2,
+  '8a: segunda llamada no re-mueve leads (idempotente vía recycled_from filter)'
 ));
 
 insert into _smoke_results(result) select * from finish();

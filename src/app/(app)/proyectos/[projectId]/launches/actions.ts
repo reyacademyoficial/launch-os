@@ -69,6 +69,8 @@ interface LaunchWritePayload {
   ventas_mensuales: number;
   ventas_anuales: number;
   revenue: number;
+  is_evergreen: boolean;
+  recycle_target_launch_id: string | null;
 }
 
 // Defaults espejados con DEFAULT_DURATIONS / la migración 0011. Inline para
@@ -131,6 +133,14 @@ function parseLaunchFromForm(
       ventas_mensuales: int(formData, "ventas_mensuales"),
       ventas_anuales: int(formData, "ventas_anuales"),
       revenue: num(formData, "revenue"),
+      is_evergreen: str(formData, "is_evergreen") === "on",
+      // El check constraint en DB exige is_evergreen=true para que el target
+      // tenga sentido. Acá normalizamos: si el flag no está prendido, el
+      // target se ignora aunque venga seteado en el form.
+      recycle_target_launch_id:
+        str(formData, "is_evergreen") === "on"
+          ? (str(formData, "recycle_target_launch_id") || null)
+          : null,
     },
   };
 }
@@ -343,19 +353,145 @@ export async function duplicateLaunch(
  * data (see daily-actions). In Phase 3 the integrations sync engine will also
  * stop polling once a launch is closed. Launch-scope gate so operadores
  * assigned with can_edit can close their own launches.
+ *
+ * Fase 8a: el close es la única transición que dispara el reciclado de leads.
+ * Idempotencia por transición — el UPDATE matchea solo `closed_at IS NULL`,
+ * así que llamar a `closeLaunch` dos veces NO re-recicla. El RPC además es
+ * idempotente por su lado (ON CONFLICT + match name+recycled_from), pero la
+ * guarda de transición ahorra el trabajo del segundo intento.
  */
 export async function closeLaunch(projectId: string, launchId: string): Promise<void> {
   await requireCanEditLaunchesIn(projectId);
 
   const supabase = await createClient();
   const payload = { closed_at: new Date().toISOString() } as never;
-  await supabase
+  const { data: updated } = await supabase
     .from("launches")
     .update(payload)
     .eq("id", launchId)
-    .eq("project_id", projectId);
+    .eq("project_id", projectId)
+    .is("closed_at", null)
+    .select("id, name, is_evergreen, recycle_target_launch_id")
+    .maybeSingle();
+
+  // Si `updated` es null, no hubo transición — el launch ya estaba cerrado.
+  // Revalidamos por las dudas (estado UI) pero nada más.
+  if (updated) {
+    const row = updated as {
+      id: string;
+      name: string;
+      is_evergreen: boolean;
+      recycle_target_launch_id: string | null;
+    };
+
+    if (row.is_evergreen) {
+      await handleEvergreenRecycle(projectId, launchId, row);
+    }
+  }
 
   revalidatePath(`/proyectos/${projectId}/launches/${launchId}`);
+}
+
+/**
+ * Llamado desde `closeLaunch` cuando el evergreen acaba de transicionar a
+ * cerrado. Si no hay target configurado, emite una notif `warning` al equipo
+ * y termina. Si lo hay, llama al RPC de reciclado y, si movió ≥1 lead, emite
+ * una notif `info` al equipo con el conteo y el nombre del lanzamiento
+ * destino. Las notifs siguen el patrón "Proyecto · Launch\n…" de 0027 y van
+ * por `create_notification` (SECURITY DEFINER) que absorbe duplicados.
+ */
+async function handleEvergreenRecycle(
+  projectId: string,
+  launchId: string,
+  evergreen: { name: string; recycle_target_launch_id: string | null },
+): Promise<void> {
+  const supabase = await createClient();
+
+  // Lookup en paralelo: nombre del proyecto + nombre del target (si hay).
+  const [projectRes, targetRes] = await Promise.all([
+    supabase.from("projects").select("name").eq("id", projectId).maybeSingle(),
+    evergreen.recycle_target_launch_id
+      ? supabase
+          .from("launches")
+          .select("name")
+          .eq("id", evergreen.recycle_target_launch_id)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
+  const projectName =
+    (projectRes.data as { name: string } | null)?.name ?? "Proyecto";
+
+  // Caller transparente: cast laxo para el RPC nuevo, no está en el
+  // Database type generado (mismo workaround que sync.ts).
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const loose = supabase as unknown as {
+    rpc: (name: string, args?: Record<string, unknown>) => any;
+  };
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+
+  // Caso A: evergreen sin target. Aviso al equipo para que lo configure y
+  // pueda re-cerrarlo (reabrir → setear target → cerrar de nuevo).
+  if (!evergreen.recycle_target_launch_id) {
+    try {
+      await loose.rpc("create_notification", {
+        p_project_id: projectId,
+        p_type: "evergreen_no_target",
+        p_title: "Evergreen cerrado sin destino",
+        p_severity: "warning",
+        p_body: `${projectName} · ${evergreen.name}\nLos leads sin venta NO se reciclaron porque el evergreen no tenía lanzamiento destino configurado.`,
+        p_target_role: "team",
+        p_target_user_id: null,
+        p_launch_id: launchId,
+        p_dedup_key: `evergreen_no_target:${launchId}`,
+        p_metadata: { evergreen_name: evergreen.name, project_name: projectName },
+      });
+    } catch {
+      // Swallow — la notif es nice-to-have, el close ya quedó persistido.
+    }
+    return;
+  }
+
+  // Caso B: target seteado. Reciclamos vía RPC SECURITY DEFINER. El RPC es
+  // idempotente; devuelve cantidad procesada (insertados + matcheados).
+  let recycledCount = 0;
+  try {
+    const { data } = await loose.rpc("recycle_evergreen_leads", {
+      p_launch_id: launchId,
+    });
+    if (typeof data === "number") recycledCount = data;
+  } catch {
+    // Si el RPC falla, no rompemos el close — pero tampoco emitimos la notif
+    // "se transfirieron N" porque sería mentir. Quedan rastro en logs server.
+    return;
+  }
+
+  if (recycledCount <= 0) return;
+
+  const targetName =
+    (targetRes.data as { name: string } | null)?.name ?? "lanzamiento destino";
+
+  try {
+    await loose.rpc("create_notification", {
+      p_project_id: projectId,
+      p_type: "evergreen_recycled",
+      p_title: "Leads transferidos desde un evergreen",
+      p_severity: "info",
+      p_body: `${projectName} · ${evergreen.name}\nSe transfirieron ${recycledCount} leads al launch ${targetName}.`,
+      p_target_role: "team",
+      p_target_user_id: null,
+      p_launch_id: launchId,
+      p_dedup_key: `evergreen_recycled:${launchId}`,
+      p_metadata: {
+        evergreen_name: evergreen.name,
+        target_launch_id: evergreen.recycle_target_launch_id,
+        target_launch_name: targetName,
+        count: recycledCount,
+        project_name: projectName,
+      },
+    });
+  } catch {
+    // Swallow.
+  }
 }
 
 /**

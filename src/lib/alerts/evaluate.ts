@@ -25,8 +25,8 @@ import { ALERT_METRIC_LABELS } from "./types";
  *     MISMA lógica que `calculateLaunchKPIs` (lib/kpis.ts). Eso significa
  *     que respeta el fallback documentado del KPI grid: si hay sync
  *     (`adsAggregate.daysCovered > 0`) usa los datos sincronizados; si no,
- *     fallback a `launches.meta_investment/leads + google_*/leads +
- *     tiktok_*/leads` (los campos manuales del form del launch). El usuario
+ *     fallback a las columnas manuales del launch (`meta_investment`,
+ *     `meta_leads`, idem google y tiktok). El usuario
  *     ve un solo número de CPL en pantalla — la alerta usa ese mismo.
  *
  *     Walk-back 2026-06-16: antes el evaluator leía SOLO `launch_daily_ads`.

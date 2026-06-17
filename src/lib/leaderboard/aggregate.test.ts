@@ -43,6 +43,7 @@ function lead(
     source: "manual",
     status: "frio",
     notes: null,
+    recycled_from_launch_id: null,
     created_at: TS,
     updated_at: TS,
     ...overrides,

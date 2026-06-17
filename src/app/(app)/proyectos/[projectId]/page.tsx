@@ -179,6 +179,7 @@ export default async function OverviewPage({
               submitLabel="Crear lanzamiento"
               action={createAction}
               copyableLaunches={copyableLaunches}
+              recycleTargetOptions={copyableLaunches}
             />
           )}
         </header>

@@ -7,6 +7,7 @@ import { LaunchTabs } from "@/components/dashboard/launches/launch-tabs";
 import { StatusBadge } from "@/components/dashboard/launches/status-badge";
 import { fmtDate, fmtLaunchWindow } from "@/lib/format";
 import { getLaunch } from "@/lib/launches/get";
+import { listLaunchesForProject } from "@/lib/launches/list";
 import { userCanEditLaunchesIn, userCanEditProject } from "@/lib/supabase/auth";
 
 import {
@@ -35,11 +36,13 @@ export default async function LaunchLayout({
 }) {
   const { projectId, launchId } = await params;
 
-  const [launch, canEditLaunchValue, canEditProjectValue] = await Promise.all([
-    getLaunch(launchId),
-    userCanEditLaunchesIn(projectId),
-    userCanEditProject(projectId),
-  ]);
+  const [launch, canEditLaunchValue, canEditProjectValue, allLaunches] =
+    await Promise.all([
+      getLaunch(launchId),
+      userCanEditLaunchesIn(projectId),
+      userCanEditProject(projectId),
+      listLaunchesForProject(projectId),
+    ]);
 
   if (!launch || launch.project_id !== projectId) notFound();
 
@@ -50,6 +53,24 @@ export default async function LaunchLayout({
   const duplicateAction = duplicateLaunch.bind(null, projectId, launchId);
   const isClosed = launch.closed_at !== null;
   const showAnyAction = canEditLaunchValue || canEditProjectValue;
+
+  // Cast laxo: las columnas de 0028 (`is_evergreen`,
+  // `recycle_target_launch_id`) todavía no están en el Database type
+  // generado. Patrón consistente con sync.ts.
+  const launchEvergreen = launch as typeof launch & {
+    is_evergreen?: boolean | null;
+    recycle_target_launch_id?: string | null;
+  };
+  const isEvergreen = launchEvergreen.is_evergreen ?? false;
+  const targetLaunchId = launchEvergreen.recycle_target_launch_id ?? null;
+  const targetLaunch = targetLaunchId
+    ? allLaunches.find((l) => l.id === targetLaunchId) ?? null
+    : null;
+  // Opciones del select del target: todos los launches del proyecto menos
+  // el actual (no se puede reciclar a sí mismo — además del check del DB).
+  const recycleTargetOptions = allLaunches
+    .filter((l) => l.id !== launchId)
+    .map((l) => ({ id: l.id, name: l.name }));
 
   const tabsBase = `/proyectos/${projectId}/launches/${launchId}`;
 
@@ -80,6 +101,23 @@ export default async function LaunchLayout({
                 <span className="rounded bg-fg-subtle/15 px-2 py-0.5 text-xs font-medium text-fg-muted">
                   Cerrado {fmtDate(launch.closed_at)}
                 </span>
+              </>
+            )}
+            {isEvergreen && (
+              <>
+                <span className="text-fg-subtle">·</span>
+                {targetLaunch ? (
+                  <span className="rounded bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
+                    Evergreen → {targetLaunch.name}
+                  </span>
+                ) : (
+                  <span
+                    title="Configurá el lanzamiento destino para que el reciclado funcione al cerrar."
+                    className="rounded bg-warning/15 px-2 py-0.5 text-xs font-medium text-warning"
+                  >
+                    Evergreen sin destino
+                  </span>
+                )}
               </>
             )}
           </div>
@@ -123,6 +161,7 @@ export default async function LaunchLayout({
                 submitLabel="Guardar cambios"
                 action={updateAction}
                 initial={launch}
+                recycleTargetOptions={recycleTargetOptions}
               />
             )}
             {canEditProjectValue && (

@@ -33,6 +33,7 @@ export function LaunchForm({
   submitLabel,
   onSuccess,
   copyableLaunches,
+  recycleTargetOptions,
 }: {
   readonly action: FormAction;
   readonly initial?: LaunchRow;
@@ -51,6 +52,12 @@ export function LaunchForm({
    * aparece la opción.
    */
   readonly copyableLaunches?: ReadonlyArray<{ id: string; name: string }>;
+  /**
+   * Lanzamientos del mismo proyecto válidos como destino de reciclado para
+   * un evergreen — todos menos el actual. Se renderizan en el select de
+   * `recycle_target_launch_id` cuando el checkbox de evergreen está activo.
+   */
+  readonly recycleTargetOptions?: ReadonlyArray<{ id: string; name: string }>;
 }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(action, null);
 
@@ -73,6 +80,22 @@ export function LaunchForm({
   );
   const [durCierre, setDurCierre] = useState<number>(
     dur(initial?.dur_cierre, DEFAULT_DURATIONS.durCierre),
+  );
+
+  // Estado controlado para evergreen: el select del target se renderiza solo
+  // cuando el flag está prendido. El check del DB exige `is_evergreen=true`
+  // cuando `recycle_target_launch_id` está seteado, así que en la action
+  // forzamos `target=null` si el flag está apagado — esto es coherente.
+  // Cast laxo a `LaunchEvergreenInitial` mientras el regen de types no
+  // incluye `is_evergreen` / `recycle_target_launch_id` (0028 las agrega).
+  const initialEvergreen = initial as
+    | (LaunchRow & {
+        is_evergreen?: boolean | null;
+        recycle_target_launch_id?: string | null;
+      })
+    | undefined;
+  const [isEvergreen, setIsEvergreen] = useState<boolean>(
+    initialEvergreen?.is_evergreen ?? false,
   );
 
   const calendar = tryComputeLaunchCalendar({
@@ -222,6 +245,47 @@ export function LaunchForm({
           <p className="mt-4 text-xs text-fg-subtle">
             Elegí la fecha de lanzamiento para ver el calendario calculado.
           </p>
+        )}
+      </Section>
+
+      <Section title="Evergreen">
+        <p className="text-xs text-fg-subtle">
+          Un evergreen es un lanzamiento normal que corre constantemente. Al
+          cerrarlo, los leads que <b>no</b> compraron se transfieren al
+          lanzamiento destino para que sigan en pipeline.
+        </p>
+        <label className="mt-3 inline-flex items-center gap-2 text-sm text-fg">
+          <input
+            type="checkbox"
+            name="is_evergreen"
+            checked={isEvergreen}
+            onChange={(e) => setIsEvergreen(e.target.checked)}
+            className="accent-accent"
+          />
+          Este lanzamiento es evergreen
+        </label>
+        {isEvergreen && (
+          <Field className="mt-3 max-w-md">
+            <Label htmlFor="recycle_target_launch_id">
+              Lanzamiento destino al cerrar
+            </Label>
+            <Select
+              id="recycle_target_launch_id"
+              name="recycle_target_launch_id"
+              defaultValue={initialEvergreen?.recycle_target_launch_id ?? ""}
+            >
+              <option value="">— Sin destino —</option>
+              {(recycleTargetOptions ?? []).map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </Select>
+            <p className="mt-1 text-xs text-fg-subtle">
+              Sin destino, al cerrar no se reciclan leads y queda un aviso al
+              equipo en la campanita.
+            </p>
+          </Field>
         )}
       </Section>
 

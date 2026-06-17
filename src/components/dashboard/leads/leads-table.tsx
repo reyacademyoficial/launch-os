@@ -257,6 +257,9 @@ export function LeadsTable({
                 const launch = lead.launch_id
                   ? launchById.get(lead.launch_id)
                   : null;
+                const recycledFrom = lead.recycled_from_launch_id
+                  ? launchById.get(lead.recycled_from_launch_id)
+                  : null;
                 return (
                   <tr
                     key={lead.id}
@@ -296,7 +299,15 @@ export function LeadsTable({
                       {setter?.name ?? "Sin asignar"}
                     </td>
                     <td className="px-3 py-3 text-fg-muted">
-                      {launch?.name ?? "—"}
+                      <div>{launch?.name ?? "—"}</div>
+                      {recycledFrom && (
+                        <div
+                          className="text-[10px] text-fg-subtle"
+                          title="Reciclado desde un evergreen"
+                        >
+                          ↩ desde {recycledFrom.name}
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-3 text-fg-muted">
                       {new Date(lead.created_at).toLocaleDateString("es-AR")}

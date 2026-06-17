@@ -23,6 +23,7 @@ export const SOURCES: ReadonlyArray<LeadSource> = [
   "import",
   "meta",
   "ghl",
+  "whatsapp",
   "otro",
 ];
 

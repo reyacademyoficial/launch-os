@@ -42,8 +42,20 @@ export function LeadForm({
     initial?.team_member_id !== undefined &&
     !teamMembers.some((t) => t.id === initial.team_member_id);
 
+  // Traza de evergreen: si el lead llegó por reciclado, mostramos de qué
+  // launch vino (read-only — la traza no es editable).
+  const recycledFromName = initial?.recycled_from_launch_id
+    ? launches.find((l) => l.id === initial.recycled_from_launch_id)?.name ?? null
+    : null;
+
   return (
     <form action={formAction} className="space-y-4">
+      {recycledFromName && (
+        <div className="rounded-md border border-accent/30 bg-accent/5 px-3 py-2 text-xs text-fg-muted">
+          ↩ Reciclado desde el evergreen <b className="text-fg">{recycledFromName}</b>
+        </div>
+      )}
+
       <div>
         <Label htmlFor="lead-name">Nombre *</Label>
         <Input
