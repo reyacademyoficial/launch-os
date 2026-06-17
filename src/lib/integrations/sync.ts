@@ -748,6 +748,8 @@ async function runSendflowBranch(args: {
     entered: number;
     removed: number;
     clicks: number;
+    /** Keys crudas de add.dates — para auditar el formato vía SQL. */
+    add_date_keys: Record<string, number>;
   }> = [];
   for (const r of successes) {
     entered += r.entered;
@@ -758,6 +760,7 @@ async function runSendflowBranch(args: {
       entered: r.entered,
       removed: r.removed,
       clicks: r.clicks,
+      add_date_keys: r.rawAddDateKeys,
     });
   }
 

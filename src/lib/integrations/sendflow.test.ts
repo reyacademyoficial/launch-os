@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import analyticsHappy from "./__fixtures__/sendflow/analytics_happy.json";
 import releasesHappy from "./__fixtures__/sendflow/releases_happy.json";
 
 import {
+  fetchSendflowAnalytics,
   parseAnalyticsBody,
   parseReleasesBody,
   parseSendflowDateKey,
@@ -229,5 +230,86 @@ describe("parseReleasesBody", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.detail.cause).toBe("schema_mismatch");
+  });
+});
+
+describe("fetchSendflowAnalytics — clasificación 401 vs 403 (bug 2026-06-17)", () => {
+  // 401 → token_invalid → el orchestrator aborta TODO el sync (key compartida).
+  // 403 → error/release_forbidden → la key es válida pero ESE release puntual
+  //       no es accesible → no aborta otras releases.
+  //
+  // El bug original mezclaba 401+403 como token_invalid: un release sin
+  // permiso kickeaba todo el sync con mensaje "API Key rechazada" falso.
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const args = {
+    token: "fake-key",
+    releaseId: "rel_xyz",
+    windowStart: "2026-05-01",
+    windowEnd: "2026-05-31",
+  };
+
+  it("HTTP 401 → token_invalid", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }),
+      ),
+    );
+    const result = await fetchSendflowAnalytics(args);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.kind).toBe("token_invalid");
+    expect(result.detail.cause).toBe("auth_failed");
+  });
+
+  it("HTTP 403 → error con cause=release_forbidden (NO token_invalid)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: "forbidden" }), { status: 403 }),
+      ),
+    );
+    const result = await fetchSendflowAnalytics(args);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.kind).toBe("error");
+    expect(result.detail.cause).toBe("release_forbidden");
+    expect(result.detail.release_id).toBe("rel_xyz");
+  });
+
+  it("HTTP 404 → error con cause=release_not_found", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: "not found" }), { status: 404 }),
+      ),
+    );
+    const result = await fetchSendflowAnalytics(args);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.kind).toBe("error");
+    expect(result.detail.cause).toBe("release_not_found");
+  });
+
+  it("HTTP 200 happy → suma según ventana", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify(analyticsHappy), { status: 200 }),
+      ),
+    );
+    const result = await fetchSendflowAnalytics({
+      ...args,
+      windowStart: "2025-07-10",
+      windowEnd: "2025-07-13",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.entered).toBe(125);
+    expect(result.removed).toBe(20);
   });
 });

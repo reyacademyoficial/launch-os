@@ -136,12 +136,12 @@ export async function fetchSendflowReleases(
     };
   }
 
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
     return {
       ok: false,
       kind: "token_invalid",
-      message: "API Key de SendFlow rechazada (401/403)",
-      detail: { http_status: response.status, cause: "auth_failed" },
+      message: "API Key de SendFlow rechazada (401)",
+      detail: { http_status: 401, cause: "auth_failed" },
     };
   }
 
@@ -254,6 +254,12 @@ export interface SendflowAnalyticsSuccess {
   clicks: number;
   /** Días que cayeron dentro de la ventana, ya parseados — para `raw` y debug. */
   windowedDays: SendflowAnalyticsWindowedDay[];
+  /**
+   * Keys crudas de `add.dates` tal cual las devolvió SendFlow (sin parsear,
+   * sin filtrar por ventana). Se guardan en `raw` para auditar el formato
+   * y validar el probe DDMMYYYY vs MMDDYYYY contra un día conocido.
+   */
+  rawAddDateKeys: Record<string, number>;
 }
 
 export type SendflowAnalyticsResult =
@@ -301,14 +307,29 @@ export async function fetchSendflowAnalytics(
     };
   }
 
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
     return {
       ok: false,
       kind: "token_invalid",
-      message: "API Key de SendFlow rechazada (401/403)",
+      message: "API Key de SendFlow rechazada (401)",
       detail: {
-        http_status: response.status,
+        http_status: 401,
         cause: "auth_failed",
+        release_id: args.releaseId,
+      },
+    };
+  }
+  if (response.status === 403) {
+    // 403 = la key es válida pero ESE release puntual no es accesible
+    // (no pertenece a la cuenta del token, fue borrado, cambió de owner).
+    // NO aborta el sync — otras releases del lanzamiento pueden seguir.
+    return {
+      ok: false,
+      kind: "error",
+      message: `SendFlow no autoriza el release ${args.releaseId} para esta API Key (403). Confirmá que el ID corresponde a una comunidad de esta cuenta.`,
+      detail: {
+        http_status: 403,
+        cause: "release_forbidden",
         release_id: args.releaseId,
       },
     };
@@ -484,6 +505,14 @@ export function parseAnalyticsBody(
     };
   }
 
+  // Snapshot crudo de add.dates: keys + valores tal cual SendFlow las devolvió.
+  // Sirve para auditar el formato real (DDMMYYYY vs MMDDYYYY) — comparando
+  // contra un día conocido del lanzamiento se cierra el probe sin curl.
+  const rawAddDateKeys: Record<string, number> = {};
+  for (const [key, value] of Object.entries(addDates)) {
+    rawAddDateKeys[key] = toInt(value);
+  }
+
   return {
     ok: true,
     releaseId: ctx.releaseId,
@@ -491,6 +520,7 @@ export function parseAnalyticsBody(
     removed,
     clicks,
     windowedDays,
+    rawAddDateKeys,
   };
 }
 
