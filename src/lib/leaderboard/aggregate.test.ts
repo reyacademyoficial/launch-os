@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 
 import type {
   CommissionRuleRow,
+  CommissionRuleTierRow,
   PaymentRow,
   SaleRow,
 } from "@/lib/commissions/types";
@@ -81,16 +82,47 @@ function payment(saleId: string, amount: number): PaymentRow {
   };
 }
 
-const RULE_10_PERCENT: CommissionRuleRow = {
-  id: "r-1",
-  project_id: "p-1",
-  payment_modality_id: "mod-1",
-  launch_id: null,
-  type: "percent",
-  value: 10,
-  created_at: TS,
-  updated_at: TS,
-};
+function tier(overrides: Partial<CommissionRuleTierRow> = {}): CommissionRuleTierRow {
+  return {
+    id: `tier-${Math.random()}`,
+    rule_id: "r-1",
+    min_count: 0,
+    max_count: null,
+    type: "percent",
+    value: 10,
+    created_at: TS,
+    updated_at: TS,
+    ...overrides,
+  };
+}
+
+function ruleSingleTier(overrides: {
+  id?: string;
+  launch_id?: string | null;
+  modality_ids?: string[];
+  type?: "percent" | "fixed";
+  value?: number;
+} = {}): CommissionRuleRow {
+  return {
+    id: overrides.id ?? "r-1",
+    project_id: "p-1",
+    launch_id: overrides.launch_id ?? null,
+    accrual_mode: "proportional",
+    threshold_type: null,
+    threshold_value: null,
+    modality_ids: overrides.modality_ids ?? ["mod-1"],
+    tiers: [
+      tier({
+        type: overrides.type ?? "percent",
+        value: overrides.value ?? 10,
+      }),
+    ],
+    created_at: TS,
+    updated_at: TS,
+  };
+}
+
+const RULE_10_PERCENT = ruleSingleTier();
 
 describe("aggregateLeaderboard — sin filtros", () => {
   it("cuenta leads, sales y comisión por miembro", () => {
@@ -120,7 +152,7 @@ describe("aggregateLeaderboard — sin filtros", () => {
     expect(rows[0]!.closed).toBe(1);
     expect(rows[0]!.conversionRate).toBeCloseTo(1 / 3);
     expect(rows[0]!.revenueCollected).toBe(500);
-    expect(rows[0]!.commissionAccrued).toBe(50); // 500 * 10%
+    expect(rows[0]!.commissionAccrued).toBe(50);
   });
 
   it("miembro sin leads ni sales devuelve fila con ceros", () => {
@@ -250,9 +282,6 @@ describe("aggregateLeaderboard — filtro fechas", () => {
         closed_at: "2026-06-01T00:00:00Z",
       }),
     ];
-    // Una sola venta por lead — ok porque acá no testeamos el UNIQUE, solo
-    // el agregador (no toca la DB). En producción la UNIQUE de leads lo
-    // impide.
     const payments = [payment("s-2025", 500), payment("s-2026", 1500)];
 
     const rows = aggregateLeaderboard({
@@ -283,7 +312,7 @@ describe("aggregateLeaderboard — sin regla aplicable", () => {
         }),
       ],
       payments: [payment("s-1", 1000)],
-      rules: [], // sin reglas
+      rules: [],
       filters: {},
     });
     expect(rows[0]!.revenueCollected).toBe(1000);
@@ -323,7 +352,7 @@ describe("aggregateLeaderboard — payouts", () => {
           total_amount: 1000,
         }),
       ],
-      payments: [payment("s-1", 1000)], // 1000 cobrado × 10% = 100 comisión
+      payments: [payment("s-1", 1000)],
       rules: [RULE_10_PERCENT],
       payouts: [
         payout("tm-1", "launch-A", 30),
@@ -351,13 +380,13 @@ describe("aggregateLeaderboard — payouts", () => {
       payments: [payment("s-A", 1000), payment("s-B", 1000)],
       rules: [RULE_10_PERCENT],
       payouts: [
-        payout("tm-1", "launch-A", 70), // dentro del filtro
-        payout("tm-1", "launch-B", 40), // fuera del filtro
+        payout("tm-1", "launch-A", 70),
+        payout("tm-1", "launch-B", 40),
       ],
       filters: { launchId: "launch-A" },
     });
-    expect(rows[0]!.commissionAccrued).toBe(100); // solo launch-A
-    expect(rows[0]!.paidOut).toBe(70); // solo payout del launch-A
+    expect(rows[0]!.commissionAccrued).toBe(100);
+    expect(rows[0]!.paidOut).toBe(70);
     expect(rows[0]!.pending).toBe(30);
   });
 
@@ -373,7 +402,7 @@ describe("aggregateLeaderboard — payouts", () => {
           total_amount: 1000,
         }),
       ],
-      payments: [payment("s-1", 500)], // 500 × 10% = 50 comisión
+      payments: [payment("s-1", 500)],
       rules: [RULE_10_PERCENT],
       payouts: [payout("tm-1", "launch-A", 200)],
       filters: {},
@@ -399,8 +428,8 @@ describe("aggregateLeaderboard — payouts", () => {
       payments: [payment("s-1", 1000)],
       rules: [RULE_10_PERCENT],
       payouts: [
-        payout("tm-1", "launch-A", 50, "2026-07-15"), // dentro
-        payout("tm-1", "launch-A", 999, "2026-06-15"), // fuera
+        payout("tm-1", "launch-A", 50, "2026-07-15"),
+        payout("tm-1", "launch-A", 999, "2026-06-15"),
       ],
       filters: { dateFrom: "2026-07-01", dateTo: "2026-07-31" },
     });
@@ -411,18 +440,8 @@ describe("aggregateLeaderboard — payouts", () => {
 describe("aggregateLeaderboard — launch override", () => {
   it("usa la regla override del launch del lead, no la default", () => {
     const closer = tm("tm-1", "Closer");
-    const ruleDefault: CommissionRuleRow = {
-      ...RULE_10_PERCENT,
-      id: "r-default",
-      launch_id: null,
-      value: 10,
-    };
-    const ruleOverride: CommissionRuleRow = {
-      ...RULE_10_PERCENT,
-      id: "r-override",
-      launch_id: "launch-X",
-      value: 25,
-    };
+    const ruleDefault = ruleSingleTier({ id: "r-default", launch_id: null, value: 10 });
+    const ruleOverride = ruleSingleTier({ id: "r-override", launch_id: "launch-X", value: 25 });
     const rows = aggregateLeaderboard({
       teamMembers: [closer],
       leads: [
@@ -439,6 +458,181 @@ describe("aggregateLeaderboard — launch override", () => {
       rules: [ruleDefault, ruleOverride],
       filters: {},
     });
-    expect(rows[0]!.commissionAccrued).toBe(250); // 25% del cobrado
+    expect(rows[0]!.commissionAccrued).toBe(250);
+  });
+});
+
+describe("aggregateLeaderboard — tiers marginales por launch", () => {
+  it("rankea por closed_at asc dentro de (member, launch) y aplica tier marginal", () => {
+    const closer = tm("tm-1", "Closer");
+    // Regla escalonada: ventas 1-2 al 10%, 3+ al 20%.
+    const ruleTiered: CommissionRuleRow = {
+      id: "r-tiered",
+      project_id: "p-1",
+      launch_id: null,
+      accrual_mode: "proportional",
+      threshold_type: null,
+      threshold_value: null,
+      modality_ids: ["mod-1"],
+      tiers: [
+        tier({ id: "t-low", min_count: 0, max_count: 1, type: "percent", value: 10 }),
+        tier({ id: "t-high", min_count: 2, max_count: null, type: "percent", value: 20 }),
+      ],
+      created_at: TS,
+      updated_at: TS,
+    };
+
+    const leads = [
+      lead("l-A", { team_member_id: "tm-1", launch_id: "launch-A" }),
+      lead("l-B", { team_member_id: "tm-1", launch_id: "launch-A" }),
+      lead("l-C", { team_member_id: "tm-1", launch_id: "launch-A" }),
+    ];
+    const sales = [
+      sale("s-1st", {
+        lead_id: "l-A",
+        team_member_id: "tm-1",
+        total_amount: 1000,
+        closed_at: "2026-06-01T00:00:00Z",
+      }),
+      sale("s-2nd", {
+        lead_id: "l-B",
+        team_member_id: "tm-1",
+        total_amount: 1000,
+        closed_at: "2026-06-02T00:00:00Z",
+      }),
+      sale("s-3rd", {
+        lead_id: "l-C",
+        team_member_id: "tm-1",
+        total_amount: 1000,
+        closed_at: "2026-06-03T00:00:00Z",
+      }),
+    ];
+    const payments = [
+      payment("s-1st", 1000),
+      payment("s-2nd", 1000),
+      payment("s-3rd", 1000),
+    ];
+
+    const rows = aggregateLeaderboard({
+      teamMembers: [closer],
+      leads,
+      sales,
+      payments,
+      rules: [ruleTiered],
+      filters: {},
+    });
+    // 1ra venta: 10% × 1000 = 100
+    // 2da venta: 10% × 1000 = 100
+    // 3ra venta: 20% × 1000 = 200
+    // total = 400
+    expect(rows[0]!.commissionAccrued).toBe(400);
+  });
+
+  it("el rank usa el histórico aun cuando dateFrom esconde ventas previas", () => {
+    const closer = tm("tm-1", "Closer");
+    const ruleTiered: CommissionRuleRow = {
+      id: "r-tiered",
+      project_id: "p-1",
+      launch_id: null,
+      accrual_mode: "proportional",
+      threshold_type: null,
+      threshold_value: null,
+      modality_ids: ["mod-1"],
+      tiers: [
+        tier({ min_count: 0, max_count: 1, type: "percent", value: 10 }),
+        tier({ min_count: 2, max_count: null, type: "percent", value: 20 }),
+      ],
+      created_at: TS,
+      updated_at: TS,
+    };
+    const leads = [
+      lead("l-A", { team_member_id: "tm-1", launch_id: "launch-A" }),
+      lead("l-B", { team_member_id: "tm-1", launch_id: "launch-A" }),
+      lead("l-C", { team_member_id: "tm-1", launch_id: "launch-A" }),
+    ];
+    // 2 ventas en mayo (ranks 0, 1) — escondidas por el filtro.
+    // 1 venta en julio (rank 2) — visible y debería usar tier alto.
+    const sales = [
+      sale("s-may1", {
+        lead_id: "l-A",
+        team_member_id: "tm-1",
+        total_amount: 1000,
+        closed_at: "2026-05-01T00:00:00Z",
+      }),
+      sale("s-may2", {
+        lead_id: "l-B",
+        team_member_id: "tm-1",
+        total_amount: 1000,
+        closed_at: "2026-05-15T00:00:00Z",
+      }),
+      sale("s-jul", {
+        lead_id: "l-C",
+        team_member_id: "tm-1",
+        total_amount: 1000,
+        closed_at: "2026-07-01T00:00:00Z",
+      }),
+    ];
+    const payments = [
+      payment("s-may1", 1000),
+      payment("s-may2", 1000),
+      payment("s-jul", 1000),
+    ];
+    const rows = aggregateLeaderboard({
+      teamMembers: [closer],
+      leads,
+      sales,
+      payments,
+      rules: [ruleTiered],
+      filters: { dateFrom: "2026-07-01", dateTo: "2026-07-31" },
+    });
+    // Solo s-jul entra al resumen, pero su rank es 2 → tier alto (20%).
+    expect(rows[0]!.commissionAccrued).toBe(200);
+  });
+});
+
+describe("aggregateLeaderboard — threshold_full", () => {
+  it("no devenga hasta cuota 3, después libera 4% del total", () => {
+    const closer = tm("tm-1", "Closer");
+    const rule: CommissionRuleRow = {
+      id: "r-th",
+      project_id: "p-1",
+      launch_id: null,
+      accrual_mode: "threshold_full",
+      threshold_type: "payment_count",
+      threshold_value: 3,
+      modality_ids: ["mod-1"],
+      tiers: [tier({ type: "percent", value: 4 })],
+      created_at: TS,
+      updated_at: TS,
+    };
+    const leads = [lead("l-1", { team_member_id: "tm-1" })];
+    const sales = [
+      sale("s-1", {
+        lead_id: "l-1",
+        team_member_id: "tm-1",
+        total_amount: 1800,
+      }),
+    ];
+    // Solo 2 cobros — no llega al umbral.
+    const rowsBefore = aggregateLeaderboard({
+      teamMembers: [closer],
+      leads,
+      sales,
+      payments: [payment("s-1", 300), payment("s-1", 300)],
+      rules: [rule],
+      filters: {},
+    });
+    expect(rowsBefore[0]!.commissionAccrued).toBe(0);
+
+    // 3 cobros — cruza el umbral, libera 4% × 1800 = 72.
+    const rowsAfter = aggregateLeaderboard({
+      teamMembers: [closer],
+      leads,
+      sales,
+      payments: [payment("s-1", 300), payment("s-1", 300), payment("s-1", 300)],
+      rules: [rule],
+      filters: {},
+    });
+    expect(rowsAfter[0]!.commissionAccrued).toBe(72);
   });
 });

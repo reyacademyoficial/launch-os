@@ -1,4 +1,5 @@
 import { computeCommission, findApplicableRule } from "@/lib/commissions/calc";
+import { buildSaleRanksFromLaunchMap } from "@/lib/commissions/ranking";
 import type {
   CommissionRuleRow,
   PaymentRow,
@@ -52,10 +53,14 @@ export interface LeaderboardRow {
  * que vienen de la DB. La idea es que el page haga el fetch y delegue acá
  * para no atar lógica de agregación a la capa de IO.
  *
- * Comisión: usa `findApplicableRule` + `computeCommission` (de
- * lib/commissions/calc). Una sale sin regla suma 0 a la comisión. Idem
- * `team_member_id == null` (venta sin closer asignado) → no se imputa a
- * nadie y queda excluida del leaderboard por miembro.
+ * RANK PARA TIERS — importante:
+ *   El tier marginal se elige por la posición 0-based de la venta dentro
+ *   del bucket (team_member, launch_of_lead), ordenado por `closed_at` asc
+ *   (empate: `created_at` asc). El ranking se calcula sobre TODAS las
+ *   ventas del proyecto, NO sobre las filtradas — el filtro de fecha
+ *   esconde ventas del resumen, pero la posición histórica de cada venta
+ *   no cambia. Lo mismo si se filtra por launch: el bucket sigue siendo
+ *   (member, launch), y el rank refleja el orden de cierre en ese launch.
  */
 export function aggregateLeaderboard(input: {
   teamMembers: ReadonlyArray<TeamMemberRow>;
@@ -105,7 +110,12 @@ export function aggregateLeaderboard(input: {
     else paymentsBySale.set(p.sale_id, [p]);
   }
 
-  // 4) Filtrar payouts. Mismo criterio que sales: respeta launchId y rango de
+  // 4) Rank por venta dentro de (member, launch). Se calcula sobre TODAS las
+  //    ventas (no las filtradas) — un filtro de UI no debe correr el tier
+  //    histórico. Ventas sin team_member se ignoran (igual no se imputan).
+  const rankBySaleId = buildSaleRanksFromLaunchMap(sales, launchByLead);
+
+  // 5) Filtrar payouts. Mismo criterio que sales: respeta launchId y rango de
   //    fechas, pero acá la fecha es `paid_at` (date) — la pregunta es "qué le
   //    pagué en este período", paralela a "qué se cerró en este período".
   const payoutsFiltered = payouts.filter((p) => {
@@ -115,7 +125,7 @@ export function aggregateLeaderboard(input: {
     return true;
   });
 
-  // 5) Por team_member: contar leads, contar sales, sumar revenue + comisión.
+  // 6) Por team_member: contar leads, contar sales, sumar revenue + comisión.
   const rows: LeaderboardRow[] = teamMembers.map((tm) => {
     const memberLeads = leadsFiltered.filter((l) => l.team_member_id === tm.id);
     const memberSales = salesFiltered.filter((s) => s.team_member_id === tm.id);
@@ -126,7 +136,8 @@ export function aggregateLeaderboard(input: {
       const pays = paymentsBySale.get(sale.id) ?? [];
       const launchOfLead = launchByLead.get(sale.lead_id) ?? null;
       const rule = findApplicableRule(rules, sale.payment_modality_id, launchOfLead);
-      const breakdown = computeCommission(sale, pays, rule);
+      const saleRank = rankBySaleId.get(sale.id) ?? 0;
+      const breakdown = computeCommission(sale, pays, rule, saleRank);
       revenueCollected += breakdown.collected;
       commissionAccrued += breakdown.commission;
     }
@@ -152,3 +163,4 @@ export function aggregateLeaderboard(input: {
 
   return rows;
 }
+

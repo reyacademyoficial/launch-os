@@ -367,17 +367,22 @@ function groupByMember(data: CommissionsLaunchInput): GroupedRow[] {
   const memberById = new Map(data.teamMembers.map((t) => [t.id, t]));
   const groups = new Map<string, GroupedRow>();
 
+  // Ranking marginal: todas las ventas del input pertenecen al mismo launch
+  // (filtrado en listSalesByLaunch), así que el bucket es solo team_member.
+  // Orden: closed_at asc, empate created_at asc.
+  const rankBySaleId = computeSaleRanks(data.sales.map((s) => s.sale));
+
   for (const { sale, payments } of data.sales) {
-    // Todas las ventas del input pertenecen al mismo launch (filtrado en
-    // `listSalesByLaunch`). Pasamos el launchId del input para que la
-    // override per-launch se considere antes que la default del proyecto.
+    // Pasamos el launchId del input para que la override per-launch se
+    // considere antes que la default del proyecto.
     const rule = findApplicableRule(
       data.rules,
       sale.payment_modality_id,
       data.launchId,
     );
 
-    const computed = computeCommission(sale, payments, rule);
+    const saleRank = rankBySaleId.get(sale.id) ?? 0;
+    const computed = computeCommission(sale, payments, rule, saleRank);
 
     const memberKey = sale.team_member_id ?? "__none__";
     let group = groups.get(memberKey);
@@ -420,6 +425,26 @@ function groupByMember(data: CommissionsLaunchInput): GroupedRow[] {
     return a.member!.name.localeCompare(b.member!.name);
   });
   return result;
+}
+
+function computeSaleRanks(sales: ReadonlyArray<SaleRow>): Map<string, number> {
+  const byMember = new Map<string, SaleRow[]>();
+  for (const s of sales) {
+    if (!s.team_member_id) continue;
+    const arr = byMember.get(s.team_member_id);
+    if (arr) arr.push(s);
+    else byMember.set(s.team_member_id, [s]);
+  }
+  const ranks = new Map<string, number>();
+  for (const arr of byMember.values()) {
+    arr.sort((a, b) => {
+      const cmp = a.closed_at.localeCompare(b.closed_at);
+      if (cmp !== 0) return cmp;
+      return a.created_at.localeCompare(b.created_at);
+    });
+    arr.forEach((s, i) => ranks.set(s.id, i));
+  }
+  return ranks;
 }
 
 function computeGrandTotals(groups: ReadonlyArray<GroupedRow>) {

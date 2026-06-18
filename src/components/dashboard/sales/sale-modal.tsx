@@ -44,6 +44,7 @@ export function SaleModal({
   triggerClassName,
   lead,
   sale,
+  saleRank,
   payments,
   modalities,
   rules,
@@ -56,6 +57,11 @@ export function SaleModal({
   readonly triggerClassName?: string;
   readonly lead: Pick<LeadRow, "id" | "name" | "launch_id" | "team_member_id">;
   readonly sale: SaleRow | null;
+  /**
+   * Posición 0-based de la venta dentro de (team_member, launch). Lo calcula
+   * el contenedor (kanban) con `buildSaleRanks`. Para venta nueva pasar 0.
+   */
+  readonly saleRank: number;
   readonly payments: ReadonlyArray<PaymentRow>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
   readonly rules: ReadonlyArray<CommissionRuleRow>;
@@ -110,6 +116,7 @@ export function SaleModal({
               {sale ? (
                 <SalePanel
                   sale={sale}
+                  saleRank={saleRank}
                   payments={payments}
                   modalities={modalities}
                   rules={rules}
@@ -252,6 +259,7 @@ function NewSaleForm({
 
 function SalePanel({
   sale,
+  saleRank,
   payments,
   modalities,
   rules,
@@ -260,6 +268,7 @@ function SalePanel({
   deletePaymentAction,
 }: {
   readonly sale: SaleRow;
+  readonly saleRank: number;
   readonly payments: ReadonlyArray<PaymentRow>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
   readonly rules: ReadonlyArray<CommissionRuleRow>;
@@ -269,7 +278,7 @@ function SalePanel({
 }) {
   const modality = modalities.find((m) => m.id === sale.payment_modality_id);
   const rule = findApplicableRule(rules, sale.payment_modality_id, launchId);
-  const breakdown = computeCommission(sale, payments, rule);
+  const breakdown = computeCommission(sale, payments, rule, saleRank);
 
   return (
     <div className="space-y-6">

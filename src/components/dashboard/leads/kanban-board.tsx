@@ -9,6 +9,7 @@ import type {
 } from "@/app/(app)/proyectos/[projectId]/leads/sale-actions";
 import { SaleModal } from "@/components/dashboard/sales/sale-modal";
 import { computeCommission, findApplicableRule } from "@/lib/commissions/calc";
+import { buildSaleRanks } from "@/lib/commissions/ranking";
 import type {
   CommissionRuleRow,
   PaymentModalityRow,
@@ -100,6 +101,11 @@ export function KanbanBoard({
 
   const memberById = new Map(teamMembers.map((m) => [m.id, m]));
 
+  // Rank por venta dentro de (member, launch). Se calcula sobre todas las
+  // ventas que ve el board para que el tier marginal de cada card sea
+  // consistente con el leaderboard.
+  const rankBySaleId = buildSaleRanks(Array.from(salesByLeadId.values()), leads);
+
   function handleDragStart(e: DragEvent<HTMLDivElement>, leadId: string) {
     e.dataTransfer.setData("text/plain", leadId);
     e.dataTransfer.effectAllowed = "move";
@@ -182,7 +188,12 @@ export function KanbanBoard({
                       )
                     : null;
                   const breakdown = sale
-                    ? computeCommission(sale, salePayments, rule)
+                    ? computeCommission(
+                        sale,
+                        salePayments,
+                        rule,
+                        rankBySaleId.get(sale.id) ?? 0,
+                      )
                     : null;
 
                   return (
@@ -239,6 +250,7 @@ export function KanbanBoard({
                               }
                               lead={lead}
                               sale={sale}
+                              saleRank={sale ? rankBySaleId.get(sale.id) ?? 0 : 0}
                               payments={salePayments}
                               modalities={modalities}
                               rules={rules}

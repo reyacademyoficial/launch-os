@@ -565,46 +565,55 @@ insert into _smoke_results(result) values (pg_temp.throws_ok(
   'operador NO inserta payment_modality (es admin-only)'::text
 ));
 
--- 32) admin SÍ inserta commission_rule (% sobre Pago total, sin launch)
+-- 32) admin SÍ inserta commission_rule vía RPC (1 tier 10%, default, 1 modalidad)
 select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
 insert into _smoke_results(result) values (lives_ok(
   format(
-    $sql$insert into public.commission_rules (project_id, payment_modality_id, type, value)
-         select %L, id, 'percent', 10 from public.payment_modalities
-         where project_id = %L and name = 'Pago total'$sql$,
+    $sql$select public.create_commission_rule(
+      %L, null,
+      'proportional', null, null,
+      array[(select id from public.payment_modalities where project_id = %L and name = 'Pago total')],
+      '[{"min_count":0,"max_count":null,"type":"percent","value":10}]'::jsonb
+    )$sql$,
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
   ),
-  'admin inserta commission_rule % default'
+  'admin inserta commission_rule via RPC'
 ));
 
--- 33) operador NO inserta commission_rule
+-- 33) operador NO inserta commission_rule (RLS sobre commission_rules)
 select pg_temp.login_as('44444444-4444-4444-4444-444444444444');
 insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
-    $sql$insert into public.commission_rules (project_id, payment_modality_id, type, value)
-         select %L, id, 'fixed', 500 from public.payment_modalities
-         where project_id = %L and name = 'Pago total'$sql$,
+    $sql$select public.create_commission_rule(
+      %L, null,
+      'proportional', null, null,
+      array[(select id from public.payment_modalities where project_id = %L and name = 'Pago total')],
+      '[{"min_count":0,"max_count":null,"type":"fixed","value":500}]'::jsonb
+    )$sql$,
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
   ),
   '42501'::text, null::text,
-  'operador NO inserta commission_rule'::text
+  'operador NO inserta commission_rule (RLS bloquea INSERT)'::text
 ));
 
--- 34) UNIQUE NULLS NOT DISTINCT: NO se puede insertar otra rule default
---     (launch_id NULL) para la misma modalidad
+-- 34) Trigger del pivot: NO se puede tener 2 reglas para la misma (modalidad,
+--     launch). El trigger usa SQLSTATE 23505 ("ya hay otra regla").
 select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
 insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
-    $sql$insert into public.commission_rules (project_id, payment_modality_id, type, value)
-         select %L, id, 'fixed', 999 from public.payment_modalities
-         where project_id = %L and name = 'Pago total'$sql$,
+    $sql$select public.create_commission_rule(
+      %L, null,
+      'proportional', null, null,
+      array[(select id from public.payment_modalities where project_id = %L and name = 'Pago total')],
+      '[{"min_count":0,"max_count":null,"type":"fixed","value":999}]'::jsonb
+    )$sql$,
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
   ),
   '23505'::text, null::text,
-  'UNIQUE NULLS NOT DISTINCT bloquea segunda rule default por modalidad'::text
+  'pivot trigger bloquea segunda rule default por modalidad'::text
 ));
 
 -- 35) operador SÍ inserta sale (can_edit_launches_in). Necesita un lead +

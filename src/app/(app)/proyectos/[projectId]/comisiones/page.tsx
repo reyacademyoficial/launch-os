@@ -14,8 +14,8 @@ import { requireSessionProfile, userCanEditProject } from "@/lib/supabase/auth";
 import {
   createCommissionRule,
   createPaymentModality,
-  deleteCommissionRule,
   deletePaymentModality,
+  deleteCommissionRule,
   updatePaymentModality,
 } from "./actions";
 
@@ -45,7 +45,6 @@ export default async function CommissionsPage({
 
   const createModalityAction = createPaymentModality.bind(null, projectId);
   const createRuleAction = createCommissionRule.bind(null, projectId);
-  // Hint para TS de que el role del profile fue consumido (evita warning).
   void profile;
 
   return (
@@ -53,9 +52,9 @@ export default async function CommissionsPage({
       <header className="space-y-1">
         <h1 className="text-2xl font-bold">Comisiones</h1>
         <p className="text-sm text-fg-muted">
-          Configurá las modalidades de pago y la regla de comisión por
-          modalidad. La comisión se calcula sobre lo <b>cobrado</b>, no sobre
-          lo pactado.
+          Configurá las modalidades de pago y las reglas escalonadas. Cada regla
+          puede aplicar a una o más modalidades, tiene tramos por cantidad de
+          ventas, y un modo de devengamiento (proporcional o con umbral).
         </p>
       </header>
 
@@ -155,54 +154,92 @@ export default async function CommissionsPage({
             primera para esa modalidad.
           </p>
         ) : (
-          <div className="overflow-hidden rounded-md border border-border">
-            <table className="w-full text-sm">
-              <thead className="bg-surface text-left text-xs uppercase tracking-wide text-fg-subtle">
-                <tr>
-                  <th scope="col" className="px-4 py-3 font-medium">Modalidad</th>
-                  <th scope="col" className="px-4 py-3 font-medium">Lanzamiento</th>
-                  <th scope="col" className="px-4 py-3 font-medium">Tipo</th>
-                  <th scope="col" className="px-4 py-3 text-right font-medium">
-                    Valor
-                  </th>
-                  <th scope="col" className="px-4 py-3 text-right font-medium">
-                    Acciones
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {rules.map((r) => {
-                  const deleteAction = deleteCommissionRule.bind(null, projectId, r.id);
-                  return (
-                    <tr key={r.id} className="border-t border-border">
-                      <td className="px-4 py-3 text-fg">
-                        {modalityById.get(r.payment_modality_id)?.name ?? "—"}
-                      </td>
-                      <td className="px-4 py-3 text-fg-muted">
-                        {r.launch_id ? launchById.get(r.launch_id) ?? "—" : "Default"}
-                      </td>
-                      <td className="px-4 py-3 text-fg-muted">
-                        {r.type === "percent" ? "% cobrado" : "Fijo proporcional"}
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-fg">
-                        {r.type === "percent" ? `${r.value}%` : `$${r.value}`}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex justify-end">
-                          <RowDelete
-                            confirmLabel="¿Borrar esta regla?"
-                            action={deleteAction}
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="space-y-3">
+            {rules.map((r) => {
+              const modalityNames = r.modality_ids
+                .map((id) => modalityById.get(id)?.name ?? "—")
+                .join(", ");
+              const launchLabel = r.launch_id
+                ? launchById.get(r.launch_id) ?? "—"
+                : "Default del proyecto";
+              const deleteAction = deleteCommissionRule.bind(null, projectId, r.id);
+              return (
+                <article
+                  key={r.id}
+                  className="overflow-hidden rounded-md border border-border"
+                >
+                  <header className="flex items-start justify-between gap-4 border-b border-border bg-surface px-4 py-3">
+                    <div>
+                      <div className="text-sm font-semibold text-fg">
+                        {modalityNames || "Sin modalidades"}
+                      </div>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-fg-muted">
+                        <span>{launchLabel}</span>
+                        <span>·</span>
+                        <span>{accrualLabel(r)}</span>
+                      </div>
+                    </div>
+                    <RowDelete
+                      confirmLabel="¿Borrar esta regla?"
+                      action={deleteAction}
+                    />
+                  </header>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="text-left text-xs uppercase tracking-wide text-fg-subtle">
+                        <tr>
+                          <th scope="col" className="px-4 py-2 font-medium">Tramo</th>
+                          <th scope="col" className="px-4 py-2 font-medium">Desde</th>
+                          <th scope="col" className="px-4 py-2 font-medium">Hasta</th>
+                          <th scope="col" className="px-4 py-2 font-medium">Tipo</th>
+                          <th scope="col" className="px-4 py-2 text-right font-medium">
+                            Valor
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {r.tiers.map((t, i) => (
+                          <tr key={t.id} className="border-t border-border">
+                            <td className="px-4 py-2 text-fg-muted">#{i + 1}</td>
+                            <td className="px-4 py-2 tabular-nums">
+                              venta {t.min_count + 1}
+                            </td>
+                            <td className="px-4 py-2 tabular-nums">
+                              {t.max_count === null ? "∞" : `venta ${t.max_count + 1}`}
+                            </td>
+                            <td className="px-4 py-2 text-fg-muted">
+                              {t.type === "percent" ? "%" : "$ fijo"}
+                            </td>
+                            <td className="px-4 py-2 text-right tabular-nums text-fg">
+                              {t.type === "percent" ? `${t.value}%` : `$${t.value}`}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         )}
       </section>
     </section>
   );
+}
+
+function accrualLabel(r: {
+  accrual_mode: "proportional" | "threshold_full" | "threshold_proportional";
+  threshold_type: "payment_count" | "paid_ratio" | null;
+  threshold_value: number | null;
+}): string {
+  if (r.accrual_mode === "proportional") return "Proporcional al cobrado";
+  const cond =
+    r.threshold_type === "payment_count"
+      ? `${r.threshold_value} cobros`
+      : `${Math.round((r.threshold_value ?? 0) * 100)}% cobrado`;
+  if (r.accrual_mode === "threshold_full") {
+    return `Libera al cumplir ${cond} → sobre el total`;
+  }
+  return `Libera al cumplir ${cond} → proporcional`;
 }
