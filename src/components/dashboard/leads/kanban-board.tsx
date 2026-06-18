@@ -47,6 +47,7 @@ type AddPaymentAction = (
   formData: FormData,
 ) => Promise<PaymentActionState>;
 type DeletePaymentAction = (paymentId: string) => Promise<void>;
+type DeleteSaleAction = (saleId: string) => Promise<void>;
 
 /**
  * Tablero kanban del pipeline. Columnas = LEAD_STATUSES, ordenadas según el
@@ -74,6 +75,7 @@ export function KanbanBoard({
   createSaleAction,
   addPaymentAction,
   deletePaymentAction,
+  deleteSaleAction,
 }: {
   readonly leads: ReadonlyArray<LeadRow>;
   readonly teamMembers: ReadonlyArray<Pick<TeamMemberRow, "id" | "name" | "active">>;
@@ -90,6 +92,7 @@ export function KanbanBoard({
   readonly createSaleAction: CreateSaleAction;
   readonly addPaymentAction: AddPaymentAction;
   readonly deletePaymentAction: DeletePaymentAction;
+  readonly deleteSaleAction: DeleteSaleAction;
 }) {
   const [, startTransition] = useTransition();
   const [dragOverCol, setDragOverCol] = useState<LeadStatus | null>(null);
@@ -262,6 +265,7 @@ export function KanbanBoard({
                                   : addPaymentAction.bind(null, "")
                               }
                               deletePaymentAction={deletePaymentAction}
+                              deleteSaleAction={deleteSaleAction}
                             />
                             <LeadRowActions
                               lead={lead}
