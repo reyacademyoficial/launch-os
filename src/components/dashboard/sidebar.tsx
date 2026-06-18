@@ -54,7 +54,6 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
           </NavGroup>
         )}
         <NavLink href="/calculadora">Calculadora</NavLink>
-        <NavLink scopedSuffix="/integraciones">Integraciones</NavLink>
       </nav>
 
       {showAdmin && (

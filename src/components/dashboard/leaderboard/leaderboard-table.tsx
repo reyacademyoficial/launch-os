@@ -2,8 +2,12 @@
 
 import { useMemo, useState } from "react";
 
+import type { PayoutActionState } from "@/app/(app)/proyectos/[projectId]/leaderboard/actions";
 import { fmtMoney, fmtNumber, fmtPercent } from "@/lib/format";
 import type { LeaderboardRow } from "@/lib/leaderboard/aggregate";
+import type { TeamMemberPayoutRow } from "@/lib/payouts/types";
+
+import { PayoutsModal } from "./payouts-modal";
 
 type SortKey =
   | "name"
@@ -11,9 +15,17 @@ type SortKey =
   | "closed"
   | "conversionRate"
   | "revenueCollected"
-  | "commissionAccrued";
+  | "commissionAccrued"
+  | "paidOut"
+  | "pending";
 
 type SortDir = "asc" | "desc";
+
+type CreateAction = (
+  prev: PayoutActionState,
+  formData: FormData,
+) => Promise<PayoutActionState>;
+type DeleteAction = (payoutId: string) => Promise<void>;
 
 const COLUMNS: ReadonlyArray<{
   key: SortKey;
@@ -27,6 +39,8 @@ const COLUMNS: ReadonlyArray<{
   { key: "conversionRate", label: "Conversión", align: "right", defaultDir: "desc" },
   { key: "revenueCollected", label: "Cobrado", align: "right", defaultDir: "desc" },
   { key: "commissionAccrued", label: "Comisión", align: "right", defaultDir: "desc" },
+  { key: "paidOut", label: "Pagado", align: "right", defaultDir: "desc" },
+  { key: "pending", label: "Pendiente", align: "right", defaultDir: "desc" },
 ];
 
 /**
@@ -39,8 +53,21 @@ const COLUMNS: ReadonlyArray<{
  */
 export function LeaderboardTable({
   rows,
+  payoutsByMember,
+  launches,
+  activeLaunchId,
+  canEdit,
+  createPayoutAction,
+  deletePayoutAction,
 }: {
   readonly rows: ReadonlyArray<LeaderboardRow>;
+  /** Historial completo de pagos por miembro (el modal filtra in-memory). */
+  readonly payoutsByMember: Readonly<Record<string, TeamMemberPayoutRow[]>>;
+  readonly launches: ReadonlyArray<{ id: string; name: string }>;
+  readonly activeLaunchId: string;
+  readonly canEdit: boolean;
+  readonly createPayoutAction: CreateAction;
+  readonly deletePayoutAction: DeleteAction;
 }) {
   const [sortKey, setSortKey] = useState<SortKey>("commissionAccrued");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -71,7 +98,7 @@ export function LeaderboardTable({
 
   return (
     <div className="overflow-x-auto rounded-md border border-border">
-      <table className="w-full min-w-[720px] text-sm">
+      <table className="w-full min-w-[960px] text-sm">
         <thead className="bg-surface text-xs uppercase tracking-wide text-fg-subtle">
           <tr>
             <th scope="col" className="px-4 py-3 text-left font-medium">
@@ -102,6 +129,9 @@ export function LeaderboardTable({
                 </th>
               );
             })}
+            <th scope="col" className="px-4 py-3 text-right font-medium">
+              {/* Acciones — sin sort */}
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -134,6 +164,32 @@ export function LeaderboardTable({
               </td>
               <td className="px-4 py-3 text-right tabular-nums font-bold text-accent">
                 {fmtMoney(row.commissionAccrued)}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums text-fg-muted">
+                {fmtMoney(row.paidOut)}
+              </td>
+              <td
+                className={
+                  "px-4 py-3 text-right tabular-nums font-medium " +
+                  (row.pending > 0
+                    ? "text-warning"
+                    : row.pending < 0
+                      ? "text-error"
+                      : "text-success")
+                }
+              >
+                {fmtMoney(row.pending)}
+              </td>
+              <td className="px-4 py-3 text-right">
+                <PayoutsModal
+                  row={row}
+                  payouts={payoutsByMember[row.teamMember.id] ?? []}
+                  launches={launches}
+                  activeLaunchId={activeLaunchId}
+                  canEdit={canEdit}
+                  createPayoutAction={createPayoutAction}
+                  deletePayoutAction={deletePayoutAction}
+                />
               </td>
             </tr>
           ))}

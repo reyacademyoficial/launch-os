@@ -5,6 +5,7 @@ import type {
   SaleRow,
 } from "@/lib/commissions/types";
 import type { LeadRow } from "@/lib/leads/types";
+import type { TeamMemberPayoutRow } from "@/lib/payouts/types";
 import type { TeamMemberRow } from "@/lib/team/types";
 
 /**
@@ -37,6 +38,13 @@ export interface LeaderboardRow {
   revenueCollected: number;
   /** Suma de comisión derivada por venta — derivada en cada lectura. */
   commissionAccrued: number;
+  /** Suma de payouts al miembro (respetando filtros launch + período). */
+  paidOut: number;
+  /**
+   * Saldo a favor del miembro: commissionAccrued - paidOut. Puede ser negativo
+   * (se le pagó más de lo devengado) — no clampeamos para que el admin lo vea.
+   */
+  pending: number;
 }
 
 /**
@@ -55,9 +63,11 @@ export function aggregateLeaderboard(input: {
   sales: ReadonlyArray<SaleRow>;
   payments: ReadonlyArray<PaymentRow>;
   rules: ReadonlyArray<CommissionRuleRow>;
+  payouts?: ReadonlyArray<TeamMemberPayoutRow>;
   filters: LeaderboardFilters;
 }): LeaderboardRow[] {
   const { teamMembers, leads, sales, payments, rules, filters } = input;
+  const payouts = input.payouts ?? [];
 
   // 1) Filtrar leads por launch (si hay filtro). El filtro de período no
   //    aplica a leads (no se filtra "trabajados" por fecha).
@@ -95,7 +105,17 @@ export function aggregateLeaderboard(input: {
     else paymentsBySale.set(p.sale_id, [p]);
   }
 
-  // 4) Por team_member: contar leads, contar sales, sumar revenue + comisión.
+  // 4) Filtrar payouts. Mismo criterio que sales: respeta launchId y rango de
+  //    fechas, pero acá la fecha es `paid_at` (date) — la pregunta es "qué le
+  //    pagué en este período", paralela a "qué se cerró en este período".
+  const payoutsFiltered = payouts.filter((p) => {
+    if (filters.launchId && p.launch_id !== filters.launchId) return false;
+    if (filters.dateFrom && p.paid_at < filters.dateFrom) return false;
+    if (filters.dateTo && p.paid_at > filters.dateTo) return false;
+    return true;
+  });
+
+  // 5) Por team_member: contar leads, contar sales, sumar revenue + comisión.
   const rows: LeaderboardRow[] = teamMembers.map((tm) => {
     const memberLeads = leadsFiltered.filter((l) => l.team_member_id === tm.id);
     const memberSales = salesFiltered.filter((s) => s.team_member_id === tm.id);
@@ -111,6 +131,10 @@ export function aggregateLeaderboard(input: {
       commissionAccrued += breakdown.commission;
     }
 
+    const paidOut = payoutsFiltered
+      .filter((p) => p.team_member_id === tm.id)
+      .reduce((sum, p) => sum + Number(p.amount), 0);
+
     const conversionRate =
       memberLeads.length === 0 ? 0 : memberSales.length / memberLeads.length;
 
@@ -121,6 +145,8 @@ export function aggregateLeaderboard(input: {
       conversionRate,
       revenueCollected,
       commissionAccrued,
+      paidOut,
+      pending: commissionAccrued - paidOut,
     };
   });
 

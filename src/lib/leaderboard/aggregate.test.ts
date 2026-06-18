@@ -6,6 +6,7 @@ import type {
   SaleRow,
 } from "@/lib/commissions/types";
 import type { LeadRow } from "@/lib/leads/types";
+import type { TeamMemberPayoutRow } from "@/lib/payouts/types";
 import type { TeamMemberRow } from "@/lib/team/types";
 
 import { aggregateLeaderboard } from "./aggregate";
@@ -287,6 +288,123 @@ describe("aggregateLeaderboard — sin regla aplicable", () => {
     });
     expect(rows[0]!.revenueCollected).toBe(1000);
     expect(rows[0]!.commissionAccrued).toBe(0);
+  });
+});
+
+function payout(
+  teamMemberId: string,
+  launchId: string,
+  amount: number,
+  paidAt = "2026-06-15",
+): TeamMemberPayoutRow {
+  return {
+    id: `payout-${Math.random()}`,
+    project_id: "p-1",
+    team_member_id: teamMemberId,
+    launch_id: launchId,
+    amount,
+    paid_at: paidAt,
+    notes: null,
+    created_at: TS,
+    updated_at: TS,
+  };
+}
+
+describe("aggregateLeaderboard — payouts", () => {
+  it("paidOut = suma de payouts del miembro, pending = comisión - pagado", () => {
+    const closer = tm("tm-1", "Closer");
+    const rows = aggregateLeaderboard({
+      teamMembers: [closer],
+      leads: [lead("l-1", { team_member_id: "tm-1", launch_id: "launch-A" })],
+      sales: [
+        sale("s-1", {
+          lead_id: "l-1",
+          team_member_id: "tm-1",
+          total_amount: 1000,
+        }),
+      ],
+      payments: [payment("s-1", 1000)], // 1000 cobrado × 10% = 100 comisión
+      rules: [RULE_10_PERCENT],
+      payouts: [
+        payout("tm-1", "launch-A", 30),
+        payout("tm-1", "launch-A", 20),
+      ],
+      filters: {},
+    });
+    expect(rows[0]!.commissionAccrued).toBe(100);
+    expect(rows[0]!.paidOut).toBe(50);
+    expect(rows[0]!.pending).toBe(50);
+  });
+
+  it("filtro de launch — solo cuenta payouts de ese launch", () => {
+    const closer = tm("tm-1", "Closer");
+    const rows = aggregateLeaderboard({
+      teamMembers: [closer],
+      leads: [
+        lead("l-A", { team_member_id: "tm-1", launch_id: "launch-A" }),
+        lead("l-B", { team_member_id: "tm-1", launch_id: "launch-B" }),
+      ],
+      sales: [
+        sale("s-A", { lead_id: "l-A", team_member_id: "tm-1", total_amount: 1000 }),
+        sale("s-B", { lead_id: "l-B", team_member_id: "tm-1", total_amount: 1000 }),
+      ],
+      payments: [payment("s-A", 1000), payment("s-B", 1000)],
+      rules: [RULE_10_PERCENT],
+      payouts: [
+        payout("tm-1", "launch-A", 70), // dentro del filtro
+        payout("tm-1", "launch-B", 40), // fuera del filtro
+      ],
+      filters: { launchId: "launch-A" },
+    });
+    expect(rows[0]!.commissionAccrued).toBe(100); // solo launch-A
+    expect(rows[0]!.paidOut).toBe(70); // solo payout del launch-A
+    expect(rows[0]!.pending).toBe(30);
+  });
+
+  it("pending negativo cuando se pagó de más", () => {
+    const closer = tm("tm-1", "Closer");
+    const rows = aggregateLeaderboard({
+      teamMembers: [closer],
+      leads: [lead("l-1", { team_member_id: "tm-1", launch_id: "launch-A" })],
+      sales: [
+        sale("s-1", {
+          lead_id: "l-1",
+          team_member_id: "tm-1",
+          total_amount: 1000,
+        }),
+      ],
+      payments: [payment("s-1", 500)], // 500 × 10% = 50 comisión
+      rules: [RULE_10_PERCENT],
+      payouts: [payout("tm-1", "launch-A", 200)],
+      filters: {},
+    });
+    expect(rows[0]!.commissionAccrued).toBe(50);
+    expect(rows[0]!.paidOut).toBe(200);
+    expect(rows[0]!.pending).toBe(-150);
+  });
+
+  it("filtro de fecha aplica sobre payout.paid_at", () => {
+    const closer = tm("tm-1", "Closer");
+    const rows = aggregateLeaderboard({
+      teamMembers: [closer],
+      leads: [lead("l-1", { team_member_id: "tm-1", launch_id: "launch-A" })],
+      sales: [
+        sale("s-1", {
+          lead_id: "l-1",
+          team_member_id: "tm-1",
+          total_amount: 1000,
+          closed_at: "2026-07-05T00:00:00Z",
+        }),
+      ],
+      payments: [payment("s-1", 1000)],
+      rules: [RULE_10_PERCENT],
+      payouts: [
+        payout("tm-1", "launch-A", 50, "2026-07-15"), // dentro
+        payout("tm-1", "launch-A", 999, "2026-06-15"), // fuera
+      ],
+      filters: { dateFrom: "2026-07-01", dateTo: "2026-07-31" },
+    });
+    expect(rows[0]!.paidOut).toBe(50);
   });
 });
 

@@ -11,12 +11,19 @@ import { fmtMoney, fmtNumber } from "@/lib/format";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { aggregateLeaderboard } from "@/lib/leaderboard/aggregate";
 import { listLeads } from "@/lib/leads/list";
+import { listPayoutsForProject } from "@/lib/payouts/list";
+import type { TeamMemberPayoutRow } from "@/lib/payouts/types";
 import {
   listPaymentsForProject,
   listSalesForProject,
 } from "@/lib/sales/list";
-import { requireSessionProfile } from "@/lib/supabase/auth";
+import {
+  requireSessionProfile,
+  userCanEditLaunchesIn,
+} from "@/lib/supabase/auth";
 import { listTeamMembers } from "@/lib/team/list";
+
+import { createPayout, deletePayout } from "./actions";
 
 export const metadata: Metadata = { title: "Leaderboard" };
 
@@ -44,13 +51,24 @@ export default async function LeaderboardPage({
   const dateFrom = strParam(sp.from);
   const dateTo = strParam(sp.to);
 
-  const [teamMembers, leads, sales, payments, rules, launches] = await Promise.all([
+  const [
+    teamMembers,
+    leads,
+    sales,
+    payments,
+    rules,
+    launches,
+    payouts,
+    canEdit,
+  ] = await Promise.all([
     listTeamMembers(projectId),
     listLeads(projectId),
     listSalesForProject(projectId),
     listPaymentsForProject(projectId),
     listCommissionRules(projectId),
     listLaunchesForProject(projectId),
+    listPayoutsForProject(projectId),
+    userCanEditLaunchesIn(projectId),
   ]);
 
   // listPaymentModalities solo lo necesitamos si quisiéramos mostrar regla por
@@ -63,12 +81,23 @@ export default async function LeaderboardPage({
     sales,
     payments,
     rules,
+    payouts,
     filters: {
       launchId: launchId || null,
       dateFrom: dateFrom || null,
       dateTo: dateTo || null,
     },
   });
+
+  // Index payouts por team_member_id para alimentar al modal (que ofrece un
+  // "ver todos los lanzamientos" — necesita el historial completo del miembro,
+  // no el filtrado).
+  const payoutsByMember: Record<string, TeamMemberPayoutRow[]> = {};
+  for (const p of payouts) {
+    const arr = payoutsByMember[p.team_member_id];
+    if (arr) arr.push(p);
+    else payoutsByMember[p.team_member_id] = [p];
+  }
 
   // Totales agregados para el header (suma de todas las filas filtradas).
   const totals = rows.reduce(
@@ -77,9 +106,14 @@ export default async function LeaderboardPage({
       closed: acc.closed + r.closed,
       revenue: acc.revenue + r.revenueCollected,
       commission: acc.commission + r.commissionAccrued,
+      paid: acc.paid + r.paidOut,
+      pending: acc.pending + r.pending,
     }),
-    { leads: 0, closed: 0, revenue: 0, commission: 0 },
+    { leads: 0, closed: 0, revenue: 0, commission: 0, paid: 0, pending: 0 },
   );
+
+  const createPayoutAction = createPayout.bind(null, projectId);
+  const deletePayoutAction = deletePayout.bind(null, projectId);
 
   return (
     <section className="space-y-6">
@@ -87,7 +121,8 @@ export default async function LeaderboardPage({
         <h1 className="text-2xl font-bold">Leaderboard</h1>
         <p className="mt-1 text-sm text-fg-muted">
           Ranking del equipo. La comisión se calcula sobre lo efectivamente
-          cobrado y se recalcula con cada cobro.
+          cobrado y se recalcula con cada cobro. Los pagos registrados al
+          miembro se restan para mostrar el saldo pendiente.
         </p>
       </header>
 
@@ -96,7 +131,7 @@ export default async function LeaderboardPage({
         initial={{ launchId, dateFrom, dateTo }}
       />
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <Card label="Leads trabajados" value={fmtNumber(totals.leads)} />
         <Card label="Cerrados" value={fmtNumber(totals.closed)} />
         <Card label="Revenue cobrado" value={fmtMoney(totals.revenue)} />
@@ -104,6 +139,12 @@ export default async function LeaderboardPage({
           label="Comisión total"
           value={fmtMoney(totals.commission)}
           accent
+        />
+        <Card label="Pagado al equipo" value={fmtMoney(totals.paid)} />
+        <Card
+          label={totals.pending < 0 ? "A favor del equipo" : "Pendiente"}
+          value={fmtMoney(Math.abs(totals.pending))}
+          tone={totals.pending > 0 ? "warning" : "success"}
         />
       </div>
 
@@ -114,7 +155,15 @@ export default async function LeaderboardPage({
           </p>
         </div>
       ) : (
-        <LeaderboardTable rows={rows} />
+        <LeaderboardTable
+          rows={rows}
+          payoutsByMember={payoutsByMember}
+          launches={launches.map((l) => ({ id: l.id, name: l.name }))}
+          activeLaunchId={launchId}
+          canEdit={canEdit}
+          createPayoutAction={createPayoutAction}
+          deletePayoutAction={deletePayoutAction}
+        />
       )}
     </section>
   );
@@ -124,28 +173,37 @@ function Card({
   label,
   value,
   accent,
+  tone,
 }: {
   readonly label: string;
   readonly value: string;
   readonly accent?: boolean;
+  readonly tone?: "warning" | "success";
 }) {
+  const toneClass =
+    tone === "warning"
+      ? "border-warning/40 bg-warning/5"
+      : tone === "success"
+        ? "border-success/40 bg-success/5"
+        : accent
+          ? "border-accent/40 bg-accent/5"
+          : "border-border bg-surface";
+
+  const valueClass =
+    tone === "warning"
+      ? "text-warning"
+      : tone === "success"
+        ? "text-success"
+        : accent
+          ? "text-accent"
+          : "text-fg";
+
   return (
-    <div
-      className={
-        "rounded-md border p-4 " +
-        (accent ? "border-accent/40 bg-accent/5" : "border-border bg-surface")
-      }
-    >
+    <div className={"rounded-md border p-4 " + toneClass}>
       <div className="text-xs uppercase tracking-wide text-fg-subtle">
         {label}
       </div>
-      <div
-        className={
-          "mt-2 text-xl font-bold " + (accent ? "text-accent" : "text-fg")
-        }
-      >
-        {value}
-      </div>
+      <div className={"mt-2 text-xl font-bold " + valueClass}>{value}</div>
     </div>
   );
 }
