@@ -4,7 +4,13 @@ import { redirect } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/server";
 
-export type Role = "superadmin" | "admin" | "operador" | "analista" | "cliente";
+export type Role =
+  | "dev"
+  | "superadmin"
+  | "admin"
+  | "operador"
+  | "analista"
+  | "cliente";
 
 export interface SessionProfile {
   id: string;
@@ -94,11 +100,13 @@ export async function requireSessionProfile(): Promise<SessionProfile> {
 /**
  * Defense-in-depth layer 2 with a role gate.
  * If the caller's role isn't in the allowed list, redirect to "/".
+ * 'dev' siempre pasa — es un rol de override, fuera del modelo de permisos.
  */
 export async function requireRole(
   ...allowed: readonly [Role, ...Role[]]
 ): Promise<SessionProfile> {
   const profile = await requireSessionProfile();
+  if (profile.role === "dev") return profile;
   if (!allowed.includes(profile.role)) redirect("/");
   return profile;
 }

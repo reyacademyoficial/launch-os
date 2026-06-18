@@ -11,6 +11,9 @@ interface CookieToSet {
   options: CookieOptions;
 }
 
+const SESSION_TRACK_COOKIE = "la_session_seen";
+const SESSION_TRACK_MAX_AGE = 60 * 60 * 8; // 8h — dedup intra-sesión.
+
 /**
  * Session refresh helper used by `src/proxy.ts`.
  *
@@ -53,6 +56,35 @@ export async function updateSession(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
+
+  // Auditoría de sesión: una fila session_start por sesión lógica. La cookie
+  // SESSION_TRACK_COOKIE actúa de dedup para no escribir en cada request. Si
+  // el usuario cierra sesión, signOut() limpia las cookies de auth; en el
+  // próximo login no habrá cookie y se registrará un nuevo session_start.
+  if (user && !request.cookies.has(SESSION_TRACK_COOKIE)) {
+    const ip =
+      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      request.headers.get("x-real-ip") ||
+      null;
+    const ua = request.headers.get("user-agent");
+    try {
+      const payload = {
+        user_id: user.id,
+        kind: "session_start",
+        ip,
+        user_agent: ua,
+      } as never;
+      await supabase.from("auth_events").insert(payload);
+    } catch {
+      // Auditoría es best-effort: nunca rompemos el request si falla.
+    }
+    response.cookies.set(SESSION_TRACK_COOKIE, "1", {
+      httpOnly: true,
+      sameSite: "lax",
+      maxAge: SESSION_TRACK_MAX_AGE,
+      path: "/",
+    });
+  }
 
   return { response, user };
 }

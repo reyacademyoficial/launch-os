@@ -15,11 +15,13 @@ import { NavLink } from "./nav-link";
  * del sidebar — accesible solo via URL directa cuando el equipo lo necesite.
  */
 export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
-  const showAdmin = profile.role === "superadmin";
+  const showAdmin = profile.role === "superadmin" || profile.role === "dev";
   const showCrm = profile.role !== "cliente";
   // Comisiones es admin-only (modalidades + reglas son decisión de admin).
   const showCommissions =
-    profile.role === "superadmin" || profile.role === "admin";
+    profile.role === "superadmin" ||
+    profile.role === "admin" ||
+    profile.role === "dev";
 
   return (
     <aside className="flex w-60 shrink-0 flex-col overflow-y-auto border-r border-border bg-bg-elevated px-4 py-6">

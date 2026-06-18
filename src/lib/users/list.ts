@@ -68,6 +68,8 @@ export async function listAllUsers(): Promise<UserListItem[]> {
   for (const u of authUsers) {
     const profile = profileById.get(u.id);
     if (!profile || !u.email) continue;
+    // El rol 'dev' es invisible: nunca se lista en /admin/usuarios.
+    if (profile.role === "dev") continue;
     items.push({
       id: u.id,
       email: u.email,

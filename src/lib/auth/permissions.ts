@@ -13,7 +13,13 @@
  * por launch.
  */
 
-export type Role = "superadmin" | "admin" | "operador" | "analista" | "cliente";
+export type Role =
+  | "dev"
+  | "superadmin"
+  | "admin"
+  | "operador"
+  | "analista"
+  | "cliente";
 
 /**
  * Minimal shape consumed by every gate below. `SessionProfile`
@@ -29,7 +35,8 @@ export interface SessionContext {
 // ─── Role predicates ────────────────────────────────────────────────────────
 
 export function isSuperadmin(ctx: SessionContext): boolean {
-  return ctx.role === "superadmin";
+  // 'dev' hereda todos los gates de superadmin (mirror del SQL is_superadmin).
+  return ctx.role === "superadmin" || ctx.role === "dev";
 }
 
 export function isAdmin(ctx: SessionContext): boolean {

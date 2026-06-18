@@ -8,6 +8,9 @@ import { DeactivateUserButton } from "./deactivate-user-button";
 import { EditUserModal } from "./edit-user-modal";
 
 const ROLE_VARIANT: Record<Role, "info" | "warning" | "success" | "neutral"> = {
+  // 'dev' es invisible: listAllUsers ya filtra estas filas. La key existe
+  // sólo para satisfacer el type, nunca se renderiza.
+  dev: "neutral",
   superadmin: "info",
   admin: "warning",
   operador: "success",

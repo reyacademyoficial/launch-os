@@ -42,6 +42,7 @@ import {
   addPayment,
   createSale,
   deletePayment,
+  deleteSale,
 } from "./sale-actions";
 
 export const metadata: Metadata = { title: "Leads" };
@@ -113,6 +114,7 @@ export default async function LeadsPage({
   const createSaleAction = createSale.bind(null, projectId);
   const addPaymentAction = addPayment.bind(null, projectId);
   const deletePaymentAction = deletePayment.bind(null, projectId);
+  const deleteSaleAction = deleteSale.bind(null, projectId);
 
   const activeMembers = teamMembers.filter((m) => m.active).length;
 
@@ -177,6 +179,7 @@ export default async function LeadsPage({
           createSaleAction={createSaleAction}
           addPaymentAction={addPaymentAction}
           deletePaymentAction={deletePaymentAction}
+          deleteSaleAction={deleteSaleAction}
         />
       ) : (
         <TablaTab
@@ -327,6 +330,7 @@ async function KanbanTab({
   createSaleAction,
   addPaymentAction,
   deletePaymentAction,
+  deleteSaleAction,
 }: {
   readonly projectId: string;
   readonly teamForForm: ReadonlyArray<{ id: string; name: string; active: boolean }>;
@@ -350,6 +354,8 @@ async function KanbanTab({
   readonly addPaymentAction: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly deletePaymentAction: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly deleteSaleAction: any;
 }) {
   const leads = await listKanbanLeads(projectId);
 
@@ -384,6 +390,7 @@ async function KanbanTab({
       createSaleAction={createSaleAction}
       addPaymentAction={addPaymentAction}
       deletePaymentAction={deletePaymentAction}
+      deleteSaleAction={deleteSaleAction}
     />
   );
 }
