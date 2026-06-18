@@ -13,11 +13,7 @@ import { listCommunityMetricsForLaunch } from "@/lib/launch-community/list";
 import { aggregateMergedDaily } from "@/lib/launch-daily/aggregate";
 import { listAdsForLaunch, listDailyForLaunch } from "@/lib/launch-daily/list";
 import { mergeDailyData } from "@/lib/launch-daily/merge";
-import {
-  aggregateOpportunities,
-  EMPTY_SALES_AGGREGATE,
-} from "@/lib/launch-opportunities/aggregate";
-import { listOpportunitiesForLaunch } from "@/lib/launch-opportunities/list";
+import { getKanbanSalesAggregateForLaunch } from "@/lib/launch-sales/list";
 import { getLaunch } from "@/lib/launches/get";
 import { userCanEditLaunchesIn } from "@/lib/supabase/auth";
 
@@ -37,13 +33,13 @@ export default async function LaunchKpiPage({
 }) {
   const { projectId, launchId } = await params;
 
-  const [launch, canEditLaunchValue, daily, ads, opportunities, community] =
+  const [launch, canEditLaunchValue, daily, ads, kanbanSalesAggregate, community] =
     await Promise.all([
       getLaunch(launchId),
       userCanEditLaunchesIn(projectId),
       listDailyForLaunch(launchId),
       listAdsForLaunch(launchId),
-      listOpportunitiesForLaunch(launchId),
+      getKanbanSalesAggregateForLaunch(projectId, launchId),
       listCommunityMetricsForLaunch(launchId),
     ]);
 
@@ -51,19 +47,10 @@ export default async function LaunchKpiPage({
 
   const mergedDaily = mergeDailyData(daily, ads);
   const adsAggregate = aggregateMergedDaily(mergedDaily);
-  // Si el launch no tiene fechas (estado raro pero posible), el agregado de
-  // ventas queda vacío y kpis cae a los campos manuales — no rompe la página.
-  const salesAggregate =
-    launch.date_start && launch.date_end
-      ? aggregateOpportunities(opportunities, {
-          date_start: launch.date_start,
-          date_end: launch.date_end,
-        })
-      : EMPTY_SALES_AGGREGATE;
   const communityAggregate = aggregateCommunityMetrics(community);
   const kpi = calculateLaunchKPIs(launch, {
     adsAggregate,
-    salesAggregate,
+    kanbanSalesAggregate,
     communityAggregate,
   });
   const isClosed = launch.closed_at !== null;

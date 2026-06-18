@@ -34,27 +34,51 @@ const DEFAULT_TIER: TierDraft = {
   value: 10,
 };
 
+export interface RuleInitial {
+  modality_ids: ReadonlyArray<string>;
+  launch_id: string | null;
+  accrual_mode: AccrualMode;
+  threshold_type: ThresholdType | null;
+  threshold_value: number | null;
+  tiers: ReadonlyArray<{
+    min_count: number;
+    max_count: number | null;
+    type: CommissionTierType;
+    value: number;
+  }>;
+}
+
 export function RuleForm({
   action,
   modalities,
   launches,
   submitLabel,
   onSuccess,
+  initial,
 }: {
   readonly action: FormAction;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
   readonly launches: ReadonlyArray<{ id: string; name: string }>;
   readonly submitLabel: string;
   readonly onSuccess?: () => void;
+  readonly initial?: RuleInitial;
 }) {
   const [state, formAction, pending] = useActionState<CommissionActionState, FormData>(
     action,
     null,
   );
 
-  const [accrualMode, setAccrualMode] = useState<AccrualMode>("proportional");
-  const [thresholdType, setThresholdType] = useState<ThresholdType>("payment_count");
-  const [tiers, setTiers] = useState<TierDraft[]>([DEFAULT_TIER]);
+  const [accrualMode, setAccrualMode] = useState<AccrualMode>(
+    initial?.accrual_mode ?? "proportional",
+  );
+  const [thresholdType, setThresholdType] = useState<ThresholdType>(
+    initial?.threshold_type ?? "payment_count",
+  );
+  const [tiers, setTiers] = useState<TierDraft[]>(() =>
+    initial && initial.tiers.length > 0
+      ? initial.tiers.map((t) => ({ ...t }))
+      : [DEFAULT_TIER],
+  );
 
   useEffect(() => {
     if (state && "ok" in state && state.ok) onSuccess?.();
@@ -91,12 +115,27 @@ export function RuleForm({
   }
 
   function patchTier(idx: number, patch: Partial<TierDraft>) {
-    setTiers((prev) =>
-      prev.map((t, i) => (i === idx ? { ...t, ...patch } : t)),
-    );
+    setTiers((prev) => {
+      const next = prev.map((t, i) => (i === idx ? { ...t, ...patch } : t));
+      // Propagar bordes para mantener contigüidad: si tocaste max_count del
+      // tramo i (no último), el i+1 arranca en max+1. Si tocaste min_count
+      // del tramo i (no primero), el i-1 cierra en min-1.
+      if (patch.max_count !== undefined && idx < next.length - 1) {
+        const maxRaw = next[idx]!.max_count;
+        if (maxRaw !== null) {
+          next[idx + 1] = { ...next[idx + 1]!, min_count: maxRaw + 1 };
+        }
+      }
+      if (patch.min_count !== undefined && idx > 0) {
+        const minRaw = next[idx]!.min_count;
+        next[idx - 1] = { ...next[idx - 1]!, max_count: minRaw - 1 };
+      }
+      return next;
+    });
   }
 
   const activeModalities = modalities.filter((m) => m.active);
+  const initialModalityIds = new Set(initial?.modality_ids ?? []);
 
   return (
     <form action={formAction} className="space-y-5">
@@ -118,6 +157,7 @@ export function RuleForm({
                   type="checkbox"
                   name="modality_ids"
                   value={m.id}
+                  defaultChecked={initialModalityIds.has(m.id)}
                   className="h-4 w-4"
                 />
                 <span>{m.name}</span>
@@ -130,7 +170,11 @@ export function RuleForm({
       {/* Launch override */}
       <div>
         <Label htmlFor="rule-launch">Lanzamiento (opcional, override)</Label>
-        <Select id="rule-launch" name="launch_id" defaultValue="">
+        <Select
+          id="rule-launch"
+          name="launch_id"
+          defaultValue={initial?.launch_id ?? ""}
+        >
           <option value="">— Regla default del proyecto —</option>
           {launches.map((l) => (
             <option key={l.id} value={l.id}>
@@ -193,6 +237,12 @@ export function RuleForm({
               min={thresholdType === "payment_count" ? "1" : "0.01"}
               max={thresholdType === "payment_count" ? undefined : "1"}
               required
+              defaultValue={
+                initial?.threshold_value !== null &&
+                initial?.threshold_value !== undefined
+                  ? String(initial.threshold_value)
+                  : ""
+              }
               placeholder={thresholdType === "payment_count" ? "3" : "0.5"}
             />
           </div>
@@ -246,9 +296,23 @@ export function RuleForm({
                 />
                 <div className="col-span-2">
                   <span className="text-xs text-fg-subtle">Desde venta</span>
-                  <div className="mt-1 rounded border border-border bg-bg-elevated px-2 py-1 text-sm tabular-nums">
-                    {t.min_count + 1}
-                  </div>
+                  {i === 0 ? (
+                    <div className="mt-1 rounded border border-border bg-bg-elevated px-2 py-1 text-sm tabular-nums">
+                      1
+                    </div>
+                  ) : (
+                    <Input
+                      type="number"
+                      min={1}
+                      value={t.min_count + 1}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        const parsed = parseInt(raw, 10);
+                        if (!Number.isFinite(parsed) || parsed < 1) return;
+                        patchTier(i, { min_count: parsed - 1 });
+                      }}
+                    />
+                  )}
                 </div>
                 <div className="col-span-2">
                   <span className="text-xs text-fg-subtle">Hasta venta</span>

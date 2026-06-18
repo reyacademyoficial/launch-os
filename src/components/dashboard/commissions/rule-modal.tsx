@@ -6,7 +6,7 @@ import type { CommissionActionState } from "@/app/(app)/proyectos/[projectId]/co
 import { Button } from "@/components/ui/button";
 import type { PaymentModalityRow } from "@/lib/commissions/types";
 
-import { RuleForm } from "./rule-form";
+import { RuleForm, type RuleInitial } from "./rule-form";
 
 type FormAction = (
   prev: CommissionActionState,
@@ -17,16 +17,22 @@ export function RuleModal({
   triggerLabel,
   triggerVariant = "primary",
   triggerClassName,
+  title = "Nueva regla de comisión",
+  submitLabel = "Crear regla",
   action,
   modalities,
   launches,
+  initial,
 }: {
   readonly triggerLabel: string;
   readonly triggerVariant?: "primary" | "secondary";
   readonly triggerClassName?: string;
+  readonly title?: string;
+  readonly submitLabel?: string;
   readonly action: FormAction;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
   readonly launches: ReadonlyArray<{ id: string; name: string }>;
+  readonly initial?: RuleInitial;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -51,7 +57,7 @@ export function RuleModal({
         >
           <div className="w-full max-w-lg rounded-md border border-border bg-bg-elevated shadow-card">
             <header className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
-              <h3 className="text-lg font-bold text-fg">Nueva regla de comisión</h3>
+              <h3 className="text-lg font-bold text-fg">{title}</h3>
               <button
                 type="button"
                 onClick={() => setOpen(false)}
@@ -66,7 +72,8 @@ export function RuleModal({
                 action={action}
                 modalities={modalities}
                 launches={launches}
-                submitLabel="Crear regla"
+                submitLabel={submitLabel}
+                initial={initial}
                 onSuccess={() => setOpen(false)}
               />
             </div>

@@ -12,11 +12,7 @@ import { aggregateMergedDaily } from "@/lib/launch-daily/aggregate";
 import { mergeDailyData, type AdsDailyRow } from "@/lib/launch-daily/merge";
 import type { LaunchDailyRow } from "@/lib/launch-daily/types";
 import { DAILY_CHANNELS, CHANNEL_LABELS } from "@/lib/launch-daily/types";
-import {
-  aggregateOpportunities,
-  EMPTY_SALES_AGGREGATE,
-  type LaunchOpportunityRow,
-} from "@/lib/launch-opportunities/aggregate";
+import type { KanbanSalesAggregate } from "@/lib/launch-sales/aggregate";
 import type { LaunchRow } from "@/lib/launches/types";
 
 import { generateText } from "./client";
@@ -52,21 +48,17 @@ export async function summarizeLaunch(
   launch: LaunchRow,
   daily: readonly LaunchDailyRow[],
   ads: readonly AdsDailyRow[] = [],
-  opportunities: readonly LaunchOpportunityRow[] = [],
+  kanbanSalesAggregate?: KanbanSalesAggregate,
 ): Promise<string> {
   // Mismo derive que el resto de los call sites — el resumen IA tiene que
   // ver los mismos números que el KPI grid del detalle, sino el modelo
   // analiza un launch fantasma.
   const merged = mergeDailyData(daily, ads);
   const adsAggregate = aggregateMergedDaily(merged);
-  const salesAggregate =
-    launch.date_start && launch.date_end
-      ? aggregateOpportunities(opportunities, {
-          date_start: launch.date_start,
-          date_end: launch.date_end,
-        })
-      : EMPTY_SALES_AGGREGATE;
-  const kpi = calculateLaunchKPIs(launch, { adsAggregate, salesAggregate });
+  const kpi = calculateLaunchKPIs(launch, {
+    adsAggregate,
+    kanbanSalesAggregate,
+  });
   const prompt = buildUserPrompt(launch, daily, kpi);
   return generateText({ system: SYSTEM_PROMPT, user: prompt });
 }
@@ -108,11 +100,14 @@ function buildUserPrompt(
   lines.push(`- Ventas: ${fmtNumber(kpi.ventas)} (close rate ${fmtPercent(kpi.closeRate)})`);
 
   lines.push("", "Revenue + economics:");
-  lines.push(`- Revenue: ${fmtMoney(kpi.revenue)}`);
-  lines.push(`- Ingresos via WhatsApp: ${fmtMoney(kpi.whatsappRevenue)} (${fmtPercent(kpi.whatsappRevenueShare)} del revenue)`);
-  lines.push(`- ROAS: ${fmtMultiplier(kpi.roas)}`);
+  lines.push(`- Revenue estimado (pactado): ${fmtMoney(kpi.revenueEstimated)}`);
+  lines.push(`- Revenue cobrado (real): ${fmtMoney(kpi.revenueCollected)}`);
+  lines.push(`- Ingresos via WhatsApp: ${fmtMoney(kpi.whatsappRevenue)} (${fmtPercent(kpi.whatsappRevenueShare)} del revenue estimado)`);
+  lines.push(`- ROAS estimado: ${fmtMultiplier(kpi.roasEstimated)}`);
+  lines.push(`- ROAS real (sobre cobrado): ${fmtMultiplier(kpi.roasReal)}`);
   lines.push(`- CAC: ${fmtMoneyDecimals(kpi.cac)}`);
-  lines.push(`- Profit: ${fmtMoney(kpi.profit)}`);
+  lines.push(`- Profit estimado: ${fmtMoney(kpi.profitEstimated)}`);
+  lines.push(`- Profit real (sobre cobrado): ${fmtMoney(kpi.profitReal)}`);
 
   if (daily.length > 0) {
     lines.push("", "Leads por día por canal:");

@@ -12,6 +12,7 @@ import { usePathname } from "next/navigation";
  */
 const TABS: ReadonlyArray<{ slug: string; label: string }> = [
   { slug: "kpi", label: "KPI" },
+  { slug: "cobros", label: "Cobros" },
   { slug: "calendario", label: "Calendario" },
   { slug: "integraciones", label: "Integraciones" },
   { slug: "alertas", label: "Alertas" },

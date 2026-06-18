@@ -562,7 +562,8 @@ export type Database = {
           project_id: string
           recycle_target_launch_id: string | null
           registrados: number | null
-          revenue: number | null
+          revenue_collected_manual: number | null
+          revenue_estimated_manual: number | null
           sources: Json
           status: string | null
           tiktok_clicks: number | null
@@ -603,7 +604,8 @@ export type Database = {
           project_id: string
           recycle_target_launch_id?: string | null
           registrados?: number | null
-          revenue?: number | null
+          revenue_collected_manual?: number | null
+          revenue_estimated_manual?: number | null
           sources?: Json
           status?: string | null
           tiktok_clicks?: number | null
@@ -644,7 +646,8 @@ export type Database = {
           project_id?: string
           recycle_target_launch_id?: string | null
           registrados?: number | null
-          revenue?: number | null
+          revenue_collected_manual?: number | null
+          revenue_estimated_manual?: number | null
           sources?: Json
           status?: string | null
           tiktok_clicks?: number | null

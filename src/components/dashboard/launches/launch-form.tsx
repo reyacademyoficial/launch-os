@@ -307,13 +307,24 @@ export function LaunchForm({
       </Section>
 
       <Section title="Conversión + revenue">
+        <p className="text-xs text-fg-subtle">
+          Los valores manuales se <b>suman</b> a lo que viene del kanban
+          (ventas en la columna <i>cerrado</i> y sus cobros). Si todo se carga
+          en el kanban, dejá estos campos en 0.
+        </p>
         <FieldsGrid>
-          <NumberField name="ventas_total" label="Ventas totales" initial={initial} />
+          <NumberField name="ventas_total" label="Ventas totales (manual)" initial={initial} />
           <NumberField name="ventas_mensuales" label="Ventas mensuales" initial={initial} />
           <NumberField name="ventas_anuales" label="Ventas anuales" initial={initial} />
           <NumberField
-            name="revenue"
-            label="Revenue"
+            name="revenue_estimated_manual"
+            label="Revenue estimado manual"
+            step="0.01"
+            initial={initial}
+          />
+          <NumberField
+            name="revenue_collected_manual"
+            label="Revenue cobrado manual"
             step="0.01"
             initial={initial}
           />

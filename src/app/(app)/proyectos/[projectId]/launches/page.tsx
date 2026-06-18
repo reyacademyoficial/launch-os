@@ -6,11 +6,7 @@ import { StatusBadge } from "@/components/dashboard/launches/status-badge";
 import { fmtLaunchWindow, fmtMoney, fmtMultiplier } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import { listAggregatesForProject } from "@/lib/launch-daily/list";
-import {
-  aggregateOpportunities,
-  EMPTY_SALES_AGGREGATE,
-  listOpportunityRowsByLaunchForProject,
-} from "@/lib/launch-opportunities/list";
+import { getKanbanSalesAggregatesForProject } from "@/lib/launch-sales/list";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { userCanEditProject } from "@/lib/supabase/auth";
 
@@ -24,12 +20,12 @@ export default async function LaunchesPage({
   readonly params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const [launches, canEdit, adsAggregates, opportunityRowsByLaunch] =
+  const [launches, canEdit, adsAggregates, kanbanSalesAggregates] =
     await Promise.all([
       listLaunchesForProject(projectId),
       userCanEditProject(projectId),
       listAggregatesForProject(projectId),
-      listOpportunityRowsByLaunchForProject(projectId),
+      getKanbanSalesAggregatesForProject(projectId),
     ]);
 
   const createAction = createLaunch.bind(null, projectId);
@@ -77,7 +73,7 @@ export default async function LaunchesPage({
       </header>
 
       <div className="overflow-x-auto rounded-md border border-border">
-        <table className="w-full min-w-[640px] text-sm">
+        <table className="w-full min-w-[820px] text-sm">
           <thead className="bg-surface text-left text-xs uppercase tracking-wide text-fg-subtle">
             <tr>
               <th scope="col" className="px-4 py-3 font-medium">
@@ -90,33 +86,29 @@ export default async function LaunchesPage({
                 Status
               </th>
               <th scope="col" className="px-4 py-3 text-right font-medium">
-                Revenue
+                Revenue est.
               </th>
               <th scope="col" className="px-4 py-3 text-right font-medium">
-                ROAS
+                Revenue cobr.
               </th>
               <th scope="col" className="px-4 py-3 text-right font-medium">
-                Profit
+                ROAS est.
+              </th>
+              <th scope="col" className="px-4 py-3 text-right font-medium">
+                Profit est.
               </th>
             </tr>
           </thead>
           <tbody>
             {launches.map((l) => {
-              const salesAggregate =
-                l.date_start && l.date_end
-                  ? aggregateOpportunities(
-                      opportunityRowsByLaunch.get(l.id) ?? [],
-                      { date_start: l.date_start, date_end: l.date_end },
-                    )
-                  : EMPTY_SALES_AGGREGATE;
               const kpi = calculateLaunchKPIs(l, {
                 adsAggregate: adsAggregates.get(l.id),
-                salesAggregate,
+                kanbanSalesAggregate: kanbanSalesAggregates.get(l.id),
               });
               const profitColor =
-                kpi.profit > 0
+                kpi.profitEstimated > 0
                   ? "text-success"
-                  : kpi.profit < 0
+                  : kpi.profitEstimated < 0
                     ? "text-error"
                     : "text-fg";
               return (
@@ -139,13 +131,16 @@ export default async function LaunchesPage({
                     <StatusBadge status={l.status} />
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums text-fg">
-                    {fmtMoney(kpi.revenue)}
+                    {fmtMoney(kpi.revenueEstimated)}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-fg">
+                    {fmtMoney(kpi.revenueCollected)}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums text-fg-muted">
-                    {fmtMultiplier(kpi.roas)}
+                    {fmtMultiplier(kpi.roasEstimated)}
                   </td>
                   <td className={`px-4 py-3 text-right tabular-nums ${profitColor}`}>
-                    {fmtMoney(kpi.profit)}
+                    {fmtMoney(kpi.profitEstimated)}
                   </td>
                 </tr>
               );

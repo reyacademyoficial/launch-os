@@ -52,6 +52,7 @@ export function SaleModal({
   createSaleAction,
   addPaymentAction,
   deletePaymentAction,
+  deleteSaleAction,
 }: {
   readonly triggerLabel: string;
   readonly triggerClassName?: string;
@@ -69,6 +70,12 @@ export function SaleModal({
   readonly createSaleAction: SaleAction;
   readonly addPaymentAction: AddPaymentAction;
   readonly deletePaymentAction: DeleteAction;
+  /**
+   * Borra la sale (los payments caen por CASCADE). El lead NO se borra. Si
+   * no se pasa, no se muestra el botón. Lo deja opcional así callers viejos
+   * no rompen.
+   */
+  readonly deleteSaleAction?: DeleteAction;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -123,6 +130,8 @@ export function SaleModal({
                   launchId={lead.launch_id}
                   addPaymentAction={addPaymentAction}
                   deletePaymentAction={deletePaymentAction}
+                  deleteSaleAction={deleteSaleAction}
+                  onSaleDeleted={() => setOpen(false)}
                 />
               ) : (
                 <NewSaleForm
@@ -266,6 +275,8 @@ function SalePanel({
   launchId,
   addPaymentAction,
   deletePaymentAction,
+  deleteSaleAction,
+  onSaleDeleted,
 }: {
   readonly sale: SaleRow;
   readonly saleRank: number;
@@ -275,10 +286,13 @@ function SalePanel({
   readonly launchId: string | null;
   readonly addPaymentAction: AddPaymentAction;
   readonly deletePaymentAction: DeleteAction;
+  readonly deleteSaleAction?: DeleteAction;
+  readonly onSaleDeleted: () => void;
 }) {
   const modality = modalities.find((m) => m.id === sale.payment_modality_id);
   const rule = findApplicableRule(rules, sale.payment_modality_id, launchId);
   const breakdown = computeCommission(sale, payments, rule, saleRank);
+  const [deletePending, startDeleteTransition] = useTransition();
 
   return (
     <div className="space-y-6">
@@ -333,6 +347,38 @@ function SalePanel({
           </ul>
         )}
       </section>
+
+      {/* Zona de peligro: borrar la venta. No toca el lead. */}
+      {deleteSaleAction && (
+        <section className="rounded-md border border-error/30 bg-error/5 p-4">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-error">
+            Borrar venta
+          </h4>
+          <p className="mt-1 text-xs text-fg-muted">
+            Se borra la venta y sus {payments.length} cobro
+            {payments.length === 1 ? "" : "s"}. El lead queda intacto en la
+            columna <b>cerrado</b> — movelo a otra columna si querés.
+          </p>
+          <button
+            type="button"
+            disabled={deletePending}
+            onClick={() => {
+              const msg =
+                payments.length > 0
+                  ? `¿Borrar la venta de ${fmtMoney(sale.total_amount)} y sus ${payments.length} cobros?`
+                  : `¿Borrar la venta de ${fmtMoney(sale.total_amount)}?`;
+              if (!confirm(msg)) return;
+              startDeleteTransition(async () => {
+                await deleteSaleAction(sale.id);
+                onSaleDeleted();
+              });
+            }}
+            className="mt-3 rounded-md border border-error/40 bg-error/10 px-3 py-1.5 text-xs font-medium text-error hover:bg-error/20 disabled:opacity-50"
+          >
+            {deletePending ? "Borrando…" : "Borrar venta"}
+          </button>
+        </section>
+      )}
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { summarizeLaunch } from "@/lib/ai/summarize-launch";
 import { listAdsForLaunch, listDailyForLaunch } from "@/lib/launch-daily/list";
-import { listOpportunitiesForLaunch } from "@/lib/launch-opportunities/list";
+import { getKanbanSalesAggregateForLaunch } from "@/lib/launch-sales/list";
 import { getLaunch } from "@/lib/launches/get";
 import {
   requireCanEditLaunchesIn,
@@ -36,15 +36,15 @@ export async function generateLaunchSummary(
     return { error: "No se encontró el lanzamiento (o no tenés acceso)." };
   }
 
-  const [daily, ads, opportunities] = await Promise.all([
+  const [daily, ads, kanbanSalesAggregate] = await Promise.all([
     listDailyForLaunch(launchId),
     listAdsForLaunch(launchId),
-    listOpportunitiesForLaunch(launchId),
+    getKanbanSalesAggregateForLaunch(projectId, launchId),
   ]);
   const supabase = await createClient();
 
   try {
-    const text = await summarizeLaunch(launch, daily, ads, opportunities);
+    const text = await summarizeLaunch(launch, daily, ads, kanbanSalesAggregate);
 
     const insertPayload = {
       launch_id: launchId,

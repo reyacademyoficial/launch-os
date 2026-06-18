@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { calculateLaunchKPIs, type LaunchKPIInput } from "./kpis";
 import type { CommunityAggregate } from "./launch-community/aggregate";
 import type { DailyAggregate } from "./launch-daily/aggregate";
-import type { SalesAggregate } from "./launch-opportunities/aggregate";
+import type { KanbanSalesAggregate } from "./launch-sales/aggregate";
 
 const BASELINE: LaunchKPIInput = {
   meta_investment: 0,
@@ -18,7 +18,8 @@ const BASELINE: LaunchKPIInput = {
   asistentes: 0,
   hasta_pitch: 0,
   ventas_total: 100,
-  revenue: 50000,
+  revenue_estimated_manual: 50000,
+  revenue_collected_manual: 30000,
 };
 
 const EMPTY_ADS: DailyAggregate = {
@@ -37,75 +38,123 @@ const EMPTY_ADS: DailyAggregate = {
   daysCovered: 0,
 };
 
-describe("calculateLaunchKPIs — fallback salesAggregate vs manual", () => {
-  it("sin salesAggregate → ventas/revenue desde launches.*", () => {
+describe("calculateLaunchKPIs — modelo aditivo kanban + manual (Phase 9)", () => {
+  it("sin kanbanSalesAggregate → revenue/ventas vienen solo del manual", () => {
     const k = calculateLaunchKPIs(BASELINE);
     expect(k.ventas).toBe(100);
+    expect(k.revenueEstimated).toBe(50000);
+    expect(k.revenueCollected).toBe(30000);
+    // Alias de compat.
     expect(k.revenue).toBe(50000);
   });
 
-  it("salesAggregate con hasData=false → fallback al manual", () => {
-    const sales: SalesAggregate = {
+  it("kanbanSalesAggregate hasData=false (vacío) → solo manual cuenta", () => {
+    const kanban: KanbanSalesAggregate = {
       hasData: false,
-      wonCount: 9999,
-      wonRevenue: 999999,
+      pledgedRevenue: 0,
+      collectedRevenue: 0,
+      salesCount: 0,
+      paymentsCount: 0,
     };
-    const k = calculateLaunchKPIs(BASELINE, { salesAggregate: sales });
-    // hasData=false: ignoramos los valores aunque vengan llenos
+    const k = calculateLaunchKPIs(BASELINE, { kanbanSalesAggregate: kanban });
     expect(k.ventas).toBe(100);
-    expect(k.revenue).toBe(50000);
+    expect(k.revenueEstimated).toBe(50000);
+    expect(k.revenueCollected).toBe(30000);
   });
 
-  it("salesAggregate con hasData=true → ventas/revenue del agregado, NO mezcla con manual", () => {
-    const sales: SalesAggregate = {
+  it("kanban con datos + manual → se SUMAN (decisión 3.b)", () => {
+    const kanban: KanbanSalesAggregate = {
       hasData: true,
-      wonCount: 7,
-      wonRevenue: 12500,
+      pledgedRevenue: 20000,
+      collectedRevenue: 15000,
+      salesCount: 7,
+      paymentsCount: 12,
     };
-    const k = calculateLaunchKPIs(BASELINE, { salesAggregate: sales });
-    expect(k.ventas).toBe(7);
-    expect(k.revenue).toBe(12500);
-    // ROAS y CAC derivados deben usar el revenue/ventas del aggregate.
-    // Sin inversión, ROAS = 0 (safeDiv).
-    expect(k.roas).toBe(0);
-    // Con inversión 0 y ventas 7, CAC = 0/7 = 0.
-    expect(k.cac).toBe(0);
+    const k = calculateLaunchKPIs(BASELINE, { kanbanSalesAggregate: kanban });
+    expect(k.ventas).toBe(107); // 7 + 100
+    expect(k.revenueEstimated).toBe(70000); // 20000 + 50000
+    expect(k.revenueCollected).toBe(45000); // 15000 + 30000
   });
 
-  it("salesAggregate con hasData=true Y wonCount=0 → 0 ventas (no fallback)", () => {
-    // Caso: GHL configurado y sincronizado pero sin won en ventana. El KPI
-    // debe mostrar 0, no caer al manual.
-    const sales: SalesAggregate = {
-      hasData: true,
-      wonCount: 0,
-      wonRevenue: 0,
+  it("solo kanban (manuales en 0) → revenue == kanban", () => {
+    const empty: LaunchKPIInput = {
+      ...BASELINE,
+      ventas_total: 0,
+      revenue_estimated_manual: 0,
+      revenue_collected_manual: 0,
     };
-    const k = calculateLaunchKPIs(BASELINE, { salesAggregate: sales });
-    expect(k.ventas).toBe(0);
-    expect(k.revenue).toBe(0);
+    const kanban: KanbanSalesAggregate = {
+      hasData: true,
+      pledgedRevenue: 8000,
+      collectedRevenue: 3500,
+      salesCount: 4,
+      paymentsCount: 6,
+    };
+    const k = calculateLaunchKPIs(empty, { kanbanSalesAggregate: kanban });
+    expect(k.ventas).toBe(4);
+    expect(k.revenueEstimated).toBe(8000);
+    expect(k.revenueCollected).toBe(3500);
   });
 
-  it("ingresos_whatsapp queda manual aunque haya salesAggregate (decisión 1.c)", () => {
-    const sales: SalesAggregate = {
+  it("roasEstimated vs roasReal con inversión > 0", () => {
+    const input: LaunchKPIInput = {
+      ...BASELINE,
+      meta_investment: 10000,
+      revenue_estimated_manual: 50000,
+      revenue_collected_manual: 25000,
+    };
+    const k = calculateLaunchKPIs(input);
+    expect(k.totalInvestment).toBe(10000);
+    expect(k.roasEstimated).toBe(5); // 50000 / 10000
+    expect(k.roasReal).toBe(2.5); // 25000 / 10000
+    // Alias.
+    expect(k.roas).toBe(5);
+  });
+
+  it("inversión 0 → ambos ROAS en 0 (safeDiv)", () => {
+    const k = calculateLaunchKPIs(BASELINE);
+    expect(k.totalInvestment).toBe(0);
+    expect(k.roasEstimated).toBe(0);
+    expect(k.roasReal).toBe(0);
+  });
+
+  it("profitEstimated y profitReal", () => {
+    const input: LaunchKPIInput = {
+      ...BASELINE,
+      meta_investment: 10000,
+      revenue_estimated_manual: 50000,
+      revenue_collected_manual: 25000,
+    };
+    const k = calculateLaunchKPIs(input);
+    expect(k.profitEstimated).toBe(40000); // 50000 - 10000
+    expect(k.profitReal).toBe(15000); // 25000 - 10000
+    expect(k.profit).toBe(40000); // alias
+  });
+
+  it("ingresos_whatsapp queda manual aunque haya kanban (decisión 1.c original)", () => {
+    const kanban: KanbanSalesAggregate = {
       hasData: true,
-      wonCount: 7,
-      wonRevenue: 12500,
+      pledgedRevenue: 20000,
+      collectedRevenue: 10000,
+      salesCount: 5,
+      paymentsCount: 8,
     };
     const k = calculateLaunchKPIs(
       { ...BASELINE, ingresos_whatsapp: 3000 },
-      { salesAggregate: sales },
+      { kanbanSalesAggregate: kanban },
     );
     expect(k.whatsappRevenue).toBe(3000);
-    // whatsappRevenueShare debe derivarse del revenue NUEVO (12500), no del
-    // viejo manual de BASELINE — para que el porcentaje sea coherente.
-    expect(k.whatsappRevenueShare).toBeCloseTo((3000 / 12500) * 100, 5);
+    // Share se calcula sobre el revenueEstimated nuevo (70000).
+    expect(k.whatsappRevenueShare).toBeCloseTo((3000 / 70000) * 100, 5);
   });
 
-  it("salesAggregate convive con adsAggregate sin interferencia", () => {
-    const sales: SalesAggregate = {
+  it("kanban convive con adsAggregate sin interferencia", () => {
+    const kanban: KanbanSalesAggregate = {
       hasData: true,
-      wonCount: 5,
-      wonRevenue: 10000,
+      pledgedRevenue: 10000,
+      collectedRevenue: 5000,
+      salesCount: 5,
+      paymentsCount: 8,
     };
     const ads: DailyAggregate = {
       ...EMPTY_ADS,
@@ -113,16 +162,22 @@ describe("calculateLaunchKPIs — fallback salesAggregate vs manual", () => {
       metaLeads: 50,
       daysCovered: 1,
     };
-    const k = calculateLaunchKPIs(BASELINE, {
-      salesAggregate: sales,
-      adsAggregate: ads,
-    });
+    const k = calculateLaunchKPIs(
+      {
+        ...BASELINE,
+        ventas_total: 0,
+        revenue_estimated_manual: 0,
+        revenue_collected_manual: 0,
+      },
+      { kanbanSalesAggregate: kanban, adsAggregate: ads },
+    );
     expect(k.metaInv).toBe(1000);
     expect(k.metaLeads).toBe(50);
     expect(k.ventas).toBe(5);
-    expect(k.revenue).toBe(10000);
-    // Profit = 10000 - 1000 = 9000
-    expect(k.profit).toBe(9000);
+    expect(k.revenueEstimated).toBe(10000);
+    expect(k.revenueCollected).toBe(5000);
+    expect(k.profitEstimated).toBe(9000);
+    expect(k.profitReal).toBe(4000);
   });
 });
 
@@ -155,9 +210,7 @@ describe("calculateLaunchKPIs — community (SendFlow)", () => {
     expect(k.enteredCommunity).toBe(100);
     expect(k.leftCommunity).toBe(20);
     expect(k.communityClicks).toBe(540);
-    // ((100 - 20) / 100) * 100 = 80
     expect(k.retentionRate).toBe(80);
-    // (100 / 400) * 100 = 25
     expect(k.enteredCommunityRate).toBe(25);
   });
 
@@ -181,20 +234,14 @@ describe("calculateLaunchKPIs — community (SendFlow)", () => {
       removed: 20,
       clicks: 540,
     };
-    // BASELINE no tiene leads (todas las columnas en 0) → totalLeads = 0.
     const k = calculateLaunchKPIs(BASELINE, {
       communityAggregate: community,
     });
     expect(k.enteredCommunityRate).toBeNull();
-    // retentionRate sí se puede calcular porque entered > 0.
     expect(k.retentionRate).toBe(80);
   });
 
   it("removed > entered → retentionRate negativa (no clamp, lo que es)", () => {
-    // Edge: si más gente sale que entra en la ventana, la fórmula da
-    // negativo. Lo dejamos pasar — la UI puede formatear; matemáticamente
-    // es lo que pide la fórmula. Si después decidimos clampear a 0, se
-    // cambia acá.
     const community: CommunityAggregate = {
       hasData: true,
       entered: 10,
@@ -204,21 +251,22 @@ describe("calculateLaunchKPIs — community (SendFlow)", () => {
     const k = calculateLaunchKPIs(BASELINE, {
       communityAggregate: community,
     });
-    // ((10 - 25) / 10) * 100 = -150
     expect(k.retentionRate).toBe(-150);
   });
 
-  it("community convive con ads + sales sin interferencia", () => {
+  it("community convive con ads + kanban sin interferencia", () => {
     const ads: DailyAggregate = {
       ...EMPTY_ADS,
       metaSpend: 1000,
       metaLeads: 200,
       daysCovered: 1,
     };
-    const sales: SalesAggregate = {
+    const kanban: KanbanSalesAggregate = {
       hasData: true,
-      wonCount: 10,
-      wonRevenue: 5000,
+      pledgedRevenue: 5000,
+      collectedRevenue: 3000,
+      salesCount: 10,
+      paymentsCount: 15,
     };
     const community: CommunityAggregate = {
       hasData: true,
@@ -226,16 +274,24 @@ describe("calculateLaunchKPIs — community (SendFlow)", () => {
       removed: 5,
       clicks: 300,
     };
-    const k = calculateLaunchKPIs(BASELINE, {
-      adsAggregate: ads,
-      salesAggregate: sales,
-      communityAggregate: community,
-    });
+    const k = calculateLaunchKPIs(
+      {
+        ...BASELINE,
+        ventas_total: 0,
+        revenue_estimated_manual: 0,
+        revenue_collected_manual: 0,
+      },
+      {
+        adsAggregate: ads,
+        kanbanSalesAggregate: kanban,
+        communityAggregate: community,
+      },
+    );
     expect(k.metaInv).toBe(1000);
     expect(k.metaLeads).toBe(200);
     expect(k.ventas).toBe(10);
-    expect(k.revenue).toBe(5000);
-    // Comunidad: (45/50)*100 = 90, (50/200)*100 = 25
+    expect(k.revenueEstimated).toBe(5000);
+    expect(k.revenueCollected).toBe(3000);
     expect(k.retentionRate).toBe(90);
     expect(k.enteredCommunityRate).toBe(25);
   });

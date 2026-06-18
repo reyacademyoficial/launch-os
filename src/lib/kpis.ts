@@ -13,11 +13,20 @@
  * día). Si no, fallback a las columnas estáticas de `launches.*` cargadas a
  * mano — compat con launches del prototipo viejo que nunca tuvieron daily.
  * NUNCA se mezclan agregado y columna estática: o uno o el otro.
+ *
+ * Fuente del revenue (Phase 9):
+ *   - Modelo aditivo: kanban (sales+payments en columna `cerrado`) + manual.
+ *     Las dos fuentes SE SUMAN siempre. Si no hay kanban, el KPI = solo
+ *     manual; si no hay manual, = solo kanban; si hay las dos, = suma.
+ *   - GHL opportunities ya NO entran al cálculo (Phase 9, decisión 2.a).
+ *     El sync sigue guardando filas pero `kpis.ts` no las lee más.
+ *   - Dos métricas separadas: `revenueEstimated` (pactado) y
+ *     `revenueCollected` (realmente cobrado). Cada una con su ROAS.
  */
 
+import type { KanbanSalesAggregate } from "./launch-sales/aggregate";
 import type { CommunityAggregate } from "./launch-community/aggregate";
 import type { DailyAggregate } from "./launch-daily/aggregate";
-import type { SalesAggregate } from "./launch-opportunities/aggregate";
 
 export const safeNumber = (v: unknown, fallback = 0): number => {
   const n = typeof v === "number" ? v : parseFloat(v as string);
@@ -49,7 +58,8 @@ export interface LaunchKPIInput {
   asistentes?: number | string | null;
   hasta_pitch?: number | string | null;
   ventas_total?: number | string | null;
-  revenue?: number | string | null;
+  revenue_estimated_manual?: number | string | null;
+  revenue_collected_manual?: number | string | null;
 }
 
 export interface LaunchKPIOptions {
@@ -61,16 +71,14 @@ export interface LaunchKPIOptions {
    */
   adsAggregate?: DailyAggregate;
   /**
-   * Agregado de `launch_opportunities` (GHL Opportunities). Cuando
-   * `hasData=true`, `ventas` y `revenue` salen de acá y se ignoran las
-   * columnas `launches.ventas_total` / `launches.revenue`. Cuando no, fallback
-   * a las columnas estáticas (mismo principio que adsAggregate).
-   *
-   * `ingresos_whatsapp` queda siempre manual en v1 (decisión 1.c). El split
-   * WhatsApp/Otros se agregará cuando exista UI para mapear pipelines de GHL
-   * a "pipeline de WhatsApp" a nivel proyecto.
+   * Agregado del kanban: ventas en columna `cerrado` del launch + payments
+   * de esas ventas. Modo aditivo (decisión 3.b — Phase 9): siempre se suma
+   * a los campos manuales `revenue_estimated_manual` / `revenue_collected_manual`
+   * / `ventas_total`. `hasData=true` cuando hay al menos 1 venta cerrada;
+   * la UI lo usa solo para mostrar/ocultar el bloque "incluye X ventas del
+   * kanban", no para decidir la fuente del número.
    */
-  salesAggregate?: SalesAggregate;
+  kanbanSalesAggregate?: KanbanSalesAggregate;
   /**
    * Agregado de `launch_community_metrics` (SendFlow). Cuando `hasData=true`,
    * derivamos los KPIs de comunidad (% retención + % que entró). Si no, los
@@ -89,10 +97,20 @@ export interface LaunchKPIs {
   tiktokLeads: number;
   contactosAPI: number;
   whatsappRevenue: number;
+  /**
+   * Alias de `revenueEstimated` para consumers viejos (PDF, IA summary,
+   * analytics) que aún no migraron a la distinción estimado/cobrado. Una vez
+   * que todos migren, se borra.
+   */
   revenue: number;
+  /** Σ pactado del kanban (cerrado) + revenue_estimated_manual. */
+  revenueEstimated: number;
+  /** Σ cobrado del kanban (payments en cerrado) + revenue_collected_manual. */
+  revenueCollected: number;
   registrados: number;
   asistentes: number;
   hastaPitch: number;
+  /** Σ ventas cerradas del kanban + ventas_total manual. */
   ventas: number;
   totalLeads: number;
   totalInvestment: number;
@@ -100,11 +118,21 @@ export interface LaunchKPIs {
   cplGoogle: number;
   cplTiktok: number;
   whatsappRevenueShare: number;
+  /** Alias de `roasEstimated` para compat. */
   roas: number;
+  /** revenueEstimated / totalInvestment. Lo que pactaron, sobre lo invertido. */
+  roasEstimated: number;
+  /** revenueCollected / totalInvestment. Lo que cobraron, sobre lo invertido. */
+  roasReal: number;
   cac: number;
   showRate: number;
   closeRate: number;
+  /** Alias de `profitEstimated` para compat con dashboards viejos. */
   profit: number;
+  /** revenueEstimated - totalInvestment. */
+  profitEstimated: number;
+  /** revenueCollected - totalInvestment. */
+  profitReal: number;
   /** Counts crudos de comunidad WhatsApp (SendFlow). 0 si no hay sync. */
   enteredCommunity: number;
   leftCommunity: number;
@@ -138,6 +166,8 @@ export function calculateLaunchKPIs(
       contactosAPI: 0,
       whatsappRevenue: 0,
       revenue: 0,
+      revenueEstimated: 0,
+      revenueCollected: 0,
       registrados: 0,
       asistentes: 0,
       hastaPitch: 0,
@@ -149,10 +179,14 @@ export function calculateLaunchKPIs(
       cplTiktok: 0,
       whatsappRevenueShare: 0,
       roas: 0,
+      roasEstimated: 0,
+      roasReal: 0,
       cac: 0,
       showRate: 0,
       closeRate: 0,
       profit: 0,
+      profitEstimated: 0,
+      profitReal: 0,
       enteredCommunity: 0,
       leftCommunity: 0,
       communityClicks: 0,
@@ -178,16 +212,21 @@ export function calculateLaunchKPIs(
   const tiktokLeads = useAggregate ? agg!.tiktokLeads : safeInt(l.tiktok_leads);
   const contactosAPI = safeInt(l.contactos_api);
   const whatsappRevenue = safeNumber(l.ingresos_whatsapp);
-  // Si el sync de GHL Opportunities trajo data (hasData=true), `ventas` y
-  // `revenue` salen del agregado. Si no, fallback al form manual. Mismo
-  // patrón que ads — nunca se mezclan las dos fuentes.
-  const useSales = opts.salesAggregate?.hasData ?? false;
-  const revenue = useSales
-    ? opts.salesAggregate!.wonRevenue
-    : safeNumber(l.revenue);
-  const ventas = useSales
-    ? opts.salesAggregate!.wonCount
-    : safeInt(l.ventas_total);
+
+  // Revenue: modelo aditivo kanban + manual (Phase 9, decisión 3.b).
+  // Si no hay kanbanSalesAggregate, kanbanPledged/Collected/Count = 0 → solo
+  // pesa el manual. Mismo patrón para `ventas`.
+  const kanban = opts.kanbanSalesAggregate;
+  const kanbanPledged = kanban?.pledgedRevenue ?? 0;
+  const kanbanCollected = kanban?.collectedRevenue ?? 0;
+  const kanbanSalesCount = kanban?.salesCount ?? 0;
+
+  const revenueEstimated =
+    kanbanPledged + safeNumber(l.revenue_estimated_manual);
+  const revenueCollected =
+    kanbanCollected + safeNumber(l.revenue_collected_manual);
+  const ventas = kanbanSalesCount + safeInt(l.ventas_total);
+
   const registrados = safeInt(l.registrados);
   const asistentes = safeInt(l.asistentes);
   const hastaPitch = safeInt(l.hasta_pitch);
@@ -211,6 +250,11 @@ export function calculateLaunchKPIs(
       ? (enteredCommunity / totalLeads) * 100
       : null;
 
+  const roasEstimated = safeDiv(revenueEstimated, totalInvestment);
+  const roasReal = safeDiv(revenueCollected, totalInvestment);
+  const profitEstimated = revenueEstimated - totalInvestment;
+  const profitReal = revenueCollected - totalInvestment;
+
   return {
     metaInv,
     metaLeads,
@@ -220,7 +264,9 @@ export function calculateLaunchKPIs(
     tiktokLeads,
     contactosAPI,
     whatsappRevenue,
-    revenue,
+    revenue: revenueEstimated,
+    revenueEstimated,
+    revenueCollected,
     registrados,
     asistentes,
     hastaPitch,
@@ -230,12 +276,16 @@ export function calculateLaunchKPIs(
     cplMeta: safeDiv(metaInv, metaLeads),
     cplGoogle: safeDiv(googleInv, googleLeads),
     cplTiktok: safeDiv(tiktokInv, tiktokLeads),
-    whatsappRevenueShare: safePercent(whatsappRevenue, revenue),
-    roas: safeDiv(revenue, totalInvestment),
+    whatsappRevenueShare: safePercent(whatsappRevenue, revenueEstimated),
+    roas: roasEstimated,
+    roasEstimated,
+    roasReal,
     cac: safeDiv(totalInvestment, ventas),
     showRate: safePercent(asistentes, registrados),
     closeRate: safePercent(ventas, asistentes),
-    profit: revenue - totalInvestment,
+    profit: profitEstimated,
+    profitEstimated,
+    profitReal,
     enteredCommunity,
     leftCommunity,
     communityClicks,

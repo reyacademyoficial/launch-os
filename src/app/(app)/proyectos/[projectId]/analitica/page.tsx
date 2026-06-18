@@ -18,11 +18,7 @@ import { getChannelsData } from "@/lib/analytics/channels";
 import { getFunnelData } from "@/lib/analytics/funnel";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import { listAggregatesForProject } from "@/lib/launch-daily/list";
-import {
-  aggregateOpportunities,
-  EMPTY_SALES_AGGREGATE,
-} from "@/lib/launch-opportunities/aggregate";
-import { listOpportunityRowsByLaunchForProject } from "@/lib/launch-opportunities/list";
+import { getKanbanSalesAggregatesForProject } from "@/lib/launch-sales/list";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { requireSessionProfile } from "@/lib/supabase/auth";
 
@@ -73,10 +69,10 @@ export default async function AnalyticsPage({
   const view = readView(sp.view);
   const filter = parseAnalyticsFilter(sp);
 
-  const [launches, adsByLaunch, opportunityRowsByLaunch] = await Promise.all([
+  const [launches, adsByLaunch, kanbanSalesByLaunch] = await Promise.all([
     listLaunchesForProject(projectId),
     listAggregatesForProject(projectId),
-    listOpportunityRowsByLaunchForProject(projectId),
+    getKanbanSalesAggregatesForProject(projectId),
   ]);
 
   const filtered = applyAnalyticsFilter(launches, filter);
@@ -116,16 +112,9 @@ export default async function AnalyticsPage({
       return ad.localeCompare(bd);
     });
     trends = ascending.map((l) => {
-      const salesAgg =
-        l.date_start && l.date_end
-          ? aggregateOpportunities(opportunityRowsByLaunch.get(l.id) ?? [], {
-              date_start: l.date_start,
-              date_end: l.date_end,
-            })
-          : EMPTY_SALES_AGGREGATE;
       const kpi = calculateLaunchKPIs(l, {
         adsAggregate: adsByLaunch.get(l.id),
-        salesAggregate: salesAgg,
+        kanbanSalesAggregate: kanbanSalesByLaunch.get(l.id),
       });
       const cpl =
         kpi.totalLeads > 0 ? kpi.totalInvestment / kpi.totalLeads : 0;
@@ -133,8 +122,8 @@ export default async function AnalyticsPage({
         launchId: l.id,
         name: l.name,
         dateStart: l.date_start,
-        revenue: kpi.revenue,
-        profit: kpi.profit,
+        revenue: kpi.revenueEstimated,
+        profit: kpi.profitEstimated,
         cpl,
         closeRate: kpi.closeRate,
       };
@@ -172,7 +161,7 @@ export default async function AnalyticsPage({
           <ComparatorTable
             launches={filtered}
             adsByLaunch={adsByLaunch}
-            opportunityRowsByLaunch={opportunityRowsByLaunch}
+            kanbanSalesByLaunch={kanbanSalesByLaunch}
           />
         )}
         {view === "embudo" && funnel && <FunnelChart stages={funnel.stages} />}

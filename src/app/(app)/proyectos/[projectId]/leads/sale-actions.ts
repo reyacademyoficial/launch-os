@@ -128,15 +128,44 @@ export async function updateSale(
   return { ok: true };
 }
 
+/**
+ * Borra una sale. Los payments asociados caen por CASCADE (FK definida en
+ * 0014). El lead NO se borra ni cambia de columna — el card del kanban queda
+ * en `cerrado` sin venta, listo para que el usuario lo mueva a otra columna
+ * si quiere. Decisión explícita: simétrico con "deletePayment no des-cierra
+ * la venta", evita adivinar a qué estado revertir.
+ *
+ * Revalidamos también el launch detail (cobros/KPI) si el lead estaba ligado
+ * a un launch — para que el revenue agregado se refleje al instante en lugar
+ * de quedar con cache stale del SSR previo.
+ */
 export async function deleteSale(projectId: string, saleId: string): Promise<void> {
   await requireCanEditLaunchesIn(projectId);
   const supabase = await createClient();
+
+  // Lookup del launch_id antes de borrar, para revalidar la tab de cobros.
+  const { data: saleRow } = await supabase
+    .from("sales")
+    .select("lead_id, leads(launch_id)")
+    .eq("id", saleId)
+    .eq("project_id", projectId)
+    .maybeSingle();
+  const launchId =
+    (saleRow as { leads: { launch_id: string | null } | null } | null)?.leads
+      ?.launch_id ?? null;
+
   await supabase
     .from("sales")
     .delete()
     .eq("id", saleId)
     .eq("project_id", projectId);
+
   revalidatePath(`/proyectos/${projectId}/leads`);
+  if (launchId) {
+    revalidatePath(`/proyectos/${projectId}/launches/${launchId}`);
+    revalidatePath(`/proyectos/${projectId}/launches/${launchId}/cobros`);
+    revalidatePath(`/proyectos/${projectId}/launches/${launchId}/kpi`);
+  }
 }
 
 // ─── payments ─────────────────────────────────────────────────────────────

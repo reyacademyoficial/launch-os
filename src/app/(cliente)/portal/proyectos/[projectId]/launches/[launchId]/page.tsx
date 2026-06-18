@@ -9,11 +9,7 @@ import { calculateLaunchKPIs } from "@/lib/kpis";
 import { aggregateMergedDaily } from "@/lib/launch-daily/aggregate";
 import { listAdsForLaunch, listDailyForLaunch } from "@/lib/launch-daily/list";
 import { mergeDailyData } from "@/lib/launch-daily/merge";
-import {
-  aggregateOpportunities,
-  EMPTY_SALES_AGGREGATE,
-} from "@/lib/launch-opportunities/aggregate";
-import { listOpportunitiesForLaunch } from "@/lib/launch-opportunities/list";
+import { getKanbanSalesAggregateForLaunch } from "@/lib/launch-sales/list";
 import { getLaunch } from "@/lib/launches/get";
 
 export const metadata: Metadata = { title: "Lanzamiento · Portal" };
@@ -32,26 +28,19 @@ export default async function ClientLaunchPage({
 }) {
   const { projectId, launchId } = await params;
 
-  const [launch, daily, ads, opportunities] = await Promise.all([
+  const [launch, daily, ads, kanbanSalesAggregate] = await Promise.all([
     getLaunch(launchId),
     listDailyForLaunch(launchId),
     listAdsForLaunch(launchId),
-    listOpportunitiesForLaunch(launchId),
+    getKanbanSalesAggregateForLaunch(projectId, launchId),
   ]);
 
   if (!launch || launch.project_id !== projectId) notFound();
 
   const mergedDaily = mergeDailyData(daily, ads);
-  const salesAggregate =
-    launch.date_start && launch.date_end
-      ? aggregateOpportunities(opportunities, {
-          date_start: launch.date_start,
-          date_end: launch.date_end,
-        })
-      : EMPTY_SALES_AGGREGATE;
   const adsAggregate =
     mergedDaily.length > 0 ? aggregateMergedDaily(mergedDaily) : undefined;
-  const kpi = calculateLaunchKPIs(launch, { adsAggregate, salesAggregate });
+  const kpi = calculateLaunchKPIs(launch, { adsAggregate, kanbanSalesAggregate });
 
   return (
     <section className="space-y-10">

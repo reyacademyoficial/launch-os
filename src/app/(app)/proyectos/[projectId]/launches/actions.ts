@@ -68,7 +68,8 @@ interface LaunchWritePayload {
   ventas_total: number;
   ventas_mensuales: number;
   ventas_anuales: number;
-  revenue: number;
+  revenue_estimated_manual: number;
+  revenue_collected_manual: number;
   is_evergreen: boolean;
   recycle_target_launch_id: string | null;
 }
@@ -132,7 +133,8 @@ function parseLaunchFromForm(
       ventas_total: int(formData, "ventas_total"),
       ventas_mensuales: int(formData, "ventas_mensuales"),
       ventas_anuales: int(formData, "ventas_anuales"),
-      revenue: num(formData, "revenue"),
+      revenue_estimated_manual: num(formData, "revenue_estimated_manual"),
+      revenue_collected_manual: num(formData, "revenue_collected_manual"),
       is_evergreen: str(formData, "is_evergreen") === "on",
       // El check constraint en DB exige is_evergreen=true para que el target
       // tenga sentido. Acá normalizamos: si el flag no está prendido, el

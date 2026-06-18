@@ -1,11 +1,7 @@
 import { fmtMoney, fmtMultiplier, fmtNumber, fmtPercent } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import type { DailyAggregate } from "@/lib/launch-daily/aggregate";
-import {
-  aggregateOpportunities,
-  EMPTY_SALES_AGGREGATE,
-  type LaunchOpportunityRow,
-} from "@/lib/launch-opportunities/aggregate";
+import type { KanbanSalesAggregate } from "@/lib/launch-sales/aggregate";
 import type { LaunchRow } from "@/lib/launches/types";
 
 /**
@@ -16,14 +12,11 @@ import type { LaunchRow } from "@/lib/launches/types";
 export function ComparatorTable({
   launches,
   adsByLaunch,
-  opportunityRowsByLaunch,
+  kanbanSalesByLaunch,
 }: {
   readonly launches: readonly LaunchRow[];
   readonly adsByLaunch: ReadonlyMap<string, DailyAggregate>;
-  readonly opportunityRowsByLaunch: ReadonlyMap<
-    string,
-    ReadonlyArray<LaunchOpportunityRow>
-  >;
+  readonly kanbanSalesByLaunch: ReadonlyMap<string, KanbanSalesAggregate>;
 }) {
   if (launches.length === 0) {
     return (
@@ -35,7 +28,7 @@ export function ComparatorTable({
 
   return (
     <div className="overflow-x-auto rounded-md border border-border">
-      <table className="w-full min-w-[1100px] text-sm">
+      <table className="w-full min-w-[1200px] text-sm">
         <thead className="bg-surface text-left text-xs uppercase tracking-wide text-fg-subtle">
           <tr>
             <th className="px-3 py-3 font-medium">Lanzamiento</th>
@@ -45,30 +38,27 @@ export function ComparatorTable({
             <th className="px-3 py-3 text-right font-medium">Show rate</th>
             <th className="px-3 py-3 text-right font-medium">Close rate</th>
             <th className="px-3 py-3 text-right font-medium">Ventas</th>
-            <th className="px-3 py-3 text-right font-medium">Revenue</th>
-            <th className="px-3 py-3 text-right font-medium">ROAS</th>
-            <th className="px-3 py-3 text-right font-medium">Profit</th>
+            <th className="px-3 py-3 text-right font-medium">Revenue est.</th>
+            <th className="px-3 py-3 text-right font-medium">Revenue cobr.</th>
+            <th className="px-3 py-3 text-right font-medium">ROAS est.</th>
+            <th className="px-3 py-3 text-right font-medium">ROAS real</th>
+            <th className="px-3 py-3 text-right font-medium">Profit est.</th>
           </tr>
         </thead>
         <tbody>
           {launches.map((l) => {
             const adsAggregate = adsByLaunch.get(l.id);
-            const salesAggregate =
-              l.date_start && l.date_end
-                ? aggregateOpportunities(
-                    opportunityRowsByLaunch.get(l.id) ?? [],
-                    { date_start: l.date_start, date_end: l.date_end },
-                  )
-                : EMPTY_SALES_AGGREGATE;
-            const kpi = calculateLaunchKPIs(l, { adsAggregate, salesAggregate });
-            // CPL promedio = inversión total / leads totales. Más útil que el
-            // promedio de CPL por canal cuando se comparan launches enteros.
+            const kanbanSalesAggregate = kanbanSalesByLaunch.get(l.id);
+            const kpi = calculateLaunchKPIs(l, {
+              adsAggregate,
+              kanbanSalesAggregate,
+            });
             const cplAvg =
               kpi.totalLeads > 0 ? kpi.totalInvestment / kpi.totalLeads : 0;
             const profitColor =
-              kpi.profit > 0
+              kpi.profitEstimated > 0
                 ? "text-success"
-                : kpi.profit < 0
+                : kpi.profitEstimated < 0
                   ? "text-error"
                   : "text-fg";
 
@@ -94,15 +84,21 @@ export function ComparatorTable({
                   {fmtNumber(kpi.ventas)}
                 </td>
                 <td className="px-3 py-3 text-right tabular-nums text-fg">
-                  {fmtMoney(kpi.revenue)}
+                  {fmtMoney(kpi.revenueEstimated)}
+                </td>
+                <td className="px-3 py-3 text-right tabular-nums text-fg">
+                  {fmtMoney(kpi.revenueCollected)}
                 </td>
                 <td className="px-3 py-3 text-right tabular-nums text-fg-muted">
-                  {fmtMultiplier(kpi.roas)}
+                  {fmtMultiplier(kpi.roasEstimated)}
+                </td>
+                <td className="px-3 py-3 text-right tabular-nums text-fg-muted">
+                  {fmtMultiplier(kpi.roasReal)}
                 </td>
                 <td
                   className={`px-3 py-3 text-right tabular-nums ${profitColor}`}
                 >
-                  {fmtMoney(kpi.profit)}
+                  {fmtMoney(kpi.profitEstimated)}
                 </td>
               </tr>
             );

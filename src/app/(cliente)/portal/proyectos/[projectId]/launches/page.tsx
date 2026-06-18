@@ -5,11 +5,7 @@ import { StatusBadge } from "@/components/dashboard/launches/status-badge";
 import { fmtLaunchWindow, fmtMoney, fmtMultiplier } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import { listAggregatesForProject } from "@/lib/launch-daily/list";
-import {
-  aggregateOpportunities,
-  EMPTY_SALES_AGGREGATE,
-  listOpportunityRowsByLaunchForProject,
-} from "@/lib/launch-opportunities/list";
+import { getKanbanSalesAggregatesForProject } from "@/lib/launch-sales/list";
 import { listLaunchesForProject } from "@/lib/launches/list";
 
 export const metadata: Metadata = { title: "Lanzamientos · Portal" };
@@ -25,10 +21,10 @@ export default async function ClientLaunchesPage({
   readonly params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const [launches, adsAggregates, opportunityRowsByLaunch] = await Promise.all([
+  const [launches, adsAggregates, kanbanSalesAggregates] = await Promise.all([
     listLaunchesForProject(projectId),
     listAggregatesForProject(projectId),
-    listOpportunityRowsByLaunchForProject(projectId),
+    getKanbanSalesAggregatesForProject(projectId),
   ]);
 
   if (launches.length === 0) {
@@ -75,21 +71,14 @@ export default async function ClientLaunchesPage({
           </thead>
           <tbody>
             {launches.map((l) => {
-              const salesAggregate =
-                l.date_start && l.date_end
-                  ? aggregateOpportunities(
-                      opportunityRowsByLaunch.get(l.id) ?? [],
-                      { date_start: l.date_start, date_end: l.date_end },
-                    )
-                  : EMPTY_SALES_AGGREGATE;
               const kpi = calculateLaunchKPIs(l, {
                 adsAggregate: adsAggregates.get(l.id),
-                salesAggregate,
+                kanbanSalesAggregate: kanbanSalesAggregates.get(l.id),
               });
               const profitColor =
-                kpi.profit > 0
+                kpi.profitEstimated > 0
                   ? "text-success"
-                  : kpi.profit < 0
+                  : kpi.profitEstimated < 0
                     ? "text-error"
                     : "text-fg";
               return (
@@ -112,13 +101,13 @@ export default async function ClientLaunchesPage({
                     <StatusBadge status={l.status} />
                   </td>
                   <td className="px-4 py-3 text-right font-medium">
-                    {fmtMoney(kpi.revenue)}
+                    {fmtMoney(kpi.revenueEstimated)}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {fmtMultiplier(kpi.roas)}
+                    {fmtMultiplier(kpi.roasEstimated)}
                   </td>
                   <td className={`px-4 py-3 text-right font-medium ${profitColor}`}>
-                    {fmtMoney(kpi.profit)}
+                    {fmtMoney(kpi.profitEstimated)}
                   </td>
                 </tr>
               );

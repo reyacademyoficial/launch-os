@@ -156,18 +156,18 @@ function parseTiers(formData: FormData): TierInput[] | string {
   return tiers;
 }
 
-export async function createCommissionRule(
-  projectId: string,
-  _prev: CommissionActionState,
-  formData: FormData,
-): Promise<CommissionActionState> {
-  await requireCanEditProject(projectId);
+interface ParsedRuleInput {
+  modalityIds: string[];
+  launch_id: string | null;
+  accrual_mode: AccrualMode;
+  threshold_type: ThresholdType | null;
+  threshold_value: number | null;
+  tiers: TierInput[];
+}
 
-  // Modalidades (múltiple) — esperamos varios values con key "modality_ids".
+function parseRuleFormData(formData: FormData): ParsedRuleInput | string {
   const modalityIds = formData.getAll("modality_ids").map(String).filter(Boolean);
-  if (modalityIds.length === 0) {
-    return { error: "Elegí al menos una modalidad." };
-  }
+  if (modalityIds.length === 0) return "Elegí al menos una modalidad.";
 
   const launch_id = nullable(str(formData, "launch_id"));
 
@@ -177,7 +177,7 @@ export async function createCommissionRule(
     accrualRaw !== "threshold_full" &&
     accrualRaw !== "threshold_proportional"
   ) {
-    return { error: "Modo de devengamiento inválido." };
+    return "Modo de devengamiento inválido.";
   }
   const accrual_mode = accrualRaw as AccrualMode;
 
@@ -186,45 +186,96 @@ export async function createCommissionRule(
   if (accrual_mode !== "proportional") {
     const thRaw = str(formData, "threshold_type");
     if (thRaw !== "payment_count" && thRaw !== "paid_ratio") {
-      return { error: "Tipo de umbral inválido." };
+      return "Tipo de umbral inválido.";
     }
     threshold_type = thRaw;
-    const thValueRaw = str(formData, "threshold_value");
-    const parsed = parseFloat(thValueRaw);
-    if (!Number.isFinite(parsed)) {
-      return { error: "Valor de umbral inválido." };
-    }
+    const parsed = parseFloat(str(formData, "threshold_value"));
+    if (!Number.isFinite(parsed)) return "Valor de umbral inválido.";
     if (threshold_type === "payment_count") {
       if (!Number.isInteger(parsed) || parsed < 1) {
-        return { error: "El umbral por cantidad de pagos debe ser un entero >= 1." };
+        return "El umbral por cantidad de pagos debe ser un entero >= 1.";
       }
-    } else {
-      if (parsed <= 0 || parsed > 1) {
-        return { error: "El umbral por proporción debe estar entre 0 y 1." };
-      }
+    } else if (parsed <= 0 || parsed > 1) {
+      return "El umbral por proporción debe estar entre 0 y 1.";
     }
     threshold_value = parsed;
   }
 
   const tiersParsed = parseTiers(formData);
-  if (typeof tiersParsed === "string") return { error: tiersParsed };
+  if (typeof tiersParsed === "string") return tiersParsed;
   const validationError = validateTiers(tiersParsed);
-  if (validationError) return { error: validationError };
+  if (validationError) return validationError;
+
+  return {
+    modalityIds,
+    launch_id,
+    accrual_mode,
+    threshold_type,
+    threshold_value,
+    tiers: tiersParsed,
+  };
+}
+
+export async function createCommissionRule(
+  projectId: string,
+  _prev: CommissionActionState,
+  formData: FormData,
+): Promise<CommissionActionState> {
+  await requireCanEditProject(projectId);
+
+  const parsed = parseRuleFormData(formData);
+  if (typeof parsed === "string") return { error: parsed };
 
   const supabase = await createClient();
   const { error } = await supabase.rpc("create_commission_rule" as never, {
     p_project_id: projectId,
-    p_launch_id: launch_id,
-    p_accrual_mode: accrual_mode,
-    p_threshold_type: threshold_type,
-    p_threshold_value: threshold_value,
-    p_modality_ids: modalityIds,
-    p_tiers: tiersParsed,
+    p_launch_id: parsed.launch_id,
+    p_accrual_mode: parsed.accrual_mode,
+    p_threshold_type: parsed.threshold_type,
+    p_threshold_value: parsed.threshold_value,
+    p_modality_ids: parsed.modalityIds,
+    p_tiers: parsed.tiers,
   } as never);
 
   if (error) {
     // El trigger del pivot lanza con SQLSTATE 23505 si una modalidad ya
     // tiene regla para el mismo (project, launch).
+    if (error.code === "23505") {
+      return {
+        error:
+          "Una de las modalidades elegidas ya tiene regla para ese lanzamiento.",
+      };
+    }
+    return { error: error.message };
+  }
+
+  revalidatePath(`/proyectos/${projectId}/comisiones`);
+  return { ok: true };
+}
+
+export async function updateCommissionRule(
+  projectId: string,
+  ruleId: string,
+  _prev: CommissionActionState,
+  formData: FormData,
+): Promise<CommissionActionState> {
+  await requireCanEditProject(projectId);
+
+  const parsed = parseRuleFormData(formData);
+  if (typeof parsed === "string") return { error: parsed };
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("update_commission_rule" as never, {
+    p_rule_id: ruleId,
+    p_launch_id: parsed.launch_id,
+    p_accrual_mode: parsed.accrual_mode,
+    p_threshold_type: parsed.threshold_type,
+    p_threshold_value: parsed.threshold_value,
+    p_modality_ids: parsed.modalityIds,
+    p_tiers: parsed.tiers,
+  } as never);
+
+  if (error) {
     if (error.code === "23505") {
       return {
         error:

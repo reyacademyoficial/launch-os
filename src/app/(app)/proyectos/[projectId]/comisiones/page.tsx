@@ -16,6 +16,7 @@ import {
   createPaymentModality,
   deletePaymentModality,
   deleteCommissionRule,
+  updateCommissionRule,
   updatePaymentModality,
 } from "./actions";
 
@@ -163,6 +164,7 @@ export default async function CommissionsPage({
                 ? launchById.get(r.launch_id) ?? "—"
                 : "Default del proyecto";
               const deleteAction = deleteCommissionRule.bind(null, projectId, r.id);
+              const updateAction = updateCommissionRule.bind(null, projectId, r.id);
               return (
                 <article
                   key={r.id}
@@ -179,10 +181,35 @@ export default async function CommissionsPage({
                         <span>{accrualLabel(r)}</span>
                       </div>
                     </div>
-                    <RowDelete
-                      confirmLabel="¿Borrar esta regla?"
-                      action={deleteAction}
-                    />
+                    <div className="flex items-center gap-2">
+                      <RuleModal
+                        triggerLabel="Editar"
+                        triggerVariant="secondary"
+                        triggerClassName="!px-2 !py-1 !text-xs"
+                        title="Editar regla de comisión"
+                        submitLabel="Guardar"
+                        action={updateAction}
+                        modalities={modalities}
+                        launches={launches.map((l) => ({ id: l.id, name: l.name }))}
+                        initial={{
+                          modality_ids: r.modality_ids,
+                          launch_id: r.launch_id,
+                          accrual_mode: r.accrual_mode,
+                          threshold_type: r.threshold_type,
+                          threshold_value: r.threshold_value,
+                          tiers: r.tiers.map((t) => ({
+                            min_count: t.min_count,
+                            max_count: t.max_count,
+                            type: t.type,
+                            value: t.value,
+                          })),
+                        }}
+                      />
+                      <RowDelete
+                        confirmLabel="¿Borrar esta regla?"
+                        action={deleteAction}
+                      />
+                    </div>
                   </header>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">

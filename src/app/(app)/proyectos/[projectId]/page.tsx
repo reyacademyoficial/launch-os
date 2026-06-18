@@ -11,13 +11,9 @@ import {
   fmtNumber,
   fmtPercent,
 } from "@/lib/format";
+import { calculateLaunchKPIs } from "@/lib/kpis";
 import { listAggregatesForProject } from "@/lib/launch-daily/list";
-import {
-  aggregateOpportunities,
-  EMPTY_SALES_AGGREGATE,
-  listOpportunityRowsByLaunchForProject,
-  type SalesAggregate,
-} from "@/lib/launch-opportunities/list";
+import { getKanbanSalesAggregatesForProject } from "@/lib/launch-sales/list";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { aggregateProjectKPIs } from "@/lib/projects/aggregates";
 import { createClient } from "@/lib/supabase/server";
@@ -42,7 +38,7 @@ export default async function OverviewPage({
     launches,
     canEdit,
     adsAggregates,
-    opportunityRowsByLaunch,
+    kanbanSalesAggregates,
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -52,26 +48,12 @@ export default async function OverviewPage({
     listLaunchesForProject(projectId),
     userCanEditProject(projectId),
     listAggregatesForProject(projectId),
-    listOpportunityRowsByLaunchForProject(projectId),
+    getKanbanSalesAggregatesForProject(projectId),
   ]);
 
   const project = projectRaw as { name: string; business_name: string | null } | null;
   const name = project?.name ?? "Proyecto";
-  const salesAggregates = new Map<string, SalesAggregate>();
-  for (const l of launches) {
-    if (!l.date_start || !l.date_end) {
-      salesAggregates.set(l.id, EMPTY_SALES_AGGREGATE);
-      continue;
-    }
-    salesAggregates.set(
-      l.id,
-      aggregateOpportunities(opportunityRowsByLaunch.get(l.id) ?? [], {
-        date_start: l.date_start,
-        date_end: l.date_end,
-      }),
-    );
-  }
-  const agg = aggregateProjectKPIs(launches, adsAggregates, salesAggregates);
+  const agg = aggregateProjectKPIs(launches, adsAggregates, kanbanSalesAggregates);
   const createAction = createLaunch.bind(null, projectId);
   const copyableLaunches = launches.map((l) => ({ id: l.id, name: l.name }));
 
@@ -185,27 +167,33 @@ export default async function OverviewPage({
         </header>
 
         <ul className="space-y-2">
-          {recent.map((l) => (
-            <li key={l.id}>
-              <Link
-                href={`/proyectos/${projectId}/launches/${l.id}`}
-                className="flex items-center justify-between gap-4 rounded-md border border-border bg-surface px-4 py-3 transition-colors hover:border-accent/40 hover:bg-bg-elevated"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium text-fg">{l.name}</div>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-fg-subtle">
-                    <span>{fmtLaunchWindow(l.date_start, l.date_end)}</span>
-                    <span>·</span>
-                    <StatusBadge status={l.status} />
+          {recent.map((l) => {
+            const lk = calculateLaunchKPIs(l, {
+              adsAggregate: adsAggregates.get(l.id),
+              kanbanSalesAggregate: kanbanSalesAggregates.get(l.id),
+            });
+            return (
+              <li key={l.id}>
+                <Link
+                  href={`/proyectos/${projectId}/launches/${l.id}`}
+                  className="flex items-center justify-between gap-4 rounded-md border border-border bg-surface px-4 py-3 transition-colors hover:border-accent/40 hover:bg-bg-elevated"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-medium text-fg">{l.name}</div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-fg-subtle">
+                      <span>{fmtLaunchWindow(l.date_start, l.date_end)}</span>
+                      <span>·</span>
+                      <StatusBadge status={l.status} />
+                    </div>
                   </div>
-                </div>
-                <div className="hidden text-right sm:block">
-                  <div className="text-xs text-fg-subtle">Revenue</div>
-                  <div className="text-sm font-bold text-fg">{fmtMoney(l.revenue)}</div>
-                </div>
-              </Link>
-            </li>
-          ))}
+                  <div className="hidden text-right sm:block">
+                    <div className="text-xs text-fg-subtle">Revenue est.</div>
+                    <div className="text-sm font-bold text-fg">{fmtMoney(lk.revenueEstimated)}</div>
+                  </div>
+                </Link>
+              </li>
+            );
+          })}
         </ul>
       </section>
     </section>

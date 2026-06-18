@@ -264,17 +264,28 @@ function KpiGrid({ kpi }: { kpi: LaunchKPIs }) {
     sub?: string;
     color?: string;
   }> = [
-    { label: "Revenue", value: money(kpi.revenue) },
+    { label: "Revenue estimado", value: money(kpi.revenueEstimated) },
+    { label: "Revenue cobrado", value: money(kpi.revenueCollected) },
     { label: "Inversión", value: money(kpi.totalInvestment) },
     {
-      label: "Profit",
-      value: money(kpi.profit),
-      color: kpi.profit >= 0 ? COLORS.success : COLORS.error,
+      label: "Profit estimado",
+      value: money(kpi.profitEstimated),
+      color: kpi.profitEstimated >= 0 ? COLORS.success : COLORS.error,
     },
     {
-      label: "ROAS",
-      value: multiplier(kpi.roas),
-      color: kpi.roas >= 1 ? COLORS.success : COLORS.error,
+      label: "Profit real",
+      value: money(kpi.profitReal),
+      color: kpi.profitReal >= 0 ? COLORS.success : COLORS.error,
+    },
+    {
+      label: "ROAS estimado",
+      value: multiplier(kpi.roasEstimated),
+      color: kpi.roasEstimated >= 1 ? COLORS.success : COLORS.error,
+    },
+    {
+      label: "ROAS real",
+      value: multiplier(kpi.roasReal),
+      color: kpi.roasReal >= 1 ? COLORS.success : COLORS.error,
     },
     { label: "CAC", value: money(kpi.cac), sub: `${int(kpi.ventas)} ventas` },
     {
