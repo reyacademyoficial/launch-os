@@ -511,10 +511,12 @@ export async function fetchGhlContactConversations(
       rawPhone: extractPhone(conv),
       contactName: extractContactName(conv),
       type: strOrNull(conv.type) ?? strOrNull(conv.lastMessageType),
-      lastMessageDate: strOrNull(conv.lastMessageDate),
+      lastMessageDate: parseGhlDate(conv.lastMessageDate),
       lastMessageType: strOrNull(conv.lastMessageType),
       lastMessageDirection: parseDirection(conv.lastMessageDirection),
-      lastInboundWhatsappMessageDate: strOrNull(conv.lastInboundWhatsappMessageDate),
+      lastInboundWhatsappMessageDate: parseGhlDate(
+        conv.lastInboundWhatsappMessageDate,
+      ),
       unreadCount: numOrNull(conv.unreadCount),
       raw: conv,
     });
@@ -664,7 +666,7 @@ export async function fetchGhlConversations(
       const lastMessageType = strOrNull(conv.lastMessageType);
       const isWhats = isWhatsAppType(type) || isWhatsAppType(lastMessageType);
 
-      const lastIso = strOrNull(conv.lastMessageDate);
+      const lastIso = parseGhlDate(conv.lastMessageDate);
       const lastMs = lastIso ? Date.parse(lastIso) : NaN;
       if (Number.isFinite(lastMs)) {
         oldestThisPageMs = Math.min(oldestThisPageMs, lastMs);
@@ -687,7 +689,9 @@ export async function fetchGhlConversations(
         lastMessageDate: lastIso,
         lastMessageType,
         lastMessageDirection: parseDirection(conv.lastMessageDirection),
-        lastInboundWhatsappMessageDate: strOrNull(conv.lastInboundWhatsappMessageDate),
+        lastInboundWhatsappMessageDate: parseGhlDate(
+          conv.lastInboundWhatsappMessageDate,
+        ),
         unreadCount: numOrNull(conv.unreadCount),
         raw: conv,
       });
@@ -1397,6 +1401,26 @@ function strOrNull(v: unknown): string | null {
   if (typeof v !== "string") return null;
   const trimmed = v.trim();
   return trimmed === "" ? null : trimmed;
+}
+
+/**
+ * GHL es inconsistente con los timestamps: el endpoint de Contacts devuelve
+ * ISO strings ("2026-06-07T12:34:56Z"), pero el de Conversations los devuelve
+ * como epoch ms (number). Si tratamos un number con `strOrNull` cae a null y
+ * perdemos toda la señal de fecha (bug observado en runtime: warm_signals=0
+ * con 20k conversaciones inbound reales). Este helper normaliza ambos shapes
+ * a ISO string para que el resto del código (Date.parse, comparaciones con
+ * sinceMs/untilMs/warmWindow) funcione igual sin importar la fuente.
+ */
+function parseGhlDate(v: unknown): string | null {
+  if (typeof v === "string") {
+    const trimmed = v.trim();
+    return trimmed === "" ? null : trimmed;
+  }
+  if (typeof v === "number" && Number.isFinite(v)) {
+    return new Date(v).toISOString();
+  }
+  return null;
 }
 
 function parseDirection(v: unknown): "inbound" | "outbound" | null {

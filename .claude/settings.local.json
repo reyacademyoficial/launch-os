@@ -44,7 +44,10 @@
       "Bash(xargs grep *)",
       "Bash(grep -c \"'::text$\" supabase/tests/rls_smoke_test.sql)",
       "Bash(xxd)",
-      "Bash(iconv -f UTF-16LE -t UTF-8 src/lib/types/database.ts)"
+      "Bash(iconv -f UTF-16LE -t UTF-8 src/lib/types/database.ts)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(echo \"TSC=$?\")",
+      "Bash(echo \"LINT=$?\")"
     ]
   }
 }

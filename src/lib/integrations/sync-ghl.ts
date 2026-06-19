@@ -6,11 +6,14 @@ import {
   fetchGhlAppointments,
   fetchGhlContactConversations,
   fetchGhlContacts,
+  fetchGhlConversations,
   fetchGhlOpportunities,
   type AppointmentsMeta,
   type ContactsMeta,
+  type ConversationsMeta,
   type GhlAppointment,
   type GhlContact,
+  type GhlConversation,
   type GhlFetchFailure,
   type GhlOpportunity,
   type OpportunitiesMeta,
@@ -32,9 +35,10 @@ import type { createServiceClient } from "@/lib/supabase/service";
  *   3) Updates individuales en paralelo, pero salteando los no-op (patch que
  *      no cambia nada respecto al existing).
  *
- * Se procesa en DOS fases serializadas: contacts primero, después appointments.
- * El segundo locate ve los leads recién creados por el primero, evitando que
- * un appointment del mismo contacto cree un lead duplicado.
+ * Se procesa en TRES fases serializadas: contacts → orphan WhatsApp →
+ * appointments. Cada locate ve los leads creados por las fases anteriores,
+ * evitando que un appointment o conversación duplique un lead que recién entró
+ * por el pase anterior.
  *
  * Detección de tibio (cierre 3b): para cada contact del fetch incremental,
  * UNA llamada a `/conversations/search?contactId=...` para leer
@@ -71,6 +75,15 @@ export interface GhlCombinedCounts {
   contacts: StageCounts;
   appointments: StageCounts;
   opportunities: StageCounts;
+  /**
+   * Leads creados/actualizados desde el pase "huérfano WA": contacts que NO
+   * vinieron en el fetch de Contacts (porque su `dateUpdated` cayó fuera de
+   * la ventana, ej. el contact se creó hace meses y nadie lo tocó desde
+   * entonces) pero SÍ tienen actividad WhatsApp dentro de la ventana del
+   * launch. Sin este pase, esos leads quedaban invisibles aunque hubiera
+   * 1000 mensajes nuevos en el periodo.
+   */
+  orphan_whatsapp: StageCounts;
 }
 
 export type GhlRunSummary =
@@ -80,6 +93,18 @@ export type GhlRunSummary =
       meta: {
         contacts: ContactsMeta;
         appointments: AppointmentsMeta;
+        /**
+         * Meta del pase "huérfano WA". Null si el fetch de conversaciones falló
+         * (rate limit, token, etc.); en ese caso el run NO se aborta — el resto
+         * del sync sigue — y el detalle queda en `conversations_error`.
+         */
+        conversations: ConversationsMeta | null;
+        conversations_error: {
+          kind: string;
+          message: string;
+          httpStatus: number | null;
+          responseBody: unknown;
+        } | null;
         /**
          * Null cuando el fetch de opportunities falló (ej. 422 por params no
          * soportados, 401 por scope faltante). En ese caso el run NO se aborta
@@ -205,32 +230,42 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     ),
   );
 
-  // 2) Fetches GHL en paralelo. Contacts + appointments + opportunities.
-  // El fetch masivo de conversations se eliminó en el cierre 3b (cuello de
-  // botella de 60-90s sin clasificación confiable). La señal de tibio ahora
-  // se hace contact-by-contact más abajo.
-  const [contactsResult, apptResult, oppsResult] = await Promise.all([
-    fetchGhlContacts({
-      token: args.token,
-      locationId: args.locationId,
-      since: args.since,
-      until: args.until,
-      cutoffIso,
-    }),
-    fetchGhlAppointments({
-      token: args.token,
-      locationId: args.locationId,
-      since: args.since,
-      until: args.until,
-    }),
-    fetchGhlOpportunities({
-      token: args.token,
-      locationId: args.locationId,
-      since: args.since,
-      until: args.until,
-      cutoffIso,
-    }),
-  ]);
+  // 2) Fetches GHL en paralelo: contacts + appointments + opportunities +
+  // conversations (pase huérfano WA). Lanzar conversations ACÁ y NO después
+  // del warm lookup es deliberado: el warm lookup es `WARM_LOOKUP_CAP` reqs
+  // contact-by-contact (~84 con concurrency 10) que queman el bucket de rate
+  // limit de GHL. Si dejábamos conversations para después se llevaba el 429.
+  // Acá viajan en paralelo con el resto antes de cualquier ráfaga pesada.
+  const [contactsResult, apptResult, oppsResult, conversationsResult] =
+    await Promise.all([
+      fetchGhlContacts({
+        token: args.token,
+        locationId: args.locationId,
+        since: args.since,
+        until: args.until,
+        cutoffIso,
+      }),
+      fetchGhlAppointments({
+        token: args.token,
+        locationId: args.locationId,
+        since: args.since,
+        until: args.until,
+      }),
+      fetchGhlOpportunities({
+        token: args.token,
+        locationId: args.locationId,
+        since: args.since,
+        until: args.until,
+        cutoffIso,
+      }),
+      fetchGhlConversations({
+        token: args.token,
+        locationId: args.locationId,
+        since: args.since,
+        until: args.until,
+        cutoffIso,
+      }),
+    ]);
   if (!contactsResult.ok) return propagateFailure(contactsResult, "contacts");
   if (!apptResult.ok) return propagateFailure(apptResult, "appointments");
   // Opportunities NO bloquea — si falla (422/401/etc), capturamos el detalle
@@ -269,6 +304,26 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     if (!iso) return false;
     const ms = Date.parse(iso);
     return Number.isFinite(ms) && ms >= warmStartMs && ms <= warmEndMs;
+  };
+
+  /**
+   * Detección de actividad WhatsApp inbound dentro del warmWindow. La señal
+   * preferida es `lastInboundWhatsappMessageDate` — campo dedicado, no se
+   * pisa cuando el operador responde después. PERO algunos locations de GHL
+   * NO pueblan ese campo en absoluto (observado en runtime con mensajes
+   * inbound reales que sí están en la UI). Fallback: derivar del último
+   * mensaje genérico cuando es TYPE_WHATSAPP + dirección inbound + en
+   * ventana. El fallback puede dar falsos negativos cuando el operador ya
+   * respondió (lastMessageDirection vuelve outbound), pero NUNCA da falsos
+   * positivos — sigue siendo "el lead nos escribió en compra+cierre".
+   */
+  const isWarmFromConversation = (conv: GhlConversation): boolean => {
+    if (inWindow(conv.lastInboundWhatsappMessageDate)) return true;
+    return (
+      conv.lastMessageType === "TYPE_WHATSAPP" &&
+      conv.lastMessageDirection === "inbound" &&
+      inWindow(conv.lastMessageDate)
+    );
   };
 
   const warmByContact = new Map<string, boolean>();
@@ -316,9 +371,7 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
             },
           };
         }
-        const hasWarm = res.rows.some((conv) =>
-          inWindow(conv.lastInboundWhatsappMessageDate),
-        );
+        const hasWarm = res.rows.some(isWarmFromConversation);
         return {
           contactId: c.id,
           ok: true as const,
@@ -415,6 +468,127 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   });
   const contactsCounts = await applyBulk(args, contactActions);
 
+  // 6b) Orphan WhatsApp pass.
+  //
+  // El fetch de Contacts (paso 2-6) filtra por `dateUpdated` del contact dentro
+  // de la ventana del launch. Pero GHL NO bumpea `dateUpdated` con cada mensaje
+  // de WhatsApp — solo cuando un workflow le toca un tag, edita campos, etc. Si
+  // el operador no automatizó eso en GHL, un contact con 5 mensajes WA en
+  // ventana puede quedar invisible para el sync. Este pase compensa:
+  //
+  //   - Procesamos `conversationsResult` (ya bajado en paralelo en el paso 2).
+  //   - Dedup por `contactId`, quedándonos con la conversación más reciente.
+  //   - Filtramos las que ya fueron procesadas por el pase de Contacts.
+  //   - Para las "huérfanas", clasificamos con `eventKind: "contact"` igual que
+  //     antes: tibio si `lastInboundWhatsappMessageDate ∈ warmWindow`, frio
+  //     si no. `external_id = contactId` (mismo que el pase de Contacts) →
+  //     cuando el operador toque el contact más adelante, el sync siguiente lo
+  //     matchea por external_id y no duplica.
+  //   - Skip silencioso de conversaciones sin teléfono normalizable: sin phone
+  //     no podemos deduplicar contra leads de import/manual y el riesgo de
+  //     duplicado supera al beneficio.
+  //
+  // Si el fetch falló (rate limit, token), seguimos con el resto del sync; el
+  // detalle queda en `conversations_error` y el counts queda en cero.
+  let orphanCounts: StageCounts = {
+    fetched: 0,
+    created: 0,
+    updated: 0,
+    skipped: 0,
+  };
+  let conversationsMetaForSummary: ConversationsMeta | null = null;
+  let conversationsError: {
+    kind: string;
+    message: string;
+    httpStatus: number | null;
+    responseBody: unknown;
+  } | null = null;
+
+  if (!conversationsResult.ok) {
+    const detail = (conversationsResult.detail ?? {}) as Record<string, unknown>;
+    const httpStatusRaw = detail.httpStatus;
+    conversationsError = {
+      kind: conversationsResult.kind,
+      message: conversationsResult.message,
+      httpStatus: typeof httpStatusRaw === "number" ? httpStatusRaw : null,
+      responseBody: detail.responseBody ?? null,
+    };
+  } else {
+    conversationsMetaForSummary = conversationsResult.meta;
+    const processedContactIds = new Set(
+      contactItems.map((i) => i.contact.id),
+    );
+    // Dedup por contactId — un contact puede tener varias conversaciones; nos
+    // quedamos con la del `lastMessageDate` más reciente para la señal warm.
+    const byContactId = new Map<string, GhlConversation>();
+    for (const conv of conversationsResult.rows) {
+      if (!conv.contactId) continue;
+      if (processedContactIds.has(conv.contactId)) continue;
+      const prev = byContactId.get(conv.contactId);
+      if (!prev) {
+        byContactId.set(conv.contactId, conv);
+        continue;
+      }
+      const a = conv.lastMessageDate ? Date.parse(conv.lastMessageDate) : 0;
+      const b = prev.lastMessageDate ? Date.parse(prev.lastMessageDate) : 0;
+      if (a > b) byContactId.set(conv.contactId, conv);
+    }
+
+    const orphanItems = Array.from(byContactId.values())
+      .map((conv) => ({
+        conv,
+        phoneNormalized: normalize(conv.rawPhone, country),
+      }))
+      .filter(
+        (it): it is { conv: GhlConversation; phoneNormalized: string } =>
+          it.phoneNormalized !== null,
+      );
+
+    orphanCounts.fetched = orphanItems.length;
+
+    if (orphanItems.length > 0) {
+      const orphanExternalIds = orphanItems.map((it) => it.conv.contactId!);
+      const orphanPhones = orphanItems.map((it) => it.phoneNormalized);
+      const orphanLookup = await buildLeadLookup({
+        service: args.service,
+        projectId: args.projectId,
+        source: "ghl",
+        externalIds: orphanExternalIds,
+        phoneNormalizeds: orphanPhones,
+      });
+
+      const orphanActions = orphanItems.map<ClassifiedAction>((it) => {
+        const externalId = it.conv.contactId!;
+        const existing = lookup(
+          orphanLookup,
+          "ghl",
+          externalId,
+          it.phoneNormalized,
+        );
+        const hasRecentInboundActivity = isWarmFromConversation(it.conv);
+        if (hasRecentInboundActivity) warmSignalsDetected++;
+
+        const action = resolveMatchAction({
+          eventKind: "contact",
+          existing,
+          externalId,
+          contactName: it.conv.contactName,
+          phoneNormalized: it.phoneNormalized,
+          rawPhone: it.conv.rawPhone,
+          email: null,
+          hasClientTag: false,
+          hasRecentInboundActivity,
+          teamMemberId: undefined,
+        });
+        return { action, existing, notes: buildOrphanWaNotes(it.conv) };
+      });
+      orphanCounts = await applyBulk(args, orphanActions);
+      // applyBulk pisa fetched con items.length — restauramos el original que
+      // ya refleja la cantidad real de huérfanos detectados.
+      orphanCounts.fetched = orphanItems.length;
+    }
+  }
+
   // 7) Preparar appointments y locate (incluyendo leads recién creados arriba).
   const apptItems: PreparedApptItem[] = apptResult.rows.map((e) => ({
     appt: e,
@@ -457,22 +631,19 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   // `syncOpportunities` devuelve counts en cero — no toca DB.
   const opportunitiesCounts = await syncOpportunities(args, opportunitiesRows);
 
-  // 9) Orphan warm REMOVIDO en el cierre 3b: requería el fetch masivo de
-  // conversations (60-90s, sin clasificación confiable). Trade-off: si GHL
-  // no actualiza `dateUpdated` del contact cuando llega un mensaje, un lead
-  // existente puede tardar una corrida más en subir a tibio (hasta que un
-  // tag/edit del contact lo modifique y reentre al incremental). Aceptable.
-
   return {
     status: "success",
     counts: {
       contacts: contactsCounts,
       appointments: apptCounts,
       opportunities: opportunitiesCounts,
+      orphan_whatsapp: orphanCounts,
     },
     meta: {
       contacts: contactsResult.meta,
       appointments: apptResult.meta,
+      conversations: conversationsMetaForSummary,
+      conversations_error: conversationsError,
       opportunities: opportunitiesMetaForSummary,
       opportunities_error: opportunitiesError,
       warm_signals_detected: warmSignalsDetected,
@@ -901,6 +1072,13 @@ function buildAppointmentNotes(e: GhlAppointment): string | null {
 function buildContactNotes(c: GhlContact): string | null {
   if (!c.dateAdded) return null;
   return `GHL contact ${c.id} — creado ${c.dateAdded}`;
+}
+
+function buildOrphanWaNotes(conv: GhlConversation): string | null {
+  // Trazabilidad mínima: dice de qué conversación nació + cuándo fue el último
+  // mensaje. Útil al revisar un lead "raro" en el kanban.
+  if (!conv.lastMessageDate) return `GHL WA orphan conv ${conv.id}`;
+  return `GHL WA orphan conv ${conv.id} — last msg ${conv.lastMessageDate}`;
 }
 
 function propagateFailure(

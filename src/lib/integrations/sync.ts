@@ -588,7 +588,9 @@ async function runGhlBranch(args: {
     summary.counts.appointments.created +
     summary.counts.appointments.updated +
     summary.counts.opportunities.created +
-    summary.counts.opportunities.updated;
+    summary.counts.opportunities.updated +
+    summary.counts.orphan_whatsapp.created +
+    summary.counts.orphan_whatsapp.updated;
 
   return await finalizeRun(service, runId, "success", written, {
     cause: "ghl_summary",
