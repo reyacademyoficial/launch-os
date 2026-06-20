@@ -78,7 +78,9 @@ export function KanbanBoard({
   deleteSaleAction,
 }: {
   readonly leads: ReadonlyArray<LeadRow>;
-  readonly teamMembers: ReadonlyArray<Pick<TeamMemberRow, "id" | "name" | "active">>;
+  readonly teamMembers: ReadonlyArray<
+    Pick<TeamMemberRow, "id" | "name" | "active" | "role">
+  >;
   readonly launches: ReadonlyArray<{ id: string; name: string }>;
   readonly canEdit: boolean;
   /** Server Action bound al projectId. Bindeamos por leadId en cada card. */
@@ -102,7 +104,17 @@ export function KanbanBoard({
       current.map((l) => (l.id === action.id ? { ...l, status: action.status } : l)),
   );
 
+  // Filtros client-side: el board ya tiene todos los leads pinned en memoria,
+  // entonces el search + setter filter operan sobre `optimistic` antes de
+  // bucketear. Sin round-trip al server, sin URL state — el caso de uso es
+  // "buscar mientras trabajo el kanban", no compartir el filtro.
+  const [query, setQuery] = useState("");
+  const [setterFilter, setSetterFilter] = useState<"all" | "unassigned" | string>(
+    "all",
+  );
+
   const memberById = new Map(teamMembers.map((m) => [m.id, m]));
+  const setters = teamMembers.filter((m) => m.role === "setter");
 
   // Rank por venta dentro de (member, launch). Se calcula sobre todas las
   // ventas que ve el board para que el tier marginal de cada card sea
@@ -138,6 +150,30 @@ export function KanbanBoard({
     });
   }
 
+  const normalizedQuery = query.trim().toLowerCase();
+  const matchesQuery = (lead: LeadRow): boolean => {
+    if (!normalizedQuery) return true;
+    const haystacks = [
+      lead.name,
+      lead.contact,
+      lead.phone_normalized,
+      lead.email,
+    ];
+    for (const h of haystacks) {
+      if (h && h.toLowerCase().includes(normalizedQuery)) return true;
+    }
+    return false;
+  };
+  const matchesSetter = (lead: LeadRow): boolean => {
+    if (setterFilter === "all") return true;
+    if (setterFilter === "unassigned") return lead.team_member_id === null;
+    return lead.team_member_id === setterFilter;
+  };
+
+  const filtered = optimistic.filter(
+    (lead) => matchesQuery(lead) && matchesSetter(lead),
+  );
+
   const buckets: Record<LeadStatus, LeadRow[]> = {
     frio: [],
     tibio: [],
@@ -145,10 +181,58 @@ export function KanbanBoard({
     cerrado: [],
     perdido: [],
   };
-  for (const lead of optimistic) buckets[lead.status].push(lead);
+  for (const lead of filtered) buckets[lead.status].push(lead);
+
+  const filtersActive =
+    normalizedQuery !== "" || setterFilter !== "all";
+  const totalCount = optimistic.length;
+  const filteredCount = filtered.length;
 
   return (
-    <div className="flex gap-3 overflow-x-auto pb-2">
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface/40 px-3 py-2">
+        <input
+          type="search"
+          placeholder="Buscar por nombre, teléfono o email…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className="min-w-[14rem] flex-1 rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg placeholder:text-fg-subtle"
+          aria-label="Buscar lead"
+        />
+        <select
+          value={setterFilter}
+          onChange={(e) => setSetterFilter(e.target.value)}
+          className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg"
+          aria-label="Filtrar por setter"
+        >
+          <option value="all">Todos los setters</option>
+          <option value="unassigned">Sin asignar</option>
+          {setters.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+              {!s.active ? " (inactivo)" : ""}
+            </option>
+          ))}
+        </select>
+        <span className="text-xs text-fg-subtle">
+          {filtersActive
+            ? `${filteredCount} de ${totalCount}`
+            : `${totalCount} leads`}
+        </span>
+        {filtersActive && (
+          <button
+            type="button"
+            onClick={() => {
+              setQuery("");
+              setSetterFilter("all");
+            }}
+            className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg hover:bg-bg-elevated"
+          >
+            Limpiar
+          </button>
+        )}
+      </div>
+      <div className="flex gap-3 overflow-x-auto pb-2">
       {LEAD_STATUSES.map((status) => {
         const items = buckets[status];
         const isDragOver = dragOverCol === status;
@@ -285,6 +369,7 @@ export function KanbanBoard({
           </div>
         );
       })}
+      </div>
     </div>
   );
 }
@@ -297,7 +382,9 @@ function LeadRowActions({
   deleteAction,
 }: {
   readonly lead: LeadRow;
-  readonly teamMembers: ReadonlyArray<Pick<TeamMemberRow, "id" | "name" | "active">>;
+  readonly teamMembers: ReadonlyArray<
+    Pick<TeamMemberRow, "id" | "name" | "active" | "role">
+  >;
   readonly launches: ReadonlyArray<{ id: string; name: string }>;
   readonly updateAction: (
     prev: LeadActionState,

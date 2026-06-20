@@ -162,6 +162,14 @@ export type GhlRunSummary =
           }>;
         };
         mappings_applied: number;
+        /**
+         * GHL user ids encontrados como `assignedTo` en contacts o
+         * conversations pero que NO tienen fila en `ghl_user_mappings`. Útil
+         * para diagnosticar "configuré mapeos pero ningún lead viene con
+         * setter": si esta lista trae IDs, faltan mapeos para esos usuarios.
+         * Cap de 20 para evitar inflar la respuesta.
+         */
+        unmapped_ghl_user_ids: string[];
       };
     }
   | {
@@ -413,6 +421,18 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   // 4) Preparar items de contacts (normalización de phones).
   let warmSignalsDetected = 0;
   let mappingsApplied = 0;
+  // Diag: GHL user ids vistos pero SIN fila en `ghl_user_mappings`. Si el
+  // usuario configuró mapeos pero ninguno aparece en `mappings_applied`, este
+  // set le muestra los IDs huérfanos que necesita mapear. Limitado a 20 para
+  // no inflar la respuesta.
+  const unmappedGhlUserIds = new Set<string>();
+  const UNMAPPED_SAMPLE_LIMIT = 20;
+  const recordUnmapped = (ghlUserId: string | null): void => {
+    if (!ghlUserId) return;
+    if (mappings.has(ghlUserId)) return;
+    if (unmappedGhlUserIds.size >= UNMAPPED_SAMPLE_LIMIT) return;
+    unmappedGhlUserIds.add(ghlUserId);
+  };
 
   const contactItems: PreparedContactItem[] = contactsResult.rows.map((c) => {
     const phoneNormalized = normalize(c.rawPhone, country);
@@ -425,6 +445,7 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
       const tm = mappings.get(c.assignedTo) ?? null;
       teamMemberId = tm;
       if (tm) mappingsApplied++;
+      else recordUnmapped(c.assignedTo);
     }
 
     return {
@@ -568,6 +589,19 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
         const hasRecentInboundActivity = isWarmFromConversation(it.conv);
         if (hasRecentInboundActivity) warmSignalsDetected++;
 
+        // Mapping: si la conversación trae `assignedTo` (GHL user id) y hay
+        // fila en ghl_user_mappings, resolvemos a team_member_id. Si no hay
+        // fila, registramos el ID huérfano para diagnóstico. Si la conv no
+        // trae assignedTo, dejamos `teamMemberId: undefined` para que
+        // resolveMatchAction no toque el team_member_id existente.
+        let teamMemberId: string | null | undefined = undefined;
+        if (it.conv.assignedTo) {
+          const tm = mappings.get(it.conv.assignedTo) ?? null;
+          teamMemberId = tm;
+          if (tm) mappingsApplied++;
+          else recordUnmapped(it.conv.assignedTo);
+        }
+
         const action = resolveMatchAction({
           eventKind: "contact",
           existing,
@@ -578,7 +612,7 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
           email: null,
           hasClientTag: false,
           hasRecentInboundActivity,
-          teamMemberId: undefined,
+          teamMemberId,
         });
         return { action, existing, notes: buildOrphanWaNotes(it.conv) };
       });
@@ -655,6 +689,7 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
         successes: warmSuccessSamples,
       },
       mappings_applied: mappingsApplied,
+      unmapped_ghl_user_ids: Array.from(unmappedGhlUserIds),
     },
   };
 }

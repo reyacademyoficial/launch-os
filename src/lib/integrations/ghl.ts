@@ -82,6 +82,13 @@ export interface GhlConversation {
   lastInboundWhatsappMessageDate: string | null;
   /** Cuántos mensajes inbound no leídos hay. Señal débil pero útil de "el lead respondió". */
   unreadCount: number | null;
+  /**
+   * GHL user id asignado a la conversación. Mismo formato que `GhlContact.assignedTo`
+   * — se traduce vía `ghl_user_mappings` a `team_member_id` del lead. El pase huérfano
+   * WA lo usa para no perder el setter cuando el contact viene por conversación y no
+   * por el endpoint de Contacts.
+   */
+  assignedTo: string | null;
   raw: unknown;
 }
 
@@ -518,6 +525,7 @@ export async function fetchGhlContactConversations(
         conv.lastInboundWhatsappMessageDate,
       ),
       unreadCount: numOrNull(conv.unreadCount),
+      assignedTo: strOrNull(conv.assignedTo),
       raw: conv,
     });
   }
@@ -693,6 +701,7 @@ export async function fetchGhlConversations(
           conv.lastInboundWhatsappMessageDate,
         ),
         unreadCount: numOrNull(conv.unreadCount),
+        assignedTo: strOrNull(conv.assignedTo),
         raw: conv,
       });
     }
@@ -1143,7 +1152,7 @@ export function parseConversationsBody(
     const type = strOrNull(conv.type);
     if (!isWhatsAppType(type)) continue;
 
-    const lastIso = strOrNull(conv.lastMessageDate);
+    const lastIso = parseGhlDate(conv.lastMessageDate);
     if (lastIso) {
       const lastMs = Date.parse(lastIso);
       if (Number.isFinite(lastMs) && (lastMs < sinceMs || lastMs > untilMs)) {
@@ -1160,8 +1169,11 @@ export function parseConversationsBody(
       lastMessageDate: lastIso,
       lastMessageType: strOrNull(conv.lastMessageType),
       lastMessageDirection: parseDirection(conv.lastMessageDirection),
-      lastInboundWhatsappMessageDate: strOrNull(conv.lastInboundWhatsappMessageDate),
+      lastInboundWhatsappMessageDate: parseGhlDate(
+        conv.lastInboundWhatsappMessageDate,
+      ),
       unreadCount: numOrNull(conv.unreadCount),
+      assignedTo: strOrNull(conv.assignedTo),
       raw: conv,
     });
   }

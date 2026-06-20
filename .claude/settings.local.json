@@ -47,7 +47,8 @@
       "Bash(iconv -f UTF-16LE -t UTF-8 src/lib/types/database.ts)",
       "Bash(echo \"EXIT=$?\")",
       "Bash(echo \"TSC=$?\")",
-      "Bash(echo \"LINT=$?\")"
+      "Bash(echo \"LINT=$?\")",
+      "Bash(git *)"
     ]
   }
 }

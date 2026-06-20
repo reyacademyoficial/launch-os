@@ -92,6 +92,7 @@ export default async function LeadsPage({
     id: m.id,
     name: m.name,
     active: m.active,
+    role: m.role,
   }));
   const launchesForForm = launches.map((l) => ({ id: l.id, name: l.name }));
   // Subset de evergreens para el filtro "Reciclado de" de la tabla.
@@ -234,7 +235,12 @@ async function TablaTab({
 }: {
   readonly projectId: string;
   readonly searchParams: Record<string, string | string[] | undefined>;
-  readonly teamForForm: ReadonlyArray<{ id: string; name: string; active: boolean }>;
+  readonly teamForForm: ReadonlyArray<{
+    id: string;
+    name: string;
+    active: boolean;
+    role: import("@/lib/team/types").TeamMemberRole;
+  }>;
   readonly launchesForForm: ReadonlyArray<{ id: string; name: string }>;
   readonly evergreenLaunches: ReadonlyArray<{ id: string; name: string }>;
 }) {
@@ -333,7 +339,12 @@ async function KanbanTab({
   deleteSaleAction,
 }: {
   readonly projectId: string;
-  readonly teamForForm: ReadonlyArray<{ id: string; name: string; active: boolean }>;
+  readonly teamForForm: ReadonlyArray<{
+    id: string;
+    name: string;
+    active: boolean;
+    role: import("@/lib/team/types").TeamMemberRole;
+  }>;
   readonly launchesForForm: ReadonlyArray<{ id: string; name: string }>;
   readonly canEdit: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
