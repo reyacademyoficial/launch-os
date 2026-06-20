@@ -69,20 +69,17 @@ export type MetaSyncResult = MetaSyncSuccess | MetaSyncFailure;
 
 // ─── action_type → leads ────────────────────────────────────────────────────
 //
-// Heurística estándar para mapear `actions[]` a leads. Esta es la lista del
-// brief; el `action_type` exacto depende de cómo esté armada la campaña.
-// VALIDAR CON CUENTA REAL antes de cerrar la fase: si el cliente usa otro
-// pixel/conversion event, agregar acá.
-const LEAD_ACTION_TYPES = new Set<string>([
-  "lead",
-  "onsite_conversion.lead_grouped",
-  "offsite_conversion.fb_pixel_lead",
-  "leadgen.other",
-]);
+// Validado contra dump real de Meta (Fase A): `action_type === "lead"` es el
+// total consolidado de formularios. Los otros types (`lead_grouped`,
+// `fb_pixel_lead`, `onsite_web_lead`, `offsite_complete_registration_add_meta_leads`,
+// `offsite_search_add_meta_leads`, `offsite_content_view_add_meta_leads`) son
+// el MISMO lead reportado bajo otra surface del píxel — sumarlos = doble cuenta.
+// Solo `lead` cuenta.
+export const LEAD_ACTION_TYPE = "lead";
 
-/** Exportado solo para tests + para que el orchestrator pueda mostrar en UI cuáles son. */
+/** Exportado solo para tests + para que el orchestrator pueda mostrar en UI cuál es. */
 export function isLeadActionType(actionType: string): boolean {
-  return LEAD_ACTION_TYPES.has(actionType);
+  return actionType === LEAD_ACTION_TYPE;
 }
 
 // ─── shape parsing (defensivo) ──────────────────────────────────────────────
@@ -138,40 +135,92 @@ function toInt(v: unknown): number {
 }
 
 /**
- * Suma los `actions[]` de un item filtrando por `action_type` en
- * LEAD_ACTION_TYPES. Si `actions` no es array (puede no venir en items sin
- * conversiones), devuelve 0.
+ * Resultado de extraer leads de un `actions[]`. `dup_value_mismatch` se
+ * dispara cuando el MISMO `action_type` aparece más de una vez con valores
+ * distintos: la dedup asume que los repetidos son idénticos (Meta los
+ * duplica dentro de la misma fila); valores divergentes serían un desglose
+ * que no entendemos y preferimos frenar a contar mal.
  */
-function sumLeads(actions: unknown): number {
-  if (!Array.isArray(actions)) return 0;
-  let total = 0;
+type ActionsParseResult =
+  | { ok: true; leads: number }
+  | {
+      ok: false;
+      reason: "dup_value_mismatch";
+      action_type: string;
+      values: number[];
+    };
+
+/**
+ * Deduplica `actions[]` por `action_type` y extrae el valor de `lead`.
+ *
+ * Por qué dedup primero: Meta devuelve el array de acciones repetido dentro
+ * de la misma fila (observado en el dump real — cada bloque de acciones
+ * viene exactamente dos veces). Sumar = contar cada lead dos veces. La regla
+ * es "un único valor por `action_type`"; si dos entradas del mismo type
+ * traen valores distintos no es duplicación sino otra cosa → abort.
+ */
+function parseLeadsFromActions(actions: unknown): ActionsParseResult {
+  if (!Array.isArray(actions)) return { ok: true, leads: 0 };
+
+  const byType = new Map<string, number>();
   for (const a of actions as MetaAction[]) {
     if (typeof a !== "object" || a === null) continue;
     const type = a.action_type;
     if (typeof type !== "string") continue;
-    if (!LEAD_ACTION_TYPES.has(type)) continue;
-    total += toInt(a.value);
+    const value = toInt(a.value);
+    const existing = byType.get(type);
+    if (existing === undefined) {
+      byType.set(type, value);
+      continue;
+    }
+    if (existing !== value) {
+      return {
+        ok: false,
+        reason: "dup_value_mismatch",
+        action_type: type,
+        values: [existing, value],
+      };
+    }
   }
-  return total;
+
+  return { ok: true, leads: byType.get(LEAD_ACTION_TYPE) ?? 0 };
 }
+
+type MapItemResult =
+  | { ok: true; row: MetaInsightDay }
+  | { ok: false; reason: "malformed_date" }
+  | {
+      ok: false;
+      reason: "dup_value_mismatch";
+      action_type: string;
+      values: number[];
+    };
 
 /**
  * Toma un item del `data[]` de la API y lo convierte en MetaInsightDay.
- * Devuelve null si el item está malformado al punto de no tener `date_start`
- * — en ese caso el orchestrator lo descarta y loguea schema_mismatch.
+ * Falla con `malformed_date` si no tiene `date_start` válido — el caller lo
+ * salta. Falla con `dup_value_mismatch` si la dedup detecta un type repetido
+ * con valores distintos — el caller aborta toda la respuesta (es estructural).
  */
-function mapInsightItem(item: MetaInsightItem): MetaInsightDay | null {
+function mapInsightItem(item: MetaInsightItem): MapItemResult {
   const date = item.date_start;
   if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return null;
+    return { ok: false, reason: "malformed_date" };
+  }
+  const leads = parseLeadsFromActions(item.actions);
+  if (!leads.ok) {
+    return leads;
   }
   return {
-    date,
-    spend: toNumber(item.spend),
-    impressions: toInt(item.impressions),
-    clicks: toInt(item.clicks),
-    leads: sumLeads(item.actions),
-    raw: item,
+    ok: true,
+    row: {
+      date,
+      spend: toNumber(item.spend),
+      impressions: toInt(item.impressions),
+      clicks: toInt(item.clicks),
+      leads: leads.leads,
+      raw: item,
+    },
   };
 }
 
@@ -255,46 +304,107 @@ export interface FetchMetaInsightsArgs {
 }
 
 /**
+ * Tope de seguridad para la paginación. Con `time_increment=1` cada página
+ * de 500 items cubre ~500 (campañas × días). 50 páginas = ~25k filas, muy
+ * por encima de cualquier launch real. Si lo superamos hay un loop o un
+ * desglose imprevisto — preferimos abortar con error a colgarnos.
+ */
+const MAX_PAGES = 50;
+
+/**
+ * Extrae `paging.next` (URL absoluta) del body de Meta. Devuelve null si no
+ * hay más páginas, si el body no es objeto, o si `next` no es string.
+ *
+ * La URL devuelta por Meta ya viene con todos los params (incluido
+ * `access_token`) → se puede llamar directo con fetch sin re-armarla.
+ */
+function extractNextPage(body: unknown): string | null {
+  if (body === null || typeof body !== "object") return null;
+  const paging = (body as MetaResponseShape).paging;
+  if (paging === null || typeof paging !== "object") return null;
+  const next = (paging as Record<string, unknown>).next;
+  return typeof next === "string" && next.length > 0 ? next : null;
+}
+
+/**
  * Hace el GET a /v25.0/{adAccountId}/insights filtrando por campañas, con
- * time_increment=1 (un item por día). Devuelve un MetaSyncResult que el
+ * time_increment=1 (un item por día). Sigue `paging.next` hasta agotar —
+ * sin esto, launches largos pierden días en silencio (la primera página
+ * tiene tope de `limit=500` items). Devuelve un MetaSyncResult que el
  * orchestrator transforma en filas de `launch_daily_ads` + un registro en
  * `integration_runs`.
  */
 export async function fetchMetaInsights(
   args: FetchMetaInsightsArgs,
 ): Promise<MetaSyncResult> {
-  const url = buildInsightsUrl(args);
-  let response: Response;
-  try {
-    response = await fetch(url, { method: "GET" });
-  } catch (err) {
-    return {
-      ok: false,
-      kind: "error",
-      message:
-        err instanceof Error ? err.message : "Network error contacting Meta",
-      detail: { cause: "fetch_failed" },
-    };
+  const allRows: MetaInsightDay[] = [];
+  let nextUrl: string | null = buildInsightsUrl(args);
+  let pageCount = 0;
+
+  while (nextUrl !== null) {
+    if (pageCount >= MAX_PAGES) {
+      return {
+        ok: false,
+        kind: "error",
+        message: `Demasiadas páginas de insights (>${MAX_PAGES}). Loop o desglose imprevisto.`,
+        detail: {
+          cause: "max_pages_exceeded",
+          page_count: pageCount,
+        },
+      };
+    }
+    pageCount += 1;
+
+    let response: Response;
+    try {
+      response = await fetch(nextUrl, { method: "GET" });
+    } catch (err) {
+      return {
+        ok: false,
+        kind: "error",
+        message:
+          err instanceof Error ? err.message : "Network error contacting Meta",
+        detail: { cause: "fetch_failed", page: pageCount },
+      };
+    }
+
+    let body: unknown;
+    try {
+      body = (await response.json()) as unknown;
+    } catch {
+      return {
+        ok: false,
+        kind: "error",
+        message: `Respuesta de Meta no es JSON (HTTP ${response.status})`,
+        detail: {
+          http_status: response.status,
+          cause: "json_parse_failed",
+          page: pageCount,
+        },
+      };
+    }
+
+    const parsed = parseMetaResponse(body, response.headers, response.status);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    allRows.push(...parsed.rows);
+    nextUrl = extractNextPage(body);
   }
 
-  let body: unknown;
-  try {
-    body = (await response.json()) as unknown;
-  } catch {
-    return {
-      ok: false,
-      kind: "error",
-      message: `Respuesta de Meta no es JSON (HTTP ${response.status})`,
-      detail: { http_status: response.status, cause: "json_parse_failed" },
-    };
-  }
-
-  return parseMetaResponse(body, response.headers, response.status);
+  return { ok: true, rows: allRows };
 }
 
 /**
  * Build de la URL — separado para poder testearlo en aislamiento y para que
  * el orchestrator pueda mockear `fetchMetaInsights` por completo si quiere.
+ *
+ * `action_attribution_windows=["7d_click"]` + `use_unified_attribution_setting=false`:
+ * sin esto, Meta usa el default de la cuenta y los `actions[].value` no
+ * coinciden con la tabla del Administrador (CPL desfasado). El cliente
+ * configura "7 días de clic" en Configuración de atribución; forzamos la
+ * misma ventana acá. `use_unified_attribution_setting=false` evita que la
+ * configuración unificada del ad set pise nuestra ventana explícita.
  */
 function buildInsightsUrl(args: FetchMetaInsightsArgs): string {
   const params = new URLSearchParams({
@@ -309,6 +419,8 @@ function buildInsightsUrl(args: FetchMetaInsightsArgs): string {
         value: [...args.campaignIds],
       },
     ]),
+    action_attribution_windows: JSON.stringify(["7d_click"]),
+    use_unified_attribution_setting: "false",
     access_token: args.token,
     limit: "500",
   });
@@ -387,11 +499,25 @@ export function parseMetaResponse(
   for (let i = 0; i < shape.data.length; i++) {
     const item = shape.data[i] as MetaInsightItem;
     const mapped = mapInsightItem(item);
-    if (mapped === null) {
+    if (!mapped.ok) {
+      if (mapped.reason === "dup_value_mismatch") {
+        return {
+          ok: false,
+          kind: "error",
+          message: `action_type "${mapped.action_type}" repetido con valores distintos (${mapped.values.join(", ")}). La dedup asume bloques idénticos; valores divergentes sugieren un desglose que no estamos manejando.`,
+          detail: {
+            http_status: httpStatus,
+            cause: "actions_dup_value_mismatch",
+            item_index: i,
+            action_type: mapped.action_type,
+            values: mapped.values,
+          },
+        };
+      }
       skipped.push(i);
       continue;
     }
-    rows.push(mapped);
+    rows.push(mapped.row);
   }
 
   if (skipped.length > 0 && rows.length === 0) {

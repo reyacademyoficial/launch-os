@@ -7,6 +7,9 @@
       "actions": [
         { "action_type": "link_click", "value": "327" },
         { "action_type": "lead", "value": "18" },
+        { "action_type": "page_engagement", "value": "412" },
+        { "action_type": "link_click", "value": "327" },
+        { "action_type": "lead", "value": "18" },
         { "action_type": "page_engagement", "value": "412" }
       ],
       "date_start": "2026-07-10",
@@ -18,6 +21,11 @@
       "clicks": "289",
       "actions": [
         { "action_type": "link_click", "value": "289" },
+        { "action_type": "lead", "value": "16" },
+        { "action_type": "onsite_conversion.lead_grouped", "value": "12" },
+        { "action_type": "offsite_conversion.fb_pixel_lead", "value": "4" },
+        { "action_type": "link_click", "value": "289" },
+        { "action_type": "lead", "value": "16" },
         { "action_type": "onsite_conversion.lead_grouped", "value": "12" },
         { "action_type": "offsite_conversion.fb_pixel_lead", "value": "4" }
       ],

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import emptyFixture from "./__fixtures__/meta/insights_empty.json";
 import happyFixture from "./__fixtures__/meta/insights_happy.json";
@@ -6,17 +6,20 @@ import malformedFixture from "./__fixtures__/meta/error_malformed.json";
 import rateLimitedFixture from "./__fixtures__/meta/error_rate_limited.json";
 import tokenInvalidFixture from "./__fixtures__/meta/error_token_invalid.json";
 
-import { isLeadActionType, parseMetaResponse } from "./meta";
+import {
+  fetchMetaInsights,
+  isLeadActionType,
+  parseMetaResponse,
+} from "./meta";
 
 /**
- * Tests del adapter de Meta. `parseMetaResponse` es la pieza que importa: el
- * `fetch` real solo lo invoca el orchestrator. Si parseMetaResponse maneja
- * los 5 fixtures correctamente, la integración está blindada contra todos
- * los caminos del brief.
+ * Tests del adapter de Meta. `parseMetaResponse` es el parser puro (un
+ * response); `fetchMetaInsights` es el wrapper que sigue paginación. Los
+ * tests cubren los dos por separado.
  *
- * NOTA: estos fixtures se hicieron basados en la doc oficial de Meta (v25)
- * + convenciones del SDK. Cuando llegue la cuenta real de Elbio, dump del
- * response real va a reemplazar los fixtures si encuentro diferencias.
+ * El fixture happy ya refleja la realidad observada en el dump de Fase A:
+ * cada bloque de `actions[]` viene duplicado (Meta lo repite). El conteo
+ * de leads usa SOLO `action_type === "lead"` y deduplica los repetidos.
  */
 
 const emptyHeaders = new Headers();
@@ -34,12 +37,15 @@ describe("meta.parseMetaResponse — happy path", () => {
     expect(day1.spend).toBe(120.45);
     expect(day1.impressions).toBe(15234);
     expect(day1.clicks).toBe(327);
-    // Solo el action_type "lead" mapea; "link_click" y "page_engagement" no.
+    // El bloque viene duplicado: hay 2 entradas `lead=18`. Después del dedup,
+    // leads = 18 (no 36 que sería sumar la duplicación).
     expect(day1.leads).toBe(18);
 
     const day2 = result.rows[1]!;
     expect(day2.date).toBe("2026-07-11");
-    // Suma de los dos action_types de leads del fixture: 12 + 4 = 16
+    // Día 2 trae `lead=16` + `onsite_conversion.lead_grouped=12` +
+    // `offsite_conversion.fb_pixel_lead=4` (12+4=16 — relación verificada en
+    // el dump real). Solo cuenta `lead` → 16, no 16+12+4=32.
     expect(day2.leads).toBe(16);
   });
 
@@ -48,6 +54,102 @@ describe("meta.parseMetaResponse — happy path", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.rows[0]!.raw).toMatchObject({ date_start: "2026-07-10" });
+  });
+});
+
+describe("meta.parseMetaResponse — dedup de actions", () => {
+  it("dedup colapsa bloques duplicados idénticos (no suma)", () => {
+    // Caso real observado: Meta repite el bloque de `actions[]` dentro de
+    // la misma fila. Sumar daría doble cuenta.
+    const item = {
+      data: [
+        {
+          spend: "10",
+          impressions: "100",
+          clicks: "10",
+          actions: [
+            { action_type: "lead", value: "5" },
+            { action_type: "lead", value: "5" },
+          ],
+          date_start: "2026-08-01",
+          date_stop: "2026-08-01",
+        },
+      ],
+    };
+    const result = parseMetaResponse(item, emptyHeaders, 200);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.rows[0]!.leads).toBe(5);
+  });
+
+  it("ignora otros action_types de lead (solo cuenta `lead`)", () => {
+    // `lead_grouped`, `fb_pixel_lead`, `onsite_web_lead` son el mismo lead
+    // bajo otra surface — sumarlos = doble cuenta. Solo `lead` es la verdad.
+    const item = {
+      data: [
+        {
+          spend: "10",
+          impressions: "100",
+          clicks: "10",
+          actions: [
+            { action_type: "lead", value: "74" },
+            { action_type: "onsite_conversion.lead_grouped", value: "30" },
+            { action_type: "offsite_conversion.fb_pixel_lead", value: "20" },
+            { action_type: "onsite_web_lead", value: "24" },
+            { action_type: "leadgen.other", value: "10" },
+          ],
+          date_start: "2026-08-01",
+          date_stop: "2026-08-01",
+        },
+      ],
+    };
+    const result = parseMetaResponse(item, emptyHeaders, 200);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.rows[0]!.leads).toBe(74);
+  });
+
+  it("aborta con dup_value_mismatch si el mismo type trae valores distintos", () => {
+    // Si Meta devuelve dos veces el mismo type con valores distintos, no es
+    // duplicación: es un desglose que no entendemos. Frenar > contar mal.
+    const item = {
+      data: [
+        {
+          spend: "10",
+          actions: [
+            { action_type: "lead", value: "5" },
+            { action_type: "lead", value: "7" },
+          ],
+          date_start: "2026-08-01",
+          date_stop: "2026-08-01",
+        },
+      ],
+    };
+    const result = parseMetaResponse(item, emptyHeaders, 200);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.kind).toBe("error");
+    expect(result.detail.cause).toBe("actions_dup_value_mismatch");
+    expect(result.detail.action_type).toBe("lead");
+    expect(result.detail.values).toEqual([5, 7]);
+  });
+
+  it("sin actions[] (item sin conversiones) → leads = 0", () => {
+    const item = {
+      data: [
+        {
+          spend: "10",
+          impressions: "100",
+          clicks: "10",
+          date_start: "2026-08-01",
+          date_stop: "2026-08-01",
+        },
+      ],
+    };
+    const result = parseMetaResponse(item, emptyHeaders, 200);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.rows[0]!.leads).toBe(0);
   });
 });
 
@@ -155,16 +257,154 @@ describe("meta.parseMetaResponse — shape inesperado", () => {
   });
 });
 
-describe("meta.isLeadActionType — heurística (VALIDAR CON CUENTA REAL)", () => {
+describe("meta.isLeadActionType — solo `lead`", () => {
+  // Validado contra dump real: `lead` es la fuente de la verdad; los otros
+  // types son el mismo lead bajo otra surface (= doble cuenta si se suman).
   it.each([
     ["lead", true],
-    ["onsite_conversion.lead_grouped", true],
-    ["offsite_conversion.fb_pixel_lead", true],
-    ["leadgen.other", true],
+    ["onsite_conversion.lead_grouped", false],
+    ["offsite_conversion.fb_pixel_lead", false],
+    ["onsite_web_lead", false],
+    ["leadgen.other", false],
     ["link_click", false],
     ["page_engagement", false],
     ["purchase", false],
   ])("%s → %s", (actionType, expected) => {
     expect(isLeadActionType(actionType)).toBe(expected);
+  });
+});
+
+describe("meta.fetchMetaInsights — paginación", () => {
+  const baseArgs = {
+    token: "TEST_TOKEN",
+    adAccountId: "act_999",
+    campaignIds: ["c1"],
+    since: "2026-07-01",
+    until: "2026-07-03",
+  };
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function jsonResponse(body: unknown): Response {
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  it("manda action_attribution_windows=7d_click en la primera URL", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ data: [] }));
+
+    await fetchMetaInsights(baseArgs);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const calledWith = fetchSpy.mock.calls[0]![0] as string;
+    expect(calledWith).toContain("action_attribution_windows=");
+    expect(calledWith).toContain("7d_click");
+    expect(calledWith).toContain("use_unified_attribution_setting=false");
+  });
+
+  it("sigue paging.next hasta agotar y concatena los rows", async () => {
+    const page1 = {
+      data: [
+        {
+          date_start: "2026-07-01",
+          date_stop: "2026-07-01",
+          spend: "10",
+          impressions: "100",
+          clicks: "10",
+          actions: [{ action_type: "lead", value: "3" }],
+        },
+      ],
+      paging: { next: "https://graph.facebook.com/v25.0/PAGE_2" },
+    };
+    const page2 = {
+      data: [
+        {
+          date_start: "2026-07-02",
+          date_stop: "2026-07-02",
+          spend: "20",
+          impressions: "200",
+          clicks: "20",
+          actions: [{ action_type: "lead", value: "5" }],
+        },
+      ],
+      paging: { next: "https://graph.facebook.com/v25.0/PAGE_3" },
+    };
+    const page3 = {
+      data: [
+        {
+          date_start: "2026-07-03",
+          date_stop: "2026-07-03",
+          spend: "30",
+          impressions: "300",
+          clicks: "30",
+          actions: [{ action_type: "lead", value: "7" }],
+        },
+      ],
+      // sin paging.next → loop termina
+    };
+
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse(page1))
+      .mockResolvedValueOnce(jsonResponse(page2))
+      .mockResolvedValueOnce(jsonResponse(page3));
+
+    const result = await fetchMetaInsights(baseArgs);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(fetchSpy.mock.calls[1]![0]).toBe(
+      "https://graph.facebook.com/v25.0/PAGE_2",
+    );
+    expect(fetchSpy.mock.calls[2]![0]).toBe(
+      "https://graph.facebook.com/v25.0/PAGE_3",
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.rows).toHaveLength(3);
+    expect(result.rows.map((r) => r.leads)).toEqual([3, 5, 7]);
+  });
+
+  it("propaga error de Meta en una página posterior (no escribe parcial)", async () => {
+    const page1 = {
+      data: [
+        {
+          date_start: "2026-07-01",
+          date_stop: "2026-07-01",
+          spend: "10",
+          impressions: "100",
+          clicks: "10",
+          actions: [{ action_type: "lead", value: "3" }],
+        },
+      ],
+      paging: { next: "https://graph.facebook.com/v25.0/PAGE_2" },
+    };
+    const tokenInvalidPage = {
+      error: {
+        message: "Session expired",
+        code: 190,
+        error_subcode: 463,
+        fbtrace_id: "tracePage2",
+      },
+    };
+
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse(page1))
+      .mockResolvedValueOnce(jsonResponse(tokenInvalidPage));
+
+    const result = await fetchMetaInsights(baseArgs);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.kind).toBe("token_invalid");
   });
 });
