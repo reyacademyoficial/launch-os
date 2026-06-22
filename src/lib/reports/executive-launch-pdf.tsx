@@ -296,12 +296,17 @@ function KpiGrid({ kpi }: { kpi: LaunchKPIs }) {
     {
       label: "Show rate",
       value: percent(kpi.showRate),
-      sub: `${int(kpi.asistentes)} asistieron`,
+      sub: `${int(kpi.asistentes)} en Clase 1 (pico)`,
     },
     {
       label: "Close rate",
       value: percent(kpi.closeRate),
-      sub: `${int(kpi.ventas)} cerradas`,
+      sub: `${int(kpi.hastaPitch)} retenidos hasta Clase 3 (pico)`,
+    },
+    {
+      label: "Close rate hasta el pitch",
+      value: percent(kpi.closeRateC3),
+      sub: `${int(kpi.ventas)} ventas`,
     },
   ];
 

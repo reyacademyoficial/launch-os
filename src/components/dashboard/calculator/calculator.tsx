@@ -13,6 +13,11 @@ import {
 import type { ProjectionListItem } from "@/lib/projections/types";
 import type { ProjectListItem } from "@/lib/projects/list";
 
+import {
+  CALENDAR_CALC_DEFAULTS,
+  CalendarSection,
+  type CalendarCalcInput,
+} from "./calendar-section";
 import { ForwardSection } from "./forward-section";
 import { ProjectionsPanel } from "./projections-panel";
 import type {
@@ -21,7 +26,7 @@ import type {
 } from "./projections-panel";
 import { ReverseSection } from "./reverse-section";
 
-type Mode = "reverse" | "forward";
+type Mode = "reverse" | "forward" | "calendario";
 
 export function Calculator({
   projections,
@@ -39,6 +44,11 @@ export function Calculator({
   // and forth preserves what the user typed in the inactive mode.
   const [reverseInput, setReverseInput] = useState<ReverseInput>(REVERSE_DEFAULTS);
   const [forwardInput, setForwardInput] = useState<ForwardInput>(FORWARD_DEFAULTS);
+  // El calendario es efímero — su input vive acá en memoria y no se guarda en
+  // `projections` (la API de save/load solo cubre reverse + forward).
+  const [calendarInput, setCalendarInput] = useState<CalendarCalcInput>(
+    CALENDAR_CALC_DEFAULTS,
+  );
 
   const currentInputs = useMemo(
     () => (mode === "reverse" ? reverseInput : forwardInput),
@@ -64,30 +74,45 @@ export function Calculator({
             Modelá escenarios. Guardá los importantes para volver a ellos.
           </p>
         </div>
-        <ProjectionsPanel
-          projections={projections}
-          editableProjects={editableProjects}
-          currentMode={mode}
-          currentInputs={currentInputs}
-          onLoad={loadProjection}
-          saveAction={saveAction}
-          deleteAction={deleteAction}
-        />
+        {/* El panel de guardar/cargar solo aplica a reverse + forward. El modo
+            calendario es efímero (no toca DB), así que ocultamos el panel
+            para que no haya un "Guardar" engañoso. */}
+        {mode !== "calendario" && (
+          <ProjectionsPanel
+            projections={projections}
+            editableProjects={editableProjects}
+            currentMode={mode}
+            currentInputs={currentInputs}
+            onLoad={loadProjection}
+            saveAction={saveAction}
+            deleteAction={deleteAction}
+          />
+        )}
       </header>
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <ModeButton active={mode === "reverse"} onClick={() => setMode("reverse")}>
           Reverse · meta → presupuesto
         </ModeButton>
         <ModeButton active={mode === "forward"} onClick={() => setMode("forward")}>
           Forward · presupuesto → resultados
         </ModeButton>
+        <ModeButton
+          active={mode === "calendario"}
+          onClick={() => setMode("calendario")}
+        >
+          Calendario · fechas del lanzamiento
+        </ModeButton>
       </div>
 
-      {mode === "reverse" ? (
+      {mode === "reverse" && (
         <ReverseSection input={reverseInput} setInput={setReverseInput} />
-      ) : (
+      )}
+      {mode === "forward" && (
         <ForwardSection input={forwardInput} setInput={setForwardInput} />
+      )}
+      {mode === "calendario" && (
+        <CalendarSection input={calendarInput} setInput={setCalendarInput} />
       )}
     </section>
   );

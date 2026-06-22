@@ -132,15 +132,17 @@ export interface LaunchKPIs {
    */
   showRate: number | null;
   /**
-   * `ventas / asistentes_clase_1` × 100. `null` cuando `asistentes_clase_1 = 0`.
-   * UI muestra "—". Mantiene el nombre histórico `closeRate` (= Close Rate
-   * Clase 1) por compat con PDF + AI summary.
+   * `asistentes_clase_3 / asistentes_clase_1` × 100 — **retención del webinar**:
+   * cuántos de los que entraron en C1 (pico simultáneo) siguen prendidos en
+   * C3 (pico simultáneo, donde está el pitch). `null` cuando
+   * `asistentes_clase_1 = 0`. Mantiene el nombre histórico `closeRate` por
+   * compat de tipo con PDF + AI summary aunque ya no mide cierre de ventas.
    */
   closeRate: number | null;
   /**
-   * `ventas / asistentes_clase_3` × 100. `null` cuando `asistentes_clase_3 = 0`.
-   * Close Rate "hasta el pitch": cuántos de los que llegaron al pitch (Clase 3)
-   * terminaron comprando.
+   * `ventas / asistentes_clase_3` × 100 — **cierre real "hasta el pitch"**:
+   * cuántos de los que llegaron al pitch terminaron comprando. `null` cuando
+   * `asistentes_clase_3 = 0`.
    */
   closeRateC3: number | null;
   /** Alias de `profitEstimated` para compat con dashboards viejos. */
@@ -298,11 +300,13 @@ export function calculateLaunchKPIs(
     roasEstimated,
     roasReal,
     cac: safeDiv(totalInvestment, ventas),
-    // Pico simultáneo Clase 1 / inscriptos. Sin inscriptos → "—" (no
-    // hay base). Mismo patrón para Close Rate (denom = asistentes_clase_1)
-    // y Close Rate C3 (denom = asistentes_clase_3 = hasta_pitch).
+    // Funnel manual del webinar (pico simultáneo):
+    //   showRate    = C1 / inscriptos     → cuántos aparecieron
+    //   closeRate   = C3 / C1             → retención hasta el pitch
+    //   closeRateC3 = ventas / C3         → cierre real en el pitch
+    // Sin denominador positivo → null (UI muestra "—", nunca NaN/Infinity).
     showRate: registrados > 0 ? (asistentes / registrados) * 100 : null,
-    closeRate: asistentes > 0 ? (ventas / asistentes) * 100 : null,
+    closeRate: asistentes > 0 ? (hastaPitch / asistentes) * 100 : null,
     closeRateC3: hastaPitch > 0 ? (ventas / hastaPitch) * 100 : null,
     profit: profitEstimated,
     profitEstimated,

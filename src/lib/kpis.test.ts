@@ -318,7 +318,7 @@ describe("calculateLaunchKPIs — funnel manual (Fase A: Show/Close Rate)", () =
     expect(k.closeRateC3).toBeNull();
   });
 
-  it("flujo completo: Show / Close C1 / Close C3", () => {
+  it("flujo completo: Show (C1/inscr) / Close (C3/C1 retención) / Close C3 (ventas/C3)", () => {
     // Inscriptos 1000, pico C1 400, pico C3 250, ventas (kanban=0) manuales 50.
     const k = calculateLaunchKPIs({
       ...BASELINE,
@@ -328,11 +328,26 @@ describe("calculateLaunchKPIs — funnel manual (Fase A: Show/Close Rate)", () =
       ventas_total: 50,
     });
     expect(k.showRate).toBeCloseTo((400 / 1000) * 100, 5); // 40%
-    expect(k.closeRate).toBeCloseTo((50 / 400) * 100, 5); // 12.5%
-    expect(k.closeRateC3).toBeCloseTo((50 / 250) * 100, 5); // 20%
+    expect(k.closeRate).toBeCloseTo((250 / 400) * 100, 5); // 62.5% — retención C1→C3
+    expect(k.closeRateC3).toBeCloseTo((50 / 250) * 100, 5); // 20% — cierre en pitch
   });
 
-  it("ventas vienen del kanban + manual; close rates usan la suma", () => {
+  it("closeRate solo depende de pico C1 y pico C3, no de ventas", () => {
+    // Cambiando ventas no debería mover closeRate (que es retención).
+    const base = {
+      ...BASELINE,
+      registrados: 1000,
+      asistentes: 400,
+      hasta_pitch: 250,
+    };
+    const a = calculateLaunchKPIs({ ...base, ventas_total: 50 });
+    const b = calculateLaunchKPIs({ ...base, ventas_total: 999 });
+    expect(a.closeRate).toBe(b.closeRate);
+    // …pero closeRateC3 sí cambia.
+    expect(a.closeRateC3).not.toBe(b.closeRateC3);
+  });
+
+  it("ventas vienen del kanban + manual; closeRateC3 usa la suma", () => {
     const kanban: KanbanSalesAggregate = {
       hasData: true,
       pledgedRevenue: 0,
@@ -351,7 +366,7 @@ describe("calculateLaunchKPIs — funnel manual (Fase A: Show/Close Rate)", () =
       { kanbanSalesAggregate: kanban },
     );
     expect(k.ventas).toBe(50); // 30 + 20
-    expect(k.closeRate).toBeCloseTo((50 / 400) * 100, 5);
+    expect(k.closeRate).toBeCloseTo((250 / 400) * 100, 5); // retención sin tocar
     expect(k.closeRateC3).toBeCloseTo((50 / 250) * 100, 5);
   });
 

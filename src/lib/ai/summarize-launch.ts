@@ -97,8 +97,8 @@ function buildUserPrompt(
   lines.push("", "Funnel:");
   lines.push(`- Inscriptos: ${fmtNumber(kpi.registrados)}`);
   lines.push(`- Asistentes Clase 1 (pico): ${fmtNumber(kpi.asistentes)} (show rate ${fmtPercentOrDash(kpi.showRate)})`);
-  lines.push(`- Asistentes Clase 3 / pitch (pico): ${fmtNumber(kpi.hastaPitch)} (close rate hasta el pitch ${fmtPercentOrDash(kpi.closeRateC3)})`);
-  lines.push(`- Ventas: ${fmtNumber(kpi.ventas)} (close rate ${fmtPercentOrDash(kpi.closeRate)})`);
+  lines.push(`- Asistentes Clase 3 / pitch (pico): ${fmtNumber(kpi.hastaPitch)} (close rate C1→C3 ${fmtPercentOrDash(kpi.closeRate)})`);
+  lines.push(`- Ventas: ${fmtNumber(kpi.ventas)} (close rate hasta el pitch ${fmtPercentOrDash(kpi.closeRateC3)})`);
 
   lines.push("", "Revenue + economics:");
   lines.push(`- Revenue estimado (pactado): ${fmtMoney(kpi.revenueEstimated)}`);

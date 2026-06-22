@@ -60,7 +60,7 @@ export function KpiGrid({ kpi }: { readonly kpi: LaunchKPIs }) {
   const closeRateC1Hint =
     kpi.closeRate == null
       ? "Cargá Asistentes Clase 1 para ver Close Rate"
-      : `${fmtNumber(kpi.ventas)} de ${fmtNumber(kpi.asistentes)} asistentes Clase 1 · pico simultáneo`;
+      : `${fmtNumber(kpi.hastaPitch)} de ${fmtNumber(kpi.asistentes)} asistentes Clase 1 retenidos hasta Clase 3 · pico simultáneo`;
 
   const closeRateC3Hint =
     kpi.closeRateC3 == null
