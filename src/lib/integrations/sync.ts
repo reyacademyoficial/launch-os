@@ -564,7 +564,11 @@ async function runGhlBranch(args: {
     service,
     token,
     locationId: cfg.location_id,
-    defaultCountry: cfg.default_country ?? "AR",
+    // `default_country` queda en config por compat (DB) pero el sync ahora
+    // normaliza por-contacto con el `country` que GHL emite. No se hardcodea
+    // "AR" cuando falta: se pasa lo que el operador haya configurado (o "")
+    // y el adapter resuelve E.164-only sin asumir país.
+    defaultCountry: cfg.default_country ?? "",
     projectId: args.projectId,
     launchId: args.launchId,
     since: args.dateStart,
@@ -573,29 +577,45 @@ async function runGhlBranch(args: {
     lastSuccessAt,
   });
 
-  if (summary.status !== "success") {
-    return await finalizeRun(service, runId, summary.status, 0, {
-      stage: summary.stage,
-      ...summary.detail,
-      message: summary.message,
-      retryAfterSeconds: summary.retryAfterSeconds ?? null,
+  if (summary.status === "success" || summary.status === "partial") {
+    const written =
+      summary.counts.contacts.created +
+      summary.counts.contacts.updated +
+      summary.counts.appointments.created +
+      summary.counts.appointments.updated +
+      summary.counts.opportunities.created +
+      summary.counts.opportunities.updated +
+      summary.counts.orphan_whatsapp.created +
+      summary.counts.orphan_whatsapp.updated;
+
+    // Bug 3 fix — antes el sync devolvía success aunque hubiera truncado por
+    // MAX_PAGES. Ahora si runGhlSync marcó partial, lo propagamos como tal
+    // con los endpoints truncados en error_detail. Los datos parciales ya
+    // quedaron escritos en DB (eso es lo que `written` cuenta); la UI/notif
+    // marca "Sync GHL terminó parcial" para que el operador sepa que faltan
+    // páginas más viejas.
+    if (summary.status === "partial") {
+      return await finalizeRun(service, runId, "partial", written, {
+        cause: "ghl_hit_max_pages",
+        hit_max_pages_endpoints: summary.hitMaxPages,
+        message: `GHL truncó por MAX_PAGES en: ${summary.hitMaxPages.join(", ")}. Faltan páginas más viejas.`,
+        counts: summary.counts,
+        meta: summary.meta,
+      });
+    }
+
+    return await finalizeRun(service, runId, "success", written, {
+      cause: "ghl_summary",
+      counts: summary.counts,
+      meta: summary.meta,
     });
   }
 
-  const written =
-    summary.counts.contacts.created +
-    summary.counts.contacts.updated +
-    summary.counts.appointments.created +
-    summary.counts.appointments.updated +
-    summary.counts.opportunities.created +
-    summary.counts.opportunities.updated +
-    summary.counts.orphan_whatsapp.created +
-    summary.counts.orphan_whatsapp.updated;
-
-  return await finalizeRun(service, runId, "success", written, {
-    cause: "ghl_summary",
-    counts: summary.counts,
-    meta: summary.meta,
+  return await finalizeRun(service, runId, summary.status, 0, {
+    stage: summary.stage,
+    ...summary.detail,
+    message: summary.message,
+    retryAfterSeconds: summary.retryAfterSeconds ?? null,
   });
 }
 

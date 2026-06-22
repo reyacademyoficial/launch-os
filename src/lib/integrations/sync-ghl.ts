@@ -86,92 +86,30 @@ export interface GhlCombinedCounts {
   orphan_whatsapp: StageCounts;
 }
 
+/** Endpoints de GHL que paginan; ver `meta.hit_max_pages` por cada uno. */
+export type GhlPaginatedEndpoint = "contacts" | "conversations" | "opportunities";
+
+interface GhlSuccessfulRunBody {
+  counts: GhlCombinedCounts;
+  meta: GhlRunMeta;
+}
+
+/**
+ * `partial` se gatilla cuando algún endpoint paginado truncó por
+ * `MAX_PAGES` — datos parciales escritos pero faltan páginas más viejas.
+ * Variants separadas (no `status: "success" | "partial"`) para que TS
+ * narrowee por discriminator literal en sync.ts.
+ */
 export type GhlRunSummary =
-  | {
+  | (GhlSuccessfulRunBody & {
       status: "success";
-      counts: GhlCombinedCounts;
-      meta: {
-        contacts: ContactsMeta;
-        appointments: AppointmentsMeta;
-        /**
-         * Meta del pase "huérfano WA". Null si el fetch de conversaciones falló
-         * (rate limit, token, etc.); en ese caso el run NO se aborta — el resto
-         * del sync sigue — y el detalle queda en `conversations_error`.
-         */
-        conversations: ConversationsMeta | null;
-        conversations_error: {
-          kind: string;
-          message: string;
-          httpStatus: number | null;
-          responseBody: unknown;
-        } | null;
-        /**
-         * Null cuando el fetch de opportunities falló (ej. 422 por params no
-         * soportados, 401 por scope faltante). En ese caso el run NO se aborta
-         * — contacts + appointments + warm lookup siguen — y el detalle del
-         * fallo queda en `opportunities_error`. KPIs de ventas se quedan con
-         * los datos del fallback manual hasta que se vuelva a sincronizar.
-         */
-        opportunities: OpportunitiesMeta | null;
-        opportunities_error: {
-          kind: string;
-          message: string;
-          httpStatus: number | null;
-          responseBody: unknown;
-        } | null;
-        /**
-         * Cuántos contacts del fetch incremental se clasificaron como tibio
-         * (señal `lastInboundWhatsappMessageDate ∈ compra+cierre`).
-         */
-        warm_signals_detected: number;
-        /**
-         * Cuántos contacts del fetch tenían al menos una conversación
-         * inspeccionada (numerador esperado: <= contactItems.length).
-         */
-        warm_lookup_contacts_inspected: number;
-        /**
-         * True si la corrida superó el cap defensivo (`WARM_LOOKUP_CAP`) y se
-         * saltó la detección de tibio. La próxima corrida incremental, más
-         * chica, debería procesarlos.
-         */
-        warm_lookup_skipped_due_to_volume: boolean;
-        /**
-         * Errores durante el lookup individual (rate limit, timeout). El sync
-         * continúa con los demás, marcando esos contacts sin señal warm.
-         */
-        warm_lookup_errors: number;
-        /**
-         * TEMP DIAG — muestras crudas del warm lookup para diagnosticar por qué
-         * `warm_signals_detected` da 0. `errors` lleva hasta 5 fallos con su
-         * httpStatus + responseBody; `successes` lleva hasta 5 contacts cuyo
-         * lookup OK trajo al menos 1 conversation, con el objeto RAW completo
-         * de cada conversation tal cual GHL la devolvió. Quitar una vez que
-         * sepamos cómo viene el campo de "último mensaje entrante".
-         */
-        warm_samples: {
-          errors: Array<{
-            contactId: string;
-            kind: string;
-            httpStatus: number | null;
-            responseBody: unknown;
-          }>;
-          successes: Array<{
-            contactId: string;
-            conversationCount: number;
-            rawConversations: unknown[];
-          }>;
-        };
-        mappings_applied: number;
-        /**
-         * GHL user ids encontrados como `assignedTo` en contacts o
-         * conversations pero que NO tienen fila en `ghl_user_mappings`. Útil
-         * para diagnosticar "configuré mapeos pero ningún lead viene con
-         * setter": si esta lista trae IDs, faltan mapeos para esos usuarios.
-         * Cap de 20 para evitar inflar la respuesta.
-         */
-        unmapped_ghl_user_ids: string[];
-      };
-    }
+      hitMaxPages: readonly [];
+    })
+  | (GhlSuccessfulRunBody & {
+      status: "partial";
+      /** Endpoints que tocaron techo de paginación. Nunca vacío en partial. */
+      hitMaxPages: ReadonlyArray<GhlPaginatedEndpoint>;
+    })
   | {
       status: "token_invalid" | "rate_limited" | "error";
       stage:
@@ -184,6 +122,88 @@ export type GhlRunSummary =
       detail: Record<string, unknown>;
       retryAfterSeconds?: number | null;
     };
+
+interface GhlRunMeta {
+  contacts: ContactsMeta;
+  appointments: AppointmentsMeta;
+  /**
+   * Meta del pase "huérfano WA". Null si el fetch de conversaciones falló
+   * (rate limit, token, etc.); en ese caso el run NO se aborta — el resto
+   * del sync sigue — y el detalle queda en `conversations_error`.
+   */
+  conversations: ConversationsMeta | null;
+  conversations_error: {
+    kind: string;
+    message: string;
+    httpStatus: number | null;
+    responseBody: unknown;
+  } | null;
+  /**
+   * Null cuando el fetch de opportunities falló (ej. 422 por params no
+   * soportados, 401 por scope faltante). En ese caso el run NO se aborta
+   * — contacts + appointments + warm lookup siguen — y el detalle del
+   * fallo queda en `opportunities_error`. KPIs de ventas se quedan con
+   * los datos del fallback manual hasta que se vuelva a sincronizar.
+   */
+  opportunities: OpportunitiesMeta | null;
+  opportunities_error: {
+    kind: string;
+    message: string;
+    httpStatus: number | null;
+    responseBody: unknown;
+  } | null;
+  /**
+   * Cuántos contacts del fetch incremental se clasificaron como tibio
+   * (señal `lastInboundWhatsappMessageDate ∈ compra+cierre`).
+   */
+  warm_signals_detected: number;
+  /**
+   * Cuántos contacts del fetch tenían al menos una conversación
+   * inspeccionada (numerador esperado: <= contactItems.length).
+   */
+  warm_lookup_contacts_inspected: number;
+  /**
+   * True si la corrida superó el cap defensivo (`WARM_LOOKUP_CAP`) y se
+   * saltó la detección de tibio. La próxima corrida incremental, más
+   * chica, debería procesarlos.
+   */
+  warm_lookup_skipped_due_to_volume: boolean;
+  /**
+   * Errores durante el lookup individual (rate limit, timeout). El sync
+   * continúa con los demás, marcando esos contacts sin señal warm.
+   */
+  warm_lookup_errors: number;
+  /**
+   * TEMP DIAG — muestras crudas del warm lookup para diagnosticar por qué
+   * `warm_signals_detected` da 0. `errors` lleva hasta 5 fallos con su
+   * httpStatus + responseBody; `successes` lleva hasta 5 contacts cuyo
+   * lookup OK trajo al menos 1 conversation, con el objeto RAW completo
+   * de cada conversation tal cual GHL la devolvió. Quitar una vez que
+   * sepamos cómo viene el campo de "último mensaje entrante".
+   */
+  warm_samples: {
+    errors: Array<{
+      contactId: string;
+      kind: string;
+      httpStatus: number | null;
+      responseBody: unknown;
+    }>;
+    successes: Array<{
+      contactId: string;
+      conversationCount: number;
+      rawConversations: unknown[];
+    }>;
+  };
+  mappings_applied: number;
+  /**
+   * GHL user ids encontrados como `assignedTo` en contacts o
+   * conversations pero que NO tienen fila en `ghl_user_mappings`. Útil
+   * para diagnosticar "configuré mapeos pero ningún lead viene con
+   * setter": si esta lista trae IDs, faltan mapeos para esos usuarios.
+   * Cap de 20 para evitar inflar la respuesta.
+   */
+  unmapped_ghl_user_ids: string[];
+}
 
 export interface RunGhlSyncArgs {
   service: ServiceClient;
@@ -215,7 +235,11 @@ const WARM_LOOKUP_CONCURRENCY = 10;
 const WARM_LOOKUP_CAP = 2000;
 
 export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
-  const country = (args.defaultCountry || "AR") as CountryCode;
+  // Antes había un `const country = (args.defaultCountry || "AR") as CountryCode`
+  // y se pasaba a todas las normalizaciones. Eso pisaba teléfonos no-AR.
+  // Ahora la normalización va por-contacto: contacts usa `c.country` (lo que
+  // GHL devuelve), y conversations + appointments parsean E.164-only sin
+  // asumir región (no tienen country en el shape).
   const warmWindow = args.warmWindow ?? { start: args.since, end: args.until };
   const cutoffIso = args.lastSuccessAt ?? null;
 
@@ -435,7 +459,7 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   };
 
   const contactItems: PreparedContactItem[] = contactsResult.rows.map((c) => {
-    const phoneNormalized = normalize(c.rawPhone, country);
+    const phoneNormalized = normalize(c.rawPhone, asCountryCode(c.country));
     const hasClientTag = c.tags.some((t) => t.toLowerCase() === "cliente");
     const hasRecentInboundActivity = warmByContact.get(c.id) === true;
     if (hasRecentInboundActivity) warmSignalsDetected++;
@@ -483,7 +507,7 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
       email: item.contact.email,
       hasClientTag: item.hasClientTag,
       hasRecentInboundActivity: item.hasRecentInboundActivity,
-      teamMemberId: item.teamMemberId,
+      teamMemberId: resolveTeamMemberAssignment(existing, item.teamMemberId),
     });
     return { action, existing, notes: buildContactNotes(item.contact) };
   });
@@ -555,10 +579,15 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
       if (a > b) byContactId.set(conv.contactId, conv);
     }
 
+    // Sin country por-conversación (GHL no lo emite a nivel conversation),
+    // parseamos E.164-only. Para WhatsApp los teléfonos suelen venir ya en
+    // E.164 con "+", así que en la práctica esto funciona bien. Los que no
+    // se puedan parsear se filtran abajo (mejor descartar que poner prefijo
+    // equivocado).
     const orphanItems = Array.from(byContactId.values())
       .map((conv) => ({
         conv,
-        phoneNormalized: normalize(conv.rawPhone, country),
+        phoneNormalized: normalize(conv.rawPhone, undefined),
       }))
       .filter(
         (it): it is { conv: GhlConversation; phoneNormalized: string } =>
@@ -612,7 +641,7 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
           email: null,
           hasClientTag: false,
           hasRecentInboundActivity,
-          teamMemberId,
+          teamMemberId: resolveTeamMemberAssignment(existing, teamMemberId),
         });
         return { action, existing, notes: buildOrphanWaNotes(it.conv) };
       });
@@ -624,9 +653,11 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   }
 
   // 7) Preparar appointments y locate (incluyendo leads recién creados arriba).
+  // Appointments tampoco traen `country` en el shape del calendar event.
+  // Mismo trade-off que orphan WA: E.164-only sin asumir país.
   const apptItems: PreparedApptItem[] = apptResult.rows.map((e) => ({
     appt: e,
-    phoneNormalized: normalize(e.rawPhone, country),
+    phoneNormalized: normalize(e.rawPhone, undefined),
   }));
   const apptExternalIds = apptItems.map((i) => i.appt.id);
   const apptPhones = apptItems
@@ -665,33 +696,44 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   // `syncOpportunities` devuelve counts en cero — no toca DB.
   const opportunitiesCounts = await syncOpportunities(args, opportunitiesRows);
 
-  return {
-    status: "success",
-    counts: {
-      contacts: contactsCounts,
-      appointments: apptCounts,
-      opportunities: opportunitiesCounts,
-      orphan_whatsapp: orphanCounts,
-    },
-    meta: {
-      contacts: contactsResult.meta,
-      appointments: apptResult.meta,
-      conversations: conversationsMetaForSummary,
-      conversations_error: conversationsError,
-      opportunities: opportunitiesMetaForSummary,
-      opportunities_error: opportunitiesError,
-      warm_signals_detected: warmSignalsDetected,
-      warm_lookup_contacts_inspected: warmLookupContactsInspected,
-      warm_lookup_skipped_due_to_volume: warmLookupSkippedDueToVolume,
-      warm_lookup_errors: warmLookupErrors,
-      warm_samples: {
-        errors: warmErrorSamples,
-        successes: warmSuccessSamples,
-      },
-      mappings_applied: mappingsApplied,
-      unmapped_ghl_user_ids: Array.from(unmappedGhlUserIds),
-    },
+  // Bug 3 fix — `hit_max_pages` antes era una flag enterrada en meta y el run
+  // cerraba como `success` aunque hubiéramos truncado. Ahora cualquier
+  // endpoint paginado que tocó techo arrastra el run a `partial`, con la lista
+  // de endpoints truncados para que el operador sepa qué falta.
+  const hitMaxPages: GhlPaginatedEndpoint[] = [];
+  if (contactsResult.meta.hit_max_pages) hitMaxPages.push("contacts");
+  if (conversationsMetaForSummary?.hit_max_pages) hitMaxPages.push("conversations");
+  if (opportunitiesMetaForSummary?.hit_max_pages) hitMaxPages.push("opportunities");
+
+  const counts: GhlCombinedCounts = {
+    contacts: contactsCounts,
+    appointments: apptCounts,
+    opportunities: opportunitiesCounts,
+    orphan_whatsapp: orphanCounts,
   };
+  const meta: GhlRunMeta = {
+    contacts: contactsResult.meta,
+    appointments: apptResult.meta,
+    conversations: conversationsMetaForSummary,
+    conversations_error: conversationsError,
+    opportunities: opportunitiesMetaForSummary,
+    opportunities_error: opportunitiesError,
+    warm_signals_detected: warmSignalsDetected,
+    warm_lookup_contacts_inspected: warmLookupContactsInspected,
+    warm_lookup_skipped_due_to_volume: warmLookupSkippedDueToVolume,
+    warm_lookup_errors: warmLookupErrors,
+    warm_samples: {
+      errors: warmErrorSamples,
+      successes: warmSuccessSamples,
+    },
+    mappings_applied: mappingsApplied,
+    unmapped_ghl_user_ids: Array.from(unmappedGhlUserIds),
+  };
+
+  if (hitMaxPages.length > 0) {
+    return { status: "partial", hitMaxPages, counts, meta };
+  }
+  return { status: "success", hitMaxPages: [], counts, meta };
 }
 
 /**
@@ -1090,13 +1132,71 @@ function uniqueStr(arr: ReadonlyArray<string>): string[] {
 
 // ─── helpers comunes ───────────────────────────────────────────────────────
 
-function normalize(raw: string | null, country: CountryCode): string | null {
+/**
+ * Normaliza un teléfono crudo a E.164.
+ *
+ * Política post-Fase B Bug 1: NO asumimos país. La región default se pasa
+ * por-contacto cuando GHL la trae (`c.country` ISO-2). Sin country:
+ *
+ *   - "+5491112345678" (E.164 completo)              → "+5491112345678"
+ *   - "5491112345678" sin "+"                        → null (no parseable)
+ *   - "11 1234-5678" local                           → null (no asumimos)
+ *   - "+99999999999999" inválido                     → null
+ *
+ * Con country (ej. "AR"):
+ *
+ *   - "11 1234-5678" + AR                            → "+5491112345678"
+ *   - "+5491112345678" + AR                          → "+5491112345678"
+ *
+ * Null significa "no pude normalizar sin meter un prefijo equivocado".
+ * El caller mete el `rawPhone` en `leads.contact` y deja `phone_normalized`
+ * en null — mejor un teléfono crudo que uno corrupto.
+ */
+export function normalize(
+  raw: string | null,
+  country: CountryCode | undefined,
+): string | null {
   if (!raw) return null;
   const trimmed = raw.trim();
   if (trimmed === "") return null;
   const parsed = parsePhoneNumberFromString(trimmed, country);
   if (!parsed || !parsed.isValid()) return null;
   return parsed.format("E.164");
+}
+
+/**
+ * Cast del `country` string que viene del adapter (ya validado ISO-2 por
+ * `extractCountryIso2`) al tipo `CountryCode` que pide libphonenumber-js.
+ * Null/undefined del adapter → undefined para `normalize`.
+ */
+function asCountryCode(v: string | null | undefined): CountryCode | undefined {
+  if (!v) return undefined;
+  return v as CountryCode;
+}
+
+/**
+ * Regla "manual gana, API rellena solo si vacío + mapeado, nunca null":
+ *
+ *   - Si el lead existente ya tiene `team_member_id` (asignación manual o de
+ *     un sync previo confirmado) → devolvemos `undefined`, el patch del
+ *     matcher no incluye `team_member_id` y la asignación NO se toca.
+ *   - Si la API NO trae mapeo válido (assignedTo vacío o sin fila en
+ *     `ghl_user_mappings`) → devolvemos `undefined` también, para nunca
+ *     escribir un null que borre la asignación.
+ *   - Solo cuando `existing` está vacío Y la API trae un mapeo no-null →
+ *     devolvemos ese valor para que el matcher lo setee.
+ *
+ * Para leads nuevos (`existing === null`), aplica igual: si la API trae
+ * mapeo lo seteamos en el create; si no, queda undefined y `createPayload`
+ * lo resuelve a `null` (correcto — no hay manual que pisar).
+ */
+export function resolveTeamMemberAssignment(
+  existing: ExistingLeadView | null,
+  fromApi: string | null | undefined,
+): string | undefined {
+  if (existing && existing.team_member_id) return undefined;
+  if (!fromApi) return undefined;
+  return fromApi;
 }
 
 function buildAppointmentNotes(e: GhlAppointment): string | null {

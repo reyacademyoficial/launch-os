@@ -108,6 +108,14 @@ export interface GhlContact {
   dateAdded: string | null;
   /** ISO timestamp de última modificación. */
   dateUpdated: string | null;
+  /**
+   * Código de país ISO-2 (`"AR"`, `"MX"`, …) tal cual lo emite GHL en el
+   * contact. Null si el contact no lo tiene seteado o si GHL devolvió algo
+   * que no es ISO-2 válido. Usado por el sync para normalizar el teléfono
+   * a E.164 con la región correcta (en vez del literal "AR" que pisaba
+   * contactos no-AR).
+   */
+  country: string | null;
   raw: unknown;
 }
 
@@ -886,6 +894,7 @@ export async function fetchGhlContacts(
         assignedTo: strOrNull(c.assignedTo),
         dateAdded,
         dateUpdated,
+        country: extractCountryIso2(c),
         raw: c,
       });
     }
@@ -1413,6 +1422,21 @@ function strOrNull(v: unknown): string | null {
   if (typeof v !== "string") return null;
   const trimmed = v.trim();
   return trimmed === "" ? null : trimmed;
+}
+
+/**
+ * Extrae el `country` de un contact GHL y lo valida como ISO-2 (2 letras
+ * alfa, uppercase). Dump real: GHL emite "AR", "MX", etc. (verificado Fase
+ * B). Cualquier otro valor (null, vacío, "Argentina", "ARG") → null para
+ * no pasarle basura a libphonenumber. El caller decide qué hacer cuando
+ * es null (parsear E.164-only sin asumir país).
+ */
+export function extractCountryIso2(obj: Record<string, unknown>): string | null {
+  const raw = obj.country;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(trimmed)) return null;
+  return trimmed;
 }
 
 /**
