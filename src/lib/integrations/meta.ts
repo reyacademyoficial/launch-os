@@ -395,6 +395,174 @@ export async function fetchMetaInsights(
   return { ok: true, rows: allRows };
 }
 
+// ─── TEMP DIAG (Fase C Paso 0) — probe de Lead Ads ──────────────────────────
+//
+// Antes de codear la feature de leads individuales tenemos que verificar (a)
+// si el token actual tiene `leads_retrieval`, y (b) el shape de `field_data`
+// — las keys de nombre/teléfono/email dependen de cómo se armó cada form y
+// no se pueden mapear a ciegas. El probe corre dentro del sync de Meta y deja
+// los raw responses en `integration_runs.error_detail.meta_leadgen_probe`
+// para inspeccionar con un SELECT de Studio. Si falla con permission error,
+// el detalle nos dice qué scope falta y la feature se posterga hasta el App
+// Review. Quitar este bloque entero una vez que Paso 2 esté implementado.
+//
+// V1 probó `/act_{id}/leadgen_forms` → #100 "nonexisting field". Los forms no
+// están en AdAccount; viven en Pages (vía page token) o se descubren a través
+// de las ads. V2 (este código) descubre via ads: lista ads de la campaña →
+// intenta `/{ad_id}/leads` por las primeras N ads hasta encontrar una con
+// data. Eso testea el permiso real (`leads_retrieval`) y captura `field_data`.
+
+const PROBE_MAX_ADS_TO_TRY = 5;
+
+/**
+ * Resultado del probe — éxito o error capturados con su shape crudo, no
+ * normalizados. La idea es ver EXACTAMENTE lo que Meta devuelve, no nuestra
+ * interpretación.
+ */
+export interface MetaLeadgenProbeResult {
+  /** Listing de ads de la primera campaña del launch — confirma acceso basal. */
+  ads: {
+    ok: boolean;
+    httpStatus: number;
+    campaignId: string;
+    raw: unknown;
+  };
+  /**
+   * Resultado de `/{ad_id}/leads` para hasta `PROBE_MAX_ADS_TO_TRY` ads. Si
+   * alguna devolvió leads reales paramos ahí. Si todas devolvieron 200 con
+   * data vacía, guardamos la última (= permiso OK, simplemente no hay leads
+   * todavía). Si alguna devolvió error de permisos, paramos y guardamos esa.
+   */
+  sampleLeads: {
+    adId: string;
+    ok: boolean;
+    httpStatus: number;
+    raw: unknown;
+  } | null;
+  /** Cuántas ads probamos antes de cortar (debug). */
+  adsTried: number;
+}
+
+export async function probeMetaLeadgen(args: {
+  token: string;
+  campaignIds: readonly string[];
+}): Promise<MetaLeadgenProbeResult> {
+  const campaignId = args.campaignIds[0] ?? "";
+  const result: MetaLeadgenProbeResult = {
+    ads: {
+      ok: false,
+      httpStatus: 0,
+      campaignId,
+      raw: { cause: "no_campaign_id" },
+    },
+    sampleLeads: null,
+    adsTried: 0,
+  };
+  if (!campaignId) return result;
+
+  const adsParams = new URLSearchParams({
+    fields: "id,name,effective_status",
+    limit: "10",
+    access_token: args.token,
+  });
+  const adsUrl = `${META_API_BASE}/${campaignId}/ads?${adsParams.toString()}`;
+  const adsRes = await fetchProbe(adsUrl);
+  result.ads = {
+    ok: adsRes.ok,
+    httpStatus: adsRes.httpStatus,
+    campaignId,
+    raw: adsRes.raw,
+  };
+  if (!adsRes.ok) return result;
+
+  const adsData = (adsRes.raw as { data?: unknown }).data;
+  if (!Array.isArray(adsData) || adsData.length === 0) return result;
+
+  const adIds: string[] = [];
+  for (const a of adsData) {
+    if (typeof a !== "object" || a === null) continue;
+    const id = (a as { id?: unknown }).id;
+    if (typeof id === "string" && id.length > 0) adIds.push(id);
+  }
+
+  for (let i = 0; i < Math.min(PROBE_MAX_ADS_TO_TRY, adIds.length); i++) {
+    const adId = adIds[i]!;
+    result.adsTried = i + 1;
+    const leadsParams = new URLSearchParams({
+      fields:
+        "id,created_time,field_data,form_id,ad_id,ad_name,campaign_id,campaign_name,adset_id",
+      limit: "3",
+      access_token: args.token,
+    });
+    const leadsUrl = `${META_API_BASE}/${adId}/leads?${leadsParams.toString()}`;
+    const leadsRes = await fetchProbe(leadsUrl);
+    const snap = {
+      adId,
+      ok: leadsRes.ok,
+      httpStatus: leadsRes.httpStatus,
+      raw: leadsRes.raw,
+    };
+    if (!leadsRes.ok) {
+      // Permission/structural error — capturamos y paramos (se va a repetir
+      // para todas las ads).
+      result.sampleLeads = snap;
+      return result;
+    }
+    const leadsData = (leadsRes.raw as { data?: unknown }).data;
+    const hasLeads = Array.isArray(leadsData) && leadsData.length > 0;
+    if (hasLeads) {
+      // Encontramos data real con field_data — es lo que necesitamos.
+      result.sampleLeads = snap;
+      return result;
+    }
+    // ok pero vacía — guardamos como mejor candidato y seguimos buscando una
+    // ad con leads. Si todas vienen vacías, queda esta (permiso OK).
+    result.sampleLeads = snap;
+  }
+  return result;
+}
+
+/**
+ * Fetch defensivo para el probe: nunca tira, captura todo (network errors,
+ * non-JSON responses, error envelopes de Meta) y devuelve `ok` solo cuando
+ * Meta respondió 2xx + sin `error` envelope.
+ */
+async function fetchProbe(
+  url: string,
+): Promise<{ ok: boolean; httpStatus: number; raw: unknown }> {
+  let res: Response;
+  try {
+    res = await fetch(url, { method: "GET" });
+  } catch (err) {
+    return {
+      ok: false,
+      httpStatus: 0,
+      raw: {
+        fetch_error: err instanceof Error ? err.message : String(err),
+      },
+    };
+  }
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    return {
+      ok: false,
+      httpStatus: res.status,
+      raw: { cause: "non_json_response" },
+    };
+  }
+  const hasError =
+    body !== null &&
+    typeof body === "object" &&
+    (body as Record<string, unknown>).error !== undefined;
+  return {
+    ok: res.ok && !hasError,
+    httpStatus: res.status,
+    raw: body,
+  };
+}
+
 /**
  * Build de la URL — separado para poder testearlo en aislamiento y para que
  * el orchestrator pueda mockear `fetchMetaInsights` por completo si quiere.

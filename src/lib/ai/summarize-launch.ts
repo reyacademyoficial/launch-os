@@ -6,6 +6,7 @@ import {
   fmtMultiplier,
   fmtNumber,
   fmtPercent,
+  fmtPercentOrDash,
 } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import { aggregateMergedDaily } from "@/lib/launch-daily/aggregate";
@@ -94,10 +95,10 @@ function buildUserPrompt(
   lines.push(`- Leads totales (ads): ${fmtNumber(kpi.totalLeads)}`);
 
   lines.push("", "Funnel:");
-  lines.push(`- Registrados: ${fmtNumber(kpi.registrados)}`);
-  lines.push(`- Asistentes: ${fmtNumber(kpi.asistentes)} (show rate ${fmtPercent(kpi.showRate)})`);
-  lines.push(`- Hasta el pitch: ${fmtNumber(kpi.hastaPitch)}`);
-  lines.push(`- Ventas: ${fmtNumber(kpi.ventas)} (close rate ${fmtPercent(kpi.closeRate)})`);
+  lines.push(`- Inscriptos: ${fmtNumber(kpi.registrados)}`);
+  lines.push(`- Asistentes Clase 1 (pico): ${fmtNumber(kpi.asistentes)} (show rate ${fmtPercentOrDash(kpi.showRate)})`);
+  lines.push(`- Asistentes Clase 3 / pitch (pico): ${fmtNumber(kpi.hastaPitch)} (close rate hasta el pitch ${fmtPercentOrDash(kpi.closeRateC3)})`);
+  lines.push(`- Ventas: ${fmtNumber(kpi.ventas)} (close rate ${fmtPercentOrDash(kpi.closeRate)})`);
 
   lines.push("", "Revenue + economics:");
   lines.push(`- Revenue estimado (pactado): ${fmtMoney(kpi.revenueEstimated)}`);

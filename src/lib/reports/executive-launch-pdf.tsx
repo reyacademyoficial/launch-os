@@ -581,8 +581,8 @@ function int(n: number): string {
   return Math.round(n).toLocaleString("en-US");
 }
 
-function percent(n: number): string {
-  return n.toFixed(1) + "%";
+function percent(n: number | null): string {
+  return n == null ? "—" : n.toFixed(1) + "%";
 }
 
 function multiplier(n: number): string {

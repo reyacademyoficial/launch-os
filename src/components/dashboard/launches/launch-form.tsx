@@ -298,11 +298,32 @@ export function LaunchForm({
       />
 
       <Section title="Webinar / lifecycle">
+        <p className="text-xs text-fg-subtle">
+          Asistencia se mide como <b>pico simultáneo</b>. Show Rate usa
+          Inscriptos + Asistentes Clase 1; Close Rate hasta el pitch usa
+          Asistentes Clase 3. Vacío en alguno → el KPI muestra <code>—</code>.
+        </p>
         <FieldsGrid>
-          <NumberField name="registrados" label="Registrados" initial={initial} />
-          <NumberField name="asistentes" label="Asistentes" initial={initial} />
-          <NumberField name="hasta_pitch" label="Hasta el pitch" initial={initial} />
-          <NumberField name="contactos_api" label="Contactos via API" initial={initial} />
+          <NumberField
+            name="registrados"
+            label="Inscriptos"
+            initial={initial}
+          />
+          <NumberField
+            name="asistentes"
+            label="Asistentes Clase 1 (pico simultáneo)"
+            initial={initial}
+          />
+          <NumberField
+            name="hasta_pitch"
+            label="Asistentes Clase 3 (pico simultáneo)"
+            initial={initial}
+          />
+          <NumberField
+            name="contactos_api"
+            label="Contactos via API"
+            initial={initial}
+          />
         </FieldsGrid>
       </Section>
 

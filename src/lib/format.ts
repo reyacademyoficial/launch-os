@@ -28,6 +28,10 @@ export const fmtMoneyDecimals = (n: unknown): string =>
 /** "12.3%" — one decimal. */
 export const fmtPercent = (n: unknown): string => safeNumber(n).toFixed(1) + "%";
 
+/** Percent o "—" cuando el valor es null/undefined (denominador vacío). */
+export const fmtPercentOrDash = (n: number | null | undefined): string =>
+  n == null ? "—" : safeNumber(n).toFixed(1) + "%";
+
 /** "1,234" — rounded integer. */
 export const fmtNumber = (n: unknown): string =>
   safeInt(n).toLocaleString("en-US");

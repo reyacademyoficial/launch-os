@@ -4,7 +4,7 @@ import { evaluateAlertsForLaunch } from "@/lib/alerts/evaluate";
 import { tryComputeLaunchCalendar } from "@/lib/launches/calendar";
 import { createServiceClient } from "@/lib/supabase/service";
 
-import { fetchMetaInsights, type MetaInsightDay } from "./meta";
+import { fetchMetaInsights, probeMetaLeadgen, type MetaInsightDay } from "./meta";
 import {
   fetchSendflowAnalytics,
   type SendflowAnalyticsResult,
@@ -320,8 +320,31 @@ export async function syncLaunch(
     (r) => r.date >= startDate && r.date <= endDate,
   );
 
+  // TEMP DIAG (Fase C Paso 0) — corremos el probe de Lead Ads en paralelo
+  // con el upsert para no bloquear. Si falla por permisos, NO afectamos el
+  // sync de Insights — el probe es solo diagnóstico para integration_runs.
+  // Quitar una vez que la feature de leads individuales esté implementada.
+  const probePromise = probeMetaLeadgen({
+    token,
+    campaignIds: providerConfig.ad_accounts[0]!.campaign_ids,
+  }).catch((err) => ({
+    ads: {
+      ok: false,
+      httpStatus: 0,
+      campaignId: providerConfig.ad_accounts[0]?.campaign_ids[0] ?? "",
+      raw: {
+        fetch_error: err instanceof Error ? err.message : String(err),
+      },
+    },
+    sampleLeads: null,
+    adsTried: 0,
+  }));
+
   if (inWindow.length === 0) {
-    return await finalizeRun(service, runId, "success", 0, null);
+    const probe = await probePromise;
+    return await finalizeRun(service, runId, "success", 0, {
+      meta_leadgen_probe: probe,
+    });
   }
 
   const mergedByDate = mergeInsightsByDate(inWindow);
@@ -342,7 +365,10 @@ export async function syncLaunch(
   // rows_written = filas escritas en launch_daily_ads, que después del merge
   // es 1 por (launch, date, provider) — usamos mergedByDate.length, no
   // inWindow.length (que cuenta las filas antes de agrupar por cuenta+campaña).
-  return await finalizeRun(service, runId, "success", mergedByDate.length, null);
+  const probe = await probePromise;
+  return await finalizeRun(service, runId, "success", mergedByDate.length, {
+    meta_leadgen_probe: probe,
+  });
 }
 
 // ─── helpers internos ───────────────────────────────────────────────────────

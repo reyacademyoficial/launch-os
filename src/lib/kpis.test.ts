@@ -296,3 +296,69 @@ describe("calculateLaunchKPIs — community (SendFlow)", () => {
     expect(k.enteredCommunityRate).toBe(25);
   });
 });
+
+describe("calculateLaunchKPIs — funnel manual (Fase A: Show/Close Rate)", () => {
+  it("registrados=0 → showRate null (UI muestra '—')", () => {
+    const k = calculateLaunchKPIs({ ...BASELINE });
+    expect(k.showRate).toBeNull();
+  });
+
+  it("asistentes (Clase 1) = 0 → closeRate null", () => {
+    const k = calculateLaunchKPIs({ ...BASELINE, registrados: 100 });
+    expect(k.showRate).toBe(0); // 0/100 * 100 = 0% — base existe, valor es 0
+    expect(k.closeRate).toBeNull(); // sin asistentes_clase_1 no hay base
+  });
+
+  it("hasta_pitch (Clase 3) = 0 → closeRateC3 null", () => {
+    const k = calculateLaunchKPIs({
+      ...BASELINE,
+      registrados: 1000,
+      asistentes: 400,
+    });
+    expect(k.closeRateC3).toBeNull();
+  });
+
+  it("flujo completo: Show / Close C1 / Close C3", () => {
+    // Inscriptos 1000, pico C1 400, pico C3 250, ventas (kanban=0) manuales 50.
+    const k = calculateLaunchKPIs({
+      ...BASELINE,
+      registrados: 1000,
+      asistentes: 400,
+      hasta_pitch: 250,
+      ventas_total: 50,
+    });
+    expect(k.showRate).toBeCloseTo((400 / 1000) * 100, 5); // 40%
+    expect(k.closeRate).toBeCloseTo((50 / 400) * 100, 5); // 12.5%
+    expect(k.closeRateC3).toBeCloseTo((50 / 250) * 100, 5); // 20%
+  });
+
+  it("ventas vienen del kanban + manual; close rates usan la suma", () => {
+    const kanban: KanbanSalesAggregate = {
+      hasData: true,
+      pledgedRevenue: 0,
+      collectedRevenue: 0,
+      salesCount: 30,
+      paymentsCount: 0,
+    };
+    const k = calculateLaunchKPIs(
+      {
+        ...BASELINE,
+        registrados: 1000,
+        asistentes: 400,
+        hasta_pitch: 250,
+        ventas_total: 20,
+      },
+      { kanbanSalesAggregate: kanban },
+    );
+    expect(k.ventas).toBe(50); // 30 + 20
+    expect(k.closeRate).toBeCloseTo((50 / 400) * 100, 5);
+    expect(k.closeRateC3).toBeCloseTo((50 / 250) * 100, 5);
+  });
+
+  it("input null devuelve los 3 rates en null", () => {
+    const k = calculateLaunchKPIs(null);
+    expect(k.showRate).toBeNull();
+    expect(k.closeRate).toBeNull();
+    expect(k.closeRateC3).toBeNull();
+  });
+});

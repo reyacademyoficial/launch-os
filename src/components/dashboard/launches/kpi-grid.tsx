@@ -4,6 +4,7 @@ import {
   fmtMultiplier,
   fmtNumber,
   fmtPercent,
+  fmtPercentOrDash,
 } from "@/lib/format";
 import type { LaunchKPIs } from "@/lib/kpis";
 
@@ -48,54 +49,91 @@ export function KpiGrid({ kpi }: { readonly kpi: LaunchKPIs }) {
         ? "negative"
         : "neutral";
 
-  const collectionPct =
-    kpi.revenueEstimated > 0
-      ? (kpi.revenueCollected / kpi.revenueEstimated) * 100
-      : 0;
+  // Footers de funnel: si falta el denominador, el KPI muestra "—". Los
+  // footers describen exactamente la cuenta para que el equipo entienda
+  // qué se está dividiendo.
+  const showRateHint =
+    kpi.showRate == null
+      ? "Cargá Inscriptos y Asistentes Clase 1 para ver Show Rate"
+      : `${fmtNumber(kpi.asistentes)} de ${fmtNumber(kpi.registrados)} inscriptos · pico simultáneo Clase 1`;
+
+  const closeRateC1Hint =
+    kpi.closeRate == null
+      ? "Cargá Asistentes Clase 1 para ver Close Rate"
+      : `${fmtNumber(kpi.ventas)} de ${fmtNumber(kpi.asistentes)} asistentes Clase 1 · pico simultáneo`;
+
+  const closeRateC3Hint =
+    kpi.closeRateC3 == null
+      ? "Cargá Asistentes Clase 3 para ver Close Rate hasta el pitch"
+      : `${fmtNumber(kpi.ventas)} de ${fmtNumber(kpi.hastaPitch)} asistentes Clase 3 / pitch · pico simultáneo`;
 
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
       <KpiCard
         label="Revenue estimado"
         value={fmtMoney(kpi.revenueEstimated)}
-        hint="Pactado en ventas cerradas + manual"
+        hint={`Suma de montos pactados de ${fmtNumber(kpi.ventas)} ventas`}
       />
       <KpiCard
         label="Revenue cobrado"
         value={fmtMoney(kpi.revenueCollected)}
-        hint={
-          kpi.revenueEstimated > 0
-            ? `${fmtPercent(collectionPct)} del estimado`
-            : "Cobros reales registrados"
-        }
+        hint="Suma de cobros registrados"
       />
-      <KpiCard label="Inversión total" value={fmtMoney(kpi.totalInvestment)} />
-      <KpiCard label="CAC" value={fmtMoneyDecimals(kpi.cac)} />
+      <KpiCard
+        label="Inversión total"
+        value={fmtMoney(kpi.totalInvestment)}
+        hint="Meta + Google + TikTok · cuenta Meta en ARS"
+      />
+      <KpiCard
+        label="CAC"
+        value={fmtMoneyDecimals(kpi.cac)}
+        hint={`${fmtMoney(kpi.totalInvestment)} invertido / ${fmtNumber(kpi.ventas)} ventas`}
+      />
 
       <KpiCard
         label="ROAS estimado"
         value={fmtMultiplier(kpi.roasEstimated)}
-        hint="Pactado / inversión"
+        hint={`${fmtMoney(kpi.revenueEstimated)} pactado / ${fmtMoney(kpi.totalInvestment)} invertido`}
       />
       <KpiCard
         label="ROAS real"
         value={fmtMultiplier(kpi.roasReal)}
-        hint="Cobrado / inversión"
+        hint={`${fmtMoney(kpi.revenueCollected)} cobrado / ${fmtMoney(kpi.totalInvestment)} invertido`}
       />
       <KpiCard
         label="Profit estimado"
         value={fmtMoney(kpi.profitEstimated)}
         emphasis={profitEstEmphasis}
+        hint={`${fmtMoney(kpi.revenueEstimated)} pactado − ${fmtMoney(kpi.totalInvestment)} invertido`}
       />
       <KpiCard
         label="Profit real"
         value={fmtMoney(kpi.profitReal)}
         emphasis={profitRealEmphasis}
+        hint={`${fmtMoney(kpi.revenueCollected)} cobrado − ${fmtMoney(kpi.totalInvestment)} invertido`}
       />
 
-      <KpiCard label="Leads totales" value={fmtNumber(kpi.totalLeads)} />
-      <KpiCard label="Show rate" value={fmtPercent(kpi.showRate)} />
-      <KpiCard label="Close rate" value={fmtPercent(kpi.closeRate)} />
+      <KpiCard
+        label="Leads totales"
+        value={fmtNumber(kpi.totalLeads)}
+        hint="Meta + Google + TikTok"
+      />
+      <KpiCard
+        label="Show rate"
+        value={fmtPercentOrDash(kpi.showRate)}
+        hint={showRateHint}
+      />
+      <KpiCard
+        label="Close rate"
+        value={fmtPercentOrDash(kpi.closeRate)}
+        hint={closeRateC1Hint}
+      />
+      <KpiCard
+        label="Close rate hasta el pitch"
+        value={fmtPercentOrDash(kpi.closeRateC3)}
+        hint={closeRateC3Hint}
+      />
+
       <KpiCard
         label="% WhatsApp del revenue"
         value={fmtPercent(kpi.whatsappRevenueShare)}
@@ -105,17 +143,17 @@ export function KpiGrid({ kpi }: { readonly kpi: LaunchKPIs }) {
       <KpiCard
         label="CPL Meta"
         value={fmtMoneyDecimals(kpi.cplMeta)}
-        hint={`${fmtNumber(kpi.metaLeads)} leads · ${fmtMoney(kpi.metaInv)} invertido`}
+        hint={`${fmtMoney(kpi.metaInv)} / ${fmtNumber(kpi.metaLeads)} leads`}
       />
       <KpiCard
         label="CPL Google"
         value={fmtMoneyDecimals(kpi.cplGoogle)}
-        hint={`${fmtNumber(kpi.googleLeads)} leads · ${fmtMoney(kpi.googleInv)} invertido`}
+        hint={`${fmtMoney(kpi.googleInv)} / ${fmtNumber(kpi.googleLeads)} leads`}
       />
       <KpiCard
         label="CPL TikTok"
         value={fmtMoneyDecimals(kpi.cplTiktok)}
-        hint={`${fmtNumber(kpi.tiktokLeads)} leads · ${fmtMoney(kpi.tiktokInv)} invertido`}
+        hint={`${fmtMoney(kpi.tiktokInv)} / ${fmtNumber(kpi.tiktokLeads)} leads`}
       />
     </div>
   );

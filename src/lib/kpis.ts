@@ -125,8 +125,24 @@ export interface LaunchKPIs {
   /** revenueCollected / totalInvestment. Lo que cobraron, sobre lo invertido. */
   roasReal: number;
   cac: number;
-  showRate: number;
-  closeRate: number;
+  /**
+   * `asistentes_clase_1 / inscriptos` × 100. `null` cuando `inscriptos = 0`
+   * (sin base para calcular). UI muestra "—". Asistentes = pico simultáneo
+   * Clase 1, manual por launch.
+   */
+  showRate: number | null;
+  /**
+   * `ventas / asistentes_clase_1` × 100. `null` cuando `asistentes_clase_1 = 0`.
+   * UI muestra "—". Mantiene el nombre histórico `closeRate` (= Close Rate
+   * Clase 1) por compat con PDF + AI summary.
+   */
+  closeRate: number | null;
+  /**
+   * `ventas / asistentes_clase_3` × 100. `null` cuando `asistentes_clase_3 = 0`.
+   * Close Rate "hasta el pitch": cuántos de los que llegaron al pitch (Clase 3)
+   * terminaron comprando.
+   */
+  closeRateC3: number | null;
   /** Alias de `profitEstimated` para compat con dashboards viejos. */
   profit: number;
   /** revenueEstimated - totalInvestment. */
@@ -182,8 +198,9 @@ export function calculateLaunchKPIs(
       roasEstimated: 0,
       roasReal: 0,
       cac: 0,
-      showRate: 0,
-      closeRate: 0,
+      showRate: null,
+      closeRate: null,
+      closeRateC3: null,
       profit: 0,
       profitEstimated: 0,
       profitReal: 0,
@@ -281,8 +298,12 @@ export function calculateLaunchKPIs(
     roasEstimated,
     roasReal,
     cac: safeDiv(totalInvestment, ventas),
-    showRate: safePercent(asistentes, registrados),
-    closeRate: safePercent(ventas, asistentes),
+    // Pico simultáneo Clase 1 / inscriptos. Sin inscriptos → "—" (no
+    // hay base). Mismo patrón para Close Rate (denom = asistentes_clase_1)
+    // y Close Rate C3 (denom = asistentes_clase_3 = hasta_pitch).
+    showRate: registrados > 0 ? (asistentes / registrados) * 100 : null,
+    closeRate: asistentes > 0 ? (ventas / asistentes) * 100 : null,
+    closeRateC3: hastaPitch > 0 ? (ventas / hastaPitch) * 100 : null,
     profit: profitEstimated,
     profitEstimated,
     profitReal,

@@ -1,4 +1,9 @@
-import { fmtMoney, fmtMultiplier, fmtNumber, fmtPercent } from "@/lib/format";
+import {
+  fmtMoney,
+  fmtMultiplier,
+  fmtNumber,
+  fmtPercentOrDash,
+} from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import type { DailyAggregate } from "@/lib/launch-daily/aggregate";
 import type { KanbanSalesAggregate } from "@/lib/launch-sales/aggregate";
@@ -75,10 +80,10 @@ export function ComparatorTable({
                   {fmtMoney(cplAvg)}
                 </td>
                 <td className="px-3 py-3 text-right tabular-nums text-fg-muted">
-                  {fmtPercent(kpi.showRate)}
+                  {fmtPercentOrDash(kpi.showRate)}
                 </td>
                 <td className="px-3 py-3 text-right tabular-nums text-fg-muted">
-                  {fmtPercent(kpi.closeRate)}
+                  {fmtPercentOrDash(kpi.closeRate)}
                 </td>
                 <td className="px-3 py-3 text-right tabular-nums text-fg">
                   {fmtNumber(kpi.ventas)}

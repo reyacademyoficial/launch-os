@@ -125,7 +125,10 @@ export default async function AnalyticsPage({
         revenue: kpi.revenueEstimated,
         profit: kpi.profitEstimated,
         cpl,
-        closeRate: kpi.closeRate,
+        // El chart no puede plotear null — un launch sin asistentes_clase_1
+        // se grafica como 0% en la serie. La tabla comparador sí distingue
+        // "—" vs "0%".
+        closeRate: kpi.closeRate ?? 0,
       };
     });
   }
