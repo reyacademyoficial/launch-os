@@ -28,11 +28,15 @@ import { SyncButton } from "./sync-button";
 
 /**
  * Catálogo de providers separado en dos arrays para que TS narrowee bien:
- *   - los AVAILABLE tienen id : SyncProviderId (backend implementado).
+ *   - los AVAILABLE tienen id : ConfigurableProvider (backend implementado +
+ *     UI de config). `ghl_messages` queda EXCLUIDO acá porque no tiene config
+ *     propia ni card propia — es un sub-sync del card de GHL (botón aparte).
  *   - los SOON son placeholders con un label, sin más logic.
  */
+type ConfigurableProvider = Exclude<SyncProviderId, "ghl_messages">;
+
 const AVAILABLE_PROVIDERS: ReadonlyArray<{
-  id: SyncProviderId;
+  id: ConfigurableProvider;
   label: string;
 }> = [
   { id: "meta", label: "Meta Ads" },
@@ -242,6 +246,19 @@ export async function LaunchIntegrationsSection({
                     disabled={disabled}
                     disabledReason={disabledReason}
                   />
+                  {p.id === "ghl" && (
+                    <GhlMessagesSyncButton
+                      projectId={projectId}
+                      launchId={launchId}
+                      isClosed={isClosed}
+                      hasSecret={hasSecret}
+                      hasConfig={display.hasConfig}
+                      missingMessage={display.missingMessage}
+                      messagesStatus={
+                        statusByProvider.get("ghl_messages") ?? null
+                      }
+                    />
+                  )}
                 </div>
               </div>
 
@@ -402,6 +419,63 @@ function numOr0(v: unknown): number {
     return Number.isFinite(n) ? n : 0;
   }
   return 0;
+}
+
+/**
+ * Botón "Sync mensajes" — sub-sync del card de GHL (Fase B).
+ *
+ * Pega al mismo PIT + location_id del provider 'ghl' (no necesita config
+ * separada). El backend usa provider='ghl_messages' en integration_runs para
+ * tener su propia historia, status badge y notificaciones independientes
+ * del sync GHL interactivo.
+ *
+ * Variant secondary para que se note que es secundario al "Sincronizar"
+ * principal del card.
+ */
+function GhlMessagesSyncButton({
+  projectId,
+  launchId,
+  isClosed,
+  hasSecret,
+  hasConfig,
+  missingMessage,
+  messagesStatus,
+}: {
+  readonly projectId: string;
+  readonly launchId: string;
+  readonly isClosed: boolean;
+  readonly hasSecret: boolean;
+  readonly hasConfig: boolean;
+  readonly missingMessage: string;
+  readonly messagesStatus: {
+    lastRunStatus: string | null;
+    lastSuccessAt: string | null;
+  } | null;
+}) {
+  const isRunning = messagesStatus?.lastRunStatus === "running";
+  const disabled = isClosed || !hasSecret || !hasConfig || isRunning;
+  const disabledReason = isClosed
+    ? "Lanzamiento cerrado"
+    : !hasSecret
+      ? "Configurá GHL primero (token)"
+      : !hasConfig
+        ? missingMessage
+        : isRunning
+          ? "Sync de mensajes en curso"
+          : undefined;
+
+  return (
+    <SyncButton
+      projectId={projectId}
+      launchId={launchId}
+      provider="ghl_messages"
+      disabled={disabled}
+      disabledReason={disabledReason}
+      label="Sync mensajes"
+      pendingLabel="Sincronizando mensajes…"
+      variant="secondary"
+    />
+  );
 }
 
 function buildGhlDisplay(cfg: GhlConfigShape): ProviderDisplay {

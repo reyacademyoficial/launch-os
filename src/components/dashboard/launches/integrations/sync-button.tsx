@@ -20,12 +20,21 @@ export function SyncButton({
   provider,
   disabled,
   disabledReason,
+  label,
+  pendingLabel,
+  variant,
 }: {
   readonly projectId: string;
   readonly launchId: string;
   readonly provider: SyncProviderId;
   readonly disabled?: boolean;
   readonly disabledReason?: string;
+  /** Label custom — default "Sincronizar". Para sub-syncs (ej. "Sync mensajes"). */
+  readonly label?: string;
+  /** Label mientras corre — default "Sincronizando…". */
+  readonly pendingLabel?: string;
+  /** Variante visual — `secondary` para syncs auxiliares (ej. messages). */
+  readonly variant?: "primary" | "secondary";
 }) {
   const [isPending, startTransition] = useTransition();
   const [lastError, setLastError] = useState<string | null>(null);
@@ -49,8 +58,11 @@ export function SyncButton({
         onClick={handleClick}
         disabled={isPending || disabled}
         title={disabled ? disabledReason : undefined}
+        variant={variant === "secondary" ? "secondary" : undefined}
       >
-        {isPending ? "Sincronizando…" : "Sincronizar"}
+        {isPending
+          ? (pendingLabel ?? "Sincronizando…")
+          : (label ?? "Sincronizar")}
       </Button>
       {lastError && <FieldError>{lastError}</FieldError>}
     </div>

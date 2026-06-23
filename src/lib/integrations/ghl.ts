@@ -786,6 +786,390 @@ export async function fetchGhlInboundMessageCount(
   return inbound;
 }
 
+// ─── Inbound messages por día (Fase B) ──────────────────────────────────────
+
+/**
+ * Resultado por día del adapter de mensajes. `inbound` cuenta solo mensajes
+ * que pasan el matcher familia SMS-or-WhatsApp. `observedTypes` agrupa TODOS
+ * los messageType vistos ese día (incluso descartados) — sirve para auditar
+ * por qué la cuenta no incluye Instagram/Email/Activity.
+ */
+export interface MessagesDayBucket {
+  inbound: number;
+  observedTypes: Record<string, number>;
+}
+
+export interface MessagesByDayMeta {
+  /** Conversaciones que devolvió /conversations/search (total acumulado). */
+  conversations_fetched_total: number;
+  /** Conversaciones que caen en [since, until] por su lastMessageDate. */
+  conversations_in_window: number;
+  /** True si pegamos el cap de conversaciones (`conversationsCap`). */
+  conversations_hit_cap: boolean;
+  /** True si paginamos conversations hasta MAX_PAGES sin terminar. */
+  conversations_hit_max_pages: boolean;
+  /** Conversaciones cuyo pase de mensajes llegó al MAX_MSG_PAGES sin terminar. */
+  conversations_messages_hit_max: number;
+  /** Distribución observada de messageType (TODOS, incluso descartados). */
+  observed_message_types: Record<string, number>;
+  /** Cuántos mensajes pasaron el matcher familia (SMS-or-WhatsApp inbound). */
+  matched_inbound: number;
+  /** Conversaciones cuyo /messages devolvió 0. */
+  conversations_empty_messages: number;
+  /** Errores no fatales por conversación (red, 5xx, etc. — el sync sigue). */
+  per_conv_errors: number;
+  /** Rate-limits recibidos al pedir mensajes (429). */
+  per_conv_rate_limited: number;
+}
+
+export interface MessagesByDayResult {
+  ok: true;
+  /** Mapa fecha YYYY-MM-DD → bucket. Ordenado por fecha en la salida del orchestrator. */
+  byDate: Record<string, MessagesDayBucket>;
+  meta: MessagesByDayMeta;
+}
+
+export type MessagesByDayFetchResult = MessagesByDayResult | GhlFetchFailure;
+
+export interface MessagesByDayArgs extends FetchArgs {
+  /** Cap defensivo de conversaciones que mensajeamos. Default 500. */
+  conversationsCap?: number;
+  /**
+   * Tipos de `lastMessageType` a filtrar server-side, multi-pass. Hacemos una
+   * llamada a /conversations/search por cada tipo para que GHL nos devuelva
+   * SOLO conversaciones de ese canal — sin filtro, locations grandes (>20k
+   * convs nuevas en pocos días) no caben en MAX_PAGES y no llegamos a la
+   * ventana del launch (verificado 2026-06-23: 20k convs en 8 días).
+   *
+   * Default = familia SMS/WhatsApp verificada en data real:
+   *   ['TYPE_WHATSAPP', 'TYPE_SMS', 'TYPE_CUSTOM_SMS']
+   *
+   * Trade-off: solo mira el LAST messageType de la conv. Conversaciones donde
+   * hubo SMS/WhatsApp pero el último mensaje cambió a otro canal se pierden.
+   * Pérdida estimada <5% — el brief ya advierte que totales no coinciden
+   * exactamente entre series.
+   */
+  lastMessageTypeFilters?: string[];
+}
+
+const MESSAGES_PER_PAGE = 100;
+const MAX_MSG_PAGES_PER_CONV = 20; // hasta 2000 mensajes por conv — sobra
+const PER_CONV_SLEEP_MS = 120; // pacing entre conversaciones (GHL rate-limita)
+const PER_CONV_429_BACKOFF_MS = 2000; // retry una vez después de 429
+
+/**
+ * Default de tipos a buscar server-side. Verificado contra location real
+ * (WDYpjQTiKpK6eUD1aFYZ, probe 2026-06-23):
+ *   - TYPE_WHATSAPP: WhatsApp Business API estándar
+ *   - TYPE_SMS: SMS nativo
+ *   - TYPE_CUSTOM_SMS: WhatsApp-App-level (lo que el operador usaba)
+ *
+ * Si una cuenta nueva expone otros TYPE_*_SMS / TYPE_*_WHATSAPP, agregar acá.
+ */
+const DEFAULT_LAST_MESSAGE_TYPE_FILTERS: ReadonlyArray<string> = [
+  "TYPE_WHATSAPP",
+  "TYPE_SMS",
+  "TYPE_CUSTOM_SMS",
+];
+
+/**
+ * Cuenta mensajes INBOUND WhatsApp/SMS por día para un launch.
+ *
+ * Diferencia con el sync vigente: NO filtra conversations por
+ * `lastMessageType=TYPE_WHATSAPP` — ese filtro dropea el WhatsApp-App-level
+ * que GHL emite como `TYPE_CUSTOM_SMS` (verificado 2026-06-23 con probe contra
+ * data real). Acá traemos todas las conversations con last_message_date en
+ * `[since, until]` y filtramos a nivel mensaje individual con un matcher
+ * familia: `messageType` contiene "SMS" o "WHATSAPP" (case-insensitive).
+ *
+ * Endpoint key: GET /conversations/{id}/messages devuelve
+ *   { messages: { lastMessageId, nextPage, messages: [...] }, traceId }
+ * El array está ANIDADO un nivel — no en `body.messages` directo. Esto rompía
+ * a `fetchGhlInboundMessageCount` silenciosamente (dead code, no afectó prod).
+ *
+ * Pacing: dormimos PER_CONV_SLEEP_MS entre conversaciones porque /messages
+ * rate-limita en bursts. Si igual cae 429, hacemos UN retry con backoff.
+ */
+export async function fetchGhlInboundMessagesByDay(
+  args: MessagesByDayArgs,
+): Promise<MessagesByDayFetchResult> {
+  const sinceMs = dateToEpochStart(args.since);
+  const untilMs = dateToEpochEnd(args.until);
+  const cap = Math.max(1, args.conversationsCap ?? 500);
+  const typeFilters =
+    args.lastMessageTypeFilters && args.lastMessageTypeFilters.length > 0
+      ? args.lastMessageTypeFilters
+      : DEFAULT_LAST_MESSAGE_TYPE_FILTERS;
+
+  const meta: MessagesByDayMeta = {
+    conversations_fetched_total: 0,
+    conversations_in_window: 0,
+    conversations_hit_cap: false,
+    conversations_hit_max_pages: false,
+    conversations_messages_hit_max: 0,
+    observed_message_types: {},
+    matched_inbound: 0,
+    conversations_empty_messages: 0,
+    per_conv_errors: 0,
+    per_conv_rate_limited: 0,
+  };
+
+  const byDate = new Map<string, MessagesDayBucket>();
+  const conversationsToProcess: string[] = [];
+  const seenConvIds = new Set<string>(); // dedupe entre passes
+
+  // ── Paso 1: paginar conversations con filtro server-side de lastMessageType,
+  //    multi-pass — uno por cada tipo de la familia. Sin este filtro, locations
+  //    grandes (>20k convs nuevas) no caben en MAX_PAGES (verificado en prod).
+  for (const lastMessageType of typeFilters) {
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const offset = page * PAGE_SIZE;
+      const params = new URLSearchParams({
+        locationId: args.locationId,
+        limit: String(PAGE_SIZE),
+        sort: "desc",
+        sortBy: "last_message_date",
+        offset: String(offset),
+        lastMessageType,
+      });
+      const url = `${GHL_API_BASE}/conversations/search?${params.toString()}`;
+      const result = await ghlFetch(url, args.token);
+      if (!result.ok) return result;
+
+      const rawItems = extractArray(result.body, ["conversations"]);
+      meta.conversations_fetched_total += rawItems.length;
+      if (rawItems.length === 0) break;
+
+      let oldestThisPageMs = Number.POSITIVE_INFINITY;
+      let capHitThisPass = false;
+      for (const item of rawItems) {
+        if (typeof item !== "object" || item === null) continue;
+        const conv = item as Record<string, unknown>;
+        const id = strOrNull(conv.id);
+        if (!id) continue;
+
+        // GHL devuelve `lastMessageDate` como epoch ms (verificado con probe).
+        const lastMs =
+          typeof conv.lastMessageDate === "number" &&
+          Number.isFinite(conv.lastMessageDate)
+            ? conv.lastMessageDate
+            : null;
+        if (lastMs === null) continue;
+
+        if (lastMs < oldestThisPageMs) oldestThisPageMs = lastMs;
+        if (lastMs < sinceMs || lastMs > untilMs) continue;
+
+        meta.conversations_in_window++;
+        if (seenConvIds.has(id)) continue; // ya la trajimos en otro pass
+        if (conversationsToProcess.length < cap) {
+          seenConvIds.add(id);
+          conversationsToProcess.push(id);
+        } else {
+          meta.conversations_hit_cap = true;
+          capHitThisPass = true;
+        }
+      }
+
+      // Cortocircuito por fecha — todo lo siguiente es más viejo.
+      if (Number.isFinite(oldestThisPageMs) && oldestThisPageMs < sinceMs) break;
+      if (rawItems.length < PAGE_SIZE) break;
+      if (page === MAX_PAGES - 1) meta.conversations_hit_max_pages = true;
+      // Si pegamos el cap en esta pasada, no tiene sentido seguir paginando
+      // el mismo tipo — pero seguimos con los próximos tipos.
+      if (capHitThisPass) break;
+    }
+    // Cap global — si ya llenamos, los próximos tipos no aportan.
+    if (conversationsToProcess.length >= cap) {
+      meta.conversations_hit_cap = true;
+      break;
+    }
+  }
+
+  // ── Paso 2: por cada conversación, paginar /messages, contar por día.
+  for (let i = 0; i < conversationsToProcess.length; i++) {
+    if (i > 0) await sleep(PER_CONV_SLEEP_MS);
+    const convId = conversationsToProcess[i]!;
+    const convResult = await accumulateConversationMessages({
+      token: args.token,
+      conversationId: convId,
+      sinceMs,
+      untilMs,
+      byDate,
+      meta,
+    });
+    // Errores no fatales (red transient, 5xx) ya contaron en per_conv_errors.
+    // Si el backend fue auth_invalid o rate_limited persistente, abortamos.
+    if (convResult.kind === "abort") {
+      return convResult.failure;
+    }
+  }
+
+  // ── Materializar el map a Record (más fácil de serializar/comparar).
+  const out: Record<string, MessagesDayBucket> = {};
+  for (const [date, bucket] of byDate.entries()) {
+    out[date] = bucket;
+  }
+  return { ok: true, byDate: out, meta };
+}
+
+interface ConvAccumArgs {
+  token: string;
+  conversationId: string;
+  sinceMs: number;
+  untilMs: number;
+  byDate: Map<string, MessagesDayBucket>;
+  meta: MessagesByDayMeta;
+}
+
+type ConvAccumResult =
+  | { kind: "done" }
+  | { kind: "abort"; failure: GhlFetchFailure };
+
+/**
+ * Pagina los mensajes de UNA conversación, filtra los inbound que pasan el
+ * matcher familia, bucketea por día y muta `byDate`.
+ *
+ * Rate limit: GHL responde 429 a veces. UN retry con backoff. Si vuelve a
+ * caer, sumamos `per_conv_rate_limited` y seguimos con la próxima conv (no
+ * abortamos el sync entero por una conv rate-limited).
+ *
+ * Cortocircuito por fecha: GHL devuelve mensajes desc por dateAdded. Cuando
+ * vemos un mensaje con dateAdded < sinceMs paramos — los siguientes son más
+ * viejos.
+ */
+async function accumulateConversationMessages(
+  args: ConvAccumArgs,
+): Promise<ConvAccumResult> {
+  let lastId: string | null = null;
+  for (let page = 0; page < MAX_MSG_PAGES_PER_CONV; page++) {
+    const params = new URLSearchParams({ limit: String(MESSAGES_PER_PAGE) });
+    if (lastId) params.set("lastMessageId", lastId);
+    const url = `${GHL_API_BASE}/conversations/${encodeURIComponent(
+      args.conversationId,
+    )}/messages?${params.toString()}`;
+
+    let result = await ghlFetch(url, args.token);
+
+    // Retry inline si fue 429 (rate limit).
+    if (!result.ok && result.kind === "rate_limited") {
+      await sleep(PER_CONV_429_BACKOFF_MS);
+      result = await ghlFetch(url, args.token);
+      if (!result.ok && result.kind === "rate_limited") {
+        args.meta.per_conv_rate_limited++;
+        return { kind: "done" }; // seguimos con la próxima conv
+      }
+    }
+
+    if (!result.ok) {
+      // token_invalid → abort todo. Otros errores → contamos y seguimos.
+      if (result.kind === "token_invalid") {
+        return { kind: "abort", failure: result };
+      }
+      args.meta.per_conv_errors++;
+      return { kind: "done" };
+    }
+
+    // Envelope anidado: body.messages = { lastMessageId, nextPage, messages: [...] }
+    const messages = extractNestedMessages(result.body);
+    if (messages.length === 0) {
+      if (page === 0) args.meta.conversations_empty_messages++;
+      break;
+    }
+
+    let oldestMs = Number.POSITIVE_INFINITY;
+    let lastMessageIdInPage: string | null = null;
+
+    for (const m of messages) {
+      if (typeof m !== "object" || m === null) continue;
+      const msg = m as Record<string, unknown>;
+
+      const id = strOrNull(msg.id);
+      if (id) lastMessageIdInPage = id;
+
+      const messageType = strOrNull(msg.messageType);
+      if (messageType) {
+        args.meta.observed_message_types[messageType] =
+          (args.meta.observed_message_types[messageType] ?? 0) + 1;
+      }
+
+      const direction = parseDirection(msg.direction);
+      const dateIso = parseGhlDate(msg.dateAdded);
+      const ms = dateIso ? Date.parse(dateIso) : NaN;
+      if (Number.isFinite(ms)) oldestMs = Math.min(oldestMs, ms);
+
+      // Solo inbound + en ventana + matcher familia.
+      if (direction !== "inbound") continue;
+      if (!Number.isFinite(ms)) continue;
+      if (ms < args.sinceMs || ms > args.untilMs) continue;
+      if (!isWhatsAppOrSmsMessageType(messageType)) continue;
+
+      const date = dateIso ? dateIso.slice(0, 10) : null;
+      if (!date) continue;
+
+      args.meta.matched_inbound++;
+      const bucket = args.byDate.get(date);
+      if (bucket) {
+        bucket.inbound++;
+        bucket.observedTypes[messageType ?? "<unknown>"] =
+          (bucket.observedTypes[messageType ?? "<unknown>"] ?? 0) + 1;
+      } else {
+        args.byDate.set(date, {
+          inbound: 1,
+          observedTypes: { [messageType ?? "<unknown>"]: 1 },
+        });
+      }
+    }
+
+    // Cortocircuito por fecha — todos los próximos mensajes son más viejos.
+    if (Number.isFinite(oldestMs) && oldestMs < args.sinceMs) break;
+    if (messages.length < MESSAGES_PER_PAGE) break;
+    if (!lastMessageIdInPage) break;
+    lastId = lastMessageIdInPage;
+
+    if (page === MAX_MSG_PAGES_PER_CONV - 1) {
+      args.meta.conversations_messages_hit_max++;
+    }
+  }
+  return { kind: "done" };
+}
+
+/**
+ * Extrae el array de mensajes del response de /conversations/{id}/messages.
+ * GHL anida: `{ messages: { messages: [...] } }` — verificado con probe
+ * 2026-06-23. Acepta también el shape "plano" por defensa.
+ *
+ * Exportada para tests.
+ */
+export function extractNestedMessages(body: unknown): unknown[] {
+  if (body === null || typeof body !== "object") return [];
+  const rec = body as Record<string, unknown>;
+  // Plano: body.messages = [...]
+  if (Array.isArray(rec.messages)) return rec.messages as unknown[];
+  // Envelope: body.messages = { messages: [...] }
+  if (rec.messages !== null && typeof rec.messages === "object") {
+    const inner = rec.messages as Record<string, unknown>;
+    if (Array.isArray(inner.messages)) return inner.messages as unknown[];
+  }
+  return [];
+}
+
+/**
+ * Matcher familia WhatsApp/SMS — captura TYPE_WHATSAPP, TYPE_SMS,
+ * TYPE_CUSTOM_SMS, TYPE_BUSINESS_SMS, etc. Excluye TYPE_INSTAGRAM,
+ * TYPE_EMAIL, TYPE_ACTIVITY_*.
+ *
+ * Exportada para tests.
+ */
+export function isWhatsAppOrSmsMessageType(messageType: string | null): boolean {
+  if (!messageType) return false;
+  const upper = messageType.toUpperCase();
+  return upper.includes("SMS") || upper.includes("WHATSAPP");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // ─── Contacts (formulario y CRM general) ────────────────────────────────────
 
 export interface ContactsFetchArgs extends FetchArgs {
