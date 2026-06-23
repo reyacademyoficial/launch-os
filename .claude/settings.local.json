@@ -48,7 +48,10 @@
       "Bash(echo \"EXIT=$?\")",
       "Bash(echo \"TSC=$?\")",
       "Bash(echo \"LINT=$?\")",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(curl *)",
+      "Bash(python -m json.tool)",
+      "Bash(node .audit-temp.mjs)"
     ]
   }
 }

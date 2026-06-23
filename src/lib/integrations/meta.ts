@@ -420,6 +420,45 @@ const PROBE_MAX_ADS_TO_TRY = 5;
  * interpretación.
  */
 export interface MetaLeadgenProbeResult {
+  /**
+   * V3 — `/me/permissions`: lista los scopes REALES que tiene el token. Si
+   * `leads_retrieval` no aparece (o aparece con `status: "declined"`), el
+   * fix es regenerar el token; el resto del probe da igual.
+   */
+  tokenPermissions: {
+    ok: boolean;
+    httpStatus: number;
+    raw: unknown;
+  };
+  /**
+   * V3 — `/me/accounts`: Pages asignadas al System User. Si viene vacío,
+   * falta hacer el Paso 2.B del manual (asignar la Page como activo). Sin
+   * Page asignada, ningún scope de Pages funciona aunque esté tildado.
+   */
+  pagesAccessible: {
+    ok: boolean;
+    httpStatus: number;
+    raw: unknown;
+  };
+  /**
+   * V4 — Camino Page Token. Las Pages tienen `MANAGE_LEADS` en `tasks`, así
+   * que su access_token (incluido en `pagesAccessible`) puede leer
+   * leadgen_forms y leads sin necesitar `leads_retrieval` en el System User
+   * token. Probamos cada Page hasta encontrar una con forms; si tiene leads
+   * los pegamos en `sampleLeads`. Si esto funciona, el Paso 2 se codea sin
+   * pasar por App Review de `leads_retrieval` / `pages_manage_ads`.
+   */
+  pageTokenLeads: {
+    pageId: string;
+    pageName: string;
+    forms: { ok: boolean; httpStatus: number; raw: unknown };
+    sampleLeads: {
+      formId: string;
+      ok: boolean;
+      httpStatus: number;
+      raw: unknown;
+    } | null;
+  } | null;
   /** Listing de ads de la primera campaña del launch — confirma acceso basal. */
   ads: {
     ok: boolean;
@@ -448,7 +487,31 @@ export async function probeMetaLeadgen(args: {
   campaignIds: readonly string[];
 }): Promise<MetaLeadgenProbeResult> {
   const campaignId = args.campaignIds[0] ?? "";
+
+  // V3 — corremos los dos diagnósticos nuevos en paralelo con el listing de
+  // ads. Independientes: el resultado de `/me/permissions` no afecta el de
+  // `/me/accounts`, etc. Si alguno tira excepción de red, fetchProbe la
+  // captura y devuelve ok=false con el cause.
+  const tokenPermsParams = new URLSearchParams({
+    access_token: args.token,
+  });
+  const tokenPermsUrl = `${META_API_BASE}/me/permissions?${tokenPermsParams.toString()}`;
+
+  const pagesParams = new URLSearchParams({
+    fields: "id,name,access_token,tasks",
+    access_token: args.token,
+  });
+  const pagesUrl = `${META_API_BASE}/me/accounts?${pagesParams.toString()}`;
+
+  const [tokenPermsRes, pagesRes] = await Promise.all([
+    fetchProbe(tokenPermsUrl),
+    fetchProbe(pagesUrl),
+  ]);
+
   const result: MetaLeadgenProbeResult = {
+    tokenPermissions: tokenPermsRes,
+    pagesAccessible: pagesRes,
+    pageTokenLeads: null,
     ads: {
       ok: false,
       httpStatus: 0,
@@ -458,6 +521,41 @@ export async function probeMetaLeadgen(args: {
     sampleLeads: null,
     adsTried: 0,
   };
+
+  // V4 — probar Page tokens si pagesAccessible vino con data. Iteramos las
+  // Pages hasta encontrar una cuyo forms listing devuelva al menos 1 form.
+  // Si esa Page tiene leads, los pegamos. Si todas las Pages fallan, el
+  // resultado queda con la última intentada (= mejor diag para el caller).
+  if (pagesRes.ok) {
+    const pagesData = (pagesRes.raw as { data?: unknown }).data;
+    if (Array.isArray(pagesData)) {
+      for (const p of pagesData) {
+        if (typeof p !== "object" || p === null) continue;
+        const page = p as {
+          id?: unknown;
+          name?: unknown;
+          access_token?: unknown;
+        };
+        const pageId = typeof page.id === "string" ? page.id : null;
+        const pageToken =
+          typeof page.access_token === "string" ? page.access_token : null;
+        const pageName = typeof page.name === "string" ? page.name : "";
+        if (!pageId || !pageToken) continue;
+
+        const pageProbe = await probePageLeadgen(pageId, pageName, pageToken);
+        result.pageTokenLeads = pageProbe;
+        // Si encontramos leads reales con esta Page, paramos — ya tenemos el
+        // shape de field_data que buscamos.
+        if (
+          pageProbe.sampleLeads?.ok &&
+          hasLeads(pageProbe.sampleLeads.raw)
+        ) {
+          break;
+        }
+      }
+    }
+  }
+
   if (!campaignId) return result;
 
   const adsParams = new URLSearchParams({
@@ -520,6 +618,62 @@ export async function probeMetaLeadgen(args: {
     result.sampleLeads = snap;
   }
   return result;
+}
+
+/**
+ * Probe del camino Page Token: lista forms de una Page y, si hay alguno,
+ * fetcha leads del primero. Todo con el `pageToken` (el access_token que
+ * Meta devuelve en `/me/accounts`), NO con el System User token.
+ */
+async function probePageLeadgen(
+  pageId: string,
+  pageName: string,
+  pageToken: string,
+): Promise<NonNullable<MetaLeadgenProbeResult["pageTokenLeads"]>> {
+  const formsParams = new URLSearchParams({
+    fields: "id,name,status,locale,questions",
+    limit: "10",
+    access_token: pageToken,
+  });
+  const formsUrl = `${META_API_BASE}/${pageId}/leadgen_forms?${formsParams.toString()}`;
+  const formsRes = await fetchProbe(formsUrl);
+
+  const pageProbe: NonNullable<MetaLeadgenProbeResult["pageTokenLeads"]> = {
+    pageId,
+    pageName,
+    forms: formsRes,
+    sampleLeads: null,
+  };
+  if (!formsRes.ok) return pageProbe;
+
+  const formsData = (formsRes.raw as { data?: unknown }).data;
+  if (!Array.isArray(formsData) || formsData.length === 0) return pageProbe;
+  const firstFormId = (formsData[0] as { id?: unknown }).id;
+  if (typeof firstFormId !== "string" || firstFormId.length === 0) {
+    return pageProbe;
+  }
+
+  const leadsParams = new URLSearchParams({
+    fields:
+      "id,created_time,field_data,form_id,ad_id,ad_name,campaign_id,campaign_name,adset_id",
+    limit: "3",
+    access_token: pageToken,
+  });
+  const leadsUrl = `${META_API_BASE}/${firstFormId}/leads?${leadsParams.toString()}`;
+  const leadsRes = await fetchProbe(leadsUrl);
+  pageProbe.sampleLeads = {
+    formId: firstFormId,
+    ok: leadsRes.ok,
+    httpStatus: leadsRes.httpStatus,
+    raw: leadsRes.raw,
+  };
+  return pageProbe;
+}
+
+function hasLeads(raw: unknown): boolean {
+  if (typeof raw !== "object" || raw === null) return false;
+  const data = (raw as { data?: unknown }).data;
+  return Array.isArray(data) && data.length > 0;
 }
 
 /**

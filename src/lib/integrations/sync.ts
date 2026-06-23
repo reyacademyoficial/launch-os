@@ -346,18 +346,24 @@ export async function syncLaunch(
   const probePromise = probeMetaLeadgen({
     token,
     campaignIds: providerConfig.ad_accounts[0]!.campaign_ids,
-  }).catch((err) => ({
-    ads: {
-      ok: false,
-      httpStatus: 0,
-      campaignId: providerConfig.ad_accounts[0]?.campaign_ids[0] ?? "",
-      raw: {
-        fetch_error: err instanceof Error ? err.message : String(err),
+  }).catch((err) => {
+    const errRaw = {
+      fetch_error: err instanceof Error ? err.message : String(err),
+    };
+    return {
+      tokenPermissions: { ok: false, httpStatus: 0, raw: errRaw },
+      pagesAccessible: { ok: false, httpStatus: 0, raw: errRaw },
+      pageTokenLeads: null,
+      ads: {
+        ok: false,
+        httpStatus: 0,
+        campaignId: providerConfig.ad_accounts[0]?.campaign_ids[0] ?? "",
+        raw: errRaw,
       },
-    },
-    sampleLeads: null,
-    adsTried: 0,
-  }));
+      sampleLeads: null,
+      adsTried: 0,
+    };
+  });
 
   if (inWindow.length === 0) {
     const probe = await probePromise;
