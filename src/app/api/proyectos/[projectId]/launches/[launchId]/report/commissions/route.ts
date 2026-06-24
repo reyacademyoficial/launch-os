@@ -61,6 +61,26 @@ export async function GET(
     return NextResponse.json({ error: "Proyecto no encontrado" }, { status: 404 });
   }
 
+  // Atribución por dueño del lead — fuente única de verdad. Hacemos un fetch
+  // de leads.team_member_id sobre los leads que tocan las sales del launch,
+  // y armamos el map sale_id → owner que consume el PDF.
+  const leadOwnerBySaleId = new Map<string, string | null>();
+  const leadIds = Array.from(new Set(sales.map((s) => s.sale.lead_id)));
+  if (leadIds.length > 0) {
+    const leadsRes = await supabase
+      .from("leads")
+      .select("id, team_member_id")
+      .in("id", leadIds);
+    const leadOwnerById = new Map<string, string | null>(
+      ((leadsRes.data ?? []) as Array<{ id: string; team_member_id: string | null }>).map(
+        (l) => [l.id, l.team_member_id],
+      ),
+    );
+    for (const { sale } of sales) {
+      leadOwnerBySaleId.set(sale.id, leadOwnerById.get(sale.lead_id) ?? null);
+    }
+  }
+
   const input: CommissionsLaunchInput = {
     projectName: project.name,
     projectBusinessName: project.business_name,
@@ -72,6 +92,7 @@ export async function GET(
     rules,
     modalities,
     teamMembers,
+    leadOwnerBySaleId,
   };
 
   let buffer: Buffer;

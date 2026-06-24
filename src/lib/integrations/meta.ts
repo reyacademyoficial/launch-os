@@ -395,326 +395,356 @@ export async function fetchMetaInsights(
   return { ok: true, rows: allRows };
 }
 
-// ─── TEMP DIAG (Fase C Paso 0) — probe de Lead Ads ──────────────────────────
-//
-// Antes de codear la feature de leads individuales tenemos que verificar (a)
-// si el token actual tiene `leads_retrieval`, y (b) el shape de `field_data`
-// — las keys de nombre/teléfono/email dependen de cómo se armó cada form y
-// no se pueden mapear a ciegas. El probe corre dentro del sync de Meta y deja
-// los raw responses en `integration_runs.error_detail.meta_leadgen_probe`
-// para inspeccionar con un SELECT de Studio. Si falla con permission error,
-// el detalle nos dice qué scope falta y la feature se posterga hasta el App
-// Review. Quitar este bloque entero una vez que Paso 2 esté implementado.
-//
-// V1 probó `/act_{id}/leadgen_forms` → #100 "nonexisting field". Los forms no
-// están en AdAccount; viven en Pages (vía page token) o se descubren a través
-// de las ads. V2 (este código) descubre via ads: lista ads de la campaña →
-// intenta `/{ad_id}/leads` por las primeras N ads hasta encontrar una con
-// data. Eso testea el permiso real (`leads_retrieval`) y captura `field_data`.
-
-const PROBE_MAX_ADS_TO_TRY = 5;
+// ─── Lead Ads — leads individuales (Fase C Paso 2) ─────────────────────────
 
 /**
- * Resultado del probe — éxito o error capturados con su shape crudo, no
- * normalizados. La idea es ver EXACTAMENTE lo que Meta devuelve, no nuestra
- * interpretación.
+ * Un lead individual de un Instant Form de Meta, ya mapeado a campos
+ * estándar. Las keys de `field_data` dependen de cómo se armó cada form
+ * (verificado con dump real: `email`, `phone_number`, `first_name` +
+ * preguntas custom con texto en español como `¿eres_dueño_de_carnicería?`).
+ * `mapFieldData` resuelve las variantes conocidas + lo que no encaja queda
+ * en `customFields` para no perder info.
  */
-export interface MetaLeadgenProbeResult {
-  /**
-   * V3 — `/me/permissions`: lista los scopes REALES que tiene el token. Si
-   * `leads_retrieval` no aparece (o aparece con `status: "declined"`), el
-   * fix es regenerar el token; el resto del probe da igual.
-   */
-  tokenPermissions: {
-    ok: boolean;
-    httpStatus: number;
-    raw: unknown;
-  };
-  /**
-   * V3 — `/me/accounts`: Pages asignadas al System User. Si viene vacío,
-   * falta hacer el Paso 2.B del manual (asignar la Page como activo). Sin
-   * Page asignada, ningún scope de Pages funciona aunque esté tildado.
-   */
-  pagesAccessible: {
-    ok: boolean;
-    httpStatus: number;
-    raw: unknown;
-  };
-  /**
-   * V4 — Camino Page Token. Las Pages tienen `MANAGE_LEADS` en `tasks`, así
-   * que su access_token (incluido en `pagesAccessible`) puede leer
-   * leadgen_forms y leads sin necesitar `leads_retrieval` en el System User
-   * token. Probamos cada Page hasta encontrar una con forms; si tiene leads
-   * los pegamos en `sampleLeads`. Si esto funciona, el Paso 2 se codea sin
-   * pasar por App Review de `leads_retrieval` / `pages_manage_ads`.
-   */
-  pageTokenLeads: {
-    pageId: string;
-    pageName: string;
-    forms: { ok: boolean; httpStatus: number; raw: unknown };
-    sampleLeads: {
-      formId: string;
-      ok: boolean;
-      httpStatus: number;
-      raw: unknown;
-    } | null;
-  } | null;
-  /** Listing de ads de la primera campaña del launch — confirma acceso basal. */
-  ads: {
-    ok: boolean;
-    httpStatus: number;
-    campaignId: string;
-    raw: unknown;
-  };
-  /**
-   * Resultado de `/{ad_id}/leads` para hasta `PROBE_MAX_ADS_TO_TRY` ads. Si
-   * alguna devolvió leads reales paramos ahí. Si todas devolvieron 200 con
-   * data vacía, guardamos la última (= permiso OK, simplemente no hay leads
-   * todavía). Si alguna devolvió error de permisos, paramos y guardamos esa.
-   */
-  sampleLeads: {
-    adId: string;
-    ok: boolean;
-    httpStatus: number;
-    raw: unknown;
-  } | null;
-  /** Cuántas ads probamos antes de cortar (debug). */
-  adsTried: number;
+export interface MetaLead {
+  /** `id` del lead en Meta. Idempotency key del upsert. */
+  leadgenId: string;
+  /** ISO timestamp de cuando el usuario envió el form. */
+  createdTime: string;
+  formId: string | null;
+  adId: string | null;
+  adName: string | null;
+  campaignId: string | null;
+  /** Mapeo: full_name | first_name [+ last_name] | nombre [+ apellido]. */
+  name: string | null;
+  /** Mapeo: email | correo | mail. Siempre lowercase + trim. */
+  email: string | null;
+  /** Mapeo: phone_number | phone | telefono | whatsapp. Crudo, no normalizado. */
+  rawPhone: string | null;
+  /** Lo que no matcheó las keys conocidas. Key = nombre del campo en Meta. */
+  customFields: Record<string, string>;
+  /** field_data crudo tal cual vino — para debug si el mapeo se queda corto. */
+  raw: unknown;
 }
 
-export async function probeMetaLeadgen(args: {
+export interface MetaLeadsSuccess {
+  ok: true;
+  rows: MetaLead[];
+  /** Cuántas ads se barrieron (telemetría del run). */
+  adsScanned: number;
+  /** True si alguna ad tocó el tope `MAX_PAGES` y truncó la paginación. */
+  hitMaxPages: boolean;
+}
+export type MetaLeadsResult = MetaLeadsSuccess | MetaSyncFailure;
+
+interface FieldDataItem {
+  name?: unknown;
+  values?: unknown;
+}
+
+/**
+ * Mapea `field_data` de un lead a los 3 campos estándar (name, email,
+ * rawPhone) + un bucket `customFields` para lo que no encaja. Tolera
+ * variantes castellanas porque los forms del cliente pueden estar en
+ * cualquier idioma. Si no logra mapear name/email/phone, NO descarta el
+ * lead — devuelve null en esos campos. El caller upsertea igual.
+ */
+export function mapFieldData(fieldData: unknown): {
+  name: string | null;
+  email: string | null;
+  rawPhone: string | null;
+  customFields: Record<string, string>;
+} {
+  const empty = { name: null, email: null, rawPhone: null, customFields: {} };
+  if (!Array.isArray(fieldData)) return empty;
+
+  let firstName: string | null = null;
+  let lastName: string | null = null;
+  let fullName: string | null = null;
+  let email: string | null = null;
+  let rawPhone: string | null = null;
+  const customFields: Record<string, string> = {};
+
+  for (const item of fieldData as FieldDataItem[]) {
+    if (typeof item !== "object" || item === null) continue;
+    const key = typeof item.name === "string" ? item.name : null;
+    if (!key) continue;
+    const values = Array.isArray(item.values) ? item.values : [];
+    const firstValue = values.find(
+      (v): v is string => typeof v === "string" && v.length > 0,
+    );
+    if (firstValue === undefined) continue;
+
+    const k = key.toLowerCase().trim();
+
+    if (matchesEmailKey(k)) {
+      email = firstValue.toLowerCase().trim();
+    } else if (matchesPhoneKey(k)) {
+      rawPhone = firstValue.trim();
+    } else if (matchesFullNameKey(k)) {
+      fullName = firstValue.trim();
+    } else if (matchesFirstNameKey(k)) {
+      firstName = firstValue.trim();
+    } else if (matchesLastNameKey(k)) {
+      lastName = firstValue.trim();
+    } else {
+      customFields[key] = firstValue;
+    }
+  }
+
+  const name = fullName ?? joinFullName(firstName, lastName);
+  return { name, email, rawPhone, customFields };
+}
+
+function matchesEmailKey(k: string): boolean {
+  return (
+    k === "email" ||
+    k === "correo" ||
+    k === "mail" ||
+    k === "e-mail" ||
+    k === "correo_electronico" ||
+    k === "correo_electrónico"
+  );
+}
+function matchesPhoneKey(k: string): boolean {
+  return (
+    k === "phone_number" ||
+    k === "phone" ||
+    k === "telefono" ||
+    k === "teléfono" ||
+    k === "whatsapp" ||
+    k === "celular" ||
+    k === "movil" ||
+    k === "móvil"
+  );
+}
+function matchesFullNameKey(k: string): boolean {
+  return (
+    k === "full_name" ||
+    k === "nombre_completo" ||
+    k === "nombre_y_apellido" ||
+    k === "name"
+  );
+}
+function matchesFirstNameKey(k: string): boolean {
+  return k === "first_name" || k === "nombre" || k === "nombres";
+}
+function matchesLastNameKey(k: string): boolean {
+  return k === "last_name" || k === "apellido" || k === "apellidos";
+}
+function joinFullName(
+  first: string | null,
+  last: string | null,
+): string | null {
+  const joined = [first, last].filter(Boolean).join(" ").trim();
+  return joined === "" ? null : joined;
+}
+
+/**
+ * Parsea el body de `/{ad_id}/leads` a `MetaLead[]`. Pura, testeable contra
+ * fixtures sin tocar `fetch`. Silencia items malformados (sin `id` o sin
+ * `created_time`) en vez de tirar — un lead corrupto no debe abortar el sync.
+ */
+export function parseLeadsBody(body: unknown): MetaLead[] {
+  if (typeof body !== "object" || body === null) return [];
+  const data = (body as { data?: unknown }).data;
+  if (!Array.isArray(data)) return [];
+  const rows: MetaLead[] = [];
+  for (const item of data) {
+    if (typeof item !== "object" || item === null) continue;
+    const o = item as Record<string, unknown>;
+    const id = typeof o.id === "string" ? o.id : null;
+    const createdTime =
+      typeof o.created_time === "string" ? o.created_time : null;
+    if (!id || !createdTime) continue;
+    const mapped = mapFieldData(o.field_data);
+    rows.push({
+      leadgenId: id,
+      createdTime,
+      formId: typeof o.form_id === "string" ? o.form_id : null,
+      adId: typeof o.ad_id === "string" ? o.ad_id : null,
+      adName: typeof o.ad_name === "string" ? o.ad_name : null,
+      campaignId: typeof o.campaign_id === "string" ? o.campaign_id : null,
+      name: mapped.name,
+      email: mapped.email,
+      rawPhone: mapped.rawPhone,
+      customFields: mapped.customFields,
+      raw: item,
+    });
+  }
+  return rows;
+}
+
+export interface FetchMetaLeadsArgs {
   token: string;
+  /** Mismas campañas que filtra Insights — un launch comparte cuenta con otros. */
   campaignIds: readonly string[];
-}): Promise<MetaLeadgenProbeResult> {
-  const campaignId = args.campaignIds[0] ?? "";
+  /** YYYY-MM-DD inclusive — filtramos client-side por created_time. */
+  since: string;
+  /** YYYY-MM-DD inclusive. */
+  until: string;
+}
 
-  // V3 — corremos los dos diagnósticos nuevos en paralelo con el listing de
-  // ads. Independientes: el resultado de `/me/permissions` no afecta el de
-  // `/me/accounts`, etc. Si alguno tira excepción de red, fetchProbe la
-  // captura y devuelve ok=false con el cause.
-  const tokenPermsParams = new URLSearchParams({
-    access_token: args.token,
-  });
-  const tokenPermsUrl = `${META_API_BASE}/me/permissions?${tokenPermsParams.toString()}`;
+const LEADS_MAX_PAGES_PER_AD = 30;
 
-  const pagesParams = new URLSearchParams({
-    fields: "id,name,access_token,tasks",
-    access_token: args.token,
-  });
-  const pagesUrl = `${META_API_BASE}/me/accounts?${pagesParams.toString()}`;
+/**
+ * Trae los leads individuales de las campañas del launch.
+ *
+ * Strategy:
+ *  1) Por cada campaign: `GET /{campaign_id}/ads?fields=id,name&limit=100`.
+ *  2) Por cada ad: `GET /{ad_id}/leads?fields=...&limit=100`, siguiendo
+ *     `paging.next` hasta agotar o tocar `LEADS_MAX_PAGES_PER_AD`.
+ *  3) Filtrar client-side por `created_time ∈ [since, until]` — el endpoint
+ *     `/leads` no acepta filter server-side confiable (Meta dropea results
+ *     silenciosamente con algunas combinaciones).
+ *  4) Dedup por `leadgen_id` — el mismo lead puede aparecer si dos ads usan
+ *     el mismo form (raro, pero posible).
+ *
+ * No usa el token del System User para `/leads` solamente — el endpoint
+ * requiere `leads_retrieval` o `pages_manage_ads` en el token. Ver el
+ * manual de Meta. Si falla con permission error, propaga el error tal cual.
+ */
+export async function fetchMetaLeads(
+  args: FetchMetaLeadsArgs,
+): Promise<MetaLeadsResult> {
+  if (args.campaignIds.length === 0) {
+    return { ok: true, rows: [], adsScanned: 0, hitMaxPages: false };
+  }
 
-  const [tokenPermsRes, pagesRes] = await Promise.all([
-    fetchProbe(tokenPermsUrl),
-    fetchProbe(pagesUrl),
-  ]);
+  const sinceMs = Date.parse(`${args.since}T00:00:00.000Z`);
+  const untilMs = Date.parse(`${args.until}T23:59:59.999Z`);
+  const byLeadgenId = new Map<string, MetaLead>();
+  let adsScanned = 0;
+  let hitMaxPages = false;
 
-  const result: MetaLeadgenProbeResult = {
-    tokenPermissions: tokenPermsRes,
-    pagesAccessible: pagesRes,
-    pageTokenLeads: null,
-    ads: {
-      ok: false,
-      httpStatus: 0,
-      campaignId,
-      raw: { cause: "no_campaign_id" },
-    },
-    sampleLeads: null,
-    adsTried: 0,
-  };
+  for (const campaignId of args.campaignIds) {
+    const adsUrl = buildCampaignAdsUrl(campaignId, args.token);
+    const adsRes = await fetchAndParseJson(adsUrl);
+    if (!adsRes.ok) return adsRes;
+    const data = (adsRes.body as { data?: unknown }).data;
+    if (!Array.isArray(data)) continue;
 
-  // V4 — probar Page tokens si pagesAccessible vino con data. Iteramos las
-  // Pages hasta encontrar una cuyo forms listing devuelva al menos 1 form.
-  // Si esa Page tiene leads, los pegamos. Si todas las Pages fallan, el
-  // resultado queda con la última intentada (= mejor diag para el caller).
-  if (pagesRes.ok) {
-    const pagesData = (pagesRes.raw as { data?: unknown }).data;
-    if (Array.isArray(pagesData)) {
-      for (const p of pagesData) {
-        if (typeof p !== "object" || p === null) continue;
-        const page = p as {
-          id?: unknown;
-          name?: unknown;
-          access_token?: unknown;
-        };
-        const pageId = typeof page.id === "string" ? page.id : null;
-        const pageToken =
-          typeof page.access_token === "string" ? page.access_token : null;
-        const pageName = typeof page.name === "string" ? page.name : "";
-        if (!pageId || !pageToken) continue;
+    for (const a of data) {
+      if (typeof a !== "object" || a === null) continue;
+      const adId = (a as { id?: unknown }).id;
+      if (typeof adId !== "string" || adId.length === 0) continue;
+      adsScanned++;
 
-        const pageProbe = await probePageLeadgen(pageId, pageName, pageToken);
-        result.pageTokenLeads = pageProbe;
-        // Si encontramos leads reales con esta Page, paramos — ya tenemos el
-        // shape de field_data que buscamos.
-        if (
-          pageProbe.sampleLeads?.ok &&
-          hasLeads(pageProbe.sampleLeads.raw)
-        ) {
+      let nextUrl: string | null = buildAdLeadsUrl(adId, args.token);
+      let page = 0;
+      while (nextUrl !== null) {
+        if (page >= LEADS_MAX_PAGES_PER_AD) {
+          hitMaxPages = true;
           break;
         }
+        page++;
+        const pageRes = await fetchAndParseJson(nextUrl);
+        if (!pageRes.ok) return pageRes;
+        const leads = parseLeadsBody(pageRes.body);
+        for (const lead of leads) {
+          const t = Date.parse(lead.createdTime);
+          if (!Number.isFinite(t)) continue;
+          if (t < sinceMs || t > untilMs) continue;
+          if (byLeadgenId.has(lead.leadgenId)) continue;
+          byLeadgenId.set(lead.leadgenId, lead);
+        }
+        nextUrl = extractNextPage(pageRes.body);
       }
     }
   }
 
-  if (!campaignId) return result;
-
-  const adsParams = new URLSearchParams({
-    fields: "id,name,effective_status",
-    limit: "10",
-    access_token: args.token,
-  });
-  const adsUrl = `${META_API_BASE}/${campaignId}/ads?${adsParams.toString()}`;
-  const adsRes = await fetchProbe(adsUrl);
-  result.ads = {
-    ok: adsRes.ok,
-    httpStatus: adsRes.httpStatus,
-    campaignId,
-    raw: adsRes.raw,
+  return {
+    ok: true,
+    rows: Array.from(byLeadgenId.values()),
+    adsScanned,
+    hitMaxPages,
   };
-  if (!adsRes.ok) return result;
-
-  const adsData = (adsRes.raw as { data?: unknown }).data;
-  if (!Array.isArray(adsData) || adsData.length === 0) return result;
-
-  const adIds: string[] = [];
-  for (const a of adsData) {
-    if (typeof a !== "object" || a === null) continue;
-    const id = (a as { id?: unknown }).id;
-    if (typeof id === "string" && id.length > 0) adIds.push(id);
-  }
-
-  for (let i = 0; i < Math.min(PROBE_MAX_ADS_TO_TRY, adIds.length); i++) {
-    const adId = adIds[i]!;
-    result.adsTried = i + 1;
-    const leadsParams = new URLSearchParams({
-      fields:
-        "id,created_time,field_data,form_id,ad_id,ad_name,campaign_id,campaign_name,adset_id",
-      limit: "3",
-      access_token: args.token,
-    });
-    const leadsUrl = `${META_API_BASE}/${adId}/leads?${leadsParams.toString()}`;
-    const leadsRes = await fetchProbe(leadsUrl);
-    const snap = {
-      adId,
-      ok: leadsRes.ok,
-      httpStatus: leadsRes.httpStatus,
-      raw: leadsRes.raw,
-    };
-    if (!leadsRes.ok) {
-      // Permission/structural error — capturamos y paramos (se va a repetir
-      // para todas las ads).
-      result.sampleLeads = snap;
-      return result;
-    }
-    const leadsData = (leadsRes.raw as { data?: unknown }).data;
-    const hasLeads = Array.isArray(leadsData) && leadsData.length > 0;
-    if (hasLeads) {
-      // Encontramos data real con field_data — es lo que necesitamos.
-      result.sampleLeads = snap;
-      return result;
-    }
-    // ok pero vacía — guardamos como mejor candidato y seguimos buscando una
-    // ad con leads. Si todas vienen vacías, queda esta (permiso OK).
-    result.sampleLeads = snap;
-  }
-  return result;
 }
 
-/**
- * Probe del camino Page Token: lista forms de una Page y, si hay alguno,
- * fetcha leads del primero. Todo con el `pageToken` (el access_token que
- * Meta devuelve en `/me/accounts`), NO con el System User token.
- */
-async function probePageLeadgen(
-  pageId: string,
-  pageName: string,
-  pageToken: string,
-): Promise<NonNullable<MetaLeadgenProbeResult["pageTokenLeads"]>> {
-  const formsParams = new URLSearchParams({
-    fields: "id,name,status,locale,questions",
-    limit: "10",
-    access_token: pageToken,
+function buildCampaignAdsUrl(campaignId: string, token: string): string {
+  const p = new URLSearchParams({
+    fields: "id,name",
+    limit: "100",
+    access_token: token,
   });
-  const formsUrl = `${META_API_BASE}/${pageId}/leadgen_forms?${formsParams.toString()}`;
-  const formsRes = await fetchProbe(formsUrl);
+  return `${META_API_BASE}/${campaignId}/ads?${p.toString()}`;
+}
 
-  const pageProbe: NonNullable<MetaLeadgenProbeResult["pageTokenLeads"]> = {
-    pageId,
-    pageName,
-    forms: formsRes,
-    sampleLeads: null,
-  };
-  if (!formsRes.ok) return pageProbe;
-
-  const formsData = (formsRes.raw as { data?: unknown }).data;
-  if (!Array.isArray(formsData) || formsData.length === 0) return pageProbe;
-  const firstFormId = (formsData[0] as { id?: unknown }).id;
-  if (typeof firstFormId !== "string" || firstFormId.length === 0) {
-    return pageProbe;
-  }
-
-  const leadsParams = new URLSearchParams({
+function buildAdLeadsUrl(adId: string, token: string): string {
+  const p = new URLSearchParams({
     fields:
       "id,created_time,field_data,form_id,ad_id,ad_name,campaign_id,campaign_name,adset_id",
-    limit: "3",
-    access_token: pageToken,
+    limit: "100",
+    access_token: token,
   });
-  const leadsUrl = `${META_API_BASE}/${firstFormId}/leads?${leadsParams.toString()}`;
-  const leadsRes = await fetchProbe(leadsUrl);
-  pageProbe.sampleLeads = {
-    formId: firstFormId,
-    ok: leadsRes.ok,
-    httpStatus: leadsRes.httpStatus,
-    raw: leadsRes.raw,
-  };
-  return pageProbe;
-}
-
-function hasLeads(raw: unknown): boolean {
-  if (typeof raw !== "object" || raw === null) return false;
-  const data = (raw as { data?: unknown }).data;
-  return Array.isArray(data) && data.length > 0;
+  return `${META_API_BASE}/${adId}/leads?${p.toString()}`;
 }
 
 /**
- * Fetch defensivo para el probe: nunca tira, captura todo (network errors,
- * non-JSON responses, error envelopes de Meta) y devuelve `ok` solo cuando
- * Meta respondió 2xx + sin `error` envelope.
+ * Helper común: fetch + JSON parse + clasificación de error de Meta. Mismo
+ * shape de salida que `parseMetaResponse` pero pensado para endpoints que
+ * NO devuelven `data: MetaInsightItem[]` — solo necesitamos saber si OK
+ * (devolver el body crudo para que el caller lo procese) o si falló
+ * (devolver `MetaSyncFailure` para propagar).
  */
-async function fetchProbe(
+async function fetchAndParseJson(
   url: string,
-): Promise<{ ok: boolean; httpStatus: number; raw: unknown }> {
-  let res: Response;
+): Promise<{ ok: true; body: unknown } | MetaSyncFailure> {
+  let response: Response;
   try {
-    res = await fetch(url, { method: "GET" });
+    response = await fetch(url, { method: "GET" });
   } catch (err) {
     return {
       ok: false,
-      httpStatus: 0,
-      raw: {
-        fetch_error: err instanceof Error ? err.message : String(err),
-      },
+      kind: "error",
+      message:
+        err instanceof Error ? err.message : "Network error contacting Meta",
+      detail: { cause: "fetch_failed" },
     };
   }
   let body: unknown;
   try {
-    body = await res.json();
+    body = await response.json();
   } catch {
     return {
       ok: false,
-      httpStatus: res.status,
-      raw: { cause: "non_json_response" },
+      kind: "error",
+      message: `Respuesta de Meta no es JSON (HTTP ${response.status})`,
+      detail: { http_status: response.status, cause: "json_parse_failed" },
     };
   }
-  const hasError =
-    body !== null &&
-    typeof body === "object" &&
-    (body as Record<string, unknown>).error !== undefined;
-  return {
-    ok: res.ok && !hasError,
-    httpStatus: res.status,
-    raw: body,
-  };
+  if (body && typeof body === "object") {
+    const err = (body as { error?: MetaErrorPayload }).error;
+    if (err && typeof err === "object") {
+      const kind = classifyMetaError(err);
+      const result: MetaSyncFailure = {
+        ok: false,
+        kind,
+        message:
+          typeof err.message === "string" ? err.message : "Unknown Meta error",
+        detail: {
+          code: err.code,
+          error_subcode: err.error_subcode,
+          type: err.type,
+          fbtrace_id: err.fbtrace_id,
+          error_user_msg: err.error_user_msg,
+          http_status: response.status,
+        },
+      };
+      if (kind === "rate_limited") {
+        result.retryAfterSeconds = parseRetryAfter(response.headers);
+      }
+      return result;
+    }
+  }
+  if (response.status >= 500) {
+    return {
+      ok: false,
+      kind: "error",
+      message: `Meta devolvió HTTP ${response.status} sin error estructurado`,
+      detail: { http_status: response.status, cause: "upstream_5xx" },
+    };
+  }
+  return { ok: true, body };
 }
 
 /**

@@ -51,7 +51,10 @@
       "Bash(git *)",
       "Bash(curl *)",
       "Bash(python -m json.tool)",
-      "Bash(node .audit-temp.mjs)"
+      "Bash(node .audit-temp.mjs)",
+      "Bash(node .audit-orphans.mjs)",
+      "Bash(rm .audit-orphans.mjs)",
+      "Bash(npx tsx *)"
     ]
   }
 }

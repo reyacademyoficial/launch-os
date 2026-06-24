@@ -9,6 +9,8 @@ import tokenInvalidFixture from "./__fixtures__/meta/error_token_invalid.json";
 import {
   fetchMetaInsights,
   isLeadActionType,
+  mapFieldData,
+  parseLeadsBody,
   parseMetaResponse,
 } from "./meta";
 
@@ -406,5 +408,173 @@ describe("meta.fetchMetaInsights — paginación", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.kind).toBe("token_invalid");
+  });
+});
+
+describe("meta.mapFieldData — Lead Ads", () => {
+  it("mapea el shape real del dump (Fase C Paso 1)", () => {
+    // Tomado tal cual del dump real que llegó del cliente.
+    const fieldData = [
+      { name: "email", values: ["castilloabrilsilvana@gmail.com"] },
+      {
+        name: "¿eres_dueño_de_carnicería?",
+        values: ["sí,_soy_dueño_de_carnicería"],
+      },
+      { name: "phone_number", values: ["+526692286027"] },
+      { name: "first_name", values: ["Isaac"] },
+    ];
+    const result = mapFieldData(fieldData);
+    expect(result.email).toBe("castilloabrilsilvana@gmail.com");
+    expect(result.rawPhone).toBe("+526692286027");
+    expect(result.name).toBe("Isaac");
+    expect(result.customFields).toEqual({
+      "¿eres_dueño_de_carnicería?": "sí,_soy_dueño_de_carnicería",
+    });
+  });
+
+  it("lowercase + trim del email aunque venga raro", () => {
+    const result = mapFieldData([
+      { name: "email", values: ["  CAMILA@Foo.COM  "] },
+    ]);
+    expect(result.email).toBe("camila@foo.com");
+  });
+
+  it("combina first_name + last_name a name", () => {
+    const result = mapFieldData([
+      { name: "first_name", values: ["Isaac"] },
+      { name: "last_name", values: ["Silvana"] },
+    ]);
+    expect(result.name).toBe("Isaac Silvana");
+  });
+
+  it("full_name gana sobre first_name + last_name", () => {
+    const result = mapFieldData([
+      { name: "first_name", values: ["Isaac"] },
+      { name: "last_name", values: ["Silvana"] },
+      { name: "full_name", values: ["Isaac Castillo Silvana"] },
+    ]);
+    expect(result.name).toBe("Isaac Castillo Silvana");
+  });
+
+  it("tolera variantes castellanas (nombre, apellido, telefono, correo)", () => {
+    const result = mapFieldData([
+      { name: "nombre", values: ["Juan"] },
+      { name: "apellido", values: ["Pérez"] },
+      { name: "correo", values: ["juan@example.com"] },
+      { name: "telefono", values: ["+5491112345678"] },
+    ]);
+    expect(result.name).toBe("Juan Pérez");
+    expect(result.email).toBe("juan@example.com");
+    expect(result.rawPhone).toBe("+5491112345678");
+  });
+
+  it("whatsapp como key cuenta como teléfono", () => {
+    const result = mapFieldData([
+      { name: "whatsapp", values: ["+5491111111111"] },
+    ]);
+    expect(result.rawPhone).toBe("+5491111111111");
+  });
+
+  it("campos desconocidos van a customFields con la key original", () => {
+    const result = mapFieldData([
+      { name: "first_name", values: ["X"] },
+      { name: "¿cuanto_vendes_por_mes?", values: ["$50k"] },
+      { name: "experiencia", values: ["+5 años"] },
+    ]);
+    expect(result.customFields).toEqual({
+      "¿cuanto_vendes_por_mes?": "$50k",
+      experiencia: "+5 años",
+    });
+  });
+
+  it("values vacío o sin string skippea ese campo", () => {
+    const result = mapFieldData([
+      { name: "email", values: [] },
+      { name: "phone_number", values: [null] },
+      { name: "first_name", values: ["Isaac"] },
+    ]);
+    expect(result.email).toBeNull();
+    expect(result.rawPhone).toBeNull();
+    expect(result.name).toBe("Isaac");
+  });
+
+  it("input no-array → todos null y custom vacío (defensa)", () => {
+    expect(mapFieldData(null)).toEqual({
+      name: null,
+      email: null,
+      rawPhone: null,
+      customFields: {},
+    });
+    expect(mapFieldData("not an array")).toEqual({
+      name: null,
+      email: null,
+      rawPhone: null,
+      customFields: {},
+    });
+  });
+});
+
+describe("meta.parseLeadsBody — Lead Ads", () => {
+  it("parsea el body real del endpoint /{ad_id}/leads", () => {
+    // Tomado tal cual del dump real que llegó del cliente.
+    const body = {
+      data: [
+        {
+          id: "989778150114487",
+          ad_id: "120245106008850610",
+          ad_name: "AD 009 [FLYER]",
+          form_id: "2090788781467261",
+          adset_id: "120245106008720610",
+          field_data: [
+            { name: "email", values: ["castilloabrilsilvana@gmail.com"] },
+            { name: "phone_number", values: ["+526692286027"] },
+            { name: "first_name", values: ["Isaac"] },
+          ],
+          campaign_id: "120245106008730610",
+          created_time: "2026-06-01T23:23:41+0000",
+          campaign_name: "[L7] México",
+        },
+      ],
+      paging: { next: "https://graph.facebook.com/next" },
+    };
+    const rows = parseLeadsBody(body);
+    expect(rows).toHaveLength(1);
+    const r = rows[0]!;
+    expect(r.leadgenId).toBe("989778150114487");
+    expect(r.createdTime).toBe("2026-06-01T23:23:41+0000");
+    expect(r.formId).toBe("2090788781467261");
+    expect(r.adId).toBe("120245106008850610");
+    expect(r.adName).toBe("AD 009 [FLYER]");
+    expect(r.campaignId).toBe("120245106008730610");
+    expect(r.name).toBe("Isaac");
+    expect(r.email).toBe("castilloabrilsilvana@gmail.com");
+    expect(r.rawPhone).toBe("+526692286027");
+  });
+
+  it("item sin id se salta sin romper los demás", () => {
+    const body = {
+      data: [
+        {
+          /* sin id */
+          created_time: "2026-06-01T00:00:00+0000",
+          field_data: [{ name: "email", values: ["a@a.com"] }],
+        },
+        {
+          id: "OK1",
+          created_time: "2026-06-01T00:00:00+0000",
+          field_data: [{ name: "email", values: ["b@b.com"] }],
+        },
+      ],
+    };
+    const rows = parseLeadsBody(body);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.leadgenId).toBe("OK1");
+    expect(rows[0]!.email).toBe("b@b.com");
+  });
+
+  it("body sin data array → rows vacío (no tira)", () => {
+    expect(parseLeadsBody({})).toEqual([]);
+    expect(parseLeadsBody(null)).toEqual([]);
+    expect(parseLeadsBody("not json")).toEqual([]);
   });
 });

@@ -20,6 +20,11 @@ function nullable(value: string): string | null {
  * (la venta es la confirmación del cierre). El brief dice "una venta cuelga
  * de un lead cerrado": elegimos cerrarlo nosotros al crear la venta, en lugar
  * de exigir que el usuario lo mueva antes — UX más directa.
+ *
+ * ATRIBUCIÓN: la sale hereda `team_member_id` del lead. Es denormalización,
+ * NO input del operador. El formulario perdió el dropdown de closer (era
+ * editable y generaba drift). Si el dueño del lead cambia, `updateLead`
+ * re-sincroniza las sales del lead.
  */
 export async function createSale(
   projectId: string,
@@ -38,19 +43,22 @@ export async function createSale(
     return { error: "Monto pactado inválido." };
   }
 
-  const team_member_id = nullable(str(formData, "team_member_id"));
   const closedAtRaw = str(formData, "closed_at");
   const closed_at = closedAtRaw === "" ? new Date().toISOString() : closedAtRaw;
 
   const supabase = await createClient();
 
-  // Resolver project_id real del lead — guard contra URL tampering.
+  // Resolver project_id + dueño del lead. El team_member_id de la venta SE
+  // DERIVA del lead — el form no lo manda.
   const { data: leadData } = await supabase
     .from("leads")
-    .select("project_id")
+    .select("project_id, team_member_id")
     .eq("id", leadId)
     .maybeSingle();
-  const lead = leadData as { project_id: string } | null;
+  const lead = leadData as {
+    project_id: string;
+    team_member_id: string | null;
+  } | null;
   if (!lead || lead.project_id !== projectId) {
     return { error: "Lead inexistente o de otro proyecto." };
   }
@@ -58,7 +66,7 @@ export async function createSale(
   const insertPayload = {
     project_id: projectId,
     lead_id: leadId,
-    team_member_id,
+    team_member_id: lead.team_member_id,
     payment_modality_id,
     total_amount,
     closed_at,
@@ -106,10 +114,28 @@ export async function updateSale(
   if (!Number.isFinite(total_amount) || total_amount < 0) {
     return { error: "Monto pactado inválido." };
   }
-  const team_member_id = nullable(str(formData, "team_member_id"));
   const closedAtRaw = str(formData, "closed_at");
 
   const supabase = await createClient();
+
+  // El dueño de la venta es el del lead — no se recibe del form. Mantenerlo
+  // alineado preserva el invariante que el LB y el PDF asumen.
+  const { data: saleRow } = await supabase
+    .from("sales")
+    .select("lead_id")
+    .eq("id", saleId)
+    .eq("project_id", projectId)
+    .maybeSingle();
+  const saleRef = saleRow as { lead_id: string } | null;
+  if (!saleRef) return { error: "Venta inexistente." };
+  const { data: leadRow } = await supabase
+    .from("leads")
+    .select("team_member_id")
+    .eq("id", saleRef.lead_id)
+    .maybeSingle();
+  const team_member_id =
+    (leadRow as { team_member_id: string | null } | null)?.team_member_id ?? null;
+
   const payload = {
     payment_modality_id,
     total_amount,

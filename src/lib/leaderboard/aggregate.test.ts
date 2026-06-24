@@ -129,7 +129,7 @@ describe("aggregateLeaderboard — sin filtros", () => {
     const closer = tm("tm-1", "Closer");
     const teamMembers = [closer];
     const leads = [
-      lead("l-1", { team_member_id: "tm-1" }),
+      lead("l-1", { team_member_id: "tm-1", status: "cerrado" }),
       lead("l-2", { team_member_id: "tm-1" }),
       lead("l-3", { team_member_id: "tm-1" }),
     ];
@@ -171,18 +171,67 @@ describe("aggregateLeaderboard — sin filtros", () => {
     expect(rows[0]!.commissionAccrued).toBe(0);
   });
 
-  it("sale sin team_member queda excluida (no se imputa a nadie)", () => {
+  it("sale con team_member_id distinto del lead se imputa al dueño del lead", () => {
+    // Antes del fix 0036 esto era el bug raíz: una sale con sale.team_member_id
+    // desalineado quedaba excluida o atribuida a otro. Ahora la atribución
+    // viene 100% de lead.team_member_id; `sale.team_member_id` se ignora acá.
     const closer = tm("tm-1", "Closer");
     const rows = aggregateLeaderboard({
       teamMembers: [closer],
-      leads: [lead("l-1", { team_member_id: "tm-1" })],
+      leads: [
+        lead("l-1", { team_member_id: "tm-1", status: "cerrado" }),
+      ],
       sales: [sale("s-1", { lead_id: "l-1", team_member_id: null })],
       payments: [payment("s-1", 100)],
       rules: [RULE_10_PERCENT],
       filters: {},
     });
-    expect(rows[0]!.closed).toBe(0);
-    expect(rows[0]!.revenueCollected).toBe(0);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.teamMember?.id).toBe("tm-1");
+    expect(rows[0]!.closed).toBe(1);
+    expect(rows[0]!.revenueCollected).toBe(100);
+    expect(rows[0]!.commissionAccrued).toBe(10);
+  });
+
+  it("aparece fila 'Sin asignar' cuando hay leads o sales sin dueño", () => {
+    const closer = tm("tm-1", "Closer");
+    const rows = aggregateLeaderboard({
+      teamMembers: [closer],
+      leads: [
+        lead("l-1", { team_member_id: "tm-1", status: "cerrado" }),
+        lead("l-orphan", { team_member_id: null, status: "cerrado" }),
+      ],
+      sales: [
+        sale("s-1", { lead_id: "l-1", team_member_id: "tm-1", total_amount: 1000 }),
+        sale("s-orphan", { lead_id: "l-orphan", team_member_id: null, total_amount: 500 }),
+      ],
+      payments: [payment("s-1", 1000), payment("s-orphan", 500)],
+      rules: [RULE_10_PERCENT],
+      filters: {},
+    });
+    expect(rows).toHaveLength(2);
+    const named = rows.find((r) => r.teamMember?.id === "tm-1")!;
+    const unassigned = rows.find((r) => r.teamMember === null)!;
+    expect(named.closed).toBe(1);
+    expect(named.revenueCollected).toBe(1000);
+    expect(unassigned.closed).toBe(1);
+    expect(unassigned.revenueCollected).toBe(500);
+    // El total reconcilia: cobrado del proyecto = 1500.
+    expect(named.revenueCollected + unassigned.revenueCollected).toBe(1500);
+  });
+
+  it("no agrega fila 'Sin asignar' si no hay leads ni sales huérfanos", () => {
+    const closer = tm("tm-1", "Closer");
+    const rows = aggregateLeaderboard({
+      teamMembers: [closer],
+      leads: [lead("l-1", { team_member_id: "tm-1" })],
+      sales: [],
+      payments: [],
+      rules: [],
+      filters: {},
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.teamMember?.id).toBe("tm-1");
   });
 });
 
@@ -190,8 +239,8 @@ describe("aggregateLeaderboard — filtro launch", () => {
   it("filtra leads y sales por launch_id (heredando de lead)", () => {
     const closer = tm("tm-1", "Closer");
     const leads = [
-      lead("l-A", { team_member_id: "tm-1", launch_id: "launch-A" }),
-      lead("l-B", { team_member_id: "tm-1", launch_id: "launch-B" }),
+      lead("l-A", { team_member_id: "tm-1", launch_id: "launch-A", status: "cerrado" }),
+      lead("l-B", { team_member_id: "tm-1", launch_id: "launch-B", status: "cerrado" }),
     ];
     const sales = [
       sale("s-A", { lead_id: "l-A", team_member_id: "tm-1", total_amount: 1000 }),
@@ -233,17 +282,23 @@ describe("aggregateLeaderboard — filtro launch", () => {
 
 describe("aggregateLeaderboard — filtro fechas", () => {
   it("dateFrom/dateTo filtran por sale.closed_at (inclusive)", () => {
+    // El filtro de fecha NO esconde leads, solo sales. Por eso ponemos los
+    // dos leads cerrados: `closed` cuenta leads (=2), pero el período acota
+    // qué sales suman a revenue/comisión (solo s-jul).
     const closer = tm("tm-1", "Closer");
-    const leads = [lead("l-1", { team_member_id: "tm-1" })];
+    const leads = [
+      lead("l-jun", { team_member_id: "tm-1", status: "cerrado" }),
+      lead("l-jul", { team_member_id: "tm-1", status: "cerrado" }),
+    ];
     const sales = [
       sale("s-jun", {
-        lead_id: "l-1",
+        lead_id: "l-jun",
         team_member_id: "tm-1",
         total_amount: 1000,
         closed_at: "2026-06-05T00:00:00Z",
       }),
       sale("s-jul", {
-        lead_id: "l-1",
+        lead_id: "l-jul",
         team_member_id: "tm-1",
         total_amount: 2000,
         closed_at: "2026-07-05T00:00:00Z",
@@ -260,23 +315,29 @@ describe("aggregateLeaderboard — filtro fechas", () => {
       filters: { dateFrom: "2026-07-01", dateTo: "2026-07-31" },
     });
 
-    expect(rows[0]!.closed).toBe(1);
+    // `closed` = leads del miembro con status='cerrado' (no se filtran por
+    // fecha). Las dos sales tienen leads cerrados → closed = 2.
+    expect(rows[0]!.closed).toBe(2);
+    // El revenue del período: solo s-jul cae adentro.
     expect(rows[0]!.revenueCollected).toBe(2000);
     expect(rows[0]!.commissionAccrued).toBe(200);
   });
 
   it("sin filtro de fecha → todas las épocas suman", () => {
     const closer = tm("tm-1", "Closer");
-    const leads = [lead("l-1", { team_member_id: "tm-1" })];
+    const leads = [
+      lead("l-old", { team_member_id: "tm-1", status: "cerrado" }),
+      lead("l-new", { team_member_id: "tm-1", status: "cerrado" }),
+    ];
     const sales = [
       sale("s-2025", {
-        lead_id: "l-1",
+        lead_id: "l-old",
         team_member_id: "tm-1",
         total_amount: 500,
         closed_at: "2025-01-01T00:00:00Z",
       }),
       sale("s-2026", {
-        lead_id: "l-1",
+        lead_id: "l-new",
         team_member_id: "tm-1",
         total_amount: 1500,
         closed_at: "2026-06-01T00:00:00Z",

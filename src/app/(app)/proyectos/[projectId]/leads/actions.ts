@@ -2,11 +2,53 @@
 
 import { revalidatePath } from "next/cache";
 
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 import { requireCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { LEAD_STATUSES, type LeadStatus } from "@/lib/leads/types";
 
 export type LeadActionState = { ok: true } | { error: string } | null;
+
+/**
+ * Re-sincroniza `sales.team_member_id` con `leads.team_member_id` para una
+ * lista de leadIds del proyecto. Es la copia "lazy" que mantiene la
+ * denormalización alineada con la verdad (`leads.team_member_id`).
+ *
+ * El Leaderboard y el PDF de comisiones leen el dueño desde el lead, así que
+ * este re-sync no afecta esos números. Lo mantenemos por (a) los queries
+ * ad-hoc en Studio que aún miran `sales.team_member_id`, y (b) para que el
+ * backfill 0036 no se vuelva necesario más adelante.
+ *
+ * Idempotente: el UPDATE no hace nada si los valores ya están alineados.
+ */
+async function syncSalesOwnerForLeads(
+  supabase: SupabaseClient,
+  projectId: string,
+  leadIds: ReadonlyArray<string>,
+): Promise<void> {
+  if (leadIds.length === 0) return;
+
+  const { data: leadsRows } = await supabase
+    .from("leads")
+    .select("id, team_member_id")
+    .eq("project_id", projectId)
+    .in("id", leadIds);
+  const owners =
+    (leadsRows as Array<{ id: string; team_member_id: string | null }> | null) ??
+    [];
+
+  // Postgrest no expone UPDATE … FROM, así que mandamos 1 UPDATE por lead.
+  // El batch típico de un changeo manual es ≤ algunas decenas y de un bulk
+  // assign cap 1000; sigue siendo aceptable, y es lectura→escritura puntual.
+  for (const l of owners) {
+    await supabase
+      .from("sales")
+      .update({ team_member_id: l.team_member_id } as never)
+      .eq("project_id", projectId)
+      .eq("lead_id", l.id);
+  }
+}
 
 function str(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
@@ -88,6 +130,10 @@ export async function updateLead(
     .eq("id", leadId)
     .eq("project_id", projectId);
   if (error) return { error: error.message };
+
+  // Tras tocar el lead, re-alinear sales del lead. Si el setter no cambió
+  // es no-op. Si cambió, las sales reflejan el nuevo dueño.
+  await syncSalesOwnerForLeads(supabase, projectId, [leadId]);
 
   revalidatePath(`/proyectos/${projectId}/leads`);
   return { ok: true };

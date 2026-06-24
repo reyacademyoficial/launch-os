@@ -8,13 +8,18 @@ import {
   fetchGhlInboundMessagesByDay,
   type MessagesByDayResult,
 } from "./ghl";
-import { fetchMetaInsights, probeMetaLeadgen, type MetaInsightDay } from "./meta";
+import {
+  fetchMetaInsights,
+  fetchMetaLeads,
+  type MetaInsightDay,
+  type MetaLead,
+} from "./meta";
 import {
   fetchSendflowAnalytics,
   type SendflowAnalyticsResult,
   type SendflowAnalyticsSuccess,
 } from "./sendflow";
-import { runGhlSync, type GhlRunSummary } from "./sync-ghl";
+import { normalize, runGhlSync, type GhlRunSummary } from "./sync-ghl";
 
 /**
  * Orchestrator del sync. Una sola función pública `syncLaunch` que el Server
@@ -339,61 +344,78 @@ export async function syncLaunch(
     (r) => r.date >= startDate && r.date <= endDate,
   );
 
-  // TEMP DIAG (Fase C Paso 0) — corremos el probe de Lead Ads en paralelo
-  // con el upsert para no bloquear. Si falla por permisos, NO afectamos el
-  // sync de Insights — el probe es solo diagnóstico para integration_runs.
-  // Quitar una vez que la feature de leads individuales esté implementada.
-  const probePromise = probeMetaLeadgen({
-    token,
-    campaignIds: providerConfig.ad_accounts[0]!.campaign_ids,
-  }).catch((err) => {
-    const errRaw = {
-      fetch_error: err instanceof Error ? err.message : String(err),
-    };
-    return {
-      tokenPermissions: { ok: false, httpStatus: 0, raw: errRaw },
-      pagesAccessible: { ok: false, httpStatus: 0, raw: errRaw },
-      pageTokenLeads: null,
-      ads: {
-        ok: false,
-        httpStatus: 0,
-        campaignId: providerConfig.ad_accounts[0]?.campaign_ids[0] ?? "",
-        raw: errRaw,
-      },
-      sampleLeads: null,
-      adsTried: 0,
-    };
-  });
+  // Insights upsert. Si la ventana del launch no tiene data (launch muy reciente
+  // o sin gasto todavía), saltamos sin error — leads puede tener data igual.
+  let upsertedDays = 0;
+  if (inWindow.length > 0) {
+    const mergedByDate = mergeInsightsByDate(inWindow);
+    const rowsToWrite = mergedByDate.map((day) =>
+      buildAdsRow(launch.id, input.provider, day),
+    );
+    const upsert = await service
+      .from("launch_daily_ads")
+      .upsert(rowsToWrite as never, { onConflict: "launch_id,date,provider" });
 
-  if (inWindow.length === 0) {
-    const probe = await probePromise;
-    return await finalizeRun(service, runId, "success", 0, {
-      meta_leadgen_probe: probe,
-    });
+    if (upsert.error) {
+      return await finalizeRun(service, runId, "error", 0, {
+        cause: "upsert_failed",
+        message: upsert.error.message,
+      });
+    }
+    upsertedDays = mergedByDate.length;
   }
 
-  const mergedByDate = mergeInsightsByDate(inWindow);
-  const rowsToWrite = mergedByDate.map((day) =>
-    buildAdsRow(launch.id, input.provider, day),
+  // Fase C Paso 2 — leads individuales (nombre/email/teléfono por lead).
+  // Independiente del éxito/empty de Insights: si la rama de leads falla,
+  // capturamos en `error_detail.leads_error` pero NO revertimos lo de
+  // Insights (ya quedó upsertado idempotentemente). Si toca el tope de
+  // páginas, el run cierra como `partial` para que se vea.
+  const allCampaignIds = providerConfig.ad_accounts.flatMap(
+    (a) => a.campaign_ids,
   );
-  const upsert = await service
-    .from("launch_daily_ads")
-    .upsert(rowsToWrite as never, { onConflict: "launch_id,date,provider" });
+  const leadsSync = await syncMetaLeads({
+    service,
+    token,
+    projectId: launch.project_id,
+    launchId: launch.id,
+    campaignIds: allCampaignIds,
+    since: launch.date_start,
+    until: launch.date_end,
+  });
 
-  if (upsert.error) {
-    return await finalizeRun(service, runId, "error", 0, {
-      cause: "upsert_failed",
-      message: upsert.error.message,
-    });
+  const detail: Record<string, unknown> = { insights_days: upsertedDays };
+  let status: SyncLaunchResult["status"] = "success";
+  let rowsWritten = upsertedDays;
+
+  if (leadsSync.ok) {
+    detail.leads = {
+      fetched: leadsSync.fetched,
+      created: leadsSync.created,
+      skipped_idempotent: leadsSync.skippedIdempotent,
+      skipped_duplicate_cross_source: leadsSync.skippedDuplicate,
+      without_contact_info: leadsSync.withoutContactInfo,
+      ads_scanned: leadsSync.adsScanned,
+      form_ids_to_review: leadsSync.formIdsToReview,
+    };
+    rowsWritten += leadsSync.created;
+    if (leadsSync.hitMaxPages) {
+      status = "partial";
+      detail.cause = "meta_leads_hit_max_pages";
+      detail.message =
+        "Algunos ads tocaron el tope de páginas — faltan leads más viejos.";
+    }
+  } else {
+    // Leads falló. Si Insights se escribió, marcamos partial; si no, propagamos
+    // el kind original (token_invalid / rate_limited / error).
+    status = upsertedDays > 0 ? "partial" : leadsSync.kind;
+    detail.leads_error = {
+      kind: leadsSync.kind,
+      message: leadsSync.message,
+      detail: leadsSync.detail,
+    };
   }
 
-  // rows_written = filas escritas en launch_daily_ads, que después del merge
-  // es 1 por (launch, date, provider) — usamos mergedByDate.length, no
-  // inWindow.length (que cuenta las filas antes de agrupar por cuenta+campaña).
-  const probe = await probePromise;
-  return await finalizeRun(service, runId, "success", mergedByDate.length, {
-    meta_leadgen_probe: probe,
-  });
+  return await finalizeRun(service, runId, status, rowsWritten, detail);
 }
 
 // ─── helpers internos ───────────────────────────────────────────────────────
@@ -1278,6 +1300,248 @@ async function finalizeRun(
         ? (errorDetail.message as string)
         : null,
   };
+}
+
+// ─── Fase C Paso 2 — sync de leads individuales de Meta ───────────────────
+
+/**
+ * Resultado de `syncMetaLeads`. El caller lo refleja en el status del run y
+ * en `error_detail.leads` / `error_detail.leads_error`.
+ */
+type MetaLeadsSyncResult =
+  | {
+      ok: true;
+      fetched: number;
+      created: number;
+      /** Re-sync detectó leadgen_id ya en DB → noop idempotente. */
+      skippedIdempotent: number;
+      /** Email o phone match con un lead de otra fuente (GHL/import). */
+      skippedDuplicate: number;
+      /** Leads sin email ni teléfono — se crean igual (no se descarta nada). */
+      withoutContactInfo: number;
+      adsScanned: number;
+      hitMaxPages: boolean;
+      /**
+       * Form ids cuyos leads no tuvieron email ni phone — para que el
+       * operador revise el form en Business Manager. Cap implícito por dedup.
+       */
+      formIdsToReview: string[];
+    }
+  | {
+      ok: false;
+      kind: "token_invalid" | "rate_limited" | "error";
+      message: string;
+      detail: Record<string, unknown>;
+    };
+
+/**
+ * Trae los leads individuales de las campañas del launch y los upsertea a
+ * la tabla `leads` con `source='meta'`. Dedup en tres niveles:
+ *
+ *   1. `(project_id, source='meta', external_id=leadgen_id)` →
+ *      idempotente, re-sync no duplica.
+ *   2. Email cross-source: si ya hay un lead (cualquier source) con el
+ *      mismo email lowercased, NO creamos. Evita duplicar contra leads de
+ *      GHL/import del mismo form vía Zapier.
+ *   3. Phone fallback: igual con `phone_normalized` E.164.
+ *
+ * Los leads sin email NI teléfono se crean igual (la idempotencia por
+ * external_id alcanza) pero se cuentan aparte y se loguea su `form_id`
+ * para que el operador revise el form. Regla "nunca descartar un lead por
+ * un campo faltante" — Fase C brief.
+ *
+ * No toca `name` ni `status` de leads existentes — la única regla de
+ * cross-source dedup es "no crear duplicado", no "enriquecer".
+ */
+async function syncMetaLeads(args: {
+  service: ServiceClient;
+  token: string;
+  projectId: string;
+  launchId: string;
+  campaignIds: readonly string[];
+  since: string;
+  until: string;
+}): Promise<MetaLeadsSyncResult> {
+  const fetched = await fetchMetaLeads({
+    token: args.token,
+    campaignIds: args.campaignIds,
+    since: args.since,
+    until: args.until,
+  });
+  if (!fetched.ok) {
+    return {
+      ok: false,
+      kind: fetched.kind,
+      message: fetched.message,
+      detail: fetched.detail,
+    };
+  }
+
+  // Normalizar email + phone una sola vez por lead (libphonenumber).
+  const prepared = fetched.rows.map((lead) => ({
+    lead,
+    normalizedEmail: lead.email ? lead.email.toLowerCase().trim() : null,
+    phoneNormalized: normalize(lead.rawPhone, undefined),
+  }));
+
+  // Bulk lookups para dedup. Las 3 queries son independientes → Promise.all.
+  const externalIds = prepared.map((p) => p.lead.leadgenId);
+  const emails = uniqueStrings(
+    prepared
+      .map((p) => p.normalizedEmail)
+      .filter((e): e is string => e !== null),
+  );
+  const phones = uniqueStrings(
+    prepared
+      .map((p) => p.phoneNormalized)
+      .filter((p): p is string => p !== null),
+  );
+
+  const [byExtIdRes, byEmailRes, byPhoneRes] = await Promise.all([
+    externalIds.length > 0
+      ? loose(args.service)
+          .from("leads")
+          .select("external_id")
+          .eq("project_id", args.projectId)
+          .eq("source", "meta")
+          .in("external_id", externalIds)
+      : Promise.resolve({ data: [] as Array<{ external_id: string }> }),
+    emails.length > 0
+      ? loose(args.service)
+          .from("leads")
+          .select("email")
+          .eq("project_id", args.projectId)
+          .in("email", emails)
+      : Promise.resolve({ data: [] as Array<{ email: string }> }),
+    phones.length > 0
+      ? loose(args.service)
+          .from("leads")
+          .select("phone_normalized")
+          .eq("project_id", args.projectId)
+          .in("phone_normalized", phones)
+      : Promise.resolve({ data: [] as Array<{ phone_normalized: string }> }),
+  ]);
+
+  const existingExtIds = new Set(
+    ((byExtIdRes.data ?? []) as Array<{ external_id: string }>).map(
+      (r) => r.external_id,
+    ),
+  );
+  const existingEmails = new Set(
+    ((byEmailRes.data ?? []) as Array<{ email: string | null }>)
+      .map((r) => (r.email ?? "").toLowerCase().trim())
+      .filter((e) => e.length > 0),
+  );
+  const existingPhones = new Set(
+    ((byPhoneRes.data ?? []) as Array<{ phone_normalized: string | null }>)
+      .map((r) => r.phone_normalized)
+      .filter((p): p is string => p !== null && p.length > 0),
+  );
+
+  let skippedIdempotent = 0;
+  let skippedDuplicate = 0;
+  let withoutContactInfo = 0;
+  const formIdsWithoutContact = new Set<string>();
+  const toCreate: Record<string, unknown>[] = [];
+
+  for (const p of prepared) {
+    const lead = p.lead;
+    if (existingExtIds.has(lead.leadgenId)) {
+      skippedIdempotent++;
+      continue;
+    }
+    if (p.normalizedEmail && existingEmails.has(p.normalizedEmail)) {
+      skippedDuplicate++;
+      continue;
+    }
+    if (p.phoneNormalized && existingPhones.has(p.phoneNormalized)) {
+      skippedDuplicate++;
+      continue;
+    }
+    if (!p.normalizedEmail && !p.phoneNormalized) {
+      withoutContactInfo++;
+      if (lead.formId) formIdsWithoutContact.add(lead.formId);
+    }
+
+    // Fallback de name: name extraído → email → placeholder. La columna no
+    // es NULLable, y "Sin nombre" deja claro que falta info sin descartar.
+    const name = lead.name ?? p.normalizedEmail ?? "Sin nombre";
+    toCreate.push({
+      project_id: args.projectId,
+      launch_id: args.launchId,
+      source: "meta",
+      status: "frio",
+      external_id: lead.leadgenId,
+      name,
+      email: p.normalizedEmail,
+      phone_normalized: p.phoneNormalized,
+      contact: p.phoneNormalized ? null : lead.rawPhone,
+      pinned_to_kanban: false,
+      notes: buildMetaLeadNotes(lead),
+    });
+  }
+
+  let created = 0;
+  if (toCreate.length > 0) {
+    for (const batch of chunkArr(toCreate, 500)) {
+      const ins = await loose(args.service)
+        .from("leads")
+        .insert(batch)
+        .select("id");
+      if (ins.error) {
+        return {
+          ok: false,
+          kind: "error",
+          message: `Insert de leads Meta falló: ${ins.error.message}`,
+          detail: {
+            cause: "insert_failed",
+            batch_size: batch.length,
+            created_before_failure: created,
+          },
+        };
+      }
+      created += ((ins.data ?? []) as unknown[]).length;
+    }
+  }
+
+  return {
+    ok: true,
+    fetched: fetched.rows.length,
+    created,
+    skippedIdempotent,
+    skippedDuplicate,
+    withoutContactInfo,
+    adsScanned: fetched.adsScanned,
+    hitMaxPages: fetched.hitMaxPages,
+    formIdsToReview: Array.from(formIdsWithoutContact),
+  };
+}
+
+/**
+ * Notes informativas — form_id + ad name + customFields que no encajaron
+ * en email/phone/name. Útil para revisar leads "raros" en la tabla.
+ */
+function buildMetaLeadNotes(lead: MetaLead): string | null {
+  const parts: string[] = [];
+  if (lead.formId) parts.push(`Form ${lead.formId}`);
+  if (lead.adName) parts.push(`Ad: ${lead.adName}`);
+  const customs = Object.entries(lead.customFields);
+  if (customs.length > 0) {
+    parts.push(
+      `Custom: ${customs.map(([k, v]) => `${k}=${v}`).join(", ")}`,
+    );
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+function uniqueStrings(arr: ReadonlyArray<string>): string[] {
+  return Array.from(new Set(arr));
+}
+
+function chunkArr<T>(arr: ReadonlyArray<T>, size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
 }
 
 // ─── 7a — notificaciones de sistema ─────────────────────────────────────────

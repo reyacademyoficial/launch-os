@@ -175,6 +175,9 @@ function NewSaleForm({
   }, [state, onSuccess]);
 
   const activeModalities = modalities.filter((m) => m.active);
+  const ownerName = lead.team_member_id
+    ? teamMembers.find((t) => t.id === lead.team_member_id)?.name ?? null
+    : null;
 
   if (activeModalities.length === 0) {
     return (
@@ -234,23 +237,16 @@ function NewSaleForm({
         </div>
       </div>
 
-      <div>
-        <Label htmlFor="sale-assignee">Closer / asignado</Label>
-        <Select
-          id="sale-assignee"
-          name="team_member_id"
-          defaultValue={lead.team_member_id ?? ""}
-        >
-          <option value="">— Sin asignar —</option>
-          {teamMembers.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-              {!t.active ? " (inactivo)" : ""}
-            </option>
-          ))}
-        </Select>
-        <p className="mt-1 text-xs text-fg-subtle">
-          Por default tomamos el team_member ya asignado al lead.
+      <div className="rounded-md border border-border bg-surface/40 px-3 py-2 text-xs">
+        <div className="uppercase tracking-wide text-fg-subtle">
+          Atribución
+        </div>
+        <div className="mt-1 text-fg">
+          {ownerName ?? "Sin asignar"}
+        </div>
+        <p className="mt-1 text-fg-subtle">
+          La venta se imputa al dueño del lead. Para cambiar la atribución,
+          editá el setter desde la tarjeta del lead.
         </p>
       </div>
 

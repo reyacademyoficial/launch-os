@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 import { LEAD_STATUSES, type LeadStatus } from "@/lib/leads/types";
 import { requireCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -65,7 +67,39 @@ export async function bulkAssignSetter(
   leadIds: ReadonlyArray<string>,
   teamMemberId: string | null,
 ): Promise<BulkResult> {
-  return await applyBulk(projectId, leadIds, { team_member_id: teamMemberId });
+  const result = await applyBulk(projectId, leadIds, {
+    team_member_id: teamMemberId,
+  });
+  if ("ok" in result) {
+    // Mantener `sales.team_member_id` alineado con el nuevo dueño del lead.
+    // Es la única ruta del bulk que cambia atribución; el resto (status,
+    // pinned) no requiere re-sync.
+    const supabase = await createClient();
+    await syncSalesOwnerForLeads(supabase, projectId, sanitizeIds(leadIds));
+  }
+  return result;
+}
+
+async function syncSalesOwnerForLeads(
+  supabase: SupabaseClient,
+  projectId: string,
+  leadIds: ReadonlyArray<string>,
+): Promise<void> {
+  if (leadIds.length === 0) return;
+  const { data } = await supabase
+    .from("leads")
+    .select("id, team_member_id")
+    .eq("project_id", projectId)
+    .in("id", leadIds);
+  const owners =
+    (data as Array<{ id: string; team_member_id: string | null }> | null) ?? [];
+  for (const l of owners) {
+    await supabase
+      .from("sales")
+      .update({ team_member_id: l.team_member_id } as never)
+      .eq("project_id", projectId)
+      .eq("lead_id", l.id);
+  }
 }
 
 async function applyBulk(

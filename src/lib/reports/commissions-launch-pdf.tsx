@@ -220,6 +220,12 @@ export interface CommissionsLaunchInput {
   rules: ReadonlyArray<CommissionRuleRow>;
   modalities: ReadonlyArray<PaymentModalityRow>;
   teamMembers: ReadonlyArray<TeamMemberRow>;
+  /**
+   * Atribución por venta. Construido por el route con un fetch de
+   * `leads.id, leads.team_member_id` sobre los lead_ids del input. Es la
+   * verdad operativa: el dueño del lead manda, NO `sales.team_member_id`.
+   */
+  leadOwnerBySaleId: ReadonlyMap<string, string | null>;
 }
 
 interface GroupedRow {
@@ -368,9 +374,12 @@ function groupByMember(data: CommissionsLaunchInput): GroupedRow[] {
   const groups = new Map<string, GroupedRow>();
 
   // Ranking marginal: todas las ventas del input pertenecen al mismo launch
-  // (filtrado en listSalesByLaunch), así que el bucket es solo team_member.
+  // (filtrado en listSalesByLaunch), así que el bucket es solo dueño_del_lead.
   // Orden: closed_at asc, empate created_at asc.
-  const rankBySaleId = computeSaleRanks(data.sales.map((s) => s.sale));
+  const rankBySaleId = computeSaleRanks(
+    data.sales.map((s) => s.sale),
+    data.leadOwnerBySaleId,
+  );
 
   for (const { sale, payments } of data.sales) {
     // Pasamos el launchId del input para que la override per-launch se
@@ -384,12 +393,13 @@ function groupByMember(data: CommissionsLaunchInput): GroupedRow[] {
     const saleRank = rankBySaleId.get(sale.id) ?? 0;
     const computed = computeCommission(sale, payments, rule, saleRank);
 
-    const memberKey = sale.team_member_id ?? "__none__";
+    // Atribución por dueño del lead — NO por `sale.team_member_id`. Si el
+    // lead no tiene dueño, va al bucket "Sin asignar".
+    const ownerId = data.leadOwnerBySaleId.get(sale.id) ?? null;
+    const memberKey = ownerId ?? "__none__";
     let group = groups.get(memberKey);
     if (!group) {
-      const member = sale.team_member_id
-        ? memberById.get(sale.team_member_id) ?? null
-        : null;
+      const member = ownerId ? memberById.get(ownerId) ?? null : null;
       group = {
         member,
         sales: [],
@@ -427,16 +437,22 @@ function groupByMember(data: CommissionsLaunchInput): GroupedRow[] {
   return result;
 }
 
-function computeSaleRanks(sales: ReadonlyArray<SaleRow>): Map<string, number> {
-  const byMember = new Map<string, SaleRow[]>();
+function computeSaleRanks(
+  sales: ReadonlyArray<SaleRow>,
+  leadOwnerBySaleId: ReadonlyMap<string, string | null>,
+): Map<string, number> {
+  // Bucket por dueño del lead. Sales sobre leads sin dueño rankean entre sí
+  // bajo la clave "__none__" — la fila "Sin asignar" del PDF las muestra
+  // con su comisión teórica.
+  const byOwner = new Map<string, SaleRow[]>();
   for (const s of sales) {
-    if (!s.team_member_id) continue;
-    const arr = byMember.get(s.team_member_id);
+    const key = leadOwnerBySaleId.get(s.id) ?? "__none__";
+    const arr = byOwner.get(key);
     if (arr) arr.push(s);
-    else byMember.set(s.team_member_id, [s]);
+    else byOwner.set(key, [s]);
   }
   const ranks = new Map<string, number>();
-  for (const arr of byMember.values()) {
+  for (const arr of byOwner.values()) {
     arr.sort((a, b) => {
       const cmp = a.closed_at.localeCompare(b.closed_at);
       if (cmp !== 0) return cmp;

@@ -3,37 +3,50 @@ import type { LeadRow } from "@/lib/leads/types";
 import type { SaleRow } from "./types";
 
 /**
- * Rankea TODAS las ventas del input por bucket (team_member, launch_of_lead),
+ * Rankea TODAS las ventas del input por bucket (dueño_del_lead, launch_of_lead),
  * ordenado por `closed_at` asc (empate: `created_at` asc). Devuelve un Map
  * sale_id → rank 0-based.
  *
  * Decisiones:
- *   - El launch del bucket viene del LEAD (las sales no guardan launch).
- *   - Ventas sin team_member NO entran al ranking (no se imputan a nadie).
+ *   - El dueño Y el launch del bucket vienen del LEAD. La venta tiene su
+ *     propio `team_member_id` denormalizado, pero NO es fuente de verdad.
+ *     El Leaderboard y el PDF de comisiones agrupan por dueño del lead;
+ *     este ranking matchea esa partición.
+ *   - Las sales cuyo lead no tiene dueño asignado caen en el bucket
+ *     `null|launch_of_lead` — rankean entre ellas para que la fila
+ *     "Sin asignar" del LB muestre su comisión teórica con tiers aplicados.
  *   - El ranking se calcula sobre el universo crudo de ventas — filtros de
  *     fecha o launch del UI no deben modificar la posición histórica de la
  *     venta. La marginal por tier es propiedad de la venta, no del filtro.
  */
 export function buildSaleRanks(
   sales: ReadonlyArray<SaleRow>,
-  leads: ReadonlyArray<Pick<LeadRow, "id" | "launch_id">>,
+  leads: ReadonlyArray<Pick<LeadRow, "id" | "team_member_id" | "launch_id">>,
 ): Map<string, number> {
+  return buildSaleRanksFromLaunchMap(sales, leads);
+}
+
+/**
+ * Variante con la misma firma — antes existía un overload que tomaba
+ * `Map<lead_id, launch_id>`, pero el bucket ahora necesita también el dueño
+ * del lead, así que recibir `leads` directo es más simple y honesto.
+ */
+export function buildSaleRanksFromLaunchMap(
+  sales: ReadonlyArray<SaleRow>,
+  leads: ReadonlyArray<Pick<LeadRow, "id" | "team_member_id" | "launch_id">>,
+): Map<string, number> {
+  const ownerByLead = new Map<string, string | null>(
+    leads.map((l) => [l.id, l.team_member_id]),
+  );
   const launchByLead = new Map<string, string | null>(
     leads.map((l) => [l.id, l.launch_id]),
   );
-  return buildSaleRanksFromLaunchMap(sales, launchByLead);
-}
 
-/** Variante para call sites que ya armaron el map lead→launch. */
-export function buildSaleRanksFromLaunchMap(
-  sales: ReadonlyArray<SaleRow>,
-  launchByLead: Map<string, string | null>,
-): Map<string, number> {
   const buckets = new Map<string, SaleRow[]>();
   for (const s of sales) {
-    if (!s.team_member_id) continue;
-    const launchOfLead = launchByLead.get(s.lead_id) ?? null;
-    const key = `${s.team_member_id}|${launchOfLead ?? ""}`;
+    const owner = ownerByLead.get(s.lead_id) ?? null;
+    const launch = launchByLead.get(s.lead_id) ?? null;
+    const key = `${owner ?? ""}|${launch ?? ""}`;
     const arr = buckets.get(key);
     if (arr) arr.push(s);
     else buckets.set(key, [s]);

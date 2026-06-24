@@ -50,6 +50,12 @@ export function PayoutsModal({
 
   const launchNameById = new Map(launches.map((l) => [l.id, l.name]));
 
+  // El caller (LeaderboardTable) sólo renderiza este modal cuando la fila
+  // pertenece a un miembro nombrado — la fila "Sin asignar" no tiene botón
+  // Pagos. Estrechamos el tipo acá para no esparcir `!` por el JSX.
+  if (!row.teamMember) return null;
+  const member = row.teamMember;
+
   const filtered =
     activeLaunchId && !showAll
       ? payouts.filter((p) => p.launch_id === activeLaunchId)
@@ -78,7 +84,7 @@ export function PayoutsModal({
             <header className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
               <div>
                 <h3 className="text-lg font-bold text-fg">
-                  Pagos a {row.teamMember.name}
+                  Pagos a {member.name}
                 </h3>
                 <p className="mt-0.5 text-xs text-fg-subtle">
                   {activeLaunchId
@@ -103,7 +109,7 @@ export function PayoutsModal({
                 <PayoutForm
                   defaultLaunchId={activeLaunchId}
                   launches={launches}
-                  teamMemberId={row.teamMember.id}
+                  teamMemberId={member.id}
                   createPayoutAction={createPayoutAction}
                 />
               )}

@@ -73,8 +73,11 @@ export function LeaderboardTable({
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   const sorted = useMemo(() => {
-    const copy = [...rows];
-    copy.sort((a, b) => {
+    // "Sin asignar" (teamMember = null) se ancla al final siempre, sin
+    // importar el sort. Es una fila informativa: no compite por ranking.
+    const named = rows.filter((r) => r.teamMember !== null);
+    const unassigned = rows.filter((r) => r.teamMember === null);
+    named.sort((a, b) => {
       const va = readValue(a, sortKey);
       const vb = readValue(b, sortKey);
       if (typeof va === "string" && typeof vb === "string") {
@@ -84,7 +87,7 @@ export function LeaderboardTable({
       const nb = Number(vb);
       return sortDir === "asc" ? na - nb : nb - na;
     });
-    return copy;
+    return [...named, ...unassigned];
   }, [rows, sortKey, sortDir]);
 
   function clickHeader(key: SortKey) {
@@ -135,64 +138,89 @@ export function LeaderboardTable({
           </tr>
         </thead>
         <tbody>
-          {sorted.map((row, idx) => (
-            <tr
-              key={row.teamMember.id}
-              className="border-t border-border transition-colors hover:bg-surface"
-            >
-              <td className="px-4 py-3 tabular-nums text-fg-subtle">
-                {idx + 1}
-              </td>
-              <td className="px-4 py-3">
-                <div className="font-medium text-fg">{row.teamMember.name}</div>
-                <div className="text-xs text-fg-subtle">
-                  {labelForRole(row.teamMember.role)}
-                  {!row.teamMember.active && " · inactivo"}
-                </div>
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums text-fg-muted">
-                {fmtNumber(row.leadsWorked)}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums text-fg">
-                {fmtNumber(row.closed)}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums text-fg-muted">
-                {fmtPercent(row.conversionRate)}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums text-fg">
-                {fmtMoney(row.revenueCollected)}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums font-bold text-accent">
-                {fmtMoney(row.commissionAccrued)}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums text-fg-muted">
-                {fmtMoney(row.paidOut)}
-              </td>
-              <td
+          {sorted.map((row, idx) => {
+            const isUnassigned = row.teamMember === null;
+            return (
+              <tr
+                key={row.teamMember?.id ?? "__unassigned__"}
                 className={
-                  "px-4 py-3 text-right tabular-nums font-medium " +
-                  (row.pending > 0
-                    ? "text-warning"
-                    : row.pending < 0
-                      ? "text-error"
-                      : "text-success")
+                  "border-t border-border transition-colors hover:bg-surface " +
+                  (isUnassigned ? "bg-surface/40" : "")
                 }
               >
-                {fmtMoney(row.pending)}
-              </td>
-              <td className="px-4 py-3 text-right">
-                <PayoutsModal
-                  row={row}
-                  payouts={payoutsByMember[row.teamMember.id] ?? []}
-                  launches={launches}
-                  activeLaunchId={activeLaunchId}
-                  canEdit={canEdit}
-                  createPayoutAction={createPayoutAction}
-                  deletePayoutAction={deletePayoutAction}
-                />
-              </td>
-            </tr>
-          ))}
+                <td className="px-4 py-3 tabular-nums text-fg-subtle">
+                  {isUnassigned ? "—" : idx + 1}
+                </td>
+                <td className="px-4 py-3">
+                  {row.teamMember ? (
+                    <>
+                      <div className="font-medium text-fg">
+                        {row.teamMember.name}
+                      </div>
+                      <div className="text-xs text-fg-subtle">
+                        {labelForRole(row.teamMember.role)}
+                        {!row.teamMember.active && " · inactivo"}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="font-medium italic text-fg-muted">
+                        Sin asignar
+                      </div>
+                      <div className="text-xs text-fg-subtle">
+                        Leads y ventas sin setter
+                      </div>
+                    </>
+                  )}
+                </td>
+                <td className="px-4 py-3 text-right tabular-nums text-fg-muted">
+                  {fmtNumber(row.leadsWorked)}
+                </td>
+                <td className="px-4 py-3 text-right tabular-nums text-fg">
+                  {fmtNumber(row.closed)}
+                </td>
+                <td className="px-4 py-3 text-right tabular-nums text-fg-muted">
+                  {fmtPercent(row.conversionRate)}
+                </td>
+                <td className="px-4 py-3 text-right tabular-nums text-fg">
+                  {fmtMoney(row.revenueCollected)}
+                </td>
+                <td className="px-4 py-3 text-right tabular-nums font-bold text-accent">
+                  {fmtMoney(row.commissionAccrued)}
+                </td>
+                <td className="px-4 py-3 text-right tabular-nums text-fg-muted">
+                  {isUnassigned ? "—" : fmtMoney(row.paidOut)}
+                </td>
+                <td
+                  className={
+                    "px-4 py-3 text-right tabular-nums font-medium " +
+                    (isUnassigned
+                      ? "text-fg-subtle"
+                      : row.pending > 0
+                        ? "text-warning"
+                        : row.pending < 0
+                          ? "text-error"
+                          : "text-success")
+                  }
+                >
+                  {isUnassigned ? "—" : fmtMoney(row.pending)}
+                </td>
+                <td className="px-4 py-3 text-right">
+                  {row.teamMember ? (
+                    <PayoutsModal
+                      row={row}
+                      payouts={payoutsByMember[row.teamMember.id] ?? []}
+                      launches={launches}
+                      activeLaunchId={activeLaunchId}
+                      canEdit={canEdit}
+                      createPayoutAction={createPayoutAction}
+                      deletePayoutAction={deletePayoutAction}
+                    />
+                  ) : null}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -200,7 +228,7 @@ export function LeaderboardTable({
 }
 
 function readValue(row: LeaderboardRow, key: SortKey): number | string {
-  if (key === "name") return row.teamMember.name.toLowerCase();
+  if (key === "name") return row.teamMember?.name.toLowerCase() ?? "";
   return row[key];
 }
 
