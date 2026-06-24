@@ -150,7 +150,7 @@ describe("aggregateLeaderboard — sin filtros", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.leadsWorked).toBe(3);
     expect(rows[0]!.closed).toBe(1);
-    expect(rows[0]!.conversionRate).toBeCloseTo(1 / 3);
+    expect(rows[0]!.conversionRate).toBeCloseTo((1 / 3) * 100);
     expect(rows[0]!.revenueCollected).toBe(500);
     expect(rows[0]!.commissionAccrued).toBe(50);
   });

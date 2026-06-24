@@ -34,7 +34,7 @@ export interface LeaderboardRow {
   leadsWorked: number;
   /** Leads del miembro con `status='cerrado'` (alineado con el Kanban). */
   closed: number;
-  /** closed / leadsWorked. 0 si leadsWorked == 0. */
+  /** (closed / leadsWorked) * 100 — porcentaje 0-100. 0 si leadsWorked == 0. */
   conversionRate: number;
   /** Suma de cobros (sum payments.amount) de las ventas que entraron. */
   revenueCollected: number;
@@ -180,8 +180,10 @@ export function aggregateLeaderboard(input: {
       : 0;
 
     const closed = memberLeads.filter((l) => l.status === "cerrado").length;
+    // Porcentaje 0-100 — `fmtPercent` no multiplica, espera el valor ya
+    // escalado (igual que showRate/closeRate en kpis.ts).
     const conversionRate =
-      memberLeads.length === 0 ? 0 : closed / memberLeads.length;
+      memberLeads.length === 0 ? 0 : (closed / memberLeads.length) * 100;
 
     return {
       teamMember,
