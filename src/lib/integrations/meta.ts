@@ -429,9 +429,9 @@ export interface MetaLead {
 export interface MetaLeadsSuccess {
   ok: true;
   rows: MetaLead[];
-  /** Cuántas ads se barrieron (telemetría del run). */
-  adsScanned: number;
-  /** True si alguna ad tocó el tope `MAX_PAGES` y truncó la paginación. */
+  /** Cuántos formularios se barrieron (telemetría del run). */
+  formsScanned: number;
+  /** True si algún form tocó el tope `LEADS_MAX_PAGES_PER_FORM` y truncó. */
   hitMaxPages: boolean;
 }
 export type MetaLeadsResult = MetaLeadsSuccess | MetaSyncFailure;
@@ -584,66 +584,113 @@ export interface FetchMetaLeadsArgs {
   until: string;
 }
 
-const LEADS_MAX_PAGES_PER_AD = 30;
+// Cap: 100 páginas × `limit=200` = 20k leads por form. Subido de 30 → 100
+// tras ver runs reales con forms de >6k leads en la ventana del launch (cliente
+// mexicano de alto volumen). 100 da headroom para 700 leads/día en un launch
+// de un mes sin truncar.
+const LEADS_MAX_PAGES_PER_FORM = 100;
 
 /**
  * Trae los leads individuales de las campañas del launch.
  *
- * Strategy:
- *  1) Por cada campaign: `GET /{campaign_id}/ads?fields=id,name&limit=100`.
- *  2) Por cada ad: `GET /{ad_id}/leads?fields=...&limit=100`, siguiendo
- *     `paging.next` hasta agotar o tocar `LEADS_MAX_PAGES_PER_AD`.
- *  3) Filtrar client-side por `created_time ∈ [since, until]` — el endpoint
- *     `/leads` no acepta filter server-side confiable (Meta dropea results
- *     silenciosamente con algunas combinaciones).
- *  4) Dedup por `leadgen_id` — el mismo lead puede aparecer si dos ads usan
- *     el mismo form (raro, pero posible).
+ * Strategy form-based (post Fase C iteración rate-limit):
+ *  1) `GET /me/accounts?fields=id` → IDs de Pages que el System User ve.
+ *  2) Por cada Page: `GET /{page_id}/leadgen_forms?fields=id&limit=100`
+ *     siguiendo `paging.next` para descubrir TODOS los forms de esa Page.
+ *  3) Por cada form único: `GET /{form_id}/leads?filtering=[time_created>=since]`
+ *     con `limit=200`, siguiendo `paging.next` hasta agotar o tocar
+ *     `LEADS_MAX_PAGES_PER_FORM`.
+ *  4) Filtrar leads por `campaign_id ∈ args.campaignIds` (un form puede
+ *     servir a varios launches que compartan cuenta).
+ *  5) Filtrar también por `created_time <= until` (server filtra `>= since`).
+ *  6) Dedup por `leadgen_id`.
  *
- * No usa el token del System User para `/leads` solamente — el endpoint
- * requiere `leads_retrieval` o `pages_manage_ads` en el token. Ver el
- * manual de Meta. Si falla con permission error, propaga el error tal cual.
+ * Por qué form-based en vez de ad-based: un launch con 7 ads × 30 páginas
+ * de leads c/u = 210 calls contra el bucket Marketing API → code 17 rate
+ * limit. Iterar por formularios (típicamente 1-5 por launch) baja a ~5-15
+ * calls, y el filtro server-side `time_created >= since` corta la
+ * paginación a casi nada para launches recientes. Además los endpoints
+ * `/{form_id}/leads` cuentan contra el bucket Pages API, distinto del de
+ * Marketing → no se acumula con el sync de Insights.
+ *
+ * El endpoint requiere `leads_retrieval` o `pages_manage_ads` en el token
+ * + Page asignada como activo del System User con task `MANAGE_LEADS`. Si
+ * falla con permission error, propaga el error tal cual.
  */
 export async function fetchMetaLeads(
   args: FetchMetaLeadsArgs,
 ): Promise<MetaLeadsResult> {
   if (args.campaignIds.length === 0) {
-    return { ok: true, rows: [], adsScanned: 0, hitMaxPages: false };
+    return { ok: true, rows: [], formsScanned: 0, hitMaxPages: false };
+  }
+
+  // 1) Discover Pages via /me/accounts. Pedimos `access_token` también: los
+  // endpoints `/{page_id}/leadgen_forms` y `/{form_id}/leads` exigen Page
+  // Access Token (Meta error #190 si los llamás con el User token). Los Page
+  // Tokens vienen derivados del System User → no vencen mientras el User
+  // token esté vivo.
+  const pagesRes = await fetchAndParseJson(buildMyAccountsUrl(args.token));
+  if (!pagesRes.ok) return pagesRes;
+  const pages = extractPages(pagesRes.body);
+  if (pages.length === 0) {
+    return { ok: true, rows: [], formsScanned: 0, hitMaxPages: false };
   }
 
   const sinceMs = Date.parse(`${args.since}T00:00:00.000Z`);
   const untilMs = Date.parse(`${args.until}T23:59:59.999Z`);
+  const sinceUnix = Math.floor(sinceMs / 1000);
+  const campaignIdSet = new Set(args.campaignIds);
   const byLeadgenId = new Map<string, MetaLead>();
-  let adsScanned = 0;
+  const seenFormIds = new Set<string>();
   let hitMaxPages = false;
 
-  for (const campaignId of args.campaignIds) {
-    const adsUrl = buildCampaignAdsUrl(campaignId, args.token);
-    const adsRes = await fetchAndParseJson(adsUrl);
-    if (!adsRes.ok) return adsRes;
-    const data = (adsRes.body as { data?: unknown }).data;
-    if (!Array.isArray(data)) continue;
+  // 2-3) Por cada Page → discover forms (con SU Page Token) → leads de cada
+  // form (con el mismo Page Token). Mantenemos el token en scope porque el
+  // form "pertenece" a la Page que lo creó.
+  for (const page of pages) {
+    const formIdsThisPage: string[] = [];
+    let formsUrl: string | null = buildLeadgenFormsUrl(
+      page.id,
+      page.accessToken,
+    );
+    while (formsUrl !== null) {
+      const formsRes = await fetchAndParseJson(formsUrl);
+      if (!formsRes.ok) return formsRes;
+      for (const id of extractFormIds(formsRes.body)) {
+        if (!seenFormIds.has(id)) {
+          seenFormIds.add(id);
+          formIdsThisPage.push(id);
+        }
+      }
+      formsUrl = extractNextPage(formsRes.body);
+    }
 
-    for (const a of data) {
-      if (typeof a !== "object" || a === null) continue;
-      const adId = (a as { id?: unknown }).id;
-      if (typeof adId !== "string" || adId.length === 0) continue;
-      adsScanned++;
-
-      let nextUrl: string | null = buildAdLeadsUrl(adId, args.token);
-      let page = 0;
+    for (const formId of formIdsThisPage) {
+      let nextUrl: string | null = buildFormLeadsUrl(
+        formId,
+        page.accessToken,
+        sinceUnix,
+      );
+      let pg = 0;
       while (nextUrl !== null) {
-        if (page >= LEADS_MAX_PAGES_PER_AD) {
+        if (pg >= LEADS_MAX_PAGES_PER_FORM) {
           hitMaxPages = true;
           break;
         }
-        page++;
+        pg++;
         const pageRes = await fetchAndParseJson(nextUrl);
         if (!pageRes.ok) return pageRes;
         const leads = parseLeadsBody(pageRes.body);
         for (const lead of leads) {
+          // Filtro de campaña: el form puede servir leads de otros launches
+          // en la misma cuenta. Si no sabemos a qué campaña pertenece,
+          // descartamos por seguridad (no atribuir a este launch sin
+          // evidencia).
+          if (!lead.campaignId || !campaignIdSet.has(lead.campaignId)) continue;
           const t = Date.parse(lead.createdTime);
           if (!Number.isFinite(t)) continue;
-          if (t < sinceMs || t > untilMs) continue;
+          // since ya filtrado server-side; verificamos until client-side.
+          if (t > untilMs) continue;
           if (byLeadgenId.has(lead.leadgenId)) continue;
           byLeadgenId.set(lead.leadgenId, lead);
         }
@@ -655,28 +702,89 @@ export async function fetchMetaLeads(
   return {
     ok: true,
     rows: Array.from(byLeadgenId.values()),
-    adsScanned,
+    formsScanned: seenFormIds.size,
     hitMaxPages,
   };
 }
 
-function buildCampaignAdsUrl(campaignId: string, token: string): string {
+function buildMyAccountsUrl(token: string): string {
   const p = new URLSearchParams({
-    fields: "id,name",
+    // Meta devuelve un Page Access Token derivado del System User en
+    // `access_token` cuando lo pedís explícito. Sin este field, no viene.
+    fields: "id,access_token",
     limit: "100",
     access_token: token,
   });
-  return `${META_API_BASE}/${campaignId}/ads?${p.toString()}`;
+  return `${META_API_BASE}/me/accounts?${p.toString()}`;
 }
 
-function buildAdLeadsUrl(adId: string, token: string): string {
+function buildLeadgenFormsUrl(pageId: string, token: string): string {
+  const p = new URLSearchParams({
+    fields: "id,name,status",
+    limit: "100",
+    access_token: token,
+  });
+  return `${META_API_BASE}/${pageId}/leadgen_forms?${p.toString()}`;
+}
+
+function buildFormLeadsUrl(
+  formId: string,
+  token: string,
+  sinceUnix: number,
+): string {
   const p = new URLSearchParams({
     fields:
       "id,created_time,field_data,form_id,ad_id,ad_name,campaign_id,campaign_name,adset_id",
-    limit: "100",
+    limit: "200",
+    filtering: JSON.stringify([
+      {
+        field: "time_created",
+        operator: "GREATER_THAN_OR_EQUAL",
+        value: sinceUnix,
+      },
+    ]),
     access_token: token,
   });
-  return `${META_API_BASE}/${adId}/leads?${p.toString()}`;
+  return `${META_API_BASE}/${formId}/leads?${p.toString()}`;
+}
+
+interface PageRef {
+  id: string;
+  accessToken: string;
+}
+
+function extractPages(body: unknown): PageRef[] {
+  if (typeof body !== "object" || body === null) return [];
+  const data = (body as { data?: unknown }).data;
+  if (!Array.isArray(data)) return [];
+  const out: PageRef[] = [];
+  for (const p of data) {
+    if (typeof p !== "object" || p === null) continue;
+    const id = (p as { id?: unknown }).id;
+    const accessToken = (p as { access_token?: unknown }).access_token;
+    if (
+      typeof id === "string" &&
+      id.length > 0 &&
+      typeof accessToken === "string" &&
+      accessToken.length > 0
+    ) {
+      out.push({ id, accessToken });
+    }
+  }
+  return out;
+}
+
+function extractFormIds(body: unknown): string[] {
+  if (typeof body !== "object" || body === null) return [];
+  const data = (body as { data?: unknown }).data;
+  if (!Array.isArray(data)) return [];
+  const out: string[] = [];
+  for (const f of data) {
+    if (typeof f !== "object" || f === null) continue;
+    const id = (f as { id?: unknown }).id;
+    if (typeof id === "string" && id.length > 0) out.push(id);
+  }
+  return out;
 }
 
 /**

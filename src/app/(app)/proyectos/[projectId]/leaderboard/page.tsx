@@ -71,6 +71,24 @@ export default async function LeaderboardPage({
     userCanEditLaunchesIn(projectId),
   ]);
 
+  // TEMP DIAG — quitar después del fix del leaderboard.
+  const cerrados = leads.filter((l) => l.status === "cerrado");
+  const cerradosConSetter = cerrados.filter((l) => l.team_member_id);
+  const teamMemberIds = new Set(teamMembers.map((t) => t.id));
+  const cerradosConSetterValido = cerrados.filter(
+    (l) => l.team_member_id && teamMemberIds.has(l.team_member_id),
+  );
+  console.log("[leaderboard DIAG]", {
+    leads_total: leads.length,
+    cerrados_total: cerrados.length,
+    cerrados_con_setter: cerradosConSetter.length,
+    cerrados_setter_match_teamMembers: cerradosConSetterValido.length,
+    team_members_total: teamMembers.length,
+    filter_launchId: launchId || null,
+    filter_dateFrom: dateFrom || null,
+    filter_dateTo: dateTo || null,
+  });
+
   // listPaymentModalities solo lo necesitamos si quisiéramos mostrar regla por
   // miembro. Para esta versión no — el agregador deriva todo internamente.
   void listPaymentModalities;

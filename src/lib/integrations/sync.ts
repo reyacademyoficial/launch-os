@@ -394,7 +394,7 @@ export async function syncLaunch(
       skipped_idempotent: leadsSync.skippedIdempotent,
       skipped_duplicate_cross_source: leadsSync.skippedDuplicate,
       without_contact_info: leadsSync.withoutContactInfo,
-      ads_scanned: leadsSync.adsScanned,
+      forms_scanned: leadsSync.formsScanned,
       form_ids_to_review: leadsSync.formIdsToReview,
     };
     rowsWritten += leadsSync.created;
@@ -1319,7 +1319,7 @@ type MetaLeadsSyncResult =
       skippedDuplicate: number;
       /** Leads sin email ni teléfono — se crean igual (no se descarta nada). */
       withoutContactInfo: number;
-      adsScanned: number;
+      formsScanned: number;
       hitMaxPages: boolean;
       /**
        * Form ids cuyos leads no tuvieron email ni phone — para que el
@@ -1384,8 +1384,12 @@ async function syncMetaLeads(args: {
     phoneNormalized: normalize(lead.rawPhone, undefined),
   }));
 
-  // Bulk lookups para dedup. Las 3 queries son independientes → Promise.all.
-  const externalIds = prepared.map((p) => p.lead.leadgenId);
+  // Bulk lookups para dedup, chunkados a 500 ids por query. PostgREST tiene
+  // un límite práctico al `.in()` (URL longitud + parser); con 6000+ leadgen
+  // ids el query venía TRUNCADO y los faltantes terminaban en el insert con
+  // 23505 contra `leads_external_id_unique_idx`. Lo mismo aplica a email y
+  // phone.
+  const externalIds = uniqueStrings(prepared.map((p) => p.lead.leadgenId));
   const emails = uniqueStrings(
     prepared
       .map((p) => p.normalizedEmail)
@@ -1397,52 +1401,36 @@ async function syncMetaLeads(args: {
       .filter((p): p is string => p !== null),
   );
 
-  const [byExtIdRes, byEmailRes, byPhoneRes] = await Promise.all([
-    externalIds.length > 0
-      ? loose(args.service)
-          .from("leads")
-          .select("external_id")
-          .eq("project_id", args.projectId)
-          .eq("source", "meta")
-          .in("external_id", externalIds)
-      : Promise.resolve({ data: [] as Array<{ external_id: string }> }),
-    emails.length > 0
-      ? loose(args.service)
-          .from("leads")
-          .select("email")
-          .eq("project_id", args.projectId)
-          .in("email", emails)
-      : Promise.resolve({ data: [] as Array<{ email: string }> }),
-    phones.length > 0
-      ? loose(args.service)
-          .from("leads")
-          .select("phone_normalized")
-          .eq("project_id", args.projectId)
-          .in("phone_normalized", phones)
-      : Promise.resolve({ data: [] as Array<{ phone_normalized: string }> }),
-  ]);
-
-  const existingExtIds = new Set(
-    ((byExtIdRes.data ?? []) as Array<{ external_id: string }>).map(
-      (r) => r.external_id,
+  const [existingExtIds, existingEmails, existingPhones] = await Promise.all([
+    bulkLookupColumn(args.service, args.projectId, "external_id", externalIds, {
+      source: "meta",
+    }),
+    bulkLookupColumn(args.service, args.projectId, "email", emails, {
+      caseInsensitive: true,
+    }),
+    bulkLookupColumn(
+      args.service,
+      args.projectId,
+      "phone_normalized",
+      phones,
+      {},
     ),
-  );
-  const existingEmails = new Set(
-    ((byEmailRes.data ?? []) as Array<{ email: string | null }>)
-      .map((r) => (r.email ?? "").toLowerCase().trim())
-      .filter((e) => e.length > 0),
-  );
-  const existingPhones = new Set(
-    ((byPhoneRes.data ?? []) as Array<{ phone_normalized: string | null }>)
-      .map((r) => r.phone_normalized)
-      .filter((p): p is string => p !== null && p.length > 0),
-  );
+  ]);
 
   let skippedIdempotent = 0;
   let skippedDuplicate = 0;
   let withoutContactInfo = 0;
   const formIdsWithoutContact = new Set<string>();
   const toCreate: Record<string, unknown>[] = [];
+
+  // Dedup intra-batch: dos leads del fetch pueden compartir teléfono o
+  // email (mismo lead con el form abierto dos veces, o varias personas
+  // con el mismo número de un familiar). El index único de DB
+  // (`leads_phone_normalized_unique_idx`) los rechazaría a mitad del
+  // insert. Llevamos sets en memoria que crecen a medida que decidimos
+  // crear, y skippeamos colisiones contra los ya elegidos.
+  const seenEmailsInBatch = new Set<string>();
+  const seenPhonesInBatch = new Set<string>();
 
   for (const p of prepared) {
     const lead = p.lead;
@@ -1458,6 +1446,18 @@ async function syncMetaLeads(args: {
       skippedDuplicate++;
       continue;
     }
+    // Intra-batch dedup
+    if (p.normalizedEmail && seenEmailsInBatch.has(p.normalizedEmail)) {
+      skippedDuplicate++;
+      continue;
+    }
+    if (p.phoneNormalized && seenPhonesInBatch.has(p.phoneNormalized)) {
+      skippedDuplicate++;
+      continue;
+    }
+    if (p.normalizedEmail) seenEmailsInBatch.add(p.normalizedEmail);
+    if (p.phoneNormalized) seenPhonesInBatch.add(p.phoneNormalized);
+
     if (!p.normalizedEmail && !p.phoneNormalized) {
       withoutContactInfo++;
       if (lead.formId) formIdsWithoutContact.add(lead.formId);
@@ -1511,7 +1511,7 @@ async function syncMetaLeads(args: {
     skippedIdempotent,
     skippedDuplicate,
     withoutContactInfo,
-    adsScanned: fetched.adsScanned,
+    formsScanned: fetched.formsScanned,
     hitMaxPages: fetched.hitMaxPages,
     formIdsToReview: Array.from(formIdsWithoutContact),
   };
@@ -1542,6 +1542,42 @@ function chunkArr<T>(arr: ReadonlyArray<T>, size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
+}
+
+const LEADS_LOOKUP_CHUNK_SIZE = 500;
+
+/**
+ * Bulk lookup chunkado de una columna escalar (email / phone_normalized /
+ * external_id) en `leads`. Chunkea por `LEADS_LOOKUP_CHUNK_SIZE` para no
+ * pasar el tope práctico de PostgREST al `.in()`. Devuelve un Set con los
+ * valores ENCONTRADOS en DB. `caseInsensitive` lowercased en JS (PostgREST
+ * no expone `ilike` con `.in()`); útil para email.
+ */
+async function bulkLookupColumn(
+  service: ServiceClient,
+  projectId: string,
+  column: "email" | "phone_normalized" | "external_id",
+  values: ReadonlyArray<string>,
+  opts: { source?: string; caseInsensitive?: boolean },
+): Promise<Set<string>> {
+  const found = new Set<string>();
+  if (values.length === 0) return found;
+  for (const slice of chunkArr(values, LEADS_LOOKUP_CHUNK_SIZE)) {
+    let q = loose(service)
+      .from("leads")
+      .select(column)
+      .eq("project_id", projectId)
+      .in(column, slice);
+    if (opts.source !== undefined) q = q.eq("source", opts.source);
+    const res = await q;
+    const rows = (res.data ?? []) as Array<Record<string, string | null>>;
+    for (const r of rows) {
+      const v = r[column];
+      if (typeof v !== "string" || v.length === 0) continue;
+      found.add(opts.caseInsensitive ? v.toLowerCase().trim() : v);
+    }
+  }
+  return found;
 }
 
 // ─── 7a — notificaciones de sistema ─────────────────────────────────────────
