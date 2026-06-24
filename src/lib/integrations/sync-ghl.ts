@@ -203,6 +203,12 @@ interface GhlRunMeta {
    * Cap de 20 para evitar inflar la respuesta.
    */
   unmapped_ghl_user_ids: string[];
+  /**
+   * Leads cuyo `team_member_id` se rellenó a partir de `opp.assignedTo` +
+   * mapping (cuando el contact no traía assignedTo pero la opp sí). Respeta
+   * "manual gana": solo escribe donde estaba NULL.
+   */
+  opp_assignments_propagated: number;
 }
 
 export interface RunGhlSyncArgs {
@@ -696,6 +702,19 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   // `syncOpportunities` devuelve counts en cero — no toca DB.
   const opportunitiesCounts = await syncOpportunities(args, opportunitiesRows);
 
+  // 9) Propagar `opp.assignedTo` → `lead.team_member_id`. En setups con
+  // workflow ("cuando contacto escribe por WhatsApp asignar a usuario X"),
+  // la asignación queda en la opportunity, NO en el contact. Sin esta pasada
+  // los leads quedan sin setter aunque ya tenemos el dato en
+  // `launch_opportunities.assigned_to_ghl_user`. Respetamos "manual gana":
+  // solo escribimos donde `team_member_id IS NULL`.
+  const oppAssignmentsPropagated = await propagateOpportunityAssignments({
+    service: args.service,
+    projectId: args.projectId,
+    opportunities: opportunitiesRows,
+    mappings,
+  });
+
   // Bug 3 fix — `hit_max_pages` antes era una flag enterrada en meta y el run
   // cerraba como `success` aunque hubiéramos truncado. Ahora cualquier
   // endpoint paginado que tocó techo arrastra el run a `partial`, con la lista
@@ -728,6 +747,7 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     },
     mappings_applied: mappingsApplied,
     unmapped_ghl_user_ids: Array.from(unmappedGhlUserIds),
+    opp_assignments_propagated: oppAssignmentsPropagated,
   };
 
   if (hitMaxPages.length > 0) {
@@ -1197,6 +1217,92 @@ export function resolveTeamMemberAssignment(
   if (existing && existing.team_member_id) return undefined;
   if (!fromApi) return undefined;
   return fromApi;
+}
+
+/**
+ * Dedup de opportunities por `contactId`: si un contact tiene varias opps
+ * con `assignedTo` poblado, nos quedamos con la más reciente por
+ * `updatedAt`. Opps sin `contactId` o sin `assignedTo` se descartan.
+ *
+ * Pura — testeable sin DB.
+ */
+export function selectBestOppByContact(
+  opps: ReadonlyArray<GhlOpportunity>,
+): Map<string, GhlOpportunity> {
+  const out = new Map<string, GhlOpportunity>();
+  for (const opp of opps) {
+    if (!opp.contactId || !opp.assignedTo) continue;
+    const prev = out.get(opp.contactId);
+    if (!prev) {
+      out.set(opp.contactId, opp);
+      continue;
+    }
+    const a = opp.updatedAt ? Date.parse(opp.updatedAt) : 0;
+    const b = prev.updatedAt ? Date.parse(prev.updatedAt) : 0;
+    if (Number.isFinite(a) && Number.isFinite(b) && a > b) {
+      out.set(opp.contactId, opp);
+    }
+  }
+  return out;
+}
+
+/**
+ * Para cada opp con `assignedTo` mapeable, UPDATE el lead correspondiente
+ * (matched por `external_id = contact_external_id`) seteando
+ * `team_member_id` SOLO si está NULL. Manual gana: si el operador asignó
+ * a mano, no se pisa.
+ *
+ * Por qué NO filtramos por `source='ghl'`: un lead puede haber entrado por
+ * Meta primero (source='meta'), y un sync de GHL posterior lo matcheó por
+ * teléfono → re-vinculó `external_id` al contact id de GHL pero `source`
+ * quedó 'meta'. Esos leads igual son la misma persona; el filtro de source
+ * los excluía y dejaba el rellenado en 0. La condición real es
+ * "external_id == contact_external_id AND team_member_id IS NULL", sin
+ * importar la source original.
+ *
+ * Agrupamos por team_member_id para hacer 1 query por setter (no 1 por
+ * lead) — un UPDATE con `external_id IN (...)`. Chunkeamos a 500 ids por
+ * query por límite de URL length de PostgREST.
+ *
+ * Errores no abortan el sync: si el UPDATE de un setter falla, los demás
+ * siguen. La idea es maximizar el rellenado, no atomicidad.
+ */
+async function propagateOpportunityAssignments(args: {
+  service: ServiceClient;
+  projectId: string;
+  opportunities: ReadonlyArray<GhlOpportunity>;
+  mappings: Map<string, string>;
+}): Promise<number> {
+  if (args.opportunities.length === 0) return 0;
+  const bestByContact = selectBestOppByContact(args.opportunities);
+  if (bestByContact.size === 0) return 0;
+
+  // Agrupar contactIds por team_member_id (= 1 query por setter, no por lead)
+  const contactIdsByTeamMember = new Map<string, string[]>();
+  for (const [contactId, opp] of bestByContact) {
+    const tm = args.mappings.get(opp.assignedTo!);
+    if (!tm) continue;
+    const arr = contactIdsByTeamMember.get(tm);
+    if (arr) arr.push(contactId);
+    else contactIdsByTeamMember.set(tm, [contactId]);
+  }
+  if (contactIdsByTeamMember.size === 0) return 0;
+
+  let updated = 0;
+  for (const [teamMemberId, contactIds] of contactIdsByTeamMember) {
+    for (const slice of chunk(contactIds, 500)) {
+      const res = await loose(args.service)
+        .from("leads")
+        .update({ team_member_id: teamMemberId })
+        .eq("project_id", args.projectId)
+        .in("external_id", slice)
+        .is("team_member_id", null)
+        .select("id");
+      if (res.error) continue;
+      updated += ((res.data ?? []) as unknown[]).length;
+    }
+  }
+  return updated;
 }
 
 function buildAppointmentNotes(e: GhlAppointment): string | null {
