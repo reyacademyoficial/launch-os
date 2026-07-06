@@ -14,6 +14,9 @@ export function LaunchCalendarTable({
 }: {
   readonly calendar: LaunchCalendar;
 }) {
+  // Evergreen tiene una sola clase — clase2/clase3 llegan en null y se ocultan.
+  const isEvergreen = calendar.consumo.clase2 === null;
+
   const rows: ReadonlyArray<{
     name: string;
     range: string;
@@ -45,19 +48,29 @@ export function LaunchCalendarTable({
       ),
       hint: "Convive con captación, arranca más cerca de la Clase 1",
     },
-    {
-      name: "Consumo · Clase 1",
-      range: fmtDate(calendar.consumo.clase1),
-    },
-    {
-      name: "Consumo · Clase 2",
-      range: fmtDate(calendar.consumo.clase2),
-    },
-    {
-      name: "Consumo · Clase 3",
-      range: fmtDate(calendar.consumo.clase3),
-      hint: "Abre el carrito",
-    },
+    isEvergreen
+      ? {
+          name: "Consumo · Clase única",
+          range: fmtDate(calendar.consumo.clase1),
+          hint: "Evergreen — abre el carrito el mismo día",
+        }
+      : {
+          name: "Consumo · Clase 1",
+          range: fmtDate(calendar.consumo.clase1),
+        },
+    ...(isEvergreen
+      ? []
+      : [
+          {
+            name: "Consumo · Clase 2",
+            range: fmtDate(calendar.consumo.clase2!),
+          },
+          {
+            name: "Consumo · Clase 3",
+            range: fmtDate(calendar.consumo.clase3!),
+            hint: "Abre el carrito",
+          },
+        ]),
     {
       name: "Compra",
       range: rangeLabel(calendar.compra.startDate, calendar.compra.endDate),

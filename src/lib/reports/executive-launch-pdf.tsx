@@ -344,8 +344,10 @@ function Timeline({ calendar }: { calendar: LaunchCalendar }) {
       range: `${fmtDate(calendar.calentamiento.startDate)} → ${fmtDate(calendar.calentamiento.endDate)}`,
     },
     {
-      stage: "Clases",
-      range: `${fmtDate(calendar.consumo.clase1)} · ${fmtDate(calendar.consumo.clase2)} · ${fmtDate(calendar.consumo.clase3)}`,
+      stage: calendar.consumo.clase2 ? "Clases" : "Clase",
+      range: calendar.consumo.clase2
+        ? `${fmtDate(calendar.consumo.clase1)} · ${fmtDate(calendar.consumo.clase2)} · ${fmtDate(calendar.consumo.clase3!)}`
+        : fmtDate(calendar.consumo.clase1),
     },
     {
       stage: "Compra",

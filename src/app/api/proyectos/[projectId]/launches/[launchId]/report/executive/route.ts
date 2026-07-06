@@ -75,6 +75,7 @@ export async function GET(
     durCalentamiento: launch.dur_calentamiento,
     durCompra: launch.dur_compra,
     durCierre: launch.dur_cierre,
+    isEvergreen: launch.is_evergreen,
   });
 
   const input: ExecutiveLaunchInput = {

@@ -86,6 +86,7 @@ export function CalendarSection({
         durCalentamiento: input.durCalentamiento,
         durCompra: input.durCompra,
         durCierre: input.durCierre,
+        isEvergreen: input.isEvergreen,
       }),
     [input],
   );

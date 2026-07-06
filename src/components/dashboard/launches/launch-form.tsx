@@ -104,6 +104,7 @@ export function LaunchForm({
     durCalentamiento,
     durCompra,
     durCierre,
+    isEvergreen,
   });
 
   const showCopyFrom =

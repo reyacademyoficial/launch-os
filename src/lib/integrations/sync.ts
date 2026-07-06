@@ -595,7 +595,7 @@ async function runGhlBranch(args: {
   const launchRowRes = await service
     .from("launches")
     .select(
-      "launch_date, dur_creacion, dur_nutricion, dur_captacion, dur_calentamiento, dur_compra, dur_cierre",
+      "launch_date, dur_creacion, dur_nutricion, dur_captacion, dur_calentamiento, dur_compra, dur_cierre, is_evergreen",
     )
     .eq("id", args.launchId)
     .maybeSingle();
@@ -607,6 +607,7 @@ async function runGhlBranch(args: {
     dur_calentamiento: number;
     dur_compra: number;
     dur_cierre: number;
+    is_evergreen: boolean;
   } | null;
   const calendar = tryComputeLaunchCalendar({
     launchDate: launchRow?.launch_date ?? undefined,
@@ -616,6 +617,7 @@ async function runGhlBranch(args: {
     durCalentamiento: launchRow?.dur_calentamiento,
     durCompra: launchRow?.dur_compra,
     durCierre: launchRow?.dur_cierre,
+    isEvergreen: launchRow?.is_evergreen ?? false,
   });
   const warmWindow = calendar
     ? { start: calendar.compra.startDate, end: calendar.cierre.endDate }

@@ -42,6 +42,12 @@ export interface LaunchCalendarInputs {
   durCalentamiento: number;
   durCompra: number;
   durCierre: number;
+  /**
+   * Un evergreen tiene una única clase de consumo (Clase 1), no las 3 del
+   * lanzamiento en vivo. `clase2`/`clase3` quedan en null y compra arranca
+   * el día de la Clase 1 (que abre el carrito).
+   */
+  isEvergreen?: boolean;
 }
 
 export interface CalendarRange {
@@ -60,10 +66,14 @@ export interface LaunchCalendar {
   nutricion: CalendarRange;
   captacion: CalendarRange;
   calentamiento: CalendarRange;
+  /**
+   * Evergreen tiene una sola clase (clase1). `clase2` y `clase3` son null en
+   * ese caso; los consumidores tienen que fallback a clase1 o esconder la fila.
+   */
   consumo: {
     clase1: string;
-    clase2: string;
-    clase3: string;
+    clase2: string | null;
+    clase3: string | null;
   };
   compra: CalendarRange;
   cierre: CalendarRange;
@@ -133,13 +143,15 @@ export function computeLaunchCalendar(
   const nutricionEnd = creacionEnd;
   const nutricionStart = addDays(captacionStart, -inputs.durNutricion);
 
-  // Consumo: clase1 = L, clase2 = L+1, clase3 = L+2
+  // Consumo: clase1 = L siempre. En un lanzamiento normal hay 3 clases (L,
+  // L+1, L+2); en un evergreen hay una sola y el carrito abre el mismo día.
   const clase1 = L;
-  const clase2 = addDays(L, 1);
-  const clase3 = addDays(L, 2);
+  const clase2 = inputs.isEvergreen ? null : addDays(L, 1);
+  const clase3 = inputs.isEvergreen ? null : addDays(L, 2);
 
-  // Compra: arranca el día de la Clase 3 y dura dur_compra (no inclusivo)
-  const compraStart = clase3;
+  // Compra: arranca el día de la última clase (Clase 3 en normal, Clase 1 en
+  // evergreen) y dura dur_compra (no inclusivo).
+  const compraStart = clase3 ?? clase1;
   const compraEnd = addDays(compraStart, inputs.durCompra);
 
   // Cierre: contiguo a Compra (rezagados), dura dur_cierre (no inclusivo)
@@ -156,7 +168,11 @@ export function computeLaunchCalendar(
       startDate: fmt(calentamientoStart),
       endDate: fmt(calentamientoEnd),
     },
-    consumo: { clase1: fmt(clase1), clase2: fmt(clase2), clase3: fmt(clase3) },
+    consumo: {
+      clase1: fmt(clase1),
+      clase2: clase2 ? fmt(clase2) : null,
+      clase3: clase3 ? fmt(clase3) : null,
+    },
     compra: { startDate: fmt(compraStart), endDate: fmt(compraEnd) },
     cierre: { startDate: fmt(cierreStart), endDate: fmt(cierreEnd) },
   };
@@ -179,5 +195,6 @@ export function tryComputeLaunchCalendar(
       inputs.durCalentamiento ?? DEFAULT_DURATIONS.durCalentamiento,
     durCompra: inputs.durCompra ?? DEFAULT_DURATIONS.durCompra,
     durCierre: inputs.durCierre ?? DEFAULT_DURATIONS.durCierre,
+    isEvergreen: inputs.isEvergreen ?? false,
   });
 }
