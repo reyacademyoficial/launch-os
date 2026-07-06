@@ -44,6 +44,8 @@ function parsePlatforms(formData: FormData): string[] {
 interface LaunchWritePayload {
   name: string;
   launch_date: string | null;
+  dur_creacion: number;
+  dur_nutricion: number;
   dur_captacion: number;
   dur_calentamiento: number;
   dur_compra: number;
@@ -74,8 +76,11 @@ interface LaunchWritePayload {
   recycle_target_launch_id: string | null;
 }
 
-// Defaults espejados con DEFAULT_DURATIONS / la migración 0011. Inline para
-// no arrastrar el módulo del calendario adentro de un archivo "use server".
+// Defaults espejados con DEFAULT_DURATIONS / migraciones del calendario.
+// Inline para no arrastrar el módulo del calendario adentro de un archivo
+// "use server".
+const DEFAULT_DUR_CREACION = 30;
+const DEFAULT_DUR_NUTRICION = 15;
 const DEFAULT_DUR_CAPTACION = 21;
 const DEFAULT_DUR_CALENTAMIENTO = 14;
 const DEFAULT_DUR_COMPRA = 5;
@@ -105,6 +110,12 @@ function parseLaunchFromForm(
     payload: {
       name,
       launch_date: launchDate,
+      dur_creacion: intWithDefault(formData, "dur_creacion", DEFAULT_DUR_CREACION),
+      dur_nutricion: intWithDefault(
+        formData,
+        "dur_nutricion",
+        DEFAULT_DUR_NUTRICION,
+      ),
       dur_captacion: intWithDefault(formData, "dur_captacion", DEFAULT_DUR_CAPTACION),
       dur_calentamiento: intWithDefault(
         formData,

@@ -20,6 +20,19 @@ export function LaunchCalendarTable({
     hint?: string;
   }> = [
     {
+      name: "Creación",
+      range: rangeLabel(calendar.creacion.startDate, calendar.creacion.endDate),
+      hint: "Producción de contenido — termina cuando arranca captación",
+    },
+    {
+      name: "Nutrición",
+      range: rangeLabel(
+        calendar.nutricion.startDate,
+        calendar.nutricion.endDate,
+      ),
+      hint: "Convive con creación, arranca más cerca de captación",
+    },
+    {
       name: "Captación",
       range: rangeLabel(calendar.captacion.startDate, calendar.captacion.endDate),
       hint: "Tráfico pago a leads",

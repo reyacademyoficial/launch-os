@@ -595,12 +595,14 @@ async function runGhlBranch(args: {
   const launchRowRes = await service
     .from("launches")
     .select(
-      "launch_date, dur_captacion, dur_calentamiento, dur_compra, dur_cierre",
+      "launch_date, dur_creacion, dur_nutricion, dur_captacion, dur_calentamiento, dur_compra, dur_cierre",
     )
     .eq("id", args.launchId)
     .maybeSingle();
   const launchRow = launchRowRes.data as {
     launch_date: string | null;
+    dur_creacion: number;
+    dur_nutricion: number;
     dur_captacion: number;
     dur_calentamiento: number;
     dur_compra: number;
@@ -608,6 +610,8 @@ async function runGhlBranch(args: {
   } | null;
   const calendar = tryComputeLaunchCalendar({
     launchDate: launchRow?.launch_date ?? undefined,
+    durCreacion: launchRow?.dur_creacion,
+    durNutricion: launchRow?.dur_nutricion,
     durCaptacion: launchRow?.dur_captacion,
     durCalentamiento: launchRow?.dur_calentamiento,
     durCompra: launchRow?.dur_compra,

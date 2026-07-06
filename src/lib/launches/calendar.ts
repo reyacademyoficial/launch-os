@@ -8,25 +8,36 @@
  *
  * Convención de conteo (importante, NO uniforme — replica la regla del
  * roadmap exactamente para no contradecir el ejemplo):
- *   - Etapas previas (captación, calentamiento): inicio = L − dur,
- *     fin = L − 1. Rango inclusivo de exactamente `dur` días.
+ *   - Etapas previas (creación, nutrición, captación, calentamiento):
+ *     inicio = ancla − dur, fin = ancla − 1. Rango inclusivo de exactamente
+ *     `dur` días. La "ancla" de captación/calentamiento es L; la de
+ *     creación/nutrición es el inicio de captación.
  *   - Compra y cierre: fin = inicio + dur. La duración es la diferencia
  *     entre los dos extremos (no inclusiva).
  *
+ * Creación y nutrición son el par "pre-captación" (equivalente a
+ * captación/calentamiento pero corridas una etapa hacia atrás): creación
+ * termina cuando arranca captación, y nutrición se solapa dentro de creación
+ * de la misma forma que calentamiento se solapa dentro de captación.
+ *
  * Test numérico (ver `supabase/tests/rls_smoke_test.sql` para la versión
  * en SQL):
- *   launchDate=2026-07-10, dur=21/14/5/3 →
+ *   launchDate=2026-07-10, dur=30/15/21/14/5/3 →
+ *     creación       20/5 → 18/6
+ *     nutrición       4/6 → 18/6   (se solapa con creación)
  *     captación      19/6 → 9/7
- *     calentamiento  26/6 → 9/7   (se solapa con captación)
+ *     calentamiento  26/6 → 9/7    (se solapa con captación)
  *     consumo        clase1=10/7, clase2=11/7, clase3=12/7
  *     compra         12/7 → 17/7
  *     cierre         17/7 → 20/7
- *     ventana total  19/6 → 20/7
+ *     ventana total  19/6 → 20/7   (sync engine: cuenta desde captación)
  */
 
 export interface LaunchCalendarInputs {
   /** Fecha de la Clase 1, ancla del calendario. Formato `YYYY-MM-DD`. */
   launchDate: string;
+  durCreacion: number;
+  durNutricion: number;
   durCaptacion: number;
   durCalentamiento: number;
   durCompra: number;
@@ -45,6 +56,8 @@ export interface LaunchCalendar {
   windowStart: string;
   /** Igual a `date_end` en la DB (fin de cierre). */
   windowEnd: string;
+  creacion: CalendarRange;
+  nutricion: CalendarRange;
   captacion: CalendarRange;
   calentamiento: CalendarRange;
   consumo: {
@@ -80,8 +93,14 @@ function fmt(d: Date): string {
   return `${y}-${m}-${dd}`;
 }
 
-/** Defaults del roadmap: 21/14/5/3. Espejados en el `default` de la migración. */
+/**
+ * Defaults del roadmap: 30/15 para el par pre-captación, 21/14/5/3 para el
+ * resto. Espejados en el `default` de las migraciones (0011 + la que agrega
+ * creación/nutrición).
+ */
 export const DEFAULT_DURATIONS = {
+  durCreacion: 30,
+  durNutricion: 15,
   durCaptacion: 21,
   durCalentamiento: 14,
   durCompra: 5,
@@ -105,6 +124,15 @@ export function computeLaunchCalendar(
   const calentamientoStart = addDays(L, -inputs.durCalentamiento);
   const calentamientoEnd = addDays(L, -1);
 
+  // Creación: termina justo cuando arranca captación (día previo, inclusivo).
+  // Es el par pre-captación: creación : nutrición :: captación : calentamiento.
+  const creacionEnd = addDays(captacionStart, -1);
+  const creacionStart = addDays(captacionStart, -inputs.durCreacion);
+
+  // Nutrición: se solapa dentro de creación, terminando el mismo día.
+  const nutricionEnd = creacionEnd;
+  const nutricionStart = addDays(captacionStart, -inputs.durNutricion);
+
   // Consumo: clase1 = L, clase2 = L+1, clase3 = L+2
   const clase1 = L;
   const clase2 = addDays(L, 1);
@@ -121,6 +149,8 @@ export function computeLaunchCalendar(
   return {
     windowStart: fmt(captacionStart),
     windowEnd: fmt(cierreEnd),
+    creacion: { startDate: fmt(creacionStart), endDate: fmt(creacionEnd) },
+    nutricion: { startDate: fmt(nutricionStart), endDate: fmt(nutricionEnd) },
     captacion: { startDate: fmt(captacionStart), endDate: fmt(captacionEnd) },
     calentamiento: {
       startDate: fmt(calentamientoStart),
@@ -142,6 +172,8 @@ export function tryComputeLaunchCalendar(
   if (!inputs.launchDate) return null;
   return computeLaunchCalendar({
     launchDate: inputs.launchDate,
+    durCreacion: inputs.durCreacion ?? DEFAULT_DURATIONS.durCreacion,
+    durNutricion: inputs.durNutricion ?? DEFAULT_DURATIONS.durNutricion,
     durCaptacion: inputs.durCaptacion ?? DEFAULT_DURATIONS.durCaptacion,
     durCalentamiento:
       inputs.durCalentamiento ?? DEFAULT_DURATIONS.durCalentamiento,

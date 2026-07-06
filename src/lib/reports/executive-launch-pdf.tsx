@@ -328,6 +328,14 @@ function KpiGrid({ kpi }: { kpi: LaunchKPIs }) {
 function Timeline({ calendar }: { calendar: LaunchCalendar }) {
   const rows: Array<{ stage: string; range: string }> = [
     {
+      stage: "Creación",
+      range: `${fmtDate(calendar.creacion.startDate)} → ${fmtDate(calendar.creacion.endDate)}`,
+    },
+    {
+      stage: "Nutrición",
+      range: `${fmtDate(calendar.nutricion.startDate)} → ${fmtDate(calendar.nutricion.endDate)}`,
+    },
+    {
       stage: "Captación",
       range: `${fmtDate(calendar.captacion.startDate)} → ${fmtDate(calendar.captacion.endDate)}`,
     },

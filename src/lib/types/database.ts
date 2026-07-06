@@ -545,6 +545,8 @@ export type Database = {
           dur_captacion: number
           dur_cierre: number
           dur_compra: number
+          dur_creacion: number
+          dur_nutricion: number
           google_clicks: number | null
           google_investment: number | null
           google_leads: number | null
@@ -587,6 +589,8 @@ export type Database = {
           dur_captacion?: number
           dur_cierre?: number
           dur_compra?: number
+          dur_creacion?: number
+          dur_nutricion?: number
           google_clicks?: number | null
           google_investment?: number | null
           google_leads?: number | null
@@ -629,6 +633,8 @@ export type Database = {
           dur_captacion?: number
           dur_cierre?: number
           dur_compra?: number
+          dur_creacion?: number
+          dur_nutricion?: number
           google_clicks?: number | null
           google_investment?: number | null
           google_leads?: number | null

@@ -20,6 +20,8 @@ import { tryComputeLaunchCalendar } from "@/lib/launches/calendar";
 export interface CalendarCalcInput {
   /** YYYY-MM-DD. Vacío al inicio en SSR; el primer mount lo rellena. */
   launchDate: string;
+  durCreacion: number;
+  durNutricion: number;
   durCaptacion: number;
   durCalentamiento: number;
   durCompra: number;
@@ -28,9 +30,9 @@ export interface CalendarCalcInput {
 }
 
 /**
- * Defaults pedidos por ventas (15 / 7 / 7 / 3) — distintos de los del
- * launch real (21 / 14 / 5 / 3) porque acá es el cronograma que se le
- * suele mostrar al prospecto. Editables como cualquier input.
+ * Defaults pedidos por ventas (30 / 15 / 15 / 7 / 7 / 3) — distintos de los
+ * del launch real (30 / 15 / 21 / 14 / 5 / 3) porque acá es el cronograma
+ * que se le suele mostrar al prospecto. Editables como cualquier input.
  *
  * `launchDate` queda en "" para evitar mismatch SSR/cliente con
  * `new Date()` — el `useEffect` del componente lo setea a hoy+30 al
@@ -38,6 +40,8 @@ export interface CalendarCalcInput {
  */
 export const CALENDAR_CALC_DEFAULTS: CalendarCalcInput = {
   launchDate: "",
+  durCreacion: 30,
+  durNutricion: 15,
   durCaptacion: 15,
   durCalentamiento: 7,
   durCompra: 7,
@@ -76,6 +80,8 @@ export function CalendarSection({
     () =>
       tryComputeLaunchCalendar({
         launchDate: input.launchDate || undefined,
+        durCreacion: input.durCreacion,
+        durNutricion: input.durNutricion,
         durCaptacion: input.durCaptacion,
         durCalentamiento: input.durCalentamiento,
         durCompra: input.durCompra,
@@ -85,7 +91,15 @@ export function CalendarSection({
   );
 
   const setNum =
-    <K extends "durCaptacion" | "durCalentamiento" | "durCompra" | "durCierre">(
+    <
+      K extends
+        | "durCreacion"
+        | "durNutricion"
+        | "durCaptacion"
+        | "durCalentamiento"
+        | "durCompra"
+        | "durCierre",
+    >(
       key: K,
     ) =>
     (raw: string) => {
@@ -108,6 +122,18 @@ export function CalendarSection({
         </div>
 
         <div className="grid grid-cols-2 gap-3">
+          <DurField
+            label="Días creación"
+            id="cal-dur-creacion"
+            value={input.durCreacion}
+            onChange={setNum("durCreacion")}
+          />
+          <DurField
+            label="Días nutrición"
+            id="cal-dur-nutricion"
+            value={input.durNutricion}
+            onChange={setNum("durNutricion")}
+          />
           <DurField
             label="Días captación"
             id="cal-dur-captacion"

@@ -18,6 +18,8 @@ export default async function LaunchCalendarPage({
 
   const calendar = tryComputeLaunchCalendar({
     launchDate: launch.launch_date ?? undefined,
+    durCreacion: launch.dur_creacion,
+    durNutricion: launch.dur_nutricion,
     durCaptacion: launch.dur_captacion,
     durCalentamiento: launch.dur_calentamiento,
     durCompra: launch.dur_compra,

@@ -69,6 +69,12 @@ export function LaunchForm({
   // Otros inputs siguen como uncontrolled (defaultValue) — no nos importa
   // recomputar UI con cada keystroke fuera de la sección Calendario.
   const [launchDate, setLaunchDate] = useState<string>(initial?.launch_date ?? "");
+  const [durCreacion, setDurCreacion] = useState<number>(
+    dur(initial?.dur_creacion, DEFAULT_DURATIONS.durCreacion),
+  );
+  const [durNutricion, setDurNutricion] = useState<number>(
+    dur(initial?.dur_nutricion, DEFAULT_DURATIONS.durNutricion),
+  );
   const [durCaptacion, setDurCaptacion] = useState<number>(
     dur(initial?.dur_captacion, DEFAULT_DURATIONS.durCaptacion),
   );
@@ -92,6 +98,8 @@ export function LaunchForm({
 
   const calendar = tryComputeLaunchCalendar({
     launchDate: launchDate || undefined,
+    durCreacion,
+    durNutricion,
     durCaptacion,
     durCalentamiento,
     durCompra,
@@ -182,8 +190,9 @@ export function LaunchForm({
 
       <Section title="Calendario del lanzamiento">
         <p className="text-xs text-fg-subtle">
-          La fecha del lanzamiento es la fecha de la Clase 1. Las 4 duraciones
-          son configurables por lanzamiento — defaults <b>21/14/5/3</b> días.
+          La fecha del lanzamiento es la fecha de la Clase 1. Las 6 duraciones
+          son configurables por lanzamiento — defaults <b>30/15/21/14/5/3</b>{" "}
+          días (creación/nutrición/captación/calentamiento/compra/cierre).
           <code className="ml-1 rounded bg-surface px-1 py-0.5 text-fg">date_start</code>
           {" "}y{" "}
           <code className="rounded bg-surface px-1 py-0.5 text-fg">date_end</code>
@@ -200,6 +209,18 @@ export function LaunchForm({
               onChange={(e) => setLaunchDate(e.target.value)}
             />
           </Field>
+          <DurField
+            id="dur_creacion"
+            label="Días de creación"
+            value={durCreacion}
+            onChange={setDurCreacion}
+          />
+          <DurField
+            id="dur_nutricion"
+            label="Días de nutrición"
+            value={durNutricion}
+            onChange={setDurNutricion}
+          />
           <DurField
             id="dur_captacion"
             label="Días de captación"
