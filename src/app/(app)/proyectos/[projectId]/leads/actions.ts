@@ -2,10 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 
-import type { SupabaseClient } from "@supabase/supabase-js";
-
 import { requireCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
+
+type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 import { LEAD_STATUSES, type LeadStatus } from "@/lib/leads/types";
 
 export type LeadActionState = { ok: true } | { error: string } | null;
@@ -23,7 +23,7 @@ export type LeadActionState = { ok: true } | { error: string } | null;
  * Idempotente: el UPDATE no hace nada si los valores ya están alineados.
  */
 async function syncSalesOwnerForLeads(
-  supabase: SupabaseClient,
+  supabase: SupabaseServerClient,
   projectId: string,
   leadIds: ReadonlyArray<string>,
 ): Promise<void> {
