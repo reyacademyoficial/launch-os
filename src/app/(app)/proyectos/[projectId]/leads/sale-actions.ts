@@ -198,6 +198,34 @@ export async function deleteSale(projectId: string, saleId: string): Promise<voi
 
 export type PaymentActionState = { ok: true } | { error: string } | null;
 
+/**
+ * Revalida las rutas que dependen del par (sale, launch): kanban de leads,
+ * tab de cobros y KPI del launch. Si la sale no está atada a un launch,
+ * revalida sólo /leads. Mismo patrón que `deleteSale`.
+ */
+async function revalidateForSale(
+  projectId: string,
+  saleId: string,
+): Promise<void> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("sales")
+    .select("lead_id, leads(launch_id)")
+    .eq("id", saleId)
+    .eq("project_id", projectId)
+    .maybeSingle();
+  const launchId =
+    (data as { leads: { launch_id: string | null } | null } | null)?.leads
+      ?.launch_id ?? null;
+
+  revalidatePath(`/proyectos/${projectId}/leads`);
+  if (launchId) {
+    revalidatePath(`/proyectos/${projectId}/launches/${launchId}`);
+    revalidatePath(`/proyectos/${projectId}/launches/${launchId}/cobros`);
+    revalidatePath(`/proyectos/${projectId}/launches/${launchId}/kpi`);
+  }
+}
+
 export async function addPayment(
   projectId: string,
   saleId: string,
@@ -225,7 +253,7 @@ export async function addPayment(
   const { error } = await supabase.from("payments").insert(payload);
   if (error) return { error: error.message };
 
-  revalidatePath(`/proyectos/${projectId}/leads`);
+  await revalidateForSale(projectId, saleId);
   return { ok: true };
 }
 
@@ -235,6 +263,19 @@ export async function deletePayment(
 ): Promise<void> {
   await requireCanEditLaunchesIn(projectId);
   const supabase = await createClient();
+  // Lookup del sale_id antes de borrar para poder revalidar la tab de cobros.
+  const { data: paymentRow } = await supabase
+    .from("payments")
+    .select("sale_id")
+    .eq("id", paymentId)
+    .maybeSingle();
+  const saleId = (paymentRow as { sale_id: string } | null)?.sale_id ?? null;
+
   await supabase.from("payments").delete().eq("id", paymentId);
-  revalidatePath(`/proyectos/${projectId}/leads`);
+
+  if (saleId) {
+    await revalidateForSale(projectId, saleId);
+  } else {
+    revalidatePath(`/proyectos/${projectId}/leads`);
+  }
 }

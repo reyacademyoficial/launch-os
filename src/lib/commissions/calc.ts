@@ -6,6 +6,20 @@ import type {
 } from "./types";
 
 /**
+ * Postgres `numeric` viaja como STRING por PostgREST (evita perder precisión
+ * en JS). Nuestros types dicen `number`, pero en runtime llega string. Sin
+ * esta coerción, `reduce((acc, p) => acc + p.amount, 0)` concatena strings
+ * ("300.00" + "200.00" = "300.00200.00" → NaN), y toda venta con más de un
+ * cobro devuelve comisión 0 / NaN — que es el síntoma clásico "no aparecen
+ * las comisiones en el leaderboard".
+ */
+function toNum(v: unknown): number {
+  if (typeof v === "number") return v;
+  const n = parseFloat(v as string);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
  * Búsqueda de la regla aplicable a una venta. Prioridad:
  *   1. Rule específica del launch de la venta (override).
  *   2. Rule default del proyecto para esa modalidad (launch_id NULL).
@@ -96,8 +110,8 @@ export function computeCommission(
   rule: CommissionRuleRow | null,
   saleRank: number,
 ): CommissionBreakdown {
-  const collected = payments.reduce((acc, p) => acc + p.amount, 0);
-  const pledged = sale.total_amount;
+  const collected = payments.reduce((acc, p) => acc + toNum(p.amount), 0);
+  const pledged = toNum(sale.total_amount);
   const paymentCount = payments.length;
 
   if (!rule) {
@@ -165,12 +179,13 @@ function isReleased(
     // Defensa: el constraint SQL impide este caso, pero por si acaso.
     return false;
   }
+  const threshold = toNum(rule.threshold_value);
   if (rule.threshold_type === "payment_count") {
-    return paymentCount >= rule.threshold_value;
+    return paymentCount >= threshold;
   }
   // paid_ratio
   if (pledged <= 0) return false;
-  return collected / pledged >= rule.threshold_value;
+  return collected / pledged >= threshold;
 }
 
 function applyTier(
@@ -179,17 +194,18 @@ function applyTier(
   collected: number,
   pledged: number,
 ): number {
+  const value = toNum(tier.value);
   const isFull = mode === "threshold_full";
   if (tier.type === "percent") {
     const base = isFull ? pledged : collected;
-    return (base * tier.value) / 100;
+    return (base * value) / 100;
   }
   // fixed
-  if (isFull) return tier.value;
+  if (isFull) return value;
   // proportional o threshold_proportional → escala el fixed por cobrado/pactado.
   if (pledged <= 0) return 0;
   const ratio = Math.min(collected / pledged, 1);
-  return tier.value * ratio;
+  return value * ratio;
 }
 
 function tierLabel(

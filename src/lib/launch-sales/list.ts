@@ -29,7 +29,10 @@ import {
 export interface LaunchSalesData {
   sales: SaleRow[];
   payments: PaymentRow[];
-  leads: Pick<LeadRow, "id" | "status" | "launch_id" | "name">[];
+  leads: Pick<
+    LeadRow,
+    "id" | "status" | "launch_id" | "name" | "team_member_id"
+  >[];
 }
 
 export async function listLaunchSalesData(
@@ -41,7 +44,7 @@ export async function listLaunchSalesData(
   const [leadsRes, salesRes] = await Promise.all([
     supabase
       .from("leads")
-      .select("id, status, launch_id, name")
+      .select("id, status, launch_id, name, team_member_id")
       .eq("project_id", projectId)
       .eq("launch_id", launchId),
     supabase
@@ -53,7 +56,7 @@ export async function listLaunchSalesData(
   ]);
 
   const leads = (leadsRes.data ?? []) as Array<
-    Pick<LeadRow, "id" | "status" | "launch_id" | "name">
+    Pick<LeadRow, "id" | "status" | "launch_id" | "name" | "team_member_id">
   >;
   const sales = ((salesRes.data ?? []) as Array<SaleRow & { leads: unknown }>).map(
     (r) => {

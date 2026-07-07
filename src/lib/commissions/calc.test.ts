@@ -380,3 +380,47 @@ describe("computeCommission — sin regla / sin tier", () => {
     expect(result.formula).toBe("Configurar regla");
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+//   Postgres `numeric` → string (PostgREST). El calc tiene que coercionar,
+//   sino los reduce/aritméticas concatenan strings y devuelven NaN.
+//   Regresión: leaderboard mostraba comisiones en 0 para setters con ventas
+//   multi-cobro.
+// ────────────────────────────────────────────────────────────────────────────
+describe("computeCommission — numeric como string (postgrest)", () => {
+  it("varios cobros como string → suma numérica, no concatenación", () => {
+    const r = rule({ tiers: [tier({ type: "percent", value: 10 as unknown as number }) ] });
+    const result = computeCommission(
+      sale({ total_amount: "1000" as unknown as number }),
+      [
+        payment("300" as unknown as number),
+        payment("200" as unknown as number),
+        payment("100" as unknown as number),
+      ],
+      r,
+      0,
+    );
+    expect(result.collected).toBe(600);
+    expect(result.commission).toBe(60); // 600 × 10%
+  });
+
+  it("threshold_full con strings — paga full del pledged en number", () => {
+    const r = rule({
+      accrual_mode: "threshold_full",
+      threshold_type: "payment_count",
+      threshold_value: "2" as unknown as number,
+      tiers: [tier({ type: "fixed", value: "500" as unknown as number })],
+    });
+    const result = computeCommission(
+      sale({ total_amount: "1000" as unknown as number }),
+      [
+        payment("400" as unknown as number),
+        payment("600" as unknown as number),
+      ],
+      r,
+      0,
+    );
+    expect(result.released).toBe(true);
+    expect(result.commission).toBe(500);
+  });
+});
