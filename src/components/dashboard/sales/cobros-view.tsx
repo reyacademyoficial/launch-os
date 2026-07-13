@@ -134,14 +134,11 @@ export function CobrosView({
   }, [payments]);
 
   // Ranks para pasarle al SaleModal (necesarios para preview de comisión).
-  // buildSaleRanks recibe un LeadRow-like; pasamos lo que tenemos.
+  // Fase 8: buildSaleRanks lee `sale.launch_id` y `sale.team_member_id`
+  // directamente — ya no necesita el array de leads.
   const rankBySaleId = useMemo(
-    () =>
-      buildSaleRanks(
-        sales as unknown as SaleRow[],
-        leads as unknown as LeadRow[],
-      ),
-    [sales, leads],
+    () => buildSaleRanks(sales as unknown as SaleRow[]),
+    [sales],
   );
 
   const paymentsSorted = useMemo(
@@ -643,9 +640,13 @@ function SalesTable({
                           }
                           triggerClassName="rounded-md border border-accent/40 bg-accent/10 px-2 py-1 text-xs text-accent hover:bg-accent/20"
                           lead={leadForModal}
-                          sale={s}
-                          saleRank={rankBySaleId.get(s.id) ?? 0}
-                          payments={salePayments}
+                          sales={[s]}
+                          saleRanks={rankBySaleId}
+                          paymentsBySaleId={
+                            new Map([[s.id, salePayments]])
+                          }
+                          initialSaleId={s.id}
+                          allowCreateAnother={false}
                           modalities={modalities}
                           products={products}
                           rules={rules}
@@ -654,14 +655,11 @@ function SalesTable({
                             null,
                             leadForModal.id,
                           )}
-                          updateProductAction={updateSaleProductAction.bind(
-                            null,
-                            s.id,
-                          )}
-                          recalculateAction={() =>
-                            recalculateSaleAction(s.id)
+                          updateProductAction={(saleId, productId) =>
+                            updateSaleProductAction(saleId, productId)
                           }
-                          addPaymentAction={addPaymentAction.bind(null, s.id)}
+                          recalculateAction={recalculateSaleAction}
+                          addPaymentAction={addPaymentAction}
                           deletePaymentAction={deletePaymentAction}
                           deleteSaleAction={deleteSaleAction}
                         />

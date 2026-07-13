@@ -46,6 +46,7 @@ function sale(overrides: Partial<SaleRow> = {}): SaleRow {
     id: "sale-1",
     project_id: "p-1",
     lead_id: "lead-1",
+    launch_id: null,
     team_member_id: "tm-1",
     payment_modality_id: "mod-1",
     product_id: "prod-1",

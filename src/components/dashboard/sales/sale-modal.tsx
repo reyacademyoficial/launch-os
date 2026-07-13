@@ -27,15 +27,35 @@ type SaleAction = (
   prev: SaleActionState,
   formData: FormData,
 ) => Promise<SaleActionState>;
-type AddPaymentAction = (
+// Fase 8: la firma de las actions ligadas a un saleId ahora acepta el saleId
+// como primer parámetro. El modal lo bindea internamente para poder rotar
+// entre varias sales del mismo lead sin que el caller tenga que armar N
+// callbacks bindeadas.
+type AddPaymentActionForSale = (
+  saleId: string,
   prev: PaymentActionState,
   formData: FormData,
 ) => Promise<PaymentActionState>;
-type DeleteAction = (id: string) => Promise<void>;
+type DeletePaymentAction = (paymentId: string) => Promise<void>;
 type UpdateProductAction = (
+  saleId: string,
   productId: string,
 ) => Promise<{ ok: true } | { error: string }>;
-type RecalculateAction = () => Promise<{ ok: true } | { error: string }>;
+type RecalculateAction = (
+  saleId: string,
+) => Promise<{ ok: true } | { error: string }>;
+type DeleteSaleAction = (saleId: string) => Promise<void>;
+
+// Variantes ya bindeadas al saleId, para consumo del SalePanel.
+type BoundAddPayment = (
+  prev: PaymentActionState,
+  formData: FormData,
+) => Promise<PaymentActionState>;
+type BoundUpdateProduct = (
+  productId: string,
+) => Promise<{ ok: true } | { error: string }>;
+type BoundRecalculate = () => Promise<{ ok: true } | { error: string }>;
+type BoundDeleteSale = () => Promise<void>;
 
 /**
  * Modal único que sirve a dos escenarios:
@@ -48,13 +68,15 @@ export function SaleModal({
   triggerLabel,
   triggerClassName,
   lead,
-  sale,
-  saleRank,
-  payments,
+  sales,
+  saleRanks,
+  paymentsBySaleId,
   modalities,
   products,
   rules,
   teamMembers,
+  initialSaleId,
+  allowCreateAnother = true,
   createSaleAction,
   updateProductAction,
   recalculateAction,
@@ -65,40 +87,73 @@ export function SaleModal({
   readonly triggerLabel: string;
   readonly triggerClassName?: string;
   readonly lead: Pick<LeadRow, "id" | "name" | "launch_id" | "team_member_id">;
-  readonly sale: SaleRow | null;
   /**
-   * Posición 0-based de la venta dentro de (team_member, launch). Lo calcula
-   * el contenedor (kanban) con `buildSaleRanks`. Para venta nueva pasar 0.
+   * Todas las ventas del lead (Fase 8: puede haber N). Si el array está
+   * vacío el modal arranca en modo "Registrar venta". Si tiene ≥1, el
+   * usuario elige cuál ver con el selector (visible solo si N>1).
    */
-  readonly saleRank: number;
-  readonly payments: ReadonlyArray<PaymentRow>;
+  readonly sales: ReadonlyArray<SaleRow>;
+  /** Rank por sale.id para el cálculo de comisión (buildSaleRanks). */
+  readonly saleRanks: ReadonlyMap<string, number>;
+  /** Payments indexados por sale_id. */
+  readonly paymentsBySaleId: ReadonlyMap<string, ReadonlyArray<PaymentRow>>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
   readonly products: ReadonlyArray<ProductRow>;
   readonly rules: ReadonlyArray<CommissionRuleRow>;
   readonly teamMembers: ReadonlyArray<Pick<TeamMemberRow, "id" | "name" | "active">>;
+  /**
+   * Sale a preseleccionar al abrir. Útil desde CobrosView (una fila = una
+   * sale). Si no se pasa, arranca en la primera del array.
+   */
+  readonly initialSaleId?: string;
+  /**
+   * ¿Mostrar el botón "+ Nueva venta" para agregar otra sale al mismo lead?
+   * Default: true (kanban). En CobrosView lo mandamos false porque cada
+   * fila es un contexto de una sola sale.
+   */
+  readonly allowCreateAnother?: boolean;
   readonly createSaleAction: SaleAction;
-  /**
-   * Cambia el producto asignado a la venta sin tocar el resto (modalidad,
-   * cobros, comisión). Bindeada al saleId. Si no se pasa, el panel muestra
-   * el producto como sólo lectura — útil para roles sin permiso de edición.
-   */
   readonly updateProductAction?: UpdateProductAction;
-  /**
-   * Recalcula `commission_rule_snapshot` contra la regla vigente. Bindeada
-   * al saleId. Cuando existe, `SalePanel` muestra el botón "Recalcular
-   * comisión con regla actual" al lado del badge "congelada".
-   */
   readonly recalculateAction?: RecalculateAction;
-  readonly addPaymentAction: AddPaymentAction;
-  readonly deletePaymentAction: DeleteAction;
-  /**
-   * Borra la sale (los payments caen por CASCADE). El lead NO se borra. Si
-   * no se pasa, no se muestra el botón. Lo deja opcional así callers viejos
-   * no rompen.
-   */
-  readonly deleteSaleAction?: DeleteAction;
+  readonly addPaymentAction: AddPaymentActionForSale;
+  readonly deletePaymentAction: DeletePaymentAction;
+  readonly deleteSaleAction?: DeleteSaleAction;
 }) {
   const [open, setOpen] = useState(false);
+  // Modo "new" fuerza el form aunque haya sales existentes — botón
+  // "+ Nueva venta". Se resetea a "list" al cerrar el modal.
+  const [mode, setMode] = useState<"list" | "new">("list");
+  const [selectedSaleId, setSelectedSaleId] = useState<string | null>(null);
+
+  // Cuando se abre el modal, elegimos qué sale mostrar y reseteamos el mode.
+  useEffect(() => {
+    if (!open) return;
+    setMode(sales.length === 0 ? "new" : "list");
+    if (sales.length === 0) {
+      setSelectedSaleId(null);
+      return;
+    }
+    // Preferimos initialSaleId si vale (existe en el array).
+    if (initialSaleId && sales.some((s) => s.id === initialSaleId)) {
+      setSelectedSaleId(initialSaleId);
+    } else {
+      setSelectedSaleId(sales[0]!.id);
+    }
+  }, [open, sales, initialSaleId]);
+
+  const selectedSale =
+    mode === "list" && selectedSaleId
+      ? sales.find((s) => s.id === selectedSaleId) ?? null
+      : null;
+
+  const headerTitle =
+    mode === "new"
+      ? sales.length > 0
+        ? "Nueva venta para este lead"
+        : "Registrar venta"
+      : sales.length > 1
+        ? `Ventas (${sales.length})`
+        : "Venta cerrada";
 
   return (
     <>
@@ -125,9 +180,7 @@ export function SaleModal({
           <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-md border border-border bg-bg-elevated shadow-card">
             <header className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
               <div>
-                <h3 className="text-lg font-bold text-fg">
-                  {sale ? "Venta cerrada" : "Registrar venta"}
-                </h3>
+                <h3 className="text-lg font-bold text-fg">{headerTitle}</h3>
                 <p className="mt-0.5 text-xs text-fg-subtle">{lead.name}</p>
               </div>
               <button
@@ -140,38 +193,137 @@ export function SaleModal({
               </button>
             </header>
 
+            {/* Selector de sale + botón "+ Nueva" — solo en modo list y si
+                tenemos al menos 1 sale (o el flag permite crear otra). */}
+            {mode === "list" && sales.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface/40 px-6 py-3">
+                {sales.length > 1 && (
+                  <SaleTabs
+                    sales={sales}
+                    products={products}
+                    selectedSaleId={selectedSaleId}
+                    onSelect={setSelectedSaleId}
+                  />
+                )}
+                {allowCreateAnother && (
+                  <button
+                    type="button"
+                    onClick={() => setMode("new")}
+                    className="ml-auto rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg hover:bg-bg-elevated"
+                  >
+                    + Nueva venta
+                  </button>
+                )}
+              </div>
+            )}
+
             <div className="flex-1 overflow-y-auto px-6 py-6">
-              {sale ? (
-                <SalePanel
-                  sale={sale}
-                  saleRank={saleRank}
-                  payments={payments}
-                  modalities={modalities}
-                  products={products}
-                  rules={rules}
-                  launchId={lead.launch_id}
-                  updateProductAction={updateProductAction}
-                  recalculateAction={recalculateAction}
-                  addPaymentAction={addPaymentAction}
-                  deletePaymentAction={deletePaymentAction}
-                  deleteSaleAction={deleteSaleAction}
-                  onSaleDeleted={() => setOpen(false)}
-                />
-              ) : (
+              {mode === "new" ? (
                 <NewSaleForm
                   lead={lead}
                   modalities={modalities}
                   products={products}
                   teamMembers={teamMembers}
                   createSaleAction={createSaleAction}
-                  onSuccess={() => setOpen(false)}
+                  onCancel={
+                    sales.length > 0 ? () => setMode("list") : undefined
+                  }
+                  onSuccess={() => {
+                    if (sales.length > 0) setMode("list");
+                    else setOpen(false);
+                  }}
                 />
+              ) : selectedSale ? (
+                <SalePanel
+                  sale={selectedSale}
+                  saleRank={saleRanks.get(selectedSale.id) ?? 0}
+                  payments={paymentsBySaleId.get(selectedSale.id) ?? []}
+                  modalities={modalities}
+                  products={products}
+                  rules={rules}
+                  launchId={selectedSale.launch_id}
+                  updateProductAction={
+                    updateProductAction
+                      ? (productId) =>
+                          updateProductAction(selectedSale.id, productId)
+                      : undefined
+                  }
+                  recalculateAction={
+                    recalculateAction
+                      ? () => recalculateAction(selectedSale.id)
+                      : undefined
+                  }
+                  addPaymentAction={(prev, fd) =>
+                    addPaymentAction(selectedSale.id, prev, fd)
+                  }
+                  deletePaymentAction={deletePaymentAction}
+                  deleteSaleAction={
+                    deleteSaleAction
+                      ? () => deleteSaleAction(selectedSale.id)
+                      : undefined
+                  }
+                  onSaleDeleted={() => {
+                    if (sales.length > 1) {
+                      // Quedan más sales — nos quedamos en modo list y el
+                      // useEffect al re-render elige otra.
+                      setSelectedSaleId(null);
+                    } else {
+                      setOpen(false);
+                    }
+                  }}
+                />
+              ) : (
+                <p className="text-sm text-fg-muted">
+                  Elegí una venta del selector.
+                </p>
               )}
             </div>
           </div>
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Tabs horizontales con las N ventas del lead. Muestra producto + monto
+ * pactado para que el operador identifique cuál abrir.
+ */
+function SaleTabs({
+  sales,
+  products,
+  selectedSaleId,
+  onSelect,
+}: {
+  readonly sales: ReadonlyArray<SaleRow>;
+  readonly products: ReadonlyArray<ProductRow>;
+  readonly selectedSaleId: string | null;
+  readonly onSelect: (saleId: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1" role="tablist">
+      {sales.map((s, i) => {
+        const product = products.find((p) => p.id === s.product_id);
+        const active = s.id === selectedSaleId;
+        return (
+          <button
+            key={s.id}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onSelect(s.id)}
+            className={
+              "rounded-md border px-2 py-1 text-xs " +
+              (active
+                ? "border-accent bg-accent/10 text-accent"
+                : "border-border bg-surface text-fg-muted hover:text-fg")
+            }
+          >
+            #{i + 1} · {product?.name ?? "—"} · {fmtMoney(s.total_amount)}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -184,6 +336,7 @@ function NewSaleForm({
   teamMembers,
   createSaleAction,
   onSuccess,
+  onCancel,
 }: {
   readonly lead: Pick<LeadRow, "id" | "team_member_id">;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
@@ -191,6 +344,8 @@ function NewSaleForm({
   readonly teamMembers: ReadonlyArray<Pick<TeamMemberRow, "id" | "name" | "active">>;
   readonly createSaleAction: SaleAction;
   readonly onSuccess: () => void;
+  /** Volver al listado sin crear (multi-venta). Si no se pasa, no se muestra. */
+  readonly onCancel?: () => void;
 }) {
   const [state, formAction, pending] = useActionState<SaleActionState, FormData>(
     createSaleAction,
@@ -308,6 +463,16 @@ function NewSaleForm({
         <Button type="submit" disabled={pending}>
           {pending ? "Registrando…" : "Registrar venta"}
         </Button>
+        {onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={pending}
+            className="text-xs text-fg-muted hover:text-fg disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+        )}
         {state && "error" in state && <FieldError>{state.error}</FieldError>}
       </div>
     </form>
@@ -338,11 +503,11 @@ function SalePanel({
   readonly products: ReadonlyArray<ProductRow>;
   readonly rules: ReadonlyArray<CommissionRuleRow>;
   readonly launchId: string | null;
-  readonly updateProductAction?: UpdateProductAction;
-  readonly recalculateAction?: RecalculateAction;
-  readonly addPaymentAction: AddPaymentAction;
-  readonly deletePaymentAction: DeleteAction;
-  readonly deleteSaleAction?: DeleteAction;
+  readonly updateProductAction?: BoundUpdateProduct;
+  readonly recalculateAction?: BoundRecalculate;
+  readonly addPaymentAction: BoundAddPayment;
+  readonly deletePaymentAction: DeletePaymentAction;
+  readonly deleteSaleAction?: BoundDeleteSale;
   readonly onSaleDeleted: () => void;
 }) {
   const modality = modalities.find((m) => m.id === sale.payment_modality_id);
@@ -438,7 +603,7 @@ function SalePanel({
                   : `¿Borrar la venta de ${fmtMoney(sale.total_amount)}?`;
               if (!confirm(msg)) return;
               startDeleteTransition(async () => {
-                await deleteSaleAction(sale.id);
+                await deleteSaleAction();
                 onSaleDeleted();
               });
             }}
@@ -484,7 +649,7 @@ function Card({
 function PaymentForm({
   addPaymentAction,
 }: {
-  readonly addPaymentAction: AddPaymentAction;
+  readonly addPaymentAction: BoundAddPayment;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -556,7 +721,7 @@ function PaymentRow({
   deletePaymentAction,
 }: {
   readonly payment: PaymentRow;
-  readonly deletePaymentAction: DeleteAction;
+  readonly deletePaymentAction: DeletePaymentAction;
 }) {
   const [isPending, startTransition] = useTransition();
   return (
@@ -608,7 +773,7 @@ function ProductAssign({
   readonly currentProductId: string;
   readonly currentProductName: string;
   readonly products: ReadonlyArray<ProductRow>;
-  readonly updateProductAction?: UpdateProductAction;
+  readonly updateProductAction?: BoundUpdateProduct;
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -668,7 +833,7 @@ function CommissionSnapshotBar({
   recalculateAction,
 }: {
   readonly hasSnapshot: boolean;
-  readonly recalculateAction?: RecalculateAction;
+  readonly recalculateAction?: BoundRecalculate;
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);

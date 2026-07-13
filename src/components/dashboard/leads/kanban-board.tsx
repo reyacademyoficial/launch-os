@@ -99,7 +99,11 @@ export function KanbanBoard({
   readonly moveAction: MoveAction;
   readonly updateAction: UpdateAction;
   readonly deleteAction: DeleteAction;
-  readonly salesByLeadId: ReadonlyMap<string, SaleRow>;
+  /**
+   * Fase 8: cada lead puede tener N ventas (una por launch/producto). Se
+   * apilan y el modal permite navegar entre ellas.
+   */
+  readonly salesByLeadId: ReadonlyMap<string, ReadonlyArray<SaleRow>>;
   readonly paymentsBySaleId: ReadonlyMap<string, ReadonlyArray<PaymentRow>>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
   readonly products: ReadonlyArray<ProductRow>;
@@ -134,7 +138,8 @@ export function KanbanBoard({
   // Rank por venta dentro de (member, launch). Se calcula sobre todas las
   // ventas que ve el board para que el tier marginal de cada card sea
   // consistente con el leaderboard.
-  const rankBySaleId = buildSaleRanks(Array.from(salesByLeadId.values()), leads);
+  const allSales = Array.from(salesByLeadId.values()).flat();
+  const rankBySaleId = buildSaleRanks(allSales);
 
   function handleDragStart(e: DragEvent<HTMLDivElement>, leadId: string) {
     e.dataTransfer.setData("text/plain", leadId);
@@ -278,25 +283,29 @@ export function KanbanBoard({
                   const assignee = lead.team_member_id
                     ? memberById.get(lead.team_member_id)
                     : null;
-                  const sale = salesByLeadId.get(lead.id) ?? null;
-                  const salePayments = sale
-                    ? paymentsBySaleId.get(sale.id) ?? []
-                    : [];
-                  const rule = sale
-                    ? findApplicableRule(
-                        rules,
-                        sale.payment_modality_id,
-                        lead.launch_id,
-                      )
-                    : null;
-                  const breakdown = sale
-                    ? computeCommission(
-                        sale,
-                        salePayments,
-                        rule,
-                        rankBySaleId.get(sale.id) ?? 0,
-                      )
-                    : null;
+                  // Fase 8: cada lead puede tener N ventas. Sumamos cobrado
+                  // y comisión de todas para el preview de la card.
+                  const leadSales = salesByLeadId.get(lead.id) ?? [];
+                  let totalCollected = 0;
+                  let totalCommission = 0;
+                  for (const s of leadSales) {
+                    const pays = paymentsBySaleId.get(s.id) ?? [];
+                    const rule = findApplicableRule(
+                      rules,
+                      s.payment_modality_id,
+                      s.launch_id,
+                      s.product_id,
+                    );
+                    const b = computeCommission(
+                      s,
+                      pays,
+                      rule,
+                      rankBySaleId.get(s.id) ?? 0,
+                    );
+                    totalCollected += b.collected;
+                    totalCommission += b.commission;
+                  }
+                  const hasSales = leadSales.length > 0;
 
                   return (
                     <div
@@ -326,13 +335,18 @@ export function KanbanBoard({
                         )}
                       </div>
 
-                      {breakdown && (
+                      {hasSales && (
                         <div className="mt-2 flex items-center justify-between rounded-md bg-surface/60 px-2 py-1 text-xs">
                           <span className="text-fg-subtle">
-                            Cobrado {fmtMoney(breakdown.collected)}
+                            Cobrado {fmtMoney(totalCollected)}
+                            {leadSales.length > 1 && (
+                              <span className="ml-1 text-fg-muted">
+                                · {leadSales.length} ventas
+                              </span>
+                            )}
                           </span>
                           <span className="font-medium text-accent">
-                            +{fmtMoney(breakdown.commission)}
+                            +{fmtMoney(totalCommission)}
                           </span>
                         </div>
                       )}
@@ -344,36 +358,32 @@ export function KanbanBoard({
                         {canEdit && (
                           <div className="flex items-center gap-1">
                             <SaleModal
-                              triggerLabel={sale ? "💰" : "Venta"}
+                              triggerLabel={
+                                hasSales
+                                  ? leadSales.length > 1
+                                    ? `💰 ${leadSales.length}`
+                                    : "💰"
+                                  : "Venta"
+                              }
                               triggerClassName={
-                                sale
+                                hasSales
                                   ? "rounded-md border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-xs text-accent hover:bg-accent/20"
                                   : "rounded-md border border-border bg-surface px-2 py-0.5 text-xs text-fg hover:bg-bg-elevated"
                               }
                               lead={lead}
-                              sale={sale}
-                              saleRank={sale ? rankBySaleId.get(sale.id) ?? 0 : 0}
-                              payments={salePayments}
+                              sales={leadSales}
+                              saleRanks={rankBySaleId}
+                              paymentsBySaleId={paymentsBySaleId}
                               modalities={modalities}
                               products={products}
                               rules={rules}
                               teamMembers={teamMembers}
                               createSaleAction={createSaleAction.bind(null, lead.id)}
-                              updateProductAction={
-                                sale
-                                  ? updateSaleProductAction.bind(null, sale.id)
-                                  : undefined
+                              updateProductAction={(saleId, productId) =>
+                                updateSaleProductAction(saleId, productId)
                               }
-                              recalculateAction={
-                                sale
-                                  ? () => recalculateSaleAction(sale.id)
-                                  : undefined
-                              }
-                              addPaymentAction={
-                                sale
-                                  ? addPaymentAction.bind(null, sale.id)
-                                  : addPaymentAction.bind(null, "")
-                              }
+                              recalculateAction={recalculateSaleAction}
+                              addPaymentAction={addPaymentAction}
                               deletePaymentAction={deletePaymentAction}
                               deleteSaleAction={deleteSaleAction}
                             />

@@ -20,9 +20,12 @@ function lead(overrides: Partial<KanbanLeadStatusRow>): KanbanLeadStatusRow {
 }
 
 function sale(overrides: Partial<KanbanSaleRow>): KanbanSaleRow {
+  // Fase 8: `sale.launch_id` es propio. Default al launch bajo prueba para
+  // que los tests que comparan por status del lead no tengan que setearlo.
   return {
     id: "sale-1",
     lead_id: "lead-1",
+    launch_id: LAUNCH_ID,
     total_amount: 1000,
     ...overrides,
   };
@@ -68,23 +71,23 @@ describe("aggregateKanbanSales", () => {
     expect(agg.pledgedRevenue).toBe(100);
   });
 
-  it("lead de OTRO launch se ignora", () => {
+  it("sale de OTRO launch se ignora (atribución vía sale.launch_id — Fase 8)", () => {
     const sales = [
-      sale({ id: "s-otro", lead_id: "l-otro", total_amount: 5000 }),
+      sale({ id: "s-otro", lead_id: "l-otro", launch_id: "otro-launch", total_amount: 5000 }),
       sale({ id: "s-launch", lead_id: "l-launch", total_amount: 100 }),
     ];
     const leads = [
-      lead({ id: "l-otro", launch_id: "otro-launch" }),
-      lead({ id: "l-launch", launch_id: LAUNCH_ID }),
+      lead({ id: "l-otro" }),
+      lead({ id: "l-launch" }),
     ];
     const agg = aggregateKanbanSales(sales, [], leads, LAUNCH_ID);
     expect(agg.salesCount).toBe(1);
     expect(agg.pledgedRevenue).toBe(100);
   });
 
-  it("lead con launch_id=null se ignora", () => {
-    const sales = [sale({ lead_id: "l-orphan" })];
-    const leads = [lead({ id: "l-orphan", launch_id: null })];
+  it("sale con launch_id=null (off-books) se ignora del agregado por launch", () => {
+    const sales = [sale({ lead_id: "l-orphan", launch_id: null })];
+    const leads = [lead({ id: "l-orphan" })];
     const agg = aggregateKanbanSales(sales, [], leads, LAUNCH_ID);
     expect(agg.salesCount).toBe(0);
     expect(agg.hasData).toBe(false);

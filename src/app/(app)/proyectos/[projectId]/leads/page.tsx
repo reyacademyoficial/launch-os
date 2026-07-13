@@ -112,7 +112,13 @@ export default async function LeadsPage({
     .filter((l) => l.is_evergreen === true)
     .map((l) => ({ id: l.id, name: l.name }));
 
-  const salesByLeadId = new Map<string, SaleRow>(sales.map((s) => [s.lead_id, s]));
+  // Fase 8: un lead puede tener N ventas. Agrupamos por lead_id como array.
+  const salesByLeadId = new Map<string, SaleRow[]>();
+  for (const s of sales) {
+    const arr = salesByLeadId.get(s.lead_id);
+    if (arr) arr.push(s);
+    else salesByLeadId.set(s.lead_id, [s]);
+  }
   const paymentsBySaleId = new Map<string, PaymentRow[]>();
   for (const p of payments) {
     const existing = paymentsBySaleId.get(p.sale_id);
@@ -373,7 +379,7 @@ async function KanbanTab({
   readonly updateAction: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly deleteAction: any;
-  readonly salesByLeadId: ReadonlyMap<string, SaleRow>;
+  readonly salesByLeadId: ReadonlyMap<string, ReadonlyArray<SaleRow>>;
   readonly paymentsBySaleId: ReadonlyMap<string, ReadonlyArray<PaymentRow>>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly modalities: any;

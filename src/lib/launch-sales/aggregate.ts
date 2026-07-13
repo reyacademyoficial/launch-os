@@ -27,6 +27,12 @@
 export interface KanbanSaleRow {
   id: string;
   lead_id: string;
+  /**
+   * Atribución de launch de la venta (Fase 8). Antes se derivaba de
+   * `lead.launch_id`; ahora vive en la sale para soportar multi-venta con
+   * distintos launches por lead.
+   */
+  launch_id: string | null;
   total_amount: number;
 }
 
@@ -64,12 +70,13 @@ export const EMPTY_KANBAN_SALES_AGGREGATE: KanbanSalesAggregate = {
 
 /**
  * Agrega ventas y cobros del kanban para un launch. La función filtra por:
- *   - `lead.launch_id === launchId`
- *   - `lead.status === 'cerrado'`
+ *   - `sale.launch_id === launchId` — Fase 8, atribución propia de la venta.
+ *   - `lead.status === 'cerrado'` — la venta cuenta si el LEAD está cerrado
+ *     (política que el KPI de revenue viene aplicando desde Fase 4b).
  *
  * `leads` se pasa como array (no map) para simetría con los otros aggregates
  * y para que el caller no tenga que pre-indexar. Adentro armamos el index
- * `lead_id → {status, launch_id}` una sola vez.
+ * `lead_id → {status}` una sola vez.
  */
 export function aggregateKanbanSales(
   sales: ReadonlyArray<KanbanSaleRow>,
@@ -87,9 +94,9 @@ export function aggregateKanbanSales(
   let salesCount = 0;
 
   for (const s of sales) {
+    if (s.launch_id !== launchId) continue;
     const lead = leadById.get(s.lead_id);
     if (!lead) continue;
-    if (lead.launch_id !== launchId) continue;
     if (lead.status !== "cerrado") continue;
 
     countedSaleIds.add(s.id);

@@ -1,5 +1,5 @@
 import { computeCommission, findApplicableRule } from "@/lib/commissions/calc";
-import { buildSaleRanksFromLaunchMap } from "@/lib/commissions/ranking";
+import { buildSaleRanks } from "@/lib/commissions/ranking";
 import type {
   CommissionRuleRow,
   PaymentRow,
@@ -90,22 +90,20 @@ export function aggregateLeaderboard(input: {
   const payouts = input.payouts ?? [];
 
   // 1) Filtrar leads por launch (si hay filtro). El filtro de período no
-  //    aplica a leads (no se filtra "trabajados" por fecha).
+  //    aplica a leads (no se filtra "trabajados" por fecha). El "launch del
+  //    lead" sigue siendo el lugar donde el lead entró al pipeline — no lo
+  //    tocamos con multi-venta (Fase 8).
   const leadsFiltered = filters.launchId
     ? leads.filter((l) => l.launch_id === filters.launchId)
     : leads;
 
-  // Index lead → launch_id, para resolver la regla aplicable a la venta.
-  const launchByLead = new Map<string, string | null>(
-    leads.map((l) => [l.id, l.launch_id]),
-  );
   // Index lead → owner (team_member_id). Atribución autoritativa.
   const ownerByLead = new Map<string, string | null>(
     leads.map((l) => [l.id, l.team_member_id]),
   );
 
-  // 2) Filtrar sales por launch (vía lead.launch_id) y por período
-  //    (sales.closed_at en rango).
+  // 2) Filtrar sales por launch (Fase 8: `sale.launch_id` propio) y por
+  //    período (sales.closed_at en rango).
   const inDateRange = (closedAt: string): boolean => {
     if (filters.dateFrom && closedAt.slice(0, 10) < filters.dateFrom) return false;
     if (filters.dateTo && closedAt.slice(0, 10) > filters.dateTo) return false;
@@ -114,10 +112,7 @@ export function aggregateLeaderboard(input: {
 
   const salesFiltered = sales.filter((s) => {
     if (!inDateRange(s.closed_at)) return false;
-    if (filters.launchId) {
-      const launchId = launchByLead.get(s.lead_id);
-      if (launchId !== filters.launchId) return false;
-    }
+    if (filters.launchId && s.launch_id !== filters.launchId) return false;
     return true;
   });
 
@@ -129,10 +124,10 @@ export function aggregateLeaderboard(input: {
     else paymentsBySale.set(p.sale_id, [p]);
   }
 
-  // 4) Rank por venta dentro de (dueño_del_lead, launch). Se calcula sobre
-  //    TODAS las ventas (no las filtradas) — un filtro de UI no debe correr
-  //    el tier histórico.
-  const rankBySaleId = buildSaleRanksFromLaunchMap(sales, leads);
+  // 4) Rank por venta dentro de (team_member, launch). Fase 8: viene de la
+  //    sale directamente. Se calcula sobre TODAS las ventas (no las
+  //    filtradas) — un filtro de UI no debe correr el tier histórico.
+  const rankBySaleId = buildSaleRanks(sales);
 
   // 5) Filtrar payouts. Mismo criterio que sales: respeta launchId y rango de
   //    fechas, pero acá la fecha es `paid_at` (date) — la pregunta es "qué le
@@ -165,8 +160,15 @@ export function aggregateLeaderboard(input: {
     let commissionAccrued = 0;
     for (const sale of memberSales) {
       const pays = paymentsBySale.get(sale.id) ?? [];
-      const launchOfLead = launchByLead.get(sale.lead_id) ?? null;
-      const rule = findApplicableRule(rules, sale.payment_modality_id, launchOfLead);
+      // Regla aplicable — cascada Fase 7: producto → launch → default. Solo
+      // se usa como fallback si la venta no tiene snapshot. `sale.launch_id`
+      // es la atribución Fase 8.
+      const rule = findApplicableRule(
+        rules,
+        sale.payment_modality_id,
+        sale.launch_id,
+        sale.product_id,
+      );
       const saleRank = rankBySaleId.get(sale.id) ?? 0;
       const breakdown = computeCommission(sale, pays, rule, saleRank);
       revenueCollected += breakdown.collected;

@@ -100,6 +100,7 @@ export async function createSale(
   const insertPayload = {
     project_id: projectId,
     lead_id: leadId,
+    launch_id: lead.launch_id,
     team_member_id: lead.team_member_id,
     payment_modality_id,
     product_id,
@@ -115,9 +116,6 @@ export async function createSale(
     .maybeSingle();
 
   if (error) {
-    if (error.code === "23505") {
-      return { error: "Este lead ya tiene una venta registrada." };
-    }
     return { error: error.message };
   }
 
@@ -242,24 +240,23 @@ export async function updateSaleProduct(
 
   let snapshotUpdate: Record<string, unknown> = {};
   if (regenerate) {
-    // Necesitamos payment_modality_id + launch_id del lead para resolver la
-    // regla vigente. Un solo lookup a sales + join.
+    // Fase 8: `sale.launch_id` es la atribución propia de la venta.
     const { data: saleData } = await supabase
       .from("sales")
-      .select("payment_modality_id, leads(launch_id)")
+      .select("payment_modality_id, launch_id")
       .eq("id", saleId)
       .eq("project_id", projectId)
       .maybeSingle();
     const sale = saleData as {
       payment_modality_id: string;
-      leads: { launch_id: string | null } | null;
+      launch_id: string | null;
     } | null;
     if (!sale) return { error: "Venta inexistente." };
 
     const snapshot = await resolveSnapshotForSale(
       projectId,
       sale.payment_modality_id,
-      sale.leads?.launch_id ?? null,
+      sale.launch_id,
       productId,
     );
     if (!snapshot) {
@@ -297,21 +294,21 @@ export async function recalculateSaleCommission(
 
   const { data: saleData } = await supabase
     .from("sales")
-    .select("payment_modality_id, product_id, leads(launch_id)")
+    .select("payment_modality_id, product_id, launch_id")
     .eq("id", saleId)
     .eq("project_id", projectId)
     .maybeSingle();
   const sale = saleData as {
     payment_modality_id: string;
     product_id: string;
-    leads: { launch_id: string | null } | null;
+    launch_id: string | null;
   } | null;
   if (!sale) return { error: "Venta inexistente." };
 
   const snapshot = await resolveSnapshotForSale(
     projectId,
     sale.payment_modality_id,
-    sale.leads?.launch_id ?? null,
+    sale.launch_id,
     sale.product_id,
   );
   if (!snapshot) {
@@ -349,15 +346,15 @@ export async function deleteSale(projectId: string, saleId: string): Promise<voi
   const supabase = await createClient();
 
   // Lookup del launch_id antes de borrar, para revalidar la tab de cobros.
+  // Fase 8: la sale tiene su propio launch_id.
   const { data: saleRow } = await supabase
     .from("sales")
-    .select("lead_id, leads(launch_id)")
+    .select("launch_id")
     .eq("id", saleId)
     .eq("project_id", projectId)
     .maybeSingle();
   const launchId =
-    (saleRow as { leads: { launch_id: string | null } | null } | null)?.leads
-      ?.launch_id ?? null;
+    (saleRow as { launch_id: string | null } | null)?.launch_id ?? null;
 
   await supabase
     .from("sales")
@@ -389,13 +386,12 @@ async function revalidateForSale(
   const supabase = await createClient();
   const { data } = await supabase
     .from("sales")
-    .select("lead_id, leads(launch_id)")
+    .select("launch_id")
     .eq("id", saleId)
     .eq("project_id", projectId)
     .maybeSingle();
   const launchId =
-    (data as { leads: { launch_id: string | null } | null } | null)?.leads
-      ?.launch_id ?? null;
+    (data as { launch_id: string | null } | null)?.launch_id ?? null;
 
   revalidatePath(`/proyectos/${projectId}/leads`);
   if (launchId) {

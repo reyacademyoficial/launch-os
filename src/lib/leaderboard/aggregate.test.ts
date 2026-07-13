@@ -60,6 +60,7 @@ function sale(
     id,
     project_id: "p-1",
     lead_id: "lead-x",
+    launch_id: null,
     team_member_id: null,
     payment_modality_id: "mod-1",
     product_id: "prod-1",
@@ -247,8 +248,8 @@ describe("aggregateLeaderboard — filtro launch", () => {
       lead("l-B", { team_member_id: "tm-1", launch_id: "launch-B", status: "cerrado" }),
     ];
     const sales = [
-      sale("s-A", { lead_id: "l-A", team_member_id: "tm-1", total_amount: 1000 }),
-      sale("s-B", { lead_id: "l-B", team_member_id: "tm-1", total_amount: 2000 }),
+      sale("s-A", { lead_id: "l-A", launch_id: "launch-A", team_member_id: "tm-1", total_amount: 1000 }),
+      sale("s-B", { lead_id: "l-B", launch_id: "launch-B", team_member_id: "tm-1", total_amount: 2000 }),
     ];
     const payments = [payment("s-A", 1000), payment("s-B", 2000)];
 
@@ -439,8 +440,8 @@ describe("aggregateLeaderboard — payouts", () => {
         lead("l-B", { team_member_id: "tm-1", launch_id: "launch-B" }),
       ],
       sales: [
-        sale("s-A", { lead_id: "l-A", team_member_id: "tm-1", total_amount: 1000 }),
-        sale("s-B", { lead_id: "l-B", team_member_id: "tm-1", total_amount: 1000 }),
+        sale("s-A", { lead_id: "l-A", launch_id: "launch-A", team_member_id: "tm-1", total_amount: 1000 }),
+        sale("s-B", { lead_id: "l-B", launch_id: "launch-B", team_member_id: "tm-1", total_amount: 1000 }),
       ],
       payments: [payment("s-A", 1000), payment("s-B", 1000)],
       rules: [RULE_10_PERCENT],
@@ -515,6 +516,7 @@ describe("aggregateLeaderboard — launch override", () => {
       sales: [
         sale("s-1", {
           lead_id: "l-1",
+          launch_id: "launch-X",
           team_member_id: "tm-1",
           total_amount: 1000,
         }),

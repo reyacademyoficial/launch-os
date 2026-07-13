@@ -94,6 +94,13 @@ export interface SaleRow {
   id: string;
   project_id: string;
   lead_id: string;
+  /**
+   * Launch al que pertenece esta venta específica (Fase 8). NULL para
+   * ventas off-books o para las que no lograron backfill (lead sin
+   * launch_id al momento de la migración 0041). Atribución de venta a
+   * launch va por acá, no por `lead.launch_id`.
+   */
+  launch_id: string | null;
   team_member_id: string | null;
   payment_modality_id: string;
   product_id: string;
