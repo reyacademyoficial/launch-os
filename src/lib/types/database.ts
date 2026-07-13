@@ -904,6 +904,44 @@ export type Database = {
           },
         ]
       }
+      products: {
+        Row: {
+          active: boolean
+          created_at: string
+          description: string | null
+          id: string
+          name: string
+          project_id: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          description?: string | null
+          id?: string
+          name: string
+          project_id: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          description?: string | null
+          id?: string
+          name?: string
+          project_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "products_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           created_at: string
@@ -1114,6 +1152,7 @@ export type Database = {
           id: string
           lead_id: string
           payment_modality_id: string
+          product_id: string
           project_id: string
           team_member_id: string | null
           total_amount: number
@@ -1125,6 +1164,7 @@ export type Database = {
           id?: string
           lead_id: string
           payment_modality_id: string
+          product_id: string
           project_id: string
           team_member_id?: string | null
           total_amount: number
@@ -1136,6 +1176,7 @@ export type Database = {
           id?: string
           lead_id?: string
           payment_modality_id?: string
+          product_id?: string
           project_id?: string
           team_member_id?: string | null
           total_amount?: number
@@ -1154,6 +1195,13 @@ export type Database = {
             columns: ["payment_modality_id"]
             isOneToOne: false
             referencedRelation: "payment_modalities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
             referencedColumns: ["id"]
           },
           {

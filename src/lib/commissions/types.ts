@@ -67,6 +67,7 @@ export interface SaleRow {
   lead_id: string;
   team_member_id: string | null;
   payment_modality_id: string;
+  product_id: string;
   total_amount: number;
   closed_at: string;
   created_at: string;

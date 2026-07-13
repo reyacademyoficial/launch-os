@@ -62,6 +62,7 @@ function sale(
     lead_id: "lead-x",
     team_member_id: null,
     payment_modality_id: "mod-1",
+    product_id: "prod-1",
     total_amount: 1000,
     closed_at: "2026-06-10T00:00:00Z",
     created_at: TS,
