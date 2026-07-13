@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 
 import { FiltersBar } from "@/components/dashboard/leaderboard/filters-bar";
 import { LeaderboardTable } from "@/components/dashboard/leaderboard/leaderboard-table";
+import { ProductBreakdownTable } from "@/components/dashboard/leaderboard/product-breakdown-table";
 import {
   listCommissionRules,
   listPaymentModalities,
@@ -10,9 +11,11 @@ import {
 import { fmtMoney, fmtNumber } from "@/lib/format";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { aggregateLeaderboard } from "@/lib/leaderboard/aggregate";
+import { aggregateProductBreakdown } from "@/lib/leaderboard/product-breakdown";
 import { listLeads } from "@/lib/leads/list";
 import { listPayoutsForProject } from "@/lib/payouts/list";
 import type { TeamMemberPayoutRow } from "@/lib/payouts/types";
+import { listProductsForProject } from "@/lib/products/list";
 import {
   listPaymentsForProject,
   listSalesForProject,
@@ -59,6 +62,7 @@ export default async function LeaderboardPage({
     rules,
     launches,
     payouts,
+    products,
     canEdit,
   ] = await Promise.all([
     listTeamMembers(projectId),
@@ -68,12 +72,19 @@ export default async function LeaderboardPage({
     listCommissionRules(projectId),
     listLaunchesForProject(projectId),
     listPayoutsForProject(projectId),
+    listProductsForProject(projectId),
     userCanEditLaunchesIn(projectId),
   ]);
 
   // listPaymentModalities solo lo necesitamos si quisiéramos mostrar regla por
   // miembro. Para esta versión no — el agregador deriva todo internamente.
   void listPaymentModalities;
+
+  const commonFilters = {
+    launchId: launchId || null,
+    dateFrom: dateFrom || null,
+    dateTo: dateTo || null,
+  };
 
   const rows = aggregateLeaderboard({
     teamMembers,
@@ -82,11 +93,17 @@ export default async function LeaderboardPage({
     payments,
     rules,
     payouts,
-    filters: {
-      launchId: launchId || null,
-      dateFrom: dateFrom || null,
-      dateTo: dateTo || null,
-    },
+    filters: commonFilters,
+  });
+
+  const productBreakdown = aggregateProductBreakdown({
+    teamMembers,
+    leads,
+    sales,
+    payments,
+    rules,
+    products,
+    filters: commonFilters,
   });
 
   // Index payouts por team_member_id para alimentar al modal (que ofrece un
@@ -165,6 +182,8 @@ export default async function LeaderboardPage({
           deletePayoutAction={deletePayoutAction}
         />
       )}
+
+      <ProductBreakdownTable rows={productBreakdown} />
     </section>
   );
 }
