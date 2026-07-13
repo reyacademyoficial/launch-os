@@ -9,6 +9,7 @@ import {
   listPaymentModalities,
 } from "@/lib/commissions/list";
 import { listLaunchesForProject } from "@/lib/launches/list";
+import { listProductsForProject } from "@/lib/products/list";
 import { requireSessionProfile, userCanEditProject } from "@/lib/supabase/auth";
 
 import {
@@ -35,14 +36,16 @@ export default async function CommissionsPage({
   const canEdit = await userCanEditProject(projectId);
   if (!canEdit) redirect(`/proyectos/${projectId}`);
 
-  const [modalities, rules, launches] = await Promise.all([
+  const [modalities, rules, launches, products] = await Promise.all([
     listPaymentModalities(projectId),
     listCommissionRules(projectId),
     listLaunchesForProject(projectId),
+    listProductsForProject(projectId),
   ]);
 
   const modalityById = new Map(modalities.map((m) => [m.id, m]));
   const launchById = new Map(launches.map((l) => [l.id, l.name]));
+  const productById = new Map(products.map((p) => [p.id, p.name]));
 
   const createModalityAction = createPaymentModality.bind(null, projectId);
   const createRuleAction = createCommissionRule.bind(null, projectId);
@@ -142,6 +145,7 @@ export default async function CommissionsPage({
               action={createRuleAction}
               modalities={modalities}
               launches={launches.map((l) => ({ id: l.id, name: l.name }))}
+              products={products}
             />
           )}
         </header>
@@ -160,9 +164,11 @@ export default async function CommissionsPage({
               const modalityNames = r.modality_ids
                 .map((id) => modalityById.get(id)?.name ?? "—")
                 .join(", ");
-              const launchLabel = r.launch_id
-                ? launchById.get(r.launch_id) ?? "—"
-                : "Default del proyecto";
+              const scopeLabel = r.product_id
+                ? `Producto: ${productById.get(r.product_id) ?? "—"}`
+                : r.launch_id
+                  ? `Launch: ${launchById.get(r.launch_id) ?? "—"}`
+                  : "Default del proyecto";
               const deleteAction = deleteCommissionRule.bind(null, projectId, r.id);
               const updateAction = updateCommissionRule.bind(null, projectId, r.id);
               return (
@@ -176,7 +182,7 @@ export default async function CommissionsPage({
                         {modalityNames || "Sin modalidades"}
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-fg-muted">
-                        <span>{launchLabel}</span>
+                        <span>{scopeLabel}</span>
                         <span>·</span>
                         <span>{accrualLabel(r)}</span>
                       </div>
@@ -191,9 +197,11 @@ export default async function CommissionsPage({
                         action={updateAction}
                         modalities={modalities}
                         launches={launches.map((l) => ({ id: l.id, name: l.name }))}
+                        products={products}
                         initial={{
                           modality_ids: r.modality_ids,
                           launch_id: r.launch_id,
+                          product_id: r.product_id,
                           accrual_mode: r.accrual_mode,
                           threshold_type: r.threshold_type,
                           threshold_value: r.threshold_value,

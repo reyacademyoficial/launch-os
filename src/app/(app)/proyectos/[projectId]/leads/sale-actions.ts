@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { resolveSnapshotForSale } from "@/lib/commissions/snapshot";
 import { requireCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
@@ -51,16 +52,19 @@ export async function createSale(
 
   const supabase = await createClient();
 
-  // Resolver project_id + dueño del lead. El team_member_id de la venta SE
-  // DERIVA del lead — el form no lo manda.
+  // Resolver project_id + dueño del lead + launch. El team_member_id de la
+  // venta SE DERIVA del lead — el form no lo manda. `launch_id` del lead
+  // también es la atribución de launch de la venta (hasta Fase 8 que le da
+  // columna propia a sales.launch_id).
   const { data: leadData } = await supabase
     .from("leads")
-    .select("project_id, team_member_id")
+    .select("project_id, team_member_id, launch_id")
     .eq("id", leadId)
     .maybeSingle();
   const lead = leadData as {
     project_id: string;
     team_member_id: string | null;
+    launch_id: string | null;
   } | null;
   if (!lead || lead.project_id !== projectId) {
     return { error: "Lead inexistente o de otro proyecto." };
@@ -78,6 +82,21 @@ export async function createSale(
     return { error: "Producto inexistente o de otro proyecto." };
   }
 
+  // Congelar la regla al momento del cierre. Fase 7: la comisión histórica
+  // no cambia si el admin toca la regla más adelante.
+  const snapshot = await resolveSnapshotForSale(
+    projectId,
+    payment_modality_id,
+    lead.launch_id,
+    product_id,
+  );
+  if (!snapshot) {
+    return {
+      error:
+        "No hay comisión configurada para esa combinación de producto y modalidad. Pedile al admin que la cargue en Comisiones.",
+    };
+  }
+
   const insertPayload = {
     project_id: projectId,
     lead_id: leadId,
@@ -86,6 +105,7 @@ export async function createSale(
     product_id,
     total_amount,
     closed_at,
+    commission_rule_snapshot: snapshot,
   } as never;
 
   const { data, error } = await supabase
@@ -192,11 +212,18 @@ export async function updateSale(
  * ahora quiere migrarla al catálogo real.
  *
  * Guard de pertenencia: el producto tiene que ser del mismo proyecto.
+ *
+ * SNAPSHOT: por default la comisión queda congelada con la regla del
+ * producto ANTERIOR (política Fase 7 "regla al cierre"). Si `regenerate`
+ * es true, resolvemos la regla actual del nuevo producto y sobrescribimos
+ * el snapshot — para reasignaciones donde el operador quiere que la
+ * comisión también migre.
  */
 export async function updateSaleProduct(
   projectId: string,
   saleId: string,
   productId: string,
+  regenerate = false,
 ): Promise<{ ok: true } | { error: string }> {
   await requireCanEditLaunchesIn(projectId);
   if (!productId) return { error: "Elegí un producto." };
@@ -213,7 +240,88 @@ export async function updateSaleProduct(
     return { error: "Producto inexistente o de otro proyecto." };
   }
 
-  const payload = { product_id: productId } as never;
+  let snapshotUpdate: Record<string, unknown> = {};
+  if (regenerate) {
+    // Necesitamos payment_modality_id + launch_id del lead para resolver la
+    // regla vigente. Un solo lookup a sales + join.
+    const { data: saleData } = await supabase
+      .from("sales")
+      .select("payment_modality_id, leads(launch_id)")
+      .eq("id", saleId)
+      .eq("project_id", projectId)
+      .maybeSingle();
+    const sale = saleData as {
+      payment_modality_id: string;
+      leads: { launch_id: string | null } | null;
+    } | null;
+    if (!sale) return { error: "Venta inexistente." };
+
+    const snapshot = await resolveSnapshotForSale(
+      projectId,
+      sale.payment_modality_id,
+      sale.leads?.launch_id ?? null,
+      productId,
+    );
+    if (!snapshot) {
+      return {
+        error:
+          "No hay comisión configurada para el nuevo producto en esa modalidad. Cargala antes de reasignar.",
+      };
+    }
+    snapshotUpdate = { commission_rule_snapshot: snapshot };
+  }
+
+  const payload = { product_id: productId, ...snapshotUpdate } as never;
+  const { error } = await supabase
+    .from("sales")
+    .update(payload)
+    .eq("id", saleId)
+    .eq("project_id", projectId);
+  if (error) return { error: error.message };
+
+  await revalidateForSale(projectId, saleId);
+  return { ok: true };
+}
+
+/**
+ * Recalcula el `commission_rule_snapshot` de una venta contra la regla
+ * vigente en el proyecto. Overwrite explícito — pensado para el botón
+ * "Recalcular comisión con la regla actual" del SalePanel.
+ */
+export async function recalculateSaleCommission(
+  projectId: string,
+  saleId: string,
+): Promise<{ ok: true } | { error: string }> {
+  await requireCanEditLaunchesIn(projectId);
+  const supabase = await createClient();
+
+  const { data: saleData } = await supabase
+    .from("sales")
+    .select("payment_modality_id, product_id, leads(launch_id)")
+    .eq("id", saleId)
+    .eq("project_id", projectId)
+    .maybeSingle();
+  const sale = saleData as {
+    payment_modality_id: string;
+    product_id: string;
+    leads: { launch_id: string | null } | null;
+  } | null;
+  if (!sale) return { error: "Venta inexistente." };
+
+  const snapshot = await resolveSnapshotForSale(
+    projectId,
+    sale.payment_modality_id,
+    sale.leads?.launch_id ?? null,
+    sale.product_id,
+  );
+  if (!snapshot) {
+    return {
+      error:
+        "No hay comisión configurada para esa combinación de producto y modalidad.",
+    };
+  }
+
+  const payload = { commission_rule_snapshot: snapshot } as never;
   const { error } = await supabase
     .from("sales")
     .update(payload)

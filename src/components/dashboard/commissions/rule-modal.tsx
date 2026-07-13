@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { CommissionActionState } from "@/app/(app)/proyectos/[projectId]/comisiones/actions";
 import { Button } from "@/components/ui/button";
 import type { PaymentModalityRow } from "@/lib/commissions/types";
+import type { ProductRow } from "@/lib/products/types";
 
 import { RuleForm, type RuleInitial } from "./rule-form";
 
@@ -22,6 +23,7 @@ export function RuleModal({
   action,
   modalities,
   launches,
+  products,
   initial,
 }: {
   readonly triggerLabel: string;
@@ -32,6 +34,7 @@ export function RuleModal({
   readonly action: FormAction;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
   readonly launches: ReadonlyArray<{ id: string; name: string }>;
+  readonly products: ReadonlyArray<ProductRow>;
   readonly initial?: RuleInitial;
 }) {
   const [open, setOpen] = useState(false);
@@ -72,6 +75,7 @@ export function RuleModal({
                 action={action}
                 modalities={modalities}
                 launches={launches}
+                products={products}
                 submitLabel={submitLabel}
                 initial={initial}
                 onSuccess={() => setOpen(false)}

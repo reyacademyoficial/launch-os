@@ -38,7 +38,7 @@ export async function listCommissionRules(
   // Reglas base.
   const { data: rulesRaw } = await supabase
     .from("commission_rules")
-    .select("id, project_id, launch_id, accrual_mode, threshold_type, threshold_value, created_at, updated_at")
+    .select("id, project_id, launch_id, product_id, accrual_mode, threshold_type, threshold_value, created_at, updated_at")
     .eq("project_id", projectId)
     .order("launch_id", { ascending: true, nullsFirst: true });
 
@@ -46,6 +46,7 @@ export async function listCommissionRules(
     id: string;
     project_id: string;
     launch_id: string | null;
+    product_id: string | null;
     accrual_mode: AccrualMode;
     threshold_type: ThresholdType | null;
     threshold_value: number | null;

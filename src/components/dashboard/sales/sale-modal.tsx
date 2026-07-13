@@ -35,6 +35,7 @@ type DeleteAction = (id: string) => Promise<void>;
 type UpdateProductAction = (
   productId: string,
 ) => Promise<{ ok: true } | { error: string }>;
+type RecalculateAction = () => Promise<{ ok: true } | { error: string }>;
 
 /**
  * Modal único que sirve a dos escenarios:
@@ -56,6 +57,7 @@ export function SaleModal({
   teamMembers,
   createSaleAction,
   updateProductAction,
+  recalculateAction,
   addPaymentAction,
   deletePaymentAction,
   deleteSaleAction,
@@ -81,6 +83,12 @@ export function SaleModal({
    * el producto como sólo lectura — útil para roles sin permiso de edición.
    */
   readonly updateProductAction?: UpdateProductAction;
+  /**
+   * Recalcula `commission_rule_snapshot` contra la regla vigente. Bindeada
+   * al saleId. Cuando existe, `SalePanel` muestra el botón "Recalcular
+   * comisión con regla actual" al lado del badge "congelada".
+   */
+  readonly recalculateAction?: RecalculateAction;
   readonly addPaymentAction: AddPaymentAction;
   readonly deletePaymentAction: DeleteAction;
   /**
@@ -143,6 +151,7 @@ export function SaleModal({
                   rules={rules}
                   launchId={lead.launch_id}
                   updateProductAction={updateProductAction}
+                  recalculateAction={recalculateAction}
                   addPaymentAction={addPaymentAction}
                   deletePaymentAction={deletePaymentAction}
                   deleteSaleAction={deleteSaleAction}
@@ -316,6 +325,7 @@ function SalePanel({
   rules,
   launchId,
   updateProductAction,
+  recalculateAction,
   addPaymentAction,
   deletePaymentAction,
   deleteSaleAction,
@@ -329,6 +339,7 @@ function SalePanel({
   readonly rules: ReadonlyArray<CommissionRuleRow>;
   readonly launchId: string | null;
   readonly updateProductAction?: UpdateProductAction;
+  readonly recalculateAction?: RecalculateAction;
   readonly addPaymentAction: AddPaymentAction;
   readonly deletePaymentAction: DeleteAction;
   readonly deleteSaleAction?: DeleteAction;
@@ -362,12 +373,17 @@ function SalePanel({
         Modalidad: <span className="text-fg-muted">{modality?.name ?? "—"}</span>
         <span className="mx-2">·</span>
         Cierre: <span className="text-fg-muted">{sale.closed_at.slice(0, 10)}</span>
-        {!rule && (
+        {!sale.commission_rule_snapshot && !rule && (
           <span className="ml-2 rounded-full bg-warning/15 px-2 py-0.5 text-warning">
             Sin regla configurada → comisión = 0
           </span>
         )}
       </section>
+
+      <CommissionSnapshotBar
+        hasSnapshot={sale.commission_rule_snapshot !== null}
+        recalculateAction={recalculateAction}
+      />
 
       <ProductAssign
         currentProductId={sale.product_id}
@@ -637,6 +653,62 @@ function ProductAssign({
         {pending && <span className="text-fg-subtle">Guardando…</span>}
       </div>
       {error && <FieldError>{error}</FieldError>}
+    </section>
+  );
+}
+
+/**
+ * Barra de estado de la comisión. Muestra si la venta tiene una regla
+ * congelada (snapshot) y ofrece el botón para recalcular contra la regla
+ * vigente — pensado para cuando el admin actualizó las reglas y esta venta
+ * concreta necesita seguir la nueva política.
+ */
+function CommissionSnapshotBar({
+  hasSnapshot,
+  recalculateAction,
+}: {
+  readonly hasSnapshot: boolean;
+  readonly recalculateAction?: RecalculateAction;
+}) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [justRecalculated, setJustRecalculated] = useState(false);
+
+  return (
+    <section className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface/40 px-3 py-2 text-xs">
+      {hasSnapshot ? (
+        <span className="rounded-full bg-success/10 px-2 py-0.5 text-success">
+          Comisión congelada al cierre
+        </span>
+      ) : (
+        <span className="rounded-full bg-warning/15 px-2 py-0.5 text-warning">
+          Sin regla congelada (usando la vigente)
+        </span>
+      )}
+      {recalculateAction && (
+        <>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              setError(null);
+              setJustRecalculated(false);
+              startTransition(async () => {
+                const r = await recalculateAction();
+                if ("error" in r) setError(r.error);
+                else setJustRecalculated(true);
+              });
+            }}
+            className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg hover:bg-bg-elevated disabled:opacity-50"
+          >
+            {pending ? "Recalculando…" : "Recalcular con regla actual"}
+          </button>
+          {justRecalculated && (
+            <span className="text-success">Actualizada.</span>
+          )}
+          {error && <FieldError>{error}</FieldError>}
+        </>
+      )}
     </section>
   );
 }

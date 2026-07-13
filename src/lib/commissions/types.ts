@@ -45,11 +45,18 @@ export interface CommissionRuleTierRow {
  * Regla "rica" — incluye tiers + modalidades ya hidratadas. Es lo que consume
  * el calc y la UI. La DB las guarda en 3 tablas (commission_rules + tiers +
  * pivot); `listCommissionRules` se encarga de armarla.
+ *
+ * Scope XOR (constraint SQL): `launch_id` y `product_id` nunca están
+ * setteados los dos a la vez. Los tres estados válidos son:
+ *   - launch_id=X, product_id=null → override por launch
+ *   - launch_id=null, product_id=Y → override por producto
+ *   - launch_id=null, product_id=null → default del proyecto
  */
 export interface CommissionRuleRow {
   id: string;
   project_id: string;
   launch_id: string | null;
+  product_id: string | null;
   accrual_mode: AccrualMode;
   threshold_type: ThresholdType | null;
   threshold_value: number | null;
@@ -61,6 +68,28 @@ export interface CommissionRuleRow {
   updated_at: string;
 }
 
+/**
+ * Snapshot congelado en `sales.commission_rule_snapshot` al momento de
+ * cerrar la venta. Guarda TODO lo que necesita `computeCommission` para
+ * derivar la comisión sin ir a buscar la regla vigente. Cambios posteriores
+ * a la regla no afectan la comisión de esta venta.
+ *
+ * Se guarda como jsonb en la DB pero acá lo tipamos para el consumo del
+ * calc. Casteo con `as unknown as CommissionRuleSnapshot` en la boundary
+ * de PostgREST — mismo patrón que el resto.
+ */
+export interface CommissionRuleSnapshot {
+  accrual_mode: AccrualMode;
+  threshold_type: ThresholdType | null;
+  threshold_value: number | null;
+  tiers: Array<{
+    min_count: number;
+    max_count: number | null;
+    type: CommissionTierType;
+    value: number;
+  }>;
+}
+
 export interface SaleRow {
   id: string;
   project_id: string;
@@ -70,6 +99,12 @@ export interface SaleRow {
   product_id: string;
   total_amount: number;
   closed_at: string;
+  /**
+   * Regla congelada al cierre. NULL solo para ventas legacy que no lograron
+   * backfill en la migración 0039 (sin regla que matchee ese día). Cuando
+   * es NULL, `computeCommission` cae al fallback de buscar la regla vigente.
+   */
+  commission_rule_snapshot: CommissionRuleSnapshot | null;
   created_at: string;
   updated_at: string;
 }

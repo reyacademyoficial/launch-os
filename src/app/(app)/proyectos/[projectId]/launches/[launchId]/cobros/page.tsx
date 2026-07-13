@@ -19,6 +19,7 @@ import {
   createSale,
   deletePayment,
   deleteSale,
+  recalculateSaleCommission,
   updateSaleProduct,
 } from "../../../leads/sale-actions";
 
@@ -113,6 +114,7 @@ export default async function LaunchCobrosPage({
   const deletePaymentAction = deletePayment.bind(null, projectId);
   const deleteSaleAction = deleteSale.bind(null, projectId);
   const updateSaleProductAction = updateSaleProduct.bind(null, projectId);
+  const recalculateSaleAction = recalculateSaleCommission.bind(null, projectId);
 
   return (
     <div className="space-y-10">
@@ -164,6 +166,7 @@ export default async function LaunchCobrosPage({
         deletePaymentAction={deletePaymentAction}
         deleteSaleAction={deleteSaleAction}
         updateSaleProductAction={updateSaleProductAction}
+        recalculateSaleAction={recalculateSaleAction}
       />
     </div>
   );

@@ -159,6 +159,7 @@ function parseTiers(formData: FormData): TierInput[] | string {
 interface ParsedRuleInput {
   modalityIds: string[];
   launch_id: string | null;
+  product_id: string | null;
   accrual_mode: AccrualMode;
   threshold_type: ThresholdType | null;
   threshold_value: number | null;
@@ -169,7 +170,18 @@ function parseRuleFormData(formData: FormData): ParsedRuleInput | string {
   const modalityIds = formData.getAll("modality_ids").map(String).filter(Boolean);
   if (modalityIds.length === 0) return "Elegí al menos una modalidad.";
 
-  const launch_id = nullable(str(formData, "launch_id"));
+  // Scope: launch, producto o default del proyecto. Radio "scope" define
+  // cuál va con valor y cuál queda null. Guard XOR: nunca ambos.
+  const scope = str(formData, "scope"); // "default" | "launch" | "product"
+  let launch_id: string | null = null;
+  let product_id: string | null = null;
+  if (scope === "launch") {
+    launch_id = nullable(str(formData, "launch_id"));
+    if (!launch_id) return "Elegí el lanzamiento al que aplica la regla.";
+  } else if (scope === "product") {
+    product_id = nullable(str(formData, "product_id"));
+    if (!product_id) return "Elegí el producto al que aplica la regla.";
+  }
 
   const accrualRaw = str(formData, "accrual_mode") || "proportional";
   if (
@@ -209,6 +221,7 @@ function parseRuleFormData(formData: FormData): ParsedRuleInput | string {
   return {
     modalityIds,
     launch_id,
+    product_id,
     accrual_mode,
     threshold_type,
     threshold_value,
@@ -230,6 +243,7 @@ export async function createCommissionRule(
   const { error } = await supabase.rpc("create_commission_rule" as never, {
     p_project_id: projectId,
     p_launch_id: parsed.launch_id,
+    p_product_id: parsed.product_id,
     p_accrual_mode: parsed.accrual_mode,
     p_threshold_type: parsed.threshold_type,
     p_threshold_value: parsed.threshold_value,
@@ -239,11 +253,11 @@ export async function createCommissionRule(
 
   if (error) {
     // El trigger del pivot lanza con SQLSTATE 23505 si una modalidad ya
-    // tiene regla para el mismo (project, launch).
+    // tiene regla para el mismo (project, launch, producto).
     if (error.code === "23505") {
       return {
         error:
-          "Una de las modalidades elegidas ya tiene regla para ese lanzamiento.",
+          "Una de las modalidades elegidas ya tiene regla para ese scope (launch o producto).",
       };
     }
     return { error: error.message };
@@ -268,6 +282,7 @@ export async function updateCommissionRule(
   const { error } = await supabase.rpc("update_commission_rule" as never, {
     p_rule_id: ruleId,
     p_launch_id: parsed.launch_id,
+    p_product_id: parsed.product_id,
     p_accrual_mode: parsed.accrual_mode,
     p_threshold_type: parsed.threshold_type,
     p_threshold_value: parsed.threshold_value,
@@ -279,7 +294,7 @@ export async function updateCommissionRule(
     if (error.code === "23505") {
       return {
         error:
-          "Una de las modalidades elegidas ya tiene regla para ese lanzamiento.",
+          "Una de las modalidades elegidas ya tiene regla para ese scope (launch o producto).",
       };
     }
     return { error: error.message };

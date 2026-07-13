@@ -14,6 +14,7 @@ import type {
   PaymentModalityRow,
   ThresholdType,
 } from "@/lib/commissions/types";
+import type { ProductRow } from "@/lib/products/types";
 
 type FormAction = (
   prev: CommissionActionState,
@@ -37,6 +38,7 @@ const DEFAULT_TIER: TierDraft = {
 export interface RuleInitial {
   modality_ids: ReadonlyArray<string>;
   launch_id: string | null;
+  product_id: string | null;
   accrual_mode: AccrualMode;
   threshold_type: ThresholdType | null;
   threshold_value: number | null;
@@ -48,10 +50,20 @@ export interface RuleInitial {
   }>;
 }
 
+type RuleScope = "default" | "launch" | "product";
+
+function initialScope(initial: RuleInitial | undefined): RuleScope {
+  if (!initial) return "default";
+  if (initial.launch_id) return "launch";
+  if (initial.product_id) return "product";
+  return "default";
+}
+
 export function RuleForm({
   action,
   modalities,
   launches,
+  products,
   submitLabel,
   onSuccess,
   initial,
@@ -59,6 +71,7 @@ export function RuleForm({
   readonly action: FormAction;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
   readonly launches: ReadonlyArray<{ id: string; name: string }>;
+  readonly products: ReadonlyArray<ProductRow>;
   readonly submitLabel: string;
   readonly onSuccess?: () => void;
   readonly initial?: RuleInitial;
@@ -68,6 +81,7 @@ export function RuleForm({
     null,
   );
 
+  const [scope, setScope] = useState<RuleScope>(() => initialScope(initial));
   const [accrualMode, setAccrualMode] = useState<AccrualMode>(
     initial?.accrual_mode ?? "proportional",
   );
@@ -136,6 +150,12 @@ export function RuleForm({
 
   const activeModalities = modalities.filter((m) => m.active);
   const initialModalityIds = new Set(initial?.modality_ids ?? []);
+  // Ocultamos productos inactivos EXCEPTO el actualmente asignado — así una
+  // regla ligada a un producto que se desactivó sigue editable sin
+  // desasignarlo por accidente.
+  const visibleProducts = products.filter(
+    (p) => p.active || p.id === initial?.product_id,
+  );
 
   return (
     <form action={formAction} className="space-y-5">
@@ -167,23 +187,83 @@ export function RuleForm({
         </div>
       </div>
 
-      {/* Launch override */}
+      {/* Scope — mutuamente excluyente: default / launch / producto */}
       <div>
-        <Label htmlFor="rule-launch">Lanzamiento (opcional, override)</Label>
-        <Select
-          id="rule-launch"
-          name="launch_id"
-          defaultValue={initial?.launch_id ?? ""}
-        >
-          <option value="">— Regla default del proyecto —</option>
-          {launches.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.name}
-            </option>
-          ))}
-        </Select>
+        <Label>Aplica a *</Label>
+        <input type="hidden" name="scope" value={scope} />
+        <div className="mt-1 space-y-2 rounded-md border border-border bg-surface/40 p-3 text-sm">
+          <label className="flex cursor-pointer items-center gap-2">
+            <input
+              type="radio"
+              name="scope_radio"
+              checked={scope === "default"}
+              onChange={() => setScope("default")}
+              className="accent-accent"
+            />
+            <span>Default del proyecto para las modalidades elegidas</span>
+          </label>
+          <label className="flex cursor-pointer items-center gap-2">
+            <input
+              type="radio"
+              name="scope_radio"
+              checked={scope === "launch"}
+              onChange={() => setScope("launch")}
+              className="accent-accent"
+            />
+            <span>Un lanzamiento específico</span>
+          </label>
+          {scope === "launch" && (
+            <div className="ml-6">
+              <Select
+                id="rule-launch"
+                name="launch_id"
+                defaultValue={initial?.launch_id ?? ""}
+                required
+              >
+                <option value="" disabled>
+                  Elegí un lanzamiento
+                </option>
+                {launches.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+          <label className="flex cursor-pointer items-center gap-2">
+            <input
+              type="radio"
+              name="scope_radio"
+              checked={scope === "product"}
+              onChange={() => setScope("product")}
+              className="accent-accent"
+            />
+            <span>Un producto específico</span>
+          </label>
+          {scope === "product" && (
+            <div className="ml-6">
+              <Select
+                id="rule-product"
+                name="product_id"
+                defaultValue={initial?.product_id ?? ""}
+                required
+              >
+                <option value="" disabled>
+                  Elegí un producto
+                </option>
+                {visibleProducts.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {!p.active ? " (inactivo)" : ""}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+        </div>
         <p className="mt-1 text-xs text-fg-subtle">
-          Si elegís un lanzamiento, esta regla pisa la default para ese launch.
+          Prioridad al calcular: producto → launch → default.
         </p>
       </div>
 

@@ -1,5 +1,6 @@
 import type {
   CommissionRuleRow,
+  CommissionRuleSnapshot,
   CommissionRuleTierRow,
   PaymentRow,
   SaleRow,
@@ -20,30 +21,82 @@ function toNum(v: unknown): number {
 }
 
 /**
- * Búsqueda de la regla aplicable a una venta. Prioridad:
- *   1. Rule específica del launch de la venta (override).
- *   2. Rule default del proyecto para esa modalidad (launch_id NULL).
- *   3. null → no hay regla configurada.
+ * Búsqueda de la regla aplicable a una venta. Cascada v2 (Fase 7):
+ *   1. Rule específica del producto (product_id=X, launch_id=NULL).
+ *   2. Rule específica del launch (launch_id=Y, product_id=NULL).
+ *   3. Rule default del proyecto (ambos NULL).
+ *   4. null → no hay regla configurada.
  *
- * El match por modalidad ahora va contra `rule.modality_ids` (M:N).
+ * Producto gana sobre launch — decisión de diseño (opción B): son
+ * dimensiones mutuamente excluyentes en el schema (constraint SQL), y en
+ * ausencia de una regla exacta preferimos la del producto porque es el
+ * "qué se vendió" antes que el "cuándo se vendió".
+ *
+ * El match por modalidad va contra `rule.modality_ids` (M:N via pivot).
  */
 export function findApplicableRule(
   rules: ReadonlyArray<CommissionRuleRow>,
   paymentModalityId: string,
   launchId: string | null,
+  productId: string | null = null,
 ): CommissionRuleRow | null {
   const candidatesForModality = rules.filter((r) =>
     r.modality_ids.includes(paymentModalityId),
   );
 
+  if (productId) {
+    const productOverride = candidatesForModality.find(
+      (r) => r.product_id === productId && r.launch_id === null,
+    );
+    if (productOverride) return productOverride;
+  }
+
   if (launchId) {
     const launchOverride = candidatesForModality.find(
-      (r) => r.launch_id === launchId,
+      (r) => r.launch_id === launchId && r.product_id === null,
     );
     if (launchOverride) return launchOverride;
   }
 
-  return candidatesForModality.find((r) => r.launch_id === null) ?? null;
+  return (
+    candidatesForModality.find(
+      (r) => r.launch_id === null && r.product_id === null,
+    ) ?? null
+  );
+}
+
+/**
+ * Convierte un snapshot congelado a la shape de `CommissionRuleRow` que
+ * `computeCommission` sabe consumir. Los campos de identidad (id,
+ * project_id, etc.) van con placeholders — al calc no le importan.
+ *
+ * El snapshot NO tiene launch_id/product_id porque son metadatos de
+ * matching, no de cálculo — para eso ya se resolvió la regla al cierre.
+ */
+function ruleFromSnapshot(snapshot: CommissionRuleSnapshot): CommissionRuleRow {
+  const tiers: CommissionRuleTierRow[] = snapshot.tiers.map((t, i) => ({
+    id: `snapshot-tier-${i}`,
+    rule_id: "snapshot",
+    min_count: t.min_count,
+    max_count: t.max_count,
+    type: t.type,
+    value: t.value,
+    created_at: "",
+    updated_at: "",
+  }));
+  return {
+    id: "snapshot",
+    project_id: "",
+    launch_id: null,
+    product_id: null,
+    accrual_mode: snapshot.accrual_mode,
+    threshold_type: snapshot.threshold_type,
+    threshold_value: snapshot.threshold_value,
+    modality_ids: [],
+    tiers,
+    created_at: "",
+    updated_at: "",
+  };
 }
 
 /**
@@ -105,7 +158,7 @@ export interface CommissionBreakdown {
  *     · threshold_proportional → value × (collected/pledged), capeado.
  */
 export function computeCommission(
-  sale: Pick<SaleRow, "total_amount">,
+  sale: Pick<SaleRow, "total_amount" | "commission_rule_snapshot">,
   payments: ReadonlyArray<Pick<PaymentRow, "amount">>,
   rule: CommissionRuleRow | null,
   saleRank: number,
@@ -114,7 +167,15 @@ export function computeCommission(
   const pledged = toNum(sale.total_amount);
   const paymentCount = payments.length;
 
-  if (!rule) {
+  // Preferimos el snapshot: es la regla congelada al cierre y es la que
+  // define el histórico. Solo caemos a `rule` (findApplicableRule vigente)
+  // para ventas legacy sin backfill — la migración 0039 intentó cubrirlas
+  // pero puede haber quedado null si no había regla ese día.
+  const effectiveRule = sale.commission_rule_snapshot
+    ? ruleFromSnapshot(sale.commission_rule_snapshot)
+    : rule;
+
+  if (!effectiveRule) {
     return {
       collected,
       pledged,
@@ -127,13 +188,13 @@ export function computeCommission(
     };
   }
 
-  const tier = findTierForRank(rule.tiers, saleRank);
+  const tier = findTierForRank(effectiveRule.tiers, saleRank);
   if (!tier) {
     return {
       collected,
       pledged,
       paymentCount,
-      rule,
+      rule: effectiveRule,
       tier: null,
       released: false,
       commission: 0,
@@ -141,30 +202,35 @@ export function computeCommission(
     };
   }
 
-  const released = isReleased(rule, collected, pledged, paymentCount);
+  const released = isReleased(effectiveRule, collected, pledged, paymentCount);
   if (!released) {
     return {
       collected,
       pledged,
       paymentCount,
-      rule,
+      rule: effectiveRule,
       tier,
       released: false,
       commission: 0,
-      formula: thresholdLabel(rule, false),
+      formula: thresholdLabel(effectiveRule, false),
     };
   }
 
-  const commission = applyTier(tier, rule.accrual_mode, collected, pledged);
+  const commission = applyTier(
+    tier,
+    effectiveRule.accrual_mode,
+    collected,
+    pledged,
+  );
   return {
     collected,
     pledged,
     paymentCount,
-    rule,
+    rule: effectiveRule,
     tier,
     released: true,
     commission: round2(commission),
-    formula: tierLabel(tier, rule),
+    formula: tierLabel(tier, effectiveRule),
   };
 }
 

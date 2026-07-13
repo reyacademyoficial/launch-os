@@ -52,6 +52,10 @@ type DeleteSaleAction = (saleId: string) => Promise<void>;
 type UpdateSaleProductAction = (
   saleId: string,
   productId: string,
+  regenerate?: boolean,
+) => Promise<{ ok: true } | { error: string }>;
+type RecalculateSaleAction = (
+  saleId: string,
 ) => Promise<{ ok: true } | { error: string }>;
 
 /**
@@ -83,6 +87,7 @@ export function KanbanBoard({
   deletePaymentAction,
   deleteSaleAction,
   updateSaleProductAction,
+  recalculateSaleAction,
 }: {
   readonly leads: ReadonlyArray<LeadRow>;
   readonly teamMembers: ReadonlyArray<
@@ -104,6 +109,7 @@ export function KanbanBoard({
   readonly deletePaymentAction: DeletePaymentAction;
   readonly deleteSaleAction: DeleteSaleAction;
   readonly updateSaleProductAction: UpdateSaleProductAction;
+  readonly recalculateSaleAction: RecalculateSaleAction;
 }) {
   const [, startTransition] = useTransition();
   const [dragOverCol, setDragOverCol] = useState<LeadStatus | null>(null);
@@ -356,6 +362,11 @@ export function KanbanBoard({
                               updateProductAction={
                                 sale
                                   ? updateSaleProductAction.bind(null, sale.id)
+                                  : undefined
+                              }
+                              recalculateAction={
+                                sale
+                                  ? () => recalculateSaleAction(sale.id)
                                   : undefined
                               }
                               addPaymentAction={

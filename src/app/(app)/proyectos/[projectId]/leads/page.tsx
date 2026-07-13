@@ -44,6 +44,7 @@ import {
   createSale,
   deletePayment,
   deleteSale,
+  recalculateSaleCommission,
   updateSaleProduct,
 } from "./sale-actions";
 
@@ -128,6 +129,7 @@ export default async function LeadsPage({
   const deletePaymentAction = deletePayment.bind(null, projectId);
   const deleteSaleAction = deleteSale.bind(null, projectId);
   const updateSaleProductAction = updateSaleProduct.bind(null, projectId);
+  const recalculateSaleAction = recalculateSaleCommission.bind(null, projectId);
 
   const activeMembers = teamMembers.filter((m) => m.active).length;
 
@@ -195,6 +197,7 @@ export default async function LeadsPage({
           deletePaymentAction={deletePaymentAction}
           deleteSaleAction={deleteSaleAction}
           updateSaleProductAction={updateSaleProductAction}
+          recalculateSaleAction={recalculateSaleAction}
         />
       ) : (
         <TablaTab
@@ -353,6 +356,7 @@ async function KanbanTab({
   deletePaymentAction,
   deleteSaleAction,
   updateSaleProductAction,
+  recalculateSaleAction,
 }: {
   readonly projectId: string;
   readonly teamForForm: ReadonlyArray<{
@@ -387,6 +391,8 @@ async function KanbanTab({
   readonly deleteSaleAction: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly updateSaleProductAction: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly recalculateSaleAction: any;
 }) {
   const leads = await listKanbanLeads(projectId);
 
@@ -424,6 +430,7 @@ async function KanbanTab({
       deletePaymentAction={deletePaymentAction}
       deleteSaleAction={deleteSaleAction}
       updateSaleProductAction={updateSaleProductAction}
+      recalculateSaleAction={recalculateSaleAction}
     />
   );
 }

@@ -35,6 +35,10 @@ type DeleteSaleAction = (saleId: string) => Promise<void>;
 type UpdateSaleProductAction = (
   saleId: string,
   productId: string,
+  regenerate?: boolean,
+) => Promise<{ ok: true } | { error: string }>;
+type RecalculateSaleAction = (
+  saleId: string,
 ) => Promise<{ ok: true } | { error: string }>;
 
 type LeadForCobros = Pick<
@@ -83,6 +87,7 @@ export function CobrosView({
   deletePaymentAction,
   deleteSaleAction,
   updateSaleProductAction,
+  recalculateSaleAction,
 }: {
   readonly sales: ReadonlyArray<SaleRow>;
   readonly payments: ReadonlyArray<PaymentRow>;
@@ -99,6 +104,7 @@ export function CobrosView({
   readonly deletePaymentAction: DeletePaymentAction;
   readonly deleteSaleAction: DeleteSaleAction;
   readonly updateSaleProductAction: UpdateSaleProductAction;
+  readonly recalculateSaleAction: RecalculateSaleAction;
 }) {
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
 
@@ -278,6 +284,7 @@ export function CobrosView({
         deletePaymentAction={deletePaymentAction}
         deleteSaleAction={deleteSaleAction}
         updateSaleProductAction={updateSaleProductAction}
+        recalculateSaleAction={recalculateSaleAction}
       />
 
       <PaymentsTable
@@ -425,6 +432,7 @@ function SalesTable({
   deletePaymentAction,
   deleteSaleAction,
   updateSaleProductAction,
+  recalculateSaleAction,
 }: {
   readonly sales: ReadonlyArray<SaleRow>;
   readonly leadById: ReadonlyMap<string, LeadForCobros>;
@@ -451,6 +459,7 @@ function SalesTable({
   readonly deletePaymentAction: DeletePaymentAction;
   readonly deleteSaleAction: DeleteSaleAction;
   readonly updateSaleProductAction: UpdateSaleProductAction;
+  readonly recalculateSaleAction: RecalculateSaleAction;
 }) {
   // Subtotales sobre lo filtrado: si el usuario filtra por "Cobrada", el
   // pactado y el cobrado totales tienen que coincidir en la fila de totales.
@@ -649,6 +658,9 @@ function SalesTable({
                             null,
                             s.id,
                           )}
+                          recalculateAction={() =>
+                            recalculateSaleAction(s.id)
+                          }
                           addPaymentAction={addPaymentAction.bind(null, s.id)}
                           deletePaymentAction={deletePaymentAction}
                           deleteSaleAction={deleteSaleAction}
@@ -887,6 +899,7 @@ function BulkAssignBar({
   readonly onClear: () => void;
 }) {
   const [productId, setProductId] = useState<string>("");
+  const [regenerate, setRegenerate] = useState(false);
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState<{
     ok: number;
@@ -901,7 +914,9 @@ function BulkAssignBar({
     setFeedback(null);
     try {
       const results = await Promise.allSettled(
-        selectedIds.map((id) => updateSaleProductAction(id, productId)),
+        selectedIds.map((id) =>
+          updateSaleProductAction(id, productId, regenerate),
+        ),
       );
       let ok = 0;
       let fail = 0;
@@ -948,6 +963,16 @@ function BulkAssignBar({
           </option>
         ))}
       </select>
+      <label className="flex items-center gap-1 text-xs text-fg-muted">
+        <input
+          type="checkbox"
+          checked={regenerate}
+          disabled={pending}
+          onChange={(e) => setRegenerate(e.target.checked)}
+          className="accent-accent"
+        />
+        Actualizar comisión con la regla del nuevo producto
+      </label>
       <button
         type="button"
         disabled={pending || !productId}

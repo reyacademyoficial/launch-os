@@ -175,6 +175,7 @@ export type Database = {
           id: string
           launch_id: string | null
           payment_modality_id: string
+          product_id: string | null
           project_id: string
           type: string
           updated_at: string
@@ -185,6 +186,7 @@ export type Database = {
           id?: string
           launch_id?: string | null
           payment_modality_id: string
+          product_id?: string | null
           project_id: string
           type: string
           updated_at?: string
@@ -195,6 +197,7 @@ export type Database = {
           id?: string
           launch_id?: string | null
           payment_modality_id?: string
+          product_id?: string | null
           project_id?: string
           type?: string
           updated_at?: string
@@ -213,6 +216,13 @@ export type Database = {
             columns: ["payment_modality_id"]
             isOneToOne: false
             referencedRelation: "payment_modalities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commission_rules_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
             referencedColumns: ["id"]
           },
           {
@@ -1148,8 +1158,10 @@ export type Database = {
       sales: {
         Row: {
           closed_at: string
+          commission_rule_snapshot: Json | null
           created_at: string
           id: string
+          launch_id: string | null
           lead_id: string
           payment_modality_id: string
           product_id: string
@@ -1160,8 +1172,10 @@ export type Database = {
         }
         Insert: {
           closed_at?: string
+          commission_rule_snapshot?: Json | null
           created_at?: string
           id?: string
+          launch_id?: string | null
           lead_id: string
           payment_modality_id: string
           product_id: string
@@ -1172,8 +1186,10 @@ export type Database = {
         }
         Update: {
           closed_at?: string
+          commission_rule_snapshot?: Json | null
           created_at?: string
           id?: string
+          launch_id?: string | null
           lead_id?: string
           payment_modality_id?: string
           product_id?: string
@@ -1184,9 +1200,16 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "sales_launch_id_fkey"
+            columns: ["launch_id"]
+            isOneToOne: false
+            referencedRelation: "launches"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "sales_lead_id_fkey"
             columns: ["lead_id"]
-            isOneToOne: true
+            isOneToOne: false
             referencedRelation: "leads"
             referencedColumns: ["id"]
           },
