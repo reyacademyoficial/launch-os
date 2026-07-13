@@ -267,29 +267,43 @@ export function RuleForm({
         </p>
       </div>
 
-      {/* Accrual mode */}
+      {/* Accrual mode — radio con lenguaje operativo */}
       <div>
-        <Label htmlFor="rule-accrual">Devengamiento *</Label>
-        <Select
-          id="rule-accrual"
-          name="accrual_mode"
-          value={accrualMode}
-          onChange={(e) => setAccrualMode(e.target.value as AccrualMode)}
-        >
-          <option value="proportional">Proporcional al cobrado</option>
-          <option value="threshold_full">Umbral → sobre el total pactado</option>
-          <option value="threshold_proportional">Umbral → proporcional al cobrado</option>
-        </Select>
-        <p className="mt-1 text-xs text-fg-subtle">
-          {accrualMode === "proportional"
-            ? "Se devenga proporcional al avance del cobro (modelo clásico)."
-            : accrualMode === "threshold_full"
-            ? "No se devenga nada hasta cruzar el umbral; al cruzarlo libera el % sobre el TOTAL pactado de la venta."
-            : "No se devenga hasta cruzar el umbral; después escala proporcional al cobrado."}
-        </p>
+        <Label>¿Cuándo se libera la comisión? *</Label>
+        <input type="hidden" name="accrual_mode" value={accrualMode} />
+        <div className="mt-1 space-y-2 rounded-md border border-border bg-surface/40 p-3 text-sm">
+          <AccrualRadio
+            value="on_close"
+            checked={accrualMode === "on_close"}
+            onSelect={setAccrualMode}
+            title="Al cerrar la venta"
+            hint="Se acredita al momento del cierre, sin importar los cobros. Usalo para comisiones fijas por venta o % sobre el pactado que no dependen del cobro real."
+          />
+          <AccrualRadio
+            value="proportional"
+            checked={accrualMode === "proportional"}
+            onSelect={setAccrualMode}
+            title="A medida que entra plata"
+            hint="Con cada cobro parcial se libera la porción correspondiente. Modelo clásico."
+          />
+          <AccrualRadio
+            value="threshold_full"
+            checked={accrualMode === "threshold_full"}
+            onSelect={setAccrualMode}
+            title="Al juntar X cobros → paga el total"
+            hint="No se devenga nada hasta cruzar el umbral. Después libera el % completo sobre el total pactado."
+          />
+          <AccrualRadio
+            value="threshold_proportional"
+            checked={accrualMode === "threshold_proportional"}
+            onSelect={setAccrualMode}
+            title="Al juntar X cobros → proporcional"
+            hint="No se devenga hasta cruzar el umbral. Después escala proporcional al cobrado."
+          />
+        </div>
       </div>
 
-      {accrualMode !== "proportional" && (
+      {accrualMode !== "proportional" && accrualMode !== "on_close" && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <Label htmlFor="threshold-type">Tipo de umbral *</Label>
@@ -462,5 +476,40 @@ export function RuleForm({
         {state && "error" in state && <FieldError>{state.error}</FieldError>}
       </div>
     </form>
+  );
+}
+
+/**
+ * Radio "amigable" para el modo de devengamiento. Muestra título + hint
+ * debajo para que el operador entienda cuándo elegir cada opción sin
+ * memorizar terminología técnica.
+ */
+function AccrualRadio({
+  value,
+  checked,
+  onSelect,
+  title,
+  hint,
+}: {
+  readonly value: AccrualMode;
+  readonly checked: boolean;
+  readonly onSelect: (v: AccrualMode) => void;
+  readonly title: string;
+  readonly hint: string;
+}) {
+  return (
+    <label className="flex cursor-pointer items-start gap-2">
+      <input
+        type="radio"
+        name="accrual_mode_radio"
+        checked={checked}
+        onChange={() => onSelect(value)}
+        className="mt-1 accent-accent"
+      />
+      <div>
+        <div className="text-fg">{title}</div>
+        <div className="text-xs text-fg-subtle">{hint}</div>
+      </div>
+    </label>
   );
 }

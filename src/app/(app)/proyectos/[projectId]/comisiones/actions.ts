@@ -187,7 +187,8 @@ function parseRuleFormData(formData: FormData): ParsedRuleInput | string {
   if (
     accrualRaw !== "proportional" &&
     accrualRaw !== "threshold_full" &&
-    accrualRaw !== "threshold_proportional"
+    accrualRaw !== "threshold_proportional" &&
+    accrualRaw !== "on_close"
   ) {
     return "Modo de devengamiento inválido.";
   }
@@ -195,7 +196,12 @@ function parseRuleFormData(formData: FormData): ParsedRuleInput | string {
 
   let threshold_type: ThresholdType | null = null;
   let threshold_value: number | null = null;
-  if (accrual_mode !== "proportional") {
+  // Modos que NO necesitan umbral: proportional (siempre cobra), on_close
+  // (cobra al cerrar, no espera nada).
+  const needsThreshold =
+    accrual_mode === "threshold_full" ||
+    accrual_mode === "threshold_proportional";
+  if (needsThreshold) {
     const thRaw = str(formData, "threshold_type");
     if (thRaw !== "payment_count" && thRaw !== "paid_ratio") {
       return "Tipo de umbral inválido.";

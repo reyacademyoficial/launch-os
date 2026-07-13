@@ -240,7 +240,10 @@ function isReleased(
   pledged: number,
   paymentCount: number,
 ): boolean {
+  // proportional: se devenga con cada cobro parcial.
+  // on_close: se devenga completo al cerrar la venta, sin depender de cobros.
   if (rule.accrual_mode === "proportional") return true;
+  if (rule.accrual_mode === "on_close") return true;
   if (rule.threshold_type === null || rule.threshold_value === null) {
     // Defensa: el constraint SQL impide este caso, pero por si acaso.
     return false;
@@ -261,13 +264,14 @@ function applyTier(
   pledged: number,
 ): number {
   const value = toNum(tier.value);
-  const isFull = mode === "threshold_full";
+  // Modos que usan el pactado como base entero — no escalan por cobro.
+  const usesPledgedFull = mode === "threshold_full" || mode === "on_close";
   if (tier.type === "percent") {
-    const base = isFull ? pledged : collected;
+    const base = usesPledgedFull ? pledged : collected;
     return (base * value) / 100;
   }
   // fixed
-  if (isFull) return value;
+  if (usesPledgedFull) return value;
   // proportional o threshold_proportional → escala el fixed por cobrado/pactado.
   if (pledged <= 0) return 0;
   const ratio = Math.min(collected / pledged, 1);
@@ -282,6 +286,11 @@ function tierLabel(
     tier.type === "percent"
       ? `${tier.value}%`
       : `$${tier.value}`;
+  if (rule.accrual_mode === "on_close") {
+    return tier.type === "percent"
+      ? `${baseLabel} del pactado (al cerrar)`
+      : `${baseLabel} fijos por venta cerrada`;
+  }
   if (rule.accrual_mode === "threshold_full") {
     return `${baseLabel} sobre el total`;
   }

@@ -53,13 +53,13 @@ export function RuleModal({
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 sm:p-6"
           onClick={(e) => {
             if (e.target === e.currentTarget) setOpen(false);
           }}
         >
-          <div className="w-full max-w-lg rounded-md border border-border bg-bg-elevated shadow-card">
-            <header className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
+          <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-md border border-border bg-bg-elevated shadow-card">
+            <header className="flex flex-shrink-0 items-start justify-between gap-4 border-b border-border px-6 py-4">
               <h3 className="text-lg font-bold text-fg">{title}</h3>
               <button
                 type="button"
@@ -70,7 +70,7 @@ export function RuleModal({
                 ×
               </button>
             </header>
-            <div className="px-6 py-6">
+            <div className="flex-1 overflow-y-auto px-6 py-6">
               <RuleForm
                 action={action}
                 modalities={modalities}

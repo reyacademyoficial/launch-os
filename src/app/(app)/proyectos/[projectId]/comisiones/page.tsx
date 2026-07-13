@@ -264,17 +264,22 @@ export default async function CommissionsPage({
 }
 
 function accrualLabel(r: {
-  accrual_mode: "proportional" | "threshold_full" | "threshold_proportional";
+  accrual_mode:
+    | "proportional"
+    | "threshold_full"
+    | "threshold_proportional"
+    | "on_close";
   threshold_type: "payment_count" | "paid_ratio" | null;
   threshold_value: number | null;
 }): string {
-  if (r.accrual_mode === "proportional") return "Proporcional al cobrado";
+  if (r.accrual_mode === "on_close") return "Se libera al cerrar la venta";
+  if (r.accrual_mode === "proportional") return "A medida que entra plata";
   const cond =
     r.threshold_type === "payment_count"
       ? `${r.threshold_value} cobros`
       : `${Math.round((r.threshold_value ?? 0) * 100)}% cobrado`;
   if (r.accrual_mode === "threshold_full") {
-    return `Libera al cumplir ${cond} → sobre el total`;
+    return `Al juntar ${cond} → paga el total`;
   }
-  return `Libera al cumplir ${cond} → proporcional`;
+  return `Al juntar ${cond} → proporcional al cobrado`;
 }

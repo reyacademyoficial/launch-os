@@ -15,7 +15,13 @@ export type CommissionTierType = "percent" | "fixed";
 export type AccrualMode =
   | "proportional"
   | "threshold_full"
-  | "threshold_proportional";
+  | "threshold_proportional"
+  /**
+   * `on_close`: comisión liberada al 100% en el momento de cierre.
+   * No mira `payments`. base = pledged (sale.total_amount).
+   * Casos típicos: "20% al cerrar" o "$100 fijos por venta cerrada".
+   */
+  | "on_close";
 
 export type ThresholdType = "payment_count" | "paid_ratio";
 
