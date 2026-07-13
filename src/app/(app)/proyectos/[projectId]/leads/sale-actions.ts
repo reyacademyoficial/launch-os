@@ -135,6 +135,20 @@ export async function createSale(
   return { ok: true, saleId };
 }
 
+/**
+ * Edita una venta: producto, modalidad, monto pactado, fecha de cierre.
+ * NO cambia `launch_id` (para eso el operador crea nueva venta) ni
+ * `team_member_id` (se hereda del lead, denormalización mantenida por
+ * updateLead).
+ *
+ * SNAPSHOT DE COMISIÓN — política Fase 7:
+ *   - Por default NO regenera el snapshot. La comisión histórica queda
+ *     congelada con la regla que había al cierre original.
+ *   - Si `regenerate=true` (checkbox del form), se resuelve la regla
+ *     vigente para la nueva combinación (modality + product) y se
+ *     sobrescribe. Útil cuando el operador está corrigiendo un error de
+ *     carga y quiere que la comisión refleje el estado correcto.
+ */
 export async function updateSale(
   projectId: string,
   saleId: string,
@@ -155,6 +169,7 @@ export async function updateSale(
     return { error: "Monto pactado inválido." };
   }
   const closedAtRaw = str(formData, "closed_at");
+  const regenerate = formData.get("regenerate") !== null;
 
   const supabase = await createClient();
 
@@ -170,14 +185,18 @@ export async function updateSale(
   }
 
   // El dueño de la venta es el del lead — no se recibe del form. Mantenerlo
-  // alineado preserva el invariante que el LB y el PDF asumen.
+  // alineado preserva el invariante que el LB y el PDF asumen. También
+  // necesitamos launch_id para regenerar el snapshot si aplica.
   const { data: saleRow } = await supabase
     .from("sales")
-    .select("lead_id")
+    .select("lead_id, launch_id")
     .eq("id", saleId)
     .eq("project_id", projectId)
     .maybeSingle();
-  const saleRef = saleRow as { lead_id: string } | null;
+  const saleRef = saleRow as {
+    lead_id: string;
+    launch_id: string | null;
+  } | null;
   if (!saleRef) return { error: "Venta inexistente." };
   const { data: leadRow } = await supabase
     .from("leads")
@@ -187,12 +206,30 @@ export async function updateSale(
   const team_member_id =
     (leadRow as { team_member_id: string | null } | null)?.team_member_id ?? null;
 
+  let snapshotUpdate: Record<string, unknown> = {};
+  if (regenerate) {
+    const snapshot = await resolveSnapshotForSale(
+      projectId,
+      payment_modality_id,
+      saleRef.launch_id,
+      product_id,
+    );
+    if (!snapshot) {
+      return {
+        error:
+          "No hay comisión configurada para esa combinación de producto y modalidad. Cargala antes de regenerar.",
+      };
+    }
+    snapshotUpdate = { commission_rule_snapshot: snapshot };
+  }
+
   const payload = {
     payment_modality_id,
     product_id,
     total_amount,
     team_member_id,
     ...(closedAtRaw && { closed_at: closedAtRaw }),
+    ...snapshotUpdate,
   } as never;
 
   const { error } = await supabase
@@ -202,7 +239,7 @@ export async function updateSale(
     .eq("project_id", projectId);
   if (error) return { error: error.message };
 
-  revalidatePath(`/proyectos/${projectId}/leads`);
+  await revalidateForSale(projectId, saleId);
   return { ok: true };
 }
 

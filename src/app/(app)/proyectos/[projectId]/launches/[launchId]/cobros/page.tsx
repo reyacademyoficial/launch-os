@@ -23,6 +23,7 @@ import {
   previewRecalculateCommissionsBulk,
   recalculateCommissionsBulk,
   recalculateSaleCommission,
+  updateSale,
   updateSaleProduct,
 } from "../../../leads/sale-actions";
 
@@ -118,6 +119,7 @@ export default async function LaunchCobrosPage({
   const deleteSaleAction = deleteSale.bind(null, projectId);
   const updateSaleProductAction = updateSaleProduct.bind(null, projectId);
   const recalculateSaleAction = recalculateSaleCommission.bind(null, projectId);
+  const updateSaleAction = updateSale.bind(null, projectId);
   const previewBulkAction = previewRecalculateCommissionsBulk.bind(null, projectId);
   const executeBulkAction = recalculateCommissionsBulk.bind(null, projectId);
 
@@ -186,6 +188,7 @@ export default async function LaunchCobrosPage({
         deleteSaleAction={deleteSaleAction}
         updateSaleProductAction={updateSaleProductAction}
         recalculateSaleAction={recalculateSaleAction}
+        updateSaleAction={updateSaleAction}
       />
     </div>
   );

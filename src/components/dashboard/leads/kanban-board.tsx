@@ -57,6 +57,11 @@ type UpdateSaleProductAction = (
 type RecalculateSaleAction = (
   saleId: string,
 ) => Promise<{ ok: true } | { error: string }>;
+type UpdateSaleAction = (
+  saleId: string,
+  prev: SaleActionState,
+  formData: FormData,
+) => Promise<SaleActionState>;
 
 /**
  * Tablero kanban del pipeline. Columnas = LEAD_STATUSES, ordenadas según el
@@ -88,6 +93,7 @@ export function KanbanBoard({
   deleteSaleAction,
   updateSaleProductAction,
   recalculateSaleAction,
+  updateSaleAction,
 }: {
   readonly leads: ReadonlyArray<LeadRow>;
   readonly teamMembers: ReadonlyArray<
@@ -114,6 +120,7 @@ export function KanbanBoard({
   readonly deleteSaleAction: DeleteSaleAction;
   readonly updateSaleProductAction: UpdateSaleProductAction;
   readonly recalculateSaleAction: RecalculateSaleAction;
+  readonly updateSaleAction: UpdateSaleAction;
 }) {
   const [, startTransition] = useTransition();
   const [dragOverCol, setDragOverCol] = useState<LeadStatus | null>(null);
@@ -383,6 +390,7 @@ export function KanbanBoard({
                                 updateSaleProductAction(saleId, productId)
                               }
                               recalculateAction={recalculateSaleAction}
+                              updateSaleAction={updateSaleAction}
                               addPaymentAction={addPaymentAction}
                               deletePaymentAction={deletePaymentAction}
                               deleteSaleAction={deleteSaleAction}

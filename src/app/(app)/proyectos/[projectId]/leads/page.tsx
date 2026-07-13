@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { RecalculateBulkModal } from "@/components/dashboard/commissions/recalculate-bulk-modal";
 import { ExportLeadsButton } from "@/components/dashboard/leads/export-leads-button";
 import { ImportLeadsModal } from "@/components/dashboard/leads/import-modal";
 import { KanbanBoard } from "@/components/dashboard/leads/kanban-board";
@@ -44,7 +45,10 @@ import {
   createSale,
   deletePayment,
   deleteSale,
+  previewRecalculateCommissionsBulk,
+  recalculateCommissionsBulk,
   recalculateSaleCommission,
+  updateSale,
   updateSaleProduct,
 } from "./sale-actions";
 
@@ -136,6 +140,9 @@ export default async function LeadsPage({
   const deleteSaleAction = deleteSale.bind(null, projectId);
   const updateSaleProductAction = updateSaleProduct.bind(null, projectId);
   const recalculateSaleAction = recalculateSaleCommission.bind(null, projectId);
+  const updateSaleAction = updateSale.bind(null, projectId);
+  const previewBulkAction = previewRecalculateCommissionsBulk.bind(null, projectId);
+  const executeBulkAction = recalculateCommissionsBulk.bind(null, projectId);
 
   const activeMembers = teamMembers.filter((m) => m.active).length;
 
@@ -160,6 +167,15 @@ export default async function LeadsPage({
               projectId={projectId}
               launches={launchesForForm}
               triggerLabel="⇪ Importar xlsx"
+            />
+            <RecalculateBulkModal
+              triggerLabel="↻ Recalcular ventas"
+              triggerVariant="secondary"
+              triggerClassName="!px-3 !py-1.5 !text-xs"
+              title="Recalcular comisiones del proyecto"
+              scopeDescription="Todas las ventas del proyecto, en cualquier lanzamiento y producto. Elegí si tocar solo las pendientes o incluir las totalmente cobradas."
+              previewAction={previewBulkAction}
+              executeAction={executeBulkAction}
             />
             <LeadFormModal
               triggerLabel="+ Nuevo lead"
@@ -204,6 +220,7 @@ export default async function LeadsPage({
           deleteSaleAction={deleteSaleAction}
           updateSaleProductAction={updateSaleProductAction}
           recalculateSaleAction={recalculateSaleAction}
+          updateSaleAction={updateSaleAction}
         />
       ) : (
         <TablaTab
@@ -363,6 +380,7 @@ async function KanbanTab({
   deleteSaleAction,
   updateSaleProductAction,
   recalculateSaleAction,
+  updateSaleAction,
 }: {
   readonly projectId: string;
   readonly teamForForm: ReadonlyArray<{
@@ -399,6 +417,8 @@ async function KanbanTab({
   readonly updateSaleProductAction: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly recalculateSaleAction: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly updateSaleAction: any;
 }) {
   const leads = await listKanbanLeads(projectId);
 
@@ -437,6 +457,7 @@ async function KanbanTab({
       deleteSaleAction={deleteSaleAction}
       updateSaleProductAction={updateSaleProductAction}
       recalculateSaleAction={recalculateSaleAction}
+      updateSaleAction={updateSaleAction}
     />
   );
 }

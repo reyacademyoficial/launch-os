@@ -40,6 +40,11 @@ type UpdateSaleProductAction = (
 type RecalculateSaleAction = (
   saleId: string,
 ) => Promise<{ ok: true } | { error: string }>;
+type UpdateSaleAction = (
+  saleId: string,
+  prev: SaleActionState,
+  formData: FormData,
+) => Promise<SaleActionState>;
 
 type LeadForCobros = Pick<
   LeadRow,
@@ -88,6 +93,7 @@ export function CobrosView({
   deleteSaleAction,
   updateSaleProductAction,
   recalculateSaleAction,
+  updateSaleAction,
 }: {
   readonly sales: ReadonlyArray<SaleRow>;
   readonly payments: ReadonlyArray<PaymentRow>;
@@ -105,6 +111,7 @@ export function CobrosView({
   readonly deleteSaleAction: DeleteSaleAction;
   readonly updateSaleProductAction: UpdateSaleProductAction;
   readonly recalculateSaleAction: RecalculateSaleAction;
+  readonly updateSaleAction: UpdateSaleAction;
 }) {
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
 
@@ -282,6 +289,7 @@ export function CobrosView({
         deleteSaleAction={deleteSaleAction}
         updateSaleProductAction={updateSaleProductAction}
         recalculateSaleAction={recalculateSaleAction}
+        updateSaleAction={updateSaleAction}
       />
 
       <PaymentsTable
@@ -430,6 +438,7 @@ function SalesTable({
   deleteSaleAction,
   updateSaleProductAction,
   recalculateSaleAction,
+  updateSaleAction,
 }: {
   readonly sales: ReadonlyArray<SaleRow>;
   readonly leadById: ReadonlyMap<string, LeadForCobros>;
@@ -457,6 +466,7 @@ function SalesTable({
   readonly deleteSaleAction: DeleteSaleAction;
   readonly updateSaleProductAction: UpdateSaleProductAction;
   readonly recalculateSaleAction: RecalculateSaleAction;
+  readonly updateSaleAction: UpdateSaleAction;
 }) {
   // Subtotales sobre lo filtrado: si el usuario filtra por "Cobrada", el
   // pactado y el cobrado totales tienen que coincidir en la fila de totales.
@@ -659,6 +669,7 @@ function SalesTable({
                             updateSaleProductAction(saleId, productId)
                           }
                           recalculateAction={recalculateSaleAction}
+                          updateSaleAction={updateSaleAction}
                           addPaymentAction={addPaymentAction}
                           deletePaymentAction={deletePaymentAction}
                           deleteSaleAction={deleteSaleAction}

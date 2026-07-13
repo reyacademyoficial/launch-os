@@ -78,6 +78,7 @@ export function SaleModal({
   initialSaleId,
   allowCreateAnother = true,
   createSaleAction,
+  updateSaleAction,
   updateProductAction,
   recalculateAction,
   addPaymentAction,
@@ -113,6 +114,15 @@ export function SaleModal({
    */
   readonly allowCreateAnother?: boolean;
   readonly createSaleAction: SaleAction;
+  /**
+   * Bindeada al projectId. Adentro se rebindea al saleId de la venta que se
+   * está editando. Si no viene, el botón "Editar venta" no aparece.
+   */
+  readonly updateSaleAction?: (
+    saleId: string,
+    prev: SaleActionState,
+    formData: FormData,
+  ) => Promise<SaleActionState>;
   readonly updateProductAction?: UpdateProductAction;
   readonly recalculateAction?: RecalculateAction;
   readonly addPaymentAction: AddPaymentActionForSale;
@@ -120,9 +130,10 @@ export function SaleModal({
   readonly deleteSaleAction?: DeleteSaleAction;
 }) {
   const [open, setOpen] = useState(false);
-  // Modo "new" fuerza el form aunque haya sales existentes — botón
-  // "+ Nueva venta". Se resetea a "list" al cerrar el modal.
-  const [mode, setMode] = useState<"list" | "new">("list");
+  // "list": mostramos el SalePanel de la sale seleccionada.
+  // "new": form para crear una venta (nueva o primera).
+  // "edit": form para modificar la sale seleccionada.
+  const [mode, setMode] = useState<"list" | "new" | "edit">("list");
   const [selectedSaleId, setSelectedSaleId] = useState<string | null>(null);
 
   // Cuando se abre el modal, elegimos qué sale mostrar y reseteamos el mode.
@@ -142,7 +153,7 @@ export function SaleModal({
   }, [open, sales, initialSaleId]);
 
   const selectedSale =
-    mode === "list" && selectedSaleId
+    (mode === "list" || mode === "edit") && selectedSaleId
       ? sales.find((s) => s.id === selectedSaleId) ?? null
       : null;
 
@@ -151,7 +162,9 @@ export function SaleModal({
       ? sales.length > 0
         ? "Nueva venta para este lead"
         : "Registrar venta"
-      : sales.length > 1
+      : mode === "edit"
+        ? "Editar venta"
+        : sales.length > 1
         ? `Ventas (${sales.length})`
         : "Venta cerrada";
 
@@ -233,6 +246,17 @@ export function SaleModal({
                     else setOpen(false);
                   }}
                 />
+              ) : mode === "edit" && selectedSale && updateSaleAction ? (
+                <EditSaleForm
+                  sale={selectedSale}
+                  modalities={modalities}
+                  products={products}
+                  updateSaleAction={(prev, fd) =>
+                    updateSaleAction(selectedSale.id, prev, fd)
+                  }
+                  onCancel={() => setMode("list")}
+                  onSuccess={() => setMode("list")}
+                />
               ) : selectedSale ? (
                 <SalePanel
                   sale={selectedSale}
@@ -242,6 +266,9 @@ export function SaleModal({
                   products={products}
                   rules={rules}
                   launchId={selectedSale.launch_id}
+                  onEdit={
+                    updateSaleAction ? () => setMode("edit") : undefined
+                  }
                   updateProductAction={
                     updateProductAction
                       ? (productId) =>
@@ -489,6 +516,7 @@ function SalePanel({
   products,
   rules,
   launchId,
+  onEdit,
   updateProductAction,
   recalculateAction,
   addPaymentAction,
@@ -503,6 +531,10 @@ function SalePanel({
   readonly products: ReadonlyArray<ProductRow>;
   readonly rules: ReadonlyArray<CommissionRuleRow>;
   readonly launchId: string | null;
+  /**
+   * Switch al modo edit del modal. Botón "Editar venta" solo aparece si viene.
+   */
+  readonly onEdit?: () => void;
   readonly updateProductAction?: BoundUpdateProduct;
   readonly recalculateAction?: BoundRecalculate;
   readonly addPaymentAction: BoundAddPayment;
@@ -534,14 +566,29 @@ function SalePanel({
         />
       </section>
 
-      <section className="text-xs text-fg-subtle">
-        Modalidad: <span className="text-fg-muted">{modality?.name ?? "—"}</span>
-        <span className="mx-2">·</span>
-        Cierre: <span className="text-fg-muted">{sale.closed_at.slice(0, 10)}</span>
+      <section className="flex flex-wrap items-center gap-2 text-xs text-fg-subtle">
+        <span>
+          Modalidad:{" "}
+          <span className="text-fg-muted">{modality?.name ?? "—"}</span>
+        </span>
+        <span>·</span>
+        <span>
+          Cierre:{" "}
+          <span className="text-fg-muted">{sale.closed_at.slice(0, 10)}</span>
+        </span>
         {!sale.commission_rule_snapshot && !rule && (
-          <span className="ml-2 rounded-full bg-warning/15 px-2 py-0.5 text-warning">
+          <span className="rounded-full bg-warning/15 px-2 py-0.5 text-warning">
             Sin regla configurada → comisión = 0
           </span>
+        )}
+        {onEdit && (
+          <button
+            type="button"
+            onClick={onEdit}
+            className="ml-auto rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg hover:bg-bg-elevated"
+          >
+            Editar venta
+          </button>
         )}
       </section>
 
@@ -875,5 +922,142 @@ function CommissionSnapshotBar({
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * Form para editar una venta existente. Reusa la misma shape que
+ * NewSaleForm (producto + modalidad + monto + fecha) pero prefill con los
+ * valores actuales y con checkbox opcional "Recalcular comisión con la
+ * regla actual".
+ *
+ * NO permite cambiar `launch_id` — política Fase 8: si la venta pertenece
+ * a otro launch, se crea una nueva y se borra ésta. Editar el launch de
+ * una venta con cobros abre puertas raras (payments quedarían en el launch
+ * viejo pero atribuidos al nuevo).
+ */
+function EditSaleForm({
+  sale,
+  modalities,
+  products,
+  updateSaleAction,
+  onCancel,
+  onSuccess,
+}: {
+  readonly sale: SaleRow;
+  readonly modalities: ReadonlyArray<PaymentModalityRow>;
+  readonly products: ReadonlyArray<ProductRow>;
+  readonly updateSaleAction: SaleAction;
+  readonly onCancel: () => void;
+  readonly onSuccess: () => void;
+}) {
+  const [state, formAction, pending] = useActionState<SaleActionState, FormData>(
+    updateSaleAction,
+    null,
+  );
+
+  useEffect(() => {
+    if (state && "ok" in state && state.ok) onSuccess();
+  }, [state, onSuccess]);
+
+  // Incluimos productos y modalidades inactivos si son los actuales de la
+  // venta, así el operador puede ver el valor cargado sin desaparecer.
+  const visibleProducts = products.filter(
+    (p) => p.active || p.id === sale.product_id,
+  );
+  const visibleModalities = modalities.filter(
+    (m) => m.active || m.id === sale.payment_modality_id,
+  );
+
+  return (
+    <form action={formAction} className="space-y-4">
+      <div>
+        <Label htmlFor="edit-product">Producto *</Label>
+        <Select
+          id="edit-product"
+          name="product_id"
+          required
+          defaultValue={sale.product_id}
+        >
+          {visibleProducts.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+              {!p.active ? " (inactivo)" : ""}
+            </option>
+          ))}
+        </Select>
+      </div>
+      <div>
+        <Label htmlFor="edit-modality">Modalidad de pago *</Label>
+        <Select
+          id="edit-modality"
+          name="payment_modality_id"
+          required
+          defaultValue={sale.payment_modality_id}
+        >
+          {visibleModalities.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name}
+              {!m.active ? " (inactiva)" : ""}
+            </option>
+          ))}
+        </Select>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div>
+          <Label htmlFor="edit-total">Monto pactado *</Label>
+          <Input
+            id="edit-total"
+            name="total_amount"
+            type="number"
+            step="0.01"
+            min="0"
+            required
+            defaultValue={String(sale.total_amount)}
+          />
+        </div>
+        <div>
+          <Label htmlFor="edit-closed-at">Fecha de cierre</Label>
+          <Input
+            id="edit-closed-at"
+            name="closed_at"
+            type="date"
+            defaultValue={sale.closed_at.slice(0, 10)}
+          />
+        </div>
+      </div>
+
+      <label className="flex items-start gap-2 text-xs text-fg-muted">
+        <input
+          type="checkbox"
+          name="regenerate"
+          className="mt-0.5 accent-accent"
+        />
+        <span>
+          Recalcular comisión con la regla actual.
+          <span className="ml-1 text-fg-subtle">
+            Por default el snapshot queda como estaba al cierre (Fase 7).
+            Marcá esto si estás corrigiendo un error de carga y querés que la
+            comisión refleje la combinación nueva.
+          </span>
+        </span>
+      </label>
+
+      <div className="flex items-center gap-4 pt-2">
+        <Button type="submit" disabled={pending}>
+          {pending ? "Guardando…" : "Guardar cambios"}
+        </Button>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={pending}
+          className="text-xs text-fg-muted hover:text-fg disabled:opacity-50"
+        >
+          Cancelar
+        </button>
+        {state && "error" in state && <FieldError>{state.error}</FieldError>}
+      </div>
+    </form>
   );
 }
