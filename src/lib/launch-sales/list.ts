@@ -41,40 +41,44 @@ export async function listLaunchSalesData(
 ): Promise<LaunchSalesData> {
   const supabase = await createClient();
 
-  const [leadsRes, salesRes] = await Promise.all([
+  // Fase 8: filtramos por `sale.launch_id` (atribución propia de la
+  // venta), no por `lead.launch_id`. Si un lead se recicla a otro launch,
+  // la venta original queda anclada a su launch original.
+  const salesRes = await supabase
+    .from("sales")
+    .select("*")
+    .eq("project_id", projectId)
+    .eq("launch_id", launchId)
+    .order("closed_at", { ascending: false });
+
+  const sales = (salesRes.data ?? []) as unknown as SaleRow[];
+
+  if (sales.length === 0) {
+    return { sales: [], payments: [], leads: [] };
+  }
+
+  // Traemos los leads de las sales que ya seleccionamos — no filtramos por
+  // `lead.launch_id` porque después de Fase 8 un lead puede haberse movido
+  // a otro launch pero su venta vieja sigue anclada acá. Y traemos
+  // payments en paralelo.
+  const leadIds = Array.from(new Set(sales.map((s) => s.lead_id)));
+  const saleIds = sales.map((s) => s.id);
+
+  const [leadsRes, paymentsRes] = await Promise.all([
     supabase
       .from("leads")
       .select("id, status, launch_id, name, team_member_id")
-      .eq("project_id", projectId)
-      .eq("launch_id", launchId),
+      .in("id", leadIds),
     supabase
-      .from("sales")
-      .select("*, leads!inner(launch_id)")
-      .eq("project_id", projectId)
-      .eq("leads.launch_id", launchId)
-      .order("closed_at", { ascending: false }),
+      .from("payments")
+      .select("*")
+      .in("sale_id", saleIds)
+      .order("paid_at", { ascending: true }),
   ]);
 
   const leads = (leadsRes.data ?? []) as Array<
     Pick<LeadRow, "id" | "status" | "launch_id" | "name" | "team_member_id">
   >;
-  const sales = ((salesRes.data ?? []) as Array<SaleRow & { leads: unknown }>).map(
-    (r) => {
-      const { leads: _drop, ...sale } = r;
-      void _drop;
-      return sale as SaleRow;
-    },
-  );
-
-  if (sales.length === 0) return { sales: [], payments: [], leads };
-
-  const saleIds = sales.map((s) => s.id);
-  const paymentsRes = await supabase
-    .from("payments")
-    .select("*")
-    .in("sale_id", saleIds)
-    .order("paid_at", { ascending: true });
-
   const payments = (paymentsRes.data ?? []) as unknown as PaymentRow[];
   return { sales, payments, leads };
 }
@@ -113,9 +117,12 @@ export async function getKanbanSalesAggregatesForProject(
       .from("leads")
       .select("id, status, launch_id")
       .eq("project_id", projectId),
+    // Fase 8: incluir `launch_id` en el select. Sin él, el filtro del
+    // aggregate por `s.launch_id === launchId` falla (undefined ≠ X) y
+    // descarta todas las sales — el bug del "30M perdidos".
     supabase
       .from("sales")
-      .select("id, lead_id, total_amount")
+      .select("id, lead_id, launch_id, total_amount")
       .eq("project_id", projectId),
   ]);
 
@@ -133,8 +140,14 @@ export async function getKanbanSalesAggregatesForProject(
     .in("sale_id", saleIds);
   const payments = (paymentsRes.data ?? []) as Array<KanbanPaymentRow>;
 
-  // Agrupar leads por launch_id para saber qué launches existen.
+  // Universo de launches a agregar: los que aparecen en sales.launch_id
+  // (fuente de verdad Fase 8) unión los que aparecen en leads.launch_id (por
+  // launches sin ventas todavía pero con leads asignados — el KPI sigue
+  // teniendo que mostrar el card del launch aunque revenue sea 0).
   const launchIds = new Set<string>();
+  for (const s of sales) {
+    if (s.launch_id) launchIds.add(s.launch_id);
+  }
   for (const l of leads) {
     if (l.launch_id) launchIds.add(l.launch_id);
   }

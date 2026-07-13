@@ -4,17 +4,13 @@ import { createClient } from "@/lib/supabase/server";
 import type { PaymentRow, SaleRow } from "@/lib/commissions/types";
 
 /**
- * Devuelve las ventas del proyecto cuyo **lead** pertenece al launch indicado,
- * con sus payments asociados. Pensado para el reporte de comisiones cerradas
- * por launch.
+ * Devuelve las ventas del proyecto atribuidas al launch indicado, con sus
+ * payments asociados. Pensado para el reporte de comisiones cerradas por
+ * launch.
  *
- * Por qué pasa por leads: el modelo (0014) no ata sales directo a launches —
- * sales tiene `lead_id`, y leads tiene `launch_id` opcional. Filtrar por launch
- * implica resolver "ventas cuyo lead está asignado a este launch".
- *
- * Estrategia de 2 queries (en paralelo) en vez de un join cruzado:
- *   1. `sales!inner(lead → leads!inner)` filtrando por launch_id en el inner join.
- *   2. `payments` por `in("sale_id", saleIds)`.
+ * Fase 8: la atribución de launch vive en `sales.launch_id`, no en
+ * `leads.launch_id`. Un lead reciclado a otro launch no arrastra sus ventas
+ * viejas — quedan ancladas al launch original.
  *
  * RLS sigue activa — un launchId de otro proyecto devuelve [] sin error.
  */
@@ -30,24 +26,14 @@ export async function listSalesByLaunch(
 ): Promise<SaleWithPayments[]> {
   const supabase = await createClient();
 
-  // 1) Ventas del proyecto cuyo lead.launch_id matchea. `leads!inner` fuerza
-  //    el join y el filtro `leads.launch_id` aplica al JOIN, no a sales.
   const salesRes = await supabase
     .from("sales")
-    .select("*, leads!inner(launch_id)")
+    .select("*")
     .eq("project_id", projectId)
-    .eq("leads.launch_id", launchId)
+    .eq("launch_id", launchId)
     .order("closed_at", { ascending: false });
 
-  // Drop la columna anidada `leads` después del filtro (no la necesitamos
-  // arriba — sólo sirvió para el join). El cast asume el shape de sales puro.
-  const sales = ((salesRes.data ?? []) as Array<SaleRow & { leads: unknown }>).map(
-    (r) => {
-      const { leads: _drop, ...sale } = r;
-      void _drop;
-      return sale as SaleRow;
-    },
-  );
+  const sales = (salesRes.data ?? []) as unknown as SaleRow[];
 
   if (sales.length === 0) return [];
 

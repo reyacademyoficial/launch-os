@@ -71,11 +71,12 @@ export default async function LaunchCobrosPage({
 
   const leadById = new Map(salesData.leads.map((l) => [l.id, l]));
 
-  // Filtramos a las sales que cuentan para el KPI (lead en cerrado del launch),
-  // mismo filtro que el agregado.
+  // Filtramos a las sales que cuentan para el KPI (lead en cerrado + venta
+  // atribuida a este launch — Fase 8: `sale.launch_id`, no `lead.launch_id`).
   const closedSales = salesData.sales.filter((s) => {
+    if (s.launch_id !== launchId) return false;
     const lead = leadById.get(s.lead_id);
-    return lead && lead.launch_id === launchId && lead.status === "cerrado";
+    return !!lead && lead.status === "cerrado";
   });
 
   const closedSaleIds = new Set(closedSales.map((s) => s.id));
