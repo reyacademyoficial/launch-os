@@ -13,6 +13,7 @@ import {
 } from "@/lib/commissions/list";
 import type { PaymentRow, SaleRow } from "@/lib/commissions/types";
 import { listLaunchesForProject } from "@/lib/launches/list";
+import { listProductsForProject } from "@/lib/products/list";
 import { listKanbanLeads, listLeadsPaginated } from "@/lib/leads/search";
 import {
   SORTABLE_COLUMNS,
@@ -43,6 +44,7 @@ import {
   createSale,
   deletePayment,
   deleteSale,
+  updateSaleProduct,
 } from "./sale-actions";
 
 export const metadata: Metadata = { title: "Leads" };
@@ -77,16 +79,25 @@ export default async function LeadsPage({
   const tab: Tab = readString(sp.view) === "kanban" ? "kanban" : "tabla";
 
   // ─── Fetches compartidos por ambos tabs ────────────────────────────────
-  const [teamMembers, launches, canEdit, sales, payments, modalities, rules] =
-    await Promise.all([
-      listTeamMembers(projectId),
-      listLaunchesForProject(projectId),
-      userCanEditLaunchesIn(projectId),
-      listSalesForProject(projectId),
-      listPaymentsForProject(projectId),
-      listPaymentModalities(projectId),
-      listCommissionRules(projectId),
-    ]);
+  const [
+    teamMembers,
+    launches,
+    canEdit,
+    sales,
+    payments,
+    modalities,
+    products,
+    rules,
+  ] = await Promise.all([
+    listTeamMembers(projectId),
+    listLaunchesForProject(projectId),
+    userCanEditLaunchesIn(projectId),
+    listSalesForProject(projectId),
+    listPaymentsForProject(projectId),
+    listPaymentModalities(projectId),
+    listProductsForProject(projectId),
+    listCommissionRules(projectId),
+  ]);
 
   const teamForForm = teamMembers.map((m) => ({
     id: m.id,
@@ -116,6 +127,7 @@ export default async function LeadsPage({
   const addPaymentAction = addPayment.bind(null, projectId);
   const deletePaymentAction = deletePayment.bind(null, projectId);
   const deleteSaleAction = deleteSale.bind(null, projectId);
+  const updateSaleProductAction = updateSaleProduct.bind(null, projectId);
 
   const activeMembers = teamMembers.filter((m) => m.active).length;
 
@@ -176,11 +188,13 @@ export default async function LeadsPage({
           salesByLeadId={salesByLeadId}
           paymentsBySaleId={paymentsBySaleId}
           modalities={modalities}
+          products={products}
           rules={rules}
           createSaleAction={createSaleAction}
           addPaymentAction={addPaymentAction}
           deletePaymentAction={deletePaymentAction}
           deleteSaleAction={deleteSaleAction}
+          updateSaleProductAction={updateSaleProductAction}
         />
       ) : (
         <TablaTab
@@ -332,11 +346,13 @@ async function KanbanTab({
   salesByLeadId,
   paymentsBySaleId,
   modalities,
+  products,
   rules,
   createSaleAction,
   addPaymentAction,
   deletePaymentAction,
   deleteSaleAction,
+  updateSaleProductAction,
 }: {
   readonly projectId: string;
   readonly teamForForm: ReadonlyArray<{
@@ -358,6 +374,8 @@ async function KanbanTab({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly modalities: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly products: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly rules: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly createSaleAction: any;
@@ -367,6 +385,8 @@ async function KanbanTab({
   readonly deletePaymentAction: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly deleteSaleAction: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly updateSaleProductAction: any;
 }) {
   const leads = await listKanbanLeads(projectId);
 
@@ -397,11 +417,13 @@ async function KanbanTab({
       salesByLeadId={salesByLeadId}
       paymentsBySaleId={paymentsBySaleId}
       modalities={modalities}
+      products={products}
       rules={rules}
       createSaleAction={createSaleAction}
       addPaymentAction={addPaymentAction}
       deletePaymentAction={deletePaymentAction}
       deleteSaleAction={deleteSaleAction}
+      updateSaleProductAction={updateSaleProductAction}
     />
   );
 }

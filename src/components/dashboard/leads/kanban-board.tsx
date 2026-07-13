@@ -18,6 +18,7 @@ import type {
 } from "@/lib/commissions/types";
 import { fmtMoney } from "@/lib/format";
 import { LEAD_STATUSES, LEAD_STATUS_LABELS, type LeadRow, type LeadStatus } from "@/lib/leads/types";
+import type { ProductRow } from "@/lib/products/types";
 import type { TeamMemberRow } from "@/lib/team/types";
 
 import { LeadFormModal } from "./lead-form-modal";
@@ -48,6 +49,10 @@ type AddPaymentAction = (
 ) => Promise<PaymentActionState>;
 type DeletePaymentAction = (paymentId: string) => Promise<void>;
 type DeleteSaleAction = (saleId: string) => Promise<void>;
+type UpdateSaleProductAction = (
+  saleId: string,
+  productId: string,
+) => Promise<{ ok: true } | { error: string }>;
 
 /**
  * Tablero kanban del pipeline. Columnas = LEAD_STATUSES, ordenadas según el
@@ -71,11 +76,13 @@ export function KanbanBoard({
   salesByLeadId,
   paymentsBySaleId,
   modalities,
+  products,
   rules,
   createSaleAction,
   addPaymentAction,
   deletePaymentAction,
   deleteSaleAction,
+  updateSaleProductAction,
 }: {
   readonly leads: ReadonlyArray<LeadRow>;
   readonly teamMembers: ReadonlyArray<
@@ -90,11 +97,13 @@ export function KanbanBoard({
   readonly salesByLeadId: ReadonlyMap<string, SaleRow>;
   readonly paymentsBySaleId: ReadonlyMap<string, ReadonlyArray<PaymentRow>>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
+  readonly products: ReadonlyArray<ProductRow>;
   readonly rules: ReadonlyArray<CommissionRuleRow>;
   readonly createSaleAction: CreateSaleAction;
   readonly addPaymentAction: AddPaymentAction;
   readonly deletePaymentAction: DeletePaymentAction;
   readonly deleteSaleAction: DeleteSaleAction;
+  readonly updateSaleProductAction: UpdateSaleProductAction;
 }) {
   const [, startTransition] = useTransition();
   const [dragOverCol, setDragOverCol] = useState<LeadStatus | null>(null);
@@ -340,9 +349,15 @@ export function KanbanBoard({
                               saleRank={sale ? rankBySaleId.get(sale.id) ?? 0 : 0}
                               payments={salePayments}
                               modalities={modalities}
+                              products={products}
                               rules={rules}
                               teamMembers={teamMembers}
                               createSaleAction={createSaleAction.bind(null, lead.id)}
+                              updateProductAction={
+                                sale
+                                  ? updateSaleProductAction.bind(null, sale.id)
+                                  : undefined
+                              }
                               addPaymentAction={
                                 sale
                                   ? addPaymentAction.bind(null, sale.id)

@@ -10,6 +10,7 @@ import { fmtMoney, fmtNumber, fmtPercent } from "@/lib/format";
 import { aggregateKanbanSales } from "@/lib/launch-sales/aggregate";
 import { listLaunchSalesData } from "@/lib/launch-sales/list";
 import { getLaunch } from "@/lib/launches/get";
+import { listProductsForProject } from "@/lib/products/list";
 import { userCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { listTeamMembers } from "@/lib/team/list";
 
@@ -18,6 +19,7 @@ import {
   createSale,
   deletePayment,
   deleteSale,
+  updateSaleProduct,
 } from "../../../leads/sale-actions";
 
 export const metadata: Metadata = { title: "Cobros · Lanzamiento" };
@@ -42,15 +44,23 @@ export default async function LaunchCobrosPage({
 }) {
   const { projectId, launchId } = await params;
 
-  const [launch, salesData, modalities, rules, teamMembers, canEdit] =
-    await Promise.all([
-      getLaunch(launchId),
-      listLaunchSalesData(projectId, launchId),
-      listPaymentModalities(projectId),
-      listCommissionRules(projectId),
-      listTeamMembers(projectId),
-      userCanEditLaunchesIn(projectId),
-    ]);
+  const [
+    launch,
+    salesData,
+    modalities,
+    products,
+    rules,
+    teamMembers,
+    canEdit,
+  ] = await Promise.all([
+    getLaunch(launchId),
+    listLaunchSalesData(projectId, launchId),
+    listPaymentModalities(projectId),
+    listProductsForProject(projectId),
+    listCommissionRules(projectId),
+    listTeamMembers(projectId),
+    userCanEditLaunchesIn(projectId),
+  ]);
 
   if (!launch || launch.project_id !== projectId) notFound();
 
@@ -102,6 +112,7 @@ export default async function LaunchCobrosPage({
   const addPaymentAction = addPayment.bind(null, projectId);
   const deletePaymentAction = deletePayment.bind(null, projectId);
   const deleteSaleAction = deleteSale.bind(null, projectId);
+  const updateSaleProductAction = updateSaleProduct.bind(null, projectId);
 
   return (
     <div className="space-y-10">
@@ -144,6 +155,7 @@ export default async function LaunchCobrosPage({
         payments={closedPayments}
         leads={closedLeads}
         modalities={modalities}
+        products={products}
         rules={rules}
         teamMembers={teamForModal}
         canEdit={canEdit}
@@ -151,6 +163,7 @@ export default async function LaunchCobrosPage({
         addPaymentAction={addPaymentAction}
         deletePaymentAction={deletePaymentAction}
         deleteSaleAction={deleteSaleAction}
+        updateSaleProductAction={updateSaleProductAction}
       />
     </div>
   );

@@ -37,6 +37,9 @@ export async function createSale(
   const payment_modality_id = str(formData, "payment_modality_id");
   if (!payment_modality_id) return { error: "Elegí una modalidad." };
 
+  const product_id = str(formData, "product_id");
+  if (!product_id) return { error: "Elegí un producto." };
+
   const totalRaw = str(formData, "total_amount");
   const total_amount = parseFloat(totalRaw);
   if (!Number.isFinite(total_amount) || total_amount < 0) {
@@ -63,11 +66,24 @@ export async function createSale(
     return { error: "Lead inexistente o de otro proyecto." };
   }
 
+  // Guard: el producto tiene que ser del mismo proyecto. La RLS lo cubre,
+  // pero devolver el error acá es más claro que un 42501 de Postgres.
+  const { data: productData } = await supabase
+    .from("products")
+    .select("id")
+    .eq("id", product_id)
+    .eq("project_id", projectId)
+    .maybeSingle();
+  if (!productData) {
+    return { error: "Producto inexistente o de otro proyecto." };
+  }
+
   const insertPayload = {
     project_id: projectId,
     lead_id: leadId,
     team_member_id: lead.team_member_id,
     payment_modality_id,
+    product_id,
     total_amount,
     closed_at,
   } as never;
@@ -109,6 +125,9 @@ export async function updateSale(
   const payment_modality_id = str(formData, "payment_modality_id");
   if (!payment_modality_id) return { error: "Elegí una modalidad." };
 
+  const product_id = str(formData, "product_id");
+  if (!product_id) return { error: "Elegí un producto." };
+
   const totalRaw = str(formData, "total_amount");
   const total_amount = parseFloat(totalRaw);
   if (!Number.isFinite(total_amount) || total_amount < 0) {
@@ -117,6 +136,17 @@ export async function updateSale(
   const closedAtRaw = str(formData, "closed_at");
 
   const supabase = await createClient();
+
+  // Guard de pertenencia — mismo criterio que createSale.
+  const { data: productData } = await supabase
+    .from("products")
+    .select("id")
+    .eq("id", product_id)
+    .eq("project_id", projectId)
+    .maybeSingle();
+  if (!productData) {
+    return { error: "Producto inexistente o de otro proyecto." };
+  }
 
   // El dueño de la venta es el del lead — no se recibe del form. Mantenerlo
   // alineado preserva el invariante que el LB y el PDF asumen.
@@ -138,6 +168,7 @@ export async function updateSale(
 
   const payload = {
     payment_modality_id,
+    product_id,
     total_amount,
     team_member_id,
     ...(closedAtRaw && { closed_at: closedAtRaw }),
@@ -151,6 +182,46 @@ export async function updateSale(
   if (error) return { error: error.message };
 
   revalidatePath(`/proyectos/${projectId}/leads`);
+  return { ok: true };
+}
+
+/**
+ * Cambia el producto de una venta sin tocar el resto (modalidad, monto,
+ * cobros). Pensado para reasignar producto desde la vista de cobros —
+ * frecuente cuando el operador cargó una venta con "Sin categoría" y
+ * ahora quiere migrarla al catálogo real.
+ *
+ * Guard de pertenencia: el producto tiene que ser del mismo proyecto.
+ */
+export async function updateSaleProduct(
+  projectId: string,
+  saleId: string,
+  productId: string,
+): Promise<{ ok: true } | { error: string }> {
+  await requireCanEditLaunchesIn(projectId);
+  if (!productId) return { error: "Elegí un producto." };
+
+  const supabase = await createClient();
+
+  const { data: productData } = await supabase
+    .from("products")
+    .select("id")
+    .eq("id", productId)
+    .eq("project_id", projectId)
+    .maybeSingle();
+  if (!productData) {
+    return { error: "Producto inexistente o de otro proyecto." };
+  }
+
+  const payload = { product_id: productId } as never;
+  const { error } = await supabase
+    .from("sales")
+    .update(payload)
+    .eq("id", saleId)
+    .eq("project_id", projectId);
+  if (error) return { error: error.message };
+
+  await revalidateForSale(projectId, saleId);
   return { ok: true };
 }
 

@@ -15,6 +15,7 @@ import type {
 } from "@/lib/commissions/types";
 import { fmtDate, fmtMoney, fmtPercent } from "@/lib/format";
 import type { LeadRow } from "@/lib/leads/types";
+import type { ProductRow } from "@/lib/products/types";
 import type { TeamMemberRow } from "@/lib/team/types";
 
 import { SaleModal } from "./sale-modal";
@@ -31,6 +32,10 @@ type AddPaymentAction = (
 ) => Promise<PaymentActionState>;
 type DeletePaymentAction = (paymentId: string) => Promise<void>;
 type DeleteSaleAction = (saleId: string) => Promise<void>;
+type UpdateSaleProductAction = (
+  saleId: string,
+  productId: string,
+) => Promise<{ ok: true } | { error: string }>;
 
 type LeadForCobros = Pick<
   LeadRow,
@@ -43,6 +48,7 @@ interface FilterState {
   query: string;
   closerId: string; // "all" | "unassigned" | team_member_id
   modalityId: string; // "all" | payment_modality_id
+  productId: string; // "all" | product_id
   collection: CollectionStatus;
 }
 
@@ -50,6 +56,7 @@ const EMPTY_FILTERS: FilterState = {
   query: "",
   closerId: "all",
   modalityId: "all",
+  productId: "all",
   collection: "all",
 };
 
@@ -67,6 +74,7 @@ export function CobrosView({
   payments,
   leads,
   modalities,
+  products,
   rules,
   teamMembers,
   canEdit,
@@ -74,11 +82,13 @@ export function CobrosView({
   addPaymentAction,
   deletePaymentAction,
   deleteSaleAction,
+  updateSaleProductAction,
 }: {
   readonly sales: ReadonlyArray<SaleRow>;
   readonly payments: ReadonlyArray<PaymentRow>;
   readonly leads: ReadonlyArray<LeadForCobros>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
+  readonly products: ReadonlyArray<ProductRow>;
   readonly rules: ReadonlyArray<CommissionRuleRow>;
   readonly teamMembers: ReadonlyArray<
     Pick<TeamMemberRow, "id" | "name" | "active" | "role">
@@ -88,6 +98,7 @@ export function CobrosView({
   readonly addPaymentAction: AddPaymentAction;
   readonly deletePaymentAction: DeletePaymentAction;
   readonly deleteSaleAction: DeleteSaleAction;
+  readonly updateSaleProductAction: UpdateSaleProductAction;
 }) {
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
 
@@ -98,6 +109,10 @@ export function CobrosView({
   const modalityById = useMemo(
     () => new Map(modalities.map((m) => [m.id, m])),
     [modalities],
+  );
+  const productById = useMemo(
+    () => new Map(products.map((p) => [p.id, p])),
+    [products],
   );
   const memberById = useMemo(
     () => new Map(teamMembers.map((m) => [m.id, m])),
@@ -167,6 +182,10 @@ export function CobrosView({
       return false;
     }
 
+    if (filters.productId !== "all" && sale.product_id !== filters.productId) {
+      return false;
+    }
+
     if (filters.collection !== "all") {
       const collected = collectedBySale.get(sale.id) ?? 0;
       const total = Number(sale.total_amount) || 0;
@@ -205,6 +224,7 @@ export function CobrosView({
     filters.query !== "" ||
     filters.closerId !== "all" ||
     filters.modalityId !== "all" ||
+    filters.productId !== "all" ||
     filters.collection !== "all";
 
   // Sólo mostramos en el dropdown de closer a los miembros que efectivamente
@@ -230,6 +250,7 @@ export function CobrosView({
         onChange={setFilters}
         closers={closersInSales}
         modalities={modalities}
+        products={products}
         hasUnassignedSales={hasUnassignedSales}
         totalSalesCount={sales.length}
         filteredSalesCount={filteredSales.length}
@@ -240,11 +261,13 @@ export function CobrosView({
         sales={filteredSales}
         leadById={leadById}
         modalityById={modalityById}
+        productById={productById}
         memberById={memberById}
         collectedBySale={collectedBySale}
         payments={payments}
         rankBySaleId={rankBySaleId}
         modalities={modalities}
+        products={products}
         rules={rules}
         teamMembers={teamMembers}
         canEdit={canEdit}
@@ -254,6 +277,7 @@ export function CobrosView({
         addPaymentAction={addPaymentAction}
         deletePaymentAction={deletePaymentAction}
         deleteSaleAction={deleteSaleAction}
+        updateSaleProductAction={updateSaleProductAction}
       />
 
       <PaymentsTable
@@ -261,6 +285,7 @@ export function CobrosView({
         salesById={new Map(sales.map((s) => [s.id, s]))}
         leadById={leadById}
         modalityById={modalityById}
+        productById={productById}
         accumByPaymentId={accumByPaymentId}
         canEdit={canEdit}
         filtersActive={filtersActive}
@@ -278,6 +303,7 @@ function FilterBar({
   onChange,
   closers,
   modalities,
+  products,
   hasUnassignedSales,
   totalSalesCount,
   filteredSalesCount,
@@ -287,6 +313,7 @@ function FilterBar({
   readonly onChange: (next: FilterState) => void;
   readonly closers: ReadonlyArray<Pick<TeamMemberRow, "id" | "name" | "active">>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
+  readonly products: ReadonlyArray<ProductRow>;
   readonly hasUnassignedSales: boolean;
   readonly totalSalesCount: number;
   readonly filteredSalesCount: number;
@@ -331,6 +358,20 @@ function FilterBar({
         ))}
       </select>
       <select
+        value={filters.productId}
+        onChange={(e) => onChange({ ...filters, productId: e.target.value })}
+        className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg"
+        aria-label="Filtrar por producto"
+      >
+        <option value="all">Todos los productos</option>
+        {products.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+            {!p.active ? " (inactivo)" : ""}
+          </option>
+        ))}
+      </select>
+      <select
         value={filters.collection}
         onChange={(e) =>
           onChange({ ...filters, collection: e.target.value as CollectionStatus })
@@ -367,11 +408,13 @@ function SalesTable({
   sales,
   leadById,
   modalityById,
+  productById,
   memberById,
   collectedBySale,
   payments,
   rankBySaleId,
   modalities,
+  products,
   rules,
   teamMembers,
   canEdit,
@@ -381,10 +424,12 @@ function SalesTable({
   addPaymentAction,
   deletePaymentAction,
   deleteSaleAction,
+  updateSaleProductAction,
 }: {
   readonly sales: ReadonlyArray<SaleRow>;
   readonly leadById: ReadonlyMap<string, LeadForCobros>;
   readonly modalityById: ReadonlyMap<string, PaymentModalityRow>;
+  readonly productById: ReadonlyMap<string, ProductRow>;
   readonly memberById: ReadonlyMap<
     string,
     Pick<TeamMemberRow, "id" | "name" | "active" | "role">
@@ -393,6 +438,7 @@ function SalesTable({
   readonly payments: ReadonlyArray<PaymentRow>;
   readonly rankBySaleId: ReadonlyMap<string, number>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
+  readonly products: ReadonlyArray<ProductRow>;
   readonly rules: ReadonlyArray<CommissionRuleRow>;
   readonly teamMembers: ReadonlyArray<
     Pick<TeamMemberRow, "id" | "name" | "active" | "role">
@@ -404,6 +450,7 @@ function SalesTable({
   readonly addPaymentAction: AddPaymentAction;
   readonly deletePaymentAction: DeletePaymentAction;
   readonly deleteSaleAction: DeleteSaleAction;
+  readonly updateSaleProductAction: UpdateSaleProductAction;
 }) {
   // Subtotales sobre lo filtrado: si el usuario filtra por "Cobrada", el
   // pactado y el cobrado totales tienen que coincidir en la fila de totales.
@@ -416,9 +463,56 @@ function SalesTable({
   const totalPct = totalPactado > 0 ? (totalCobrado / totalPactado) * 100 : 0;
   const totalPendiente = Math.max(totalPactado - totalCobrado, 0);
 
+  // Selección múltiple — sólo tiene sentido si el user puede editar.
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  // Limpiar selección cuando cambia el universo filtrado: si el usuario
+  // cambió los filtros y una venta seleccionada desapareció, se queda
+  // fantasma en el Set. Recortamos.
+  const visibleIds = useMemo(() => sales.map((s) => s.id), [sales]);
+  const visibleIdSet = useMemo(() => new Set(visibleIds), [visibleIds]);
+  const effectiveSelected = useMemo(() => {
+    if (selectedIds.size === 0) return selectedIds;
+    const next = new Set<string>();
+    for (const id of selectedIds) if (visibleIdSet.has(id)) next.add(id);
+    return next;
+  }, [selectedIds, visibleIdSet]);
+  const allSelected =
+    visibleIds.length > 0 && effectiveSelected.size === visibleIds.length;
+  const someSelected =
+    !allSelected && effectiveSelected.size > 0;
+
+  function toggleAll() {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(visibleIds));
+    }
+  }
+  function toggleOne(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  const totalColSpan = canEdit ? 5 : 4;
+
   return (
     <section className="space-y-3">
       <h2 className="text-base font-semibold text-fg">Ventas cerradas</h2>
+      {canEdit && effectiveSelected.size > 0 && (
+        <BulkAssignBar
+          selectedCount={effectiveSelected.size}
+          selectedIds={Array.from(effectiveSelected)}
+          products={products}
+          updateSaleProductAction={updateSaleProductAction}
+          onClear={() => setSelectedIds(new Set())}
+        />
+      )}
       {sales.length === 0 ? (
         <p className="rounded-md border border-dashed border-border bg-surface/40 p-8 text-center text-sm text-fg-muted">
           {totalSalesCount === 0
@@ -429,11 +523,26 @@ function SalesTable({
         </p>
       ) : (
         <div className="overflow-x-auto rounded-md border border-border">
-          <table className="w-full min-w-[820px] text-sm">
+          <table className="w-full min-w-[920px] text-sm">
             <thead className="bg-surface text-left text-xs uppercase tracking-wide text-fg-subtle">
               <tr>
+                {canEdit && (
+                  <th className="w-8 px-3 py-3 font-medium">
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = someSelected;
+                      }}
+                      onChange={toggleAll}
+                      aria-label="Seleccionar todas las ventas visibles"
+                      className="accent-accent"
+                    />
+                  </th>
+                )}
                 <th className="px-3 py-3 font-medium">Alumno</th>
                 <th className="px-3 py-3 font-medium">Closer</th>
+                <th className="px-3 py-3 font-medium">Producto</th>
                 <th className="px-3 py-3 font-medium">Modalidad</th>
                 <th className="px-3 py-3 text-right font-medium">Pactado</th>
                 <th className="px-3 py-3 text-right font-medium">Cobrado</th>
@@ -446,6 +555,7 @@ function SalesTable({
               {sales.map((s) => {
                 const lead = leadById.get(s.lead_id);
                 const modality = modalityById.get(s.payment_modality_id);
+                const product = productById.get(s.product_id);
                 // Atribución vía lead (fuente única de verdad) — no `s.team_member_id`.
                 const ownerId = lead?.team_member_id ?? null;
                 const closer = ownerId ? memberById.get(ownerId) : null;
@@ -453,6 +563,7 @@ function SalesTable({
                 const total = Number(s.total_amount) || 0;
                 const pct = total > 0 ? (collected / total) * 100 : 0;
                 const salePayments = payments.filter((p) => p.sale_id === s.id);
+                const isSelected = effectiveSelected.has(s.id);
                 const leadForModal: Pick<
                   LeadRow,
                   "id" | "name" | "launch_id" | "team_member_id"
@@ -473,13 +584,30 @@ function SalesTable({
                 return (
                   <tr
                     key={s.id}
-                    className="border-t border-border hover:bg-surface"
+                    className={
+                      "border-t border-border hover:bg-surface " +
+                      (isSelected ? "bg-accent/5" : "")
+                    }
                   >
+                    {canEdit && (
+                      <td className="px-3 py-3">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleOne(s.id)}
+                          aria-label={`Seleccionar venta de ${lead?.name ?? "sin alumno"}`}
+                          className="accent-accent"
+                        />
+                      </td>
+                    )}
                     <td className="px-3 py-3 font-medium text-fg">
                       {lead?.name ?? "—"}
                     </td>
                     <td className="px-3 py-3 text-fg-muted">
                       {closer?.name ?? "Sin asignar"}
+                    </td>
+                    <td className="px-3 py-3 text-fg-muted">
+                      {product?.name ?? "—"}
                     </td>
                     <td className="px-3 py-3 text-fg-muted">
                       {modality?.name ?? "—"}
@@ -510,11 +638,16 @@ function SalesTable({
                           saleRank={rankBySaleId.get(s.id) ?? 0}
                           payments={salePayments}
                           modalities={modalities}
+                          products={products}
                           rules={rules}
                           teamMembers={teamMembers}
                           createSaleAction={createSaleAction.bind(
                             null,
                             leadForModal.id,
+                          )}
+                          updateProductAction={updateSaleProductAction.bind(
+                            null,
+                            s.id,
                           )}
                           addPaymentAction={addPaymentAction.bind(null, s.id)}
                           deletePaymentAction={deletePaymentAction}
@@ -530,7 +663,7 @@ function SalesTable({
               <tr>
                 <td
                   className="px-3 py-3 font-semibold text-fg"
-                  colSpan={3}
+                  colSpan={totalColSpan}
                 >
                   {filtersActive
                     ? `Subtotal filtrado · ${sales.length} venta${sales.length === 1 ? "" : "s"}`
@@ -568,6 +701,7 @@ function PaymentsTable({
   salesById,
   leadById,
   modalityById,
+  productById,
   accumByPaymentId,
   canEdit,
   filtersActive,
@@ -578,6 +712,7 @@ function PaymentsTable({
   readonly salesById: ReadonlyMap<string, SaleRow>;
   readonly leadById: ReadonlyMap<string, LeadForCobros>;
   readonly modalityById: ReadonlyMap<string, PaymentModalityRow>;
+  readonly productById: ReadonlyMap<string, ProductRow>;
   readonly accumByPaymentId: ReadonlyMap<string, number>;
   readonly canEdit: boolean;
   readonly filtersActive: boolean;
@@ -617,6 +752,7 @@ function PaymentsTable({
               <tr>
                 <th className="px-3 py-3 font-medium">Fecha</th>
                 <th className="px-3 py-3 font-medium">Alumno</th>
+                <th className="px-3 py-3 font-medium">Producto</th>
                 <th className="px-3 py-3 font-medium">Modalidad</th>
                 <th className="px-3 py-3 text-right font-medium">Monto</th>
                 <th className="px-3 py-3 text-right font-medium">
@@ -633,6 +769,7 @@ function PaymentsTable({
                 const modality = sale
                   ? modalityById.get(sale.payment_modality_id)
                   : null;
+                const product = sale ? productById.get(sale.product_id) : null;
                 return (
                   <tr
                     key={p.id}
@@ -643,6 +780,9 @@ function PaymentsTable({
                     </td>
                     <td className="px-3 py-3 font-medium text-fg">
                       {lead?.name ?? "—"}
+                    </td>
+                    <td className="px-3 py-3 text-fg-muted">
+                      {product?.name ?? "—"}
                     </td>
                     <td className="px-3 py-3 text-fg-muted">
                       {modality?.name ?? "—"}
@@ -671,7 +811,7 @@ function PaymentsTable({
               <tr>
                 <td
                   className="px-3 py-3 font-semibold text-fg"
-                  colSpan={3}
+                  colSpan={4}
                 >
                   {filtersActive
                     ? `Subtotal filtrado · ${payments.length} cobro${payments.length === 1 ? "" : "s"}`
@@ -720,5 +860,122 @@ function DeletePaymentButton({
     >
       {pending ? "…" : "×"}
     </button>
+  );
+}
+
+/**
+ * Barra de acciones en bulk que aparece cuando el operador seleccionó al
+ * menos una venta. Hoy tiene una sola acción — reasignar producto — que es
+ * la de mayor throughput (post backfill 0038 hay muchas ventas en
+ * "Sin categoría" que hay que migrar al catálogo real).
+ *
+ * Aplica en paralelo con Promise.allSettled: si algunas fallan (RLS, FK, etc)
+ * se muestra el resumen. No hace optimistic update — dejamos que el
+ * revalidatePath del server refresque la vista.
+ */
+function BulkAssignBar({
+  selectedCount,
+  selectedIds,
+  products,
+  updateSaleProductAction,
+  onClear,
+}: {
+  readonly selectedCount: number;
+  readonly selectedIds: ReadonlyArray<string>;
+  readonly products: ReadonlyArray<ProductRow>;
+  readonly updateSaleProductAction: UpdateSaleProductAction;
+  readonly onClear: () => void;
+}) {
+  const [productId, setProductId] = useState<string>("");
+  const [pending, setPending] = useState(false);
+  const [feedback, setFeedback] = useState<{
+    ok: number;
+    fail: number;
+    firstError?: string;
+  } | null>(null);
+  const activeProducts = products.filter((p) => p.active);
+
+  async function apply() {
+    if (!productId) return;
+    setPending(true);
+    setFeedback(null);
+    try {
+      const results = await Promise.allSettled(
+        selectedIds.map((id) => updateSaleProductAction(id, productId)),
+      );
+      let ok = 0;
+      let fail = 0;
+      let firstError: string | undefined;
+      for (const r of results) {
+        if (r.status === "fulfilled") {
+          if ("ok" in r.value) ok++;
+          else {
+            fail++;
+            firstError ??= r.value.error;
+          }
+        } else {
+          fail++;
+          firstError ??= "Error de red";
+        }
+      }
+      setFeedback({ ok, fail, firstError });
+      if (fail === 0) {
+        onClear();
+        setProductId("");
+      }
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-accent/40 bg-accent/5 px-3 py-2">
+      <span className="text-sm font-medium text-fg">
+        {selectedCount} venta{selectedCount === 1 ? "" : "s"} seleccionada
+        {selectedCount === 1 ? "" : "s"}
+      </span>
+      <select
+        value={productId}
+        onChange={(e) => setProductId(e.target.value)}
+        disabled={pending}
+        aria-label="Producto a asignar en bulk"
+        className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg disabled:opacity-50"
+      >
+        <option value="">Elegí producto…</option>
+        {activeProducts.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        disabled={pending || !productId}
+        onClick={apply}
+        className="rounded-md border border-accent/40 bg-accent/10 px-3 py-1 text-sm font-medium text-accent hover:bg-accent/20 disabled:opacity-50"
+      >
+        {pending ? "Asignando…" : "Asignar"}
+      </button>
+      <button
+        type="button"
+        onClick={onClear}
+        disabled={pending}
+        className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg hover:bg-bg-elevated disabled:opacity-50"
+      >
+        Limpiar
+      </button>
+      {feedback && (
+        <span
+          className={
+            "text-xs " +
+            (feedback.fail === 0 ? "text-success" : "text-error")
+          }
+        >
+          {feedback.fail === 0
+            ? `${feedback.ok} venta${feedback.ok === 1 ? "" : "s"} actualizada${feedback.ok === 1 ? "" : "s"}.`
+            : `${feedback.ok} OK · ${feedback.fail} con error${feedback.firstError ? ` (${feedback.firstError})` : ""}.`}
+        </span>
+      )}
+    </div>
   );
 }

@@ -20,6 +20,7 @@ import type {
 } from "@/lib/commissions/types";
 import { fmtMoney } from "@/lib/format";
 import type { LeadRow } from "@/lib/leads/types";
+import type { ProductRow } from "@/lib/products/types";
 import type { TeamMemberRow } from "@/lib/team/types";
 
 type SaleAction = (
@@ -31,6 +32,9 @@ type AddPaymentAction = (
   formData: FormData,
 ) => Promise<PaymentActionState>;
 type DeleteAction = (id: string) => Promise<void>;
+type UpdateProductAction = (
+  productId: string,
+) => Promise<{ ok: true } | { error: string }>;
 
 /**
  * Modal único que sirve a dos escenarios:
@@ -47,9 +51,11 @@ export function SaleModal({
   saleRank,
   payments,
   modalities,
+  products,
   rules,
   teamMembers,
   createSaleAction,
+  updateProductAction,
   addPaymentAction,
   deletePaymentAction,
   deleteSaleAction,
@@ -65,9 +71,16 @@ export function SaleModal({
   readonly saleRank: number;
   readonly payments: ReadonlyArray<PaymentRow>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
+  readonly products: ReadonlyArray<ProductRow>;
   readonly rules: ReadonlyArray<CommissionRuleRow>;
   readonly teamMembers: ReadonlyArray<Pick<TeamMemberRow, "id" | "name" | "active">>;
   readonly createSaleAction: SaleAction;
+  /**
+   * Cambia el producto asignado a la venta sin tocar el resto (modalidad,
+   * cobros, comisión). Bindeada al saleId. Si no se pasa, el panel muestra
+   * el producto como sólo lectura — útil para roles sin permiso de edición.
+   */
+  readonly updateProductAction?: UpdateProductAction;
   readonly addPaymentAction: AddPaymentAction;
   readonly deletePaymentAction: DeleteAction;
   /**
@@ -126,8 +139,10 @@ export function SaleModal({
                   saleRank={saleRank}
                   payments={payments}
                   modalities={modalities}
+                  products={products}
                   rules={rules}
                   launchId={lead.launch_id}
+                  updateProductAction={updateProductAction}
                   addPaymentAction={addPaymentAction}
                   deletePaymentAction={deletePaymentAction}
                   deleteSaleAction={deleteSaleAction}
@@ -137,6 +152,7 @@ export function SaleModal({
                 <NewSaleForm
                   lead={lead}
                   modalities={modalities}
+                  products={products}
                   teamMembers={teamMembers}
                   createSaleAction={createSaleAction}
                   onSuccess={() => setOpen(false)}
@@ -155,12 +171,14 @@ export function SaleModal({
 function NewSaleForm({
   lead,
   modalities,
+  products,
   teamMembers,
   createSaleAction,
   onSuccess,
 }: {
   readonly lead: Pick<LeadRow, "id" | "team_member_id">;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
+  readonly products: ReadonlyArray<ProductRow>;
   readonly teamMembers: ReadonlyArray<Pick<TeamMemberRow, "id" | "name" | "active">>;
   readonly createSaleAction: SaleAction;
   readonly onSuccess: () => void;
@@ -175,6 +193,7 @@ function NewSaleForm({
   }, [state, onSuccess]);
 
   const activeModalities = modalities.filter((m) => m.active);
+  const activeProducts = products.filter((p) => p.active);
   const ownerName = lead.team_member_id
     ? teamMembers.find((t) => t.id === lead.team_member_id)?.name ?? null
     : null;
@@ -187,9 +206,35 @@ function NewSaleForm({
       </div>
     );
   }
+  if (activeProducts.length === 0) {
+    return (
+      <div className="rounded-md border border-dashed border-border bg-surface/40 p-4 text-sm text-fg-muted">
+        No hay productos configurados. Pedile al admin que cargue el catálogo
+        en <b>Productos</b> antes de registrar ventas.
+      </div>
+    );
+  }
 
   return (
     <form action={formAction} className="space-y-4">
+      <div>
+        <Label htmlFor="sale-product">Producto *</Label>
+        <Select
+          id="sale-product"
+          name="product_id"
+          required
+          defaultValue=""
+        >
+          <option value="" disabled>
+            Elegí un producto
+          </option>
+          {activeProducts.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </Select>
+      </div>
       <div>
         <Label htmlFor="sale-modality">Modalidad de pago *</Label>
         <Select
@@ -267,8 +312,10 @@ function SalePanel({
   saleRank,
   payments,
   modalities,
+  products,
   rules,
   launchId,
+  updateProductAction,
   addPaymentAction,
   deletePaymentAction,
   deleteSaleAction,
@@ -278,14 +325,17 @@ function SalePanel({
   readonly saleRank: number;
   readonly payments: ReadonlyArray<PaymentRow>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
+  readonly products: ReadonlyArray<ProductRow>;
   readonly rules: ReadonlyArray<CommissionRuleRow>;
   readonly launchId: string | null;
+  readonly updateProductAction?: UpdateProductAction;
   readonly addPaymentAction: AddPaymentAction;
   readonly deletePaymentAction: DeleteAction;
   readonly deleteSaleAction?: DeleteAction;
   readonly onSaleDeleted: () => void;
 }) {
   const modality = modalities.find((m) => m.id === sale.payment_modality_id);
+  const product = products.find((p) => p.id === sale.product_id);
   const rule = findApplicableRule(rules, sale.payment_modality_id, launchId);
   const breakdown = computeCommission(sale, payments, rule, saleRank);
   const [deletePending, startDeleteTransition] = useTransition();
@@ -318,6 +368,13 @@ function SalePanel({
           </span>
         )}
       </section>
+
+      <ProductAssign
+        currentProductId={sale.product_id}
+        currentProductName={product?.name ?? "—"}
+        products={products}
+        updateProductAction={updateProductAction}
+      />
 
       {/* Form cargar cobro */}
       <PaymentForm addPaymentAction={addPaymentAction} />
@@ -516,5 +573,70 @@ function PaymentRow({
         ×
       </button>
     </li>
+  );
+}
+
+/**
+ * Bloque para ver/cambiar el producto asignado a la venta. Si el caller no
+ * pasa `updateProductAction`, se muestra sólo el nombre (read-only). Con la
+ * action disponible, el operador puede reasignar en 1 click desde el mismo
+ * modal — flujo pensado para cobros/ventas que quedaron en "Sin categoría"
+ * tras el backfill de la migración 0038.
+ */
+function ProductAssign({
+  currentProductId,
+  currentProductName,
+  products,
+  updateProductAction,
+}: {
+  readonly currentProductId: string;
+  readonly currentProductName: string;
+  readonly products: ReadonlyArray<ProductRow>;
+  readonly updateProductAction?: UpdateProductAction;
+}) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const activeProducts = products.filter(
+    (p) => p.active || p.id === currentProductId,
+  );
+
+  if (!updateProductAction) {
+    return (
+      <section className="rounded-md border border-border bg-surface/40 px-3 py-2 text-xs">
+        <div className="uppercase tracking-wide text-fg-subtle">Producto</div>
+        <div className="mt-1 text-fg">{currentProductName}</div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-md border border-border bg-surface/40 px-3 py-2 text-xs">
+      <div className="uppercase tracking-wide text-fg-subtle">Producto</div>
+      <div className="mt-1 flex items-center gap-2">
+        <Select
+          aria-label="Producto asignado a la venta"
+          defaultValue={currentProductId}
+          disabled={pending}
+          onChange={(e) => {
+            const nextId = e.target.value;
+            if (nextId === currentProductId) return;
+            setError(null);
+            startTransition(async () => {
+              const result = await updateProductAction(nextId);
+              if ("error" in result) setError(result.error);
+            });
+          }}
+        >
+          {activeProducts.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+              {!p.active ? " (inactivo)" : ""}
+            </option>
+          ))}
+        </Select>
+        {pending && <span className="text-fg-subtle">Guardando…</span>}
+      </div>
+      {error && <FieldError>{error}</FieldError>}
+    </section>
   );
 }

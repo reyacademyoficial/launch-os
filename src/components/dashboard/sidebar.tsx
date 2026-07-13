@@ -17,11 +17,12 @@ import { NavLink } from "./nav-link";
 export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
   const showAdmin = profile.role === "superadmin" || profile.role === "dev";
   const showCrm = profile.role !== "cliente";
-  // Comisiones es admin-only (modalidades + reglas son decisión de admin).
+  // Comisiones y Productos son admin-only (catálogo = decisión de admin).
   const showCommissions =
     profile.role === "superadmin" ||
     profile.role === "admin" ||
     profile.role === "dev";
+  const showProducts = showCommissions;
 
   return (
     <aside className="flex w-60 shrink-0 flex-col overflow-y-auto border-r border-border bg-bg-elevated px-4 py-6">
@@ -44,12 +45,16 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
               "/leads",
               "/equipo",
               "/leaderboard",
+              ...(showProducts ? ["/productos"] : []),
               ...(showCommissions ? ["/comisiones"] : []),
             ]}
           >
             <NavLink scopedSuffix="/leads">Leads</NavLink>
             <NavLink scopedSuffix="/equipo">Equipo</NavLink>
             <NavLink scopedSuffix="/leaderboard">Leaderboard</NavLink>
+            {showProducts && (
+              <NavLink scopedSuffix="/productos">Productos</NavLink>
+            )}
             {showCommissions && (
               <NavLink scopedSuffix="/comisiones">Comisiones</NavLink>
             )}
