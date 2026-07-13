@@ -1,11 +1,16 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
+import { RecalculateBulkModal } from "@/components/dashboard/commissions/recalculate-bulk-modal";
 import { ProductDelete } from "@/components/dashboard/products/product-delete";
 import { ProductModal } from "@/components/dashboard/products/product-modal";
 import { listProductsForProject } from "@/lib/products/list";
 import { requireSessionProfile, userCanEditProject } from "@/lib/supabase/auth";
 
+import {
+  previewRecalculateCommissionsBulk,
+  recalculateCommissionsBulk,
+} from "../leads/sale-actions";
 import {
   createProduct,
   deleteProduct,
@@ -32,6 +37,8 @@ export default async function ProductsPage({
   const products = await listProductsForProject(projectId);
 
   const createAction = createProduct.bind(null, projectId);
+  const previewBulkAction = previewRecalculateCommissionsBulk.bind(null, projectId);
+  const executeBulkAction = recalculateCommissionsBulk.bind(null, projectId);
 
   return (
     <section className="space-y-6">
@@ -95,6 +102,16 @@ export default async function ProductsPage({
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-start justify-end gap-2">
+                          <RecalculateBulkModal
+                            triggerLabel="Recalcular"
+                            triggerVariant="secondary"
+                            triggerClassName="!px-2 !py-1 !text-xs"
+                            title={`Recalcular comisiones de ${p.name}`}
+                            scopeDescription={`Ventas asignadas al producto "${p.name}", en todos los lanzamientos.`}
+                            fixedProductId={p.id}
+                            previewAction={previewBulkAction}
+                            executeAction={executeBulkAction}
+                          />
                           <ProductModal
                             triggerLabel="Editar"
                             triggerVariant="secondary"

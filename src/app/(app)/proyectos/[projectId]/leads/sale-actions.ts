@@ -2,6 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 
+import { findApplicableRule } from "@/lib/commissions/calc";
+import { listCommissionRules } from "@/lib/commissions/list";
+import { ruleToSnapshot } from "@/lib/commissions/snapshot";
 import { resolveSnapshotForSale } from "@/lib/commissions/snapshot";
 import { requireCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -453,4 +456,172 @@ export async function deletePayment(
   } else {
     revalidatePath(`/proyectos/${projectId}/leads`);
   }
+}
+
+// ─── recalculo bulk (Fase 9) ─────────────────────────────────────────────
+
+export interface RecalculateBulkFilters {
+  /** Restringe a ventas con este launch_id. NULL/undefined = todos los launches. */
+  launchId?: string | null;
+  /** Restringe a ventas con este product_id. NULL/undefined = todos los productos. */
+  productId?: string | null;
+  /**
+   * pending: sólo ventas con saldo pendiente (`sum(payments) < total_amount`).
+   * all: todas las ventas del scope (incluye ya totalmente cobradas).
+   */
+  scope: "pending" | "all";
+}
+
+export interface RecalculateBulkPreview {
+  totalMatches: number;
+}
+
+export interface RecalculateBulkResult {
+  updated: number;
+  failed: number;
+  firstError?: string;
+}
+
+interface SaleForBulk {
+  id: string;
+  payment_modality_id: string;
+  product_id: string;
+  launch_id: string | null;
+  total_amount: number;
+}
+
+/**
+ * Filtra sales según los criterios de bulk. Reusa RLS via cliente autenticado.
+ * scope="pending" hace un lookup adicional a payments para calcular el
+ * pendiente por venta. `all` no necesita ese join.
+ */
+async function fetchSalesForBulk(
+  projectId: string,
+  filters: RecalculateBulkFilters,
+): Promise<SaleForBulk[]> {
+  const supabase = await createClient();
+  let query = supabase
+    .from("sales")
+    .select("id, payment_modality_id, product_id, launch_id, total_amount")
+    .eq("project_id", projectId);
+
+  if (filters.launchId) query = query.eq("launch_id", filters.launchId);
+  if (filters.productId) query = query.eq("product_id", filters.productId);
+
+  const { data: rows } = await query;
+  const sales = (rows ?? []) as unknown as Array<SaleForBulk>;
+  if (sales.length === 0) return [];
+
+  if (filters.scope === "all") return sales;
+
+  // scope="pending": traer payments agregados y filtrar los saldos.
+  const saleIds = sales.map((s) => s.id);
+  const { data: paymentRows } = await supabase
+    .from("payments")
+    .select("sale_id, amount")
+    .in("sale_id", saleIds);
+  const payments = (paymentRows ?? []) as unknown as Array<{
+    sale_id: string;
+    amount: number;
+  }>;
+  const collectedBySale = new Map<string, number>();
+  for (const p of payments) {
+    const cur = collectedBySale.get(p.sale_id) ?? 0;
+    collectedBySale.set(p.sale_id, cur + Number(p.amount));
+  }
+  return sales.filter((s) => {
+    const collected = collectedBySale.get(s.id) ?? 0;
+    return collected < Number(s.total_amount);
+  });
+}
+
+/**
+ * Preview del count antes de disparar el recalc — el modal lo llama al
+ * abrirse y cada vez que cambian los filtros/scope.
+ */
+export async function previewRecalculateCommissionsBulk(
+  projectId: string,
+  filters: RecalculateBulkFilters,
+): Promise<RecalculateBulkPreview | { error: string }> {
+  await requireCanEditLaunchesIn(projectId);
+  try {
+    const sales = await fetchSalesForBulk(projectId, filters);
+    return { totalMatches: sales.length };
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
+}
+
+/**
+ * Recalcula el `commission_rule_snapshot` de todas las ventas que matchean
+ * los filtros contra la regla vigente HOY. Mismo criterio de matching que
+ * `findApplicableRule` (cascada Fase 7: producto → launch → default).
+ *
+ * Ventas cuya combinación no tiene regla vigente se saltan y cuentan como
+ * `failed`. El primer error se reporta en `firstError` — el resto se
+ * agrega al contador.
+ *
+ * NO usa `recalculateSaleCommission` para cada venta (que refetchea la
+ * regla) — resuelve las reglas una sola vez y reusa el map, ahorrando N
+ * roundtrips.
+ */
+export async function recalculateCommissionsBulk(
+  projectId: string,
+  filters: RecalculateBulkFilters,
+): Promise<RecalculateBulkResult | { error: string }> {
+  await requireCanEditLaunchesIn(projectId);
+  const supabase = await createClient();
+
+  const sales = await fetchSalesForBulk(projectId, filters);
+  if (sales.length === 0) {
+    return { updated: 0, failed: 0 };
+  }
+
+  // Resolver reglas UNA sola vez.
+  const rules = await listCommissionRules(projectId);
+
+  const results = await Promise.allSettled(
+    sales.map(async (s) => {
+      const rule = findApplicableRule(
+        rules,
+        s.payment_modality_id,
+        s.launch_id,
+        s.product_id,
+      );
+      if (!rule) {
+        throw new Error(
+          "No hay comisión configurada para esa combinación de producto y modalidad.",
+        );
+      }
+      const snapshot = ruleToSnapshot(rule);
+      const payload = { commission_rule_snapshot: snapshot } as never;
+      const { error } = await supabase
+        .from("sales")
+        .update(payload)
+        .eq("id", s.id)
+        .eq("project_id", projectId);
+      if (error) throw new Error(error.message);
+    }),
+  );
+
+  let updated = 0;
+  let failed = 0;
+  let firstError: string | undefined;
+  for (const r of results) {
+    if (r.status === "fulfilled") {
+      updated++;
+    } else {
+      failed++;
+      firstError ??= (r.reason as Error).message;
+    }
+  }
+
+  // Revalidamos la cache. Preferimos ir directo a los paths afectados que a
+  // /leads global — hoy revalido el layout de launches para cubrir tanto
+  // /launches/[id] como /launches/[id]/cobros, más /leads porque el kanban
+  // también depende del snapshot para preview de comisión.
+  revalidatePath(`/proyectos/${projectId}/leads`);
+  revalidatePath(`/proyectos/${projectId}/launches`, "layout");
+
+  return { updated, failed, firstError };
 }

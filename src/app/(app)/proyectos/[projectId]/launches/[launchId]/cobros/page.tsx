@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
+import { RecalculateBulkModal } from "@/components/dashboard/commissions/recalculate-bulk-modal";
 import { CobrosView } from "@/components/dashboard/sales/cobros-view";
 import {
   listCommissionRules,
@@ -19,6 +20,8 @@ import {
   createSale,
   deletePayment,
   deleteSale,
+  previewRecalculateCommissionsBulk,
+  recalculateCommissionsBulk,
   recalculateSaleCommission,
   updateSaleProduct,
 } from "../../../leads/sale-actions";
@@ -115,17 +118,33 @@ export default async function LaunchCobrosPage({
   const deleteSaleAction = deleteSale.bind(null, projectId);
   const updateSaleProductAction = updateSaleProduct.bind(null, projectId);
   const recalculateSaleAction = recalculateSaleCommission.bind(null, projectId);
+  const previewBulkAction = previewRecalculateCommissionsBulk.bind(null, projectId);
+  const executeBulkAction = recalculateCommissionsBulk.bind(null, projectId);
 
   return (
     <div className="space-y-10">
       <section className="space-y-3">
-        <header>
-          <h2 className="text-base font-semibold text-fg">Resumen de cobros</h2>
-          <p className="text-xs text-fg-subtle">
-            Calculado sobre ventas en columna <b>cerrado</b> del kanban. El
-            campo manual del form se suma a estos números en el KPI del
-            lanzamiento.
-          </p>
+        <header className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-fg">Resumen de cobros</h2>
+            <p className="text-xs text-fg-subtle">
+              Calculado sobre ventas en columna <b>cerrado</b> del kanban. El
+              campo manual del form se suma a estos números en el KPI del
+              lanzamiento.
+            </p>
+          </div>
+          {canEdit && (
+            <RecalculateBulkModal
+              triggerLabel="Recalcular comisiones"
+              triggerVariant="secondary"
+              triggerClassName="!px-3 !py-1.5 !text-xs"
+              title="Recalcular comisiones del lanzamiento"
+              scopeDescription={`Ventas atribuidas a este launch (${launch.name}). Elegí si solo tocar las pendientes o incluir las totalmente cobradas.`}
+              fixedLaunchId={launchId}
+              previewAction={previewBulkAction}
+              executeAction={executeBulkAction}
+            />
+          )}
         </header>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           <StatCard label="Pactado (kanban)" value={fmtMoney(agg.pledgedRevenue)} />
