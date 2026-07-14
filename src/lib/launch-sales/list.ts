@@ -112,44 +112,46 @@ export async function getKanbanSalesAggregatesForProject(
 ): Promise<Map<string, KanbanSalesAggregate>> {
   const supabase = await createClient();
 
-  const [leadsRes, salesRes] = await Promise.all([
-    supabase
-      .from("leads")
-      .select("id, status, launch_id")
-      .eq("project_id", projectId),
-    // Fase 8: incluir `launch_id` en el select. Sin él, el filtro del
-    // aggregate por `s.launch_id === launchId` falla (undefined ≠ X) y
-    // descarta todas las sales — el bug del "30M perdidos".
-    supabase
-      .from("sales")
-      .select("id, lead_id, launch_id, total_amount")
-      .eq("project_id", projectId),
-  ]);
-
-  const leads = (leadsRes.data ?? []) as Array<KanbanLeadStatusRow>;
+  // Fase 8: incluir `launch_id` en el select. Sin él, el filtro del
+  // aggregate por `s.launch_id === launchId` falla (undefined ≠ X) y
+  // descarta todas las sales.
+  const salesRes = await supabase
+    .from("sales")
+    .select("id, lead_id, launch_id, total_amount")
+    .eq("project_id", projectId);
   const sales = (salesRes.data ?? []) as Array<KanbanSaleRow>;
 
   const out = new Map<string, KanbanSalesAggregate>();
-
   if (sales.length === 0) return out;
 
+  // Bug 2026-07-14: antes traíamos TODOS los leads del proyecto y Supabase
+  // paginea a 1000 por default. Proyectos con >1000 leads perdían los que
+  // caían en filas 1001+, y sus ventas se descartaban silenciosamente en el
+  // aggregate (leadById.get devolvía undefined). Ahora traemos solo los
+  // leads referenciados por sales — con 58 sales son max 58 leads, siempre
+  // adentro del limit por defecto.
+  const leadIds = Array.from(new Set(sales.map((s) => s.lead_id)));
   const saleIds = sales.map((s) => s.id);
-  const paymentsRes = await supabase
-    .from("payments")
-    .select("sale_id, amount")
-    .in("sale_id", saleIds);
+
+  const [leadsRes, paymentsRes] = await Promise.all([
+    supabase
+      .from("leads")
+      .select("id, status, launch_id")
+      .in("id", leadIds),
+    supabase.from("payments").select("sale_id, amount").in("sale_id", saleIds),
+  ]);
+  const leads = (leadsRes.data ?? []) as Array<KanbanLeadStatusRow>;
   const payments = (paymentsRes.data ?? []) as Array<KanbanPaymentRow>;
 
-  // Universo de launches a agregar: los que aparecen en sales.launch_id
-  // (fuente de verdad Fase 8) unión los que aparecen en leads.launch_id (por
-  // launches sin ventas todavía pero con leads asignados — el KPI sigue
-  // teniendo que mostrar el card del launch aunque revenue sea 0).
+  // Universo de launches a agregar: `sales.launch_id` (Fase 8, atribución
+  // propia). No sumamos launches derivados de leads porque:
+  //   - Un launch sin ventas devolvería revenue=0 igual que si no lo
+  //     agregáramos — el caller ya tiene la lista de launches y renderiza
+  //     el card con EMPTY si no está en el map.
+  //   - Traer leads sin sales sería paginación pesada de vuelta.
   const launchIds = new Set<string>();
   for (const s of sales) {
     if (s.launch_id) launchIds.add(s.launch_id);
-  }
-  for (const l of leads) {
-    if (l.launch_id) launchIds.add(l.launch_id);
   }
 
   for (const launchId of launchIds) {
