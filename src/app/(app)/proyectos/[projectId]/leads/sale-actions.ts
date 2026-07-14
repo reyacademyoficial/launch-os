@@ -130,7 +130,7 @@ export async function createSale(
     .eq("id", leadId)
     .eq("project_id", projectId);
 
-  revalidatePath(`/proyectos/${projectId}/leads`);
+  revalidateSalesImpact(projectId, lead.launch_id);
   const saleId = (data as { id: string } | null)?.id;
   return { ok: true, saleId };
 }
@@ -402,6 +402,28 @@ export async function deleteSale(projectId: string, saleId: string): Promise<voi
     .eq("id", saleId)
     .eq("project_id", projectId);
 
+  revalidateSalesImpact(projectId, launchId);
+}
+
+/**
+ * Revalida TODAS las rutas cuyo agregado depende de la venta que cambió.
+ * Incluye:
+ *   - Overview del proyecto (`aggregateProjectKPIs`).
+ *   - Listado de launches (mismo aggregate por launch card).
+ *   - Kanban de leads.
+ *   - Detalle del launch (kpi + cobros) si aplica.
+ *
+ * Sin esto, los KPIs de overview y del listado quedan con cache stale de la
+ * SSR previa aunque el detalle del launch ya haya revalidado — bug reportado
+ * el 2026-07-14 tras Fase 8: el detail mostraba bien pero overview seguía
+ * con los números viejos.
+ */
+function revalidateSalesImpact(
+  projectId: string,
+  launchId: string | null,
+): void {
+  revalidatePath(`/proyectos/${projectId}`);
+  revalidatePath(`/proyectos/${projectId}/launches`);
   revalidatePath(`/proyectos/${projectId}/leads`);
   if (launchId) {
     revalidatePath(`/proyectos/${projectId}/launches/${launchId}`);
@@ -415,9 +437,8 @@ export async function deleteSale(projectId: string, saleId: string): Promise<voi
 export type PaymentActionState = { ok: true } | { error: string } | null;
 
 /**
- * Revalida las rutas que dependen del par (sale, launch): kanban de leads,
- * tab de cobros y KPI del launch. Si la sale no está atada a un launch,
- * revalida sólo /leads. Mismo patrón que `deleteSale`.
+ * Revalida las rutas que dependen del par (sale, launch). Ver
+ * `revalidateSalesImpact` — este wrapper hace el lookup del launch_id antes.
  */
 async function revalidateForSale(
   projectId: string,
@@ -432,13 +453,7 @@ async function revalidateForSale(
     .maybeSingle();
   const launchId =
     (data as { launch_id: string | null } | null)?.launch_id ?? null;
-
-  revalidatePath(`/proyectos/${projectId}/leads`);
-  if (launchId) {
-    revalidatePath(`/proyectos/${projectId}/launches/${launchId}`);
-    revalidatePath(`/proyectos/${projectId}/launches/${launchId}/cobros`);
-    revalidatePath(`/proyectos/${projectId}/launches/${launchId}/kpi`);
-  }
+  revalidateSalesImpact(projectId, launchId);
 }
 
 export async function addPayment(
@@ -653,12 +668,13 @@ export async function recalculateCommissionsBulk(
     }
   }
 
-  // Revalidamos la cache. Preferimos ir directo a los paths afectados que a
-  // /leads global — hoy revalido el layout de launches para cubrir tanto
-  // /launches/[id] como /launches/[id]/cobros, más /leads porque el kanban
-  // también depende del snapshot para preview de comisión.
-  revalidatePath(`/proyectos/${projectId}/leads`);
+  // Revalidamos con scope de proyecto: bulk toca N launches, no vale la
+  // pena revalidar uno por uno. Layout de launches cubre detail + subtabs.
+  // También overview y listado top-level para que sus KPIs agregados vean
+  // los nuevos snapshots.
+  revalidatePath(`/proyectos/${projectId}`);
   revalidatePath(`/proyectos/${projectId}/launches`, "layout");
+  revalidatePath(`/proyectos/${projectId}/leads`);
 
   return { updated, failed, firstError };
 }
