@@ -9,12 +9,20 @@ import type {
 import { buildSaleRanks } from "@/lib/commissions/ranking";
 import type {
   CommissionRuleRow,
+  InstallmentRow,
   PaymentModalityRow,
   PaymentRow,
   SaleRow,
 } from "@/lib/commissions/types";
-import { fmtDate, fmtMoney, fmtPercent } from "@/lib/format";
+import { fmtDate, fmtMoney, fmtNumber } from "@/lib/format";
+import {
+  computeInstallmentStatuses,
+  summarizeSaleOverdue,
+  todayInAR,
+  type SaleOverdueSummary,
+} from "@/lib/installments/status";
 import type { LeadRow } from "@/lib/leads/types";
+import type { PaymentMethodRow } from "@/lib/payment-methods/types";
 import type { ProductRow } from "@/lib/products/types";
 import type { TeamMemberRow } from "@/lib/team/types";
 
@@ -45,6 +53,14 @@ type UpdateSaleAction = (
   prev: SaleActionState,
   formData: FormData,
 ) => Promise<SaleActionState>;
+type UpdatePaymentInstallmentAction = (
+  paymentId: string,
+  installmentId: string | null,
+) => Promise<{ ok: true } | { error: string }>;
+type UpdatePaymentMethodAction = (
+  paymentId: string,
+  paymentMethodId: string | null,
+) => Promise<{ ok: true } | { error: string }>;
 
 type LeadForCobros = Pick<
   LeadRow,
@@ -55,9 +71,9 @@ type CollectionStatus = "all" | "paid" | "partial" | "unpaid";
 
 interface FilterState {
   query: string;
-  closerId: string; // "all" | "unassigned" | team_member_id
-  modalityId: string; // "all" | payment_modality_id
-  productId: string; // "all" | product_id
+  closerId: string;
+  modalityId: string;
+  productId: string;
   collection: CollectionStatus;
 }
 
@@ -70,21 +86,20 @@ const EMPTY_FILTERS: FilterState = {
 };
 
 /**
- * Vista interactiva del tab Cobros. Owns filter state y las dos tablas
- * (ventas cerradas + historial de cobros). Reusa `SaleModal` en modo
- * "venta existente" para registrar cobros sin bajar a Leads → Kanban.
- *
- * Los filtros se comparten entre las dos tablas: un pago se muestra si su
- * venta pasa el filtro. Idea: buscar "Juan" filtra a las ventas de Juan
- * arriba y sus cobros abajo, sin duplicar controles.
+ * Vista interactiva del tab Cobros. Fase 11: la tabla principal se reduce a
+ * los KPIs "de cobro" (Pactado, Cobrado, Vencido, # Cuotas vencidas, Próx
+ * vencimiento) y el detalle completo (closer, producto, modalidad, fecha
+ * cierre, cronograma) vive en la ficha del alumno = SaleModal.
  */
 export function CobrosView({
   sales,
   payments,
+  installments,
   leads,
   modalities,
   products,
   rules,
+  paymentMethods,
   teamMembers,
   canEdit,
   createSaleAction,
@@ -94,13 +109,17 @@ export function CobrosView({
   updateSaleProductAction,
   recalculateSaleAction,
   updateSaleAction,
+  updatePaymentInstallmentAction,
+  updatePaymentMethodAction,
 }: {
   readonly sales: ReadonlyArray<SaleRow>;
   readonly payments: ReadonlyArray<PaymentRow>;
+  readonly installments: ReadonlyArray<InstallmentRow>;
   readonly leads: ReadonlyArray<LeadForCobros>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
   readonly products: ReadonlyArray<ProductRow>;
   readonly rules: ReadonlyArray<CommissionRuleRow>;
+  readonly paymentMethods: ReadonlyArray<PaymentMethodRow>;
   readonly teamMembers: ReadonlyArray<
     Pick<TeamMemberRow, "id" | "name" | "active" | "role">
   >;
@@ -112,6 +131,8 @@ export function CobrosView({
   readonly updateSaleProductAction: UpdateSaleProductAction;
   readonly recalculateSaleAction: RecalculateSaleAction;
   readonly updateSaleAction: UpdateSaleAction;
+  readonly updatePaymentInstallmentAction: UpdatePaymentInstallmentAction;
+  readonly updatePaymentMethodAction: UpdatePaymentMethodAction;
 }) {
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
 
@@ -127,9 +148,9 @@ export function CobrosView({
     () => new Map(products.map((p) => [p.id, p])),
     [products],
   );
-  const memberById = useMemo(
-    () => new Map(teamMembers.map((m) => [m.id, m])),
-    [teamMembers],
+  const paymentMethodById = useMemo(
+    () => new Map(paymentMethods.map((m) => [m.id, m])),
+    [paymentMethods],
   );
 
   const collectedBySale = useMemo(() => {
@@ -140,9 +161,44 @@ export function CobrosView({
     return out;
   }, [payments]);
 
-  // Ranks para pasarle al SaleModal (necesarios para preview de comisión).
-  // Fase 8: buildSaleRanks lee `sale.launch_id` y `sale.team_member_id`
-  // directamente — ya no necesita el array de leads.
+  const installmentsBySaleId = useMemo(() => {
+    const out = new Map<string, InstallmentRow[]>();
+    for (const inst of installments) {
+      const arr = out.get(inst.sale_id);
+      if (arr) arr.push(inst);
+      else out.set(inst.sale_id, [inst]);
+    }
+    return out;
+  }, [installments]);
+
+  const paymentsBySaleId = useMemo(() => {
+    const out = new Map<string, PaymentRow[]>();
+    for (const p of payments) {
+      const arr = out.get(p.sale_id);
+      if (arr) arr.push(p);
+      else out.set(p.sale_id, [p]);
+    }
+    return out;
+  }, [payments]);
+
+  const today = todayInAR();
+
+  const overdueBySale = useMemo(() => {
+    const out = new Map<string, SaleOverdueSummary>();
+    for (const s of sales) {
+      const insts = installmentsBySaleId.get(s.id) ?? [];
+      const paysForSale = paymentsBySaleId.get(s.id) ?? [];
+      const statuses = computeInstallmentStatuses(
+        insts,
+        paysForSale,
+        s.grace_days,
+        today,
+      );
+      out.set(s.id, summarizeSaleOverdue(statuses));
+    }
+    return out;
+  }, [sales, installmentsBySaleId, paymentsBySaleId, today]);
+
   const rankBySaleId = useMemo(
     () => buildSaleRanks(sales as unknown as SaleRow[]),
     [sales],
@@ -163,6 +219,11 @@ export function CobrosView({
     return out;
   }, [paymentsSorted]);
 
+  const installmentById = useMemo(
+    () => new Map(installments.map((i) => [i.id, i])),
+    [installments],
+  );
+
   const normalizedQuery = filters.query.trim().toLowerCase();
 
   function saleMatches(sale: SaleRow): boolean {
@@ -173,9 +234,6 @@ export function CobrosView({
       return false;
     }
 
-    // Atribución: `lead.team_member_id` es la fuente única de verdad
-    // (kanban + leaderboard hacen lo mismo). `sale.team_member_id` es
-    // denormalización y puede quedar desincronizada.
     if (filters.closerId !== "all") {
       const ownerId = lead.team_member_id;
       if (filters.closerId === "unassigned") {
@@ -221,7 +279,6 @@ export function CobrosView({
     [filteredSales],
   );
 
-  // Pagos filtrados = pagos cuyo sale pasó el filtro. Ordenados desc por fecha.
   const filteredPayments = useMemo(
     () =>
       payments
@@ -237,9 +294,6 @@ export function CobrosView({
     filters.productId !== "all" ||
     filters.collection !== "all";
 
-  // Sólo mostramos en el dropdown de closer a los miembros que efectivamente
-  // aparecen como dueños de leads con ventas del launch. Usa lead.team_member_id
-  // (misma atribución que kanban + leaderboard).
   const closersInSales = useMemo(() => {
     const ids = new Set<string>();
     for (const s of sales) {
@@ -270,15 +324,15 @@ export function CobrosView({
       <SalesTable
         sales={filteredSales}
         leadById={leadById}
-        modalityById={modalityById}
-        productById={productById}
-        memberById={memberById}
         collectedBySale={collectedBySale}
-        payments={payments}
+        overdueBySale={overdueBySale}
+        installmentsBySaleId={installmentsBySaleId}
+        paymentsBySaleId={paymentsBySaleId}
         rankBySaleId={rankBySaleId}
         modalities={modalities}
         products={products}
         rules={rules}
+        paymentMethods={paymentMethods}
         teamMembers={teamMembers}
         canEdit={canEdit}
         filtersActive={filtersActive}
@@ -290,6 +344,8 @@ export function CobrosView({
         updateSaleProductAction={updateSaleProductAction}
         recalculateSaleAction={recalculateSaleAction}
         updateSaleAction={updateSaleAction}
+        updatePaymentInstallmentAction={updatePaymentInstallmentAction}
+        updatePaymentMethodAction={updatePaymentMethodAction}
       />
 
       <PaymentsTable
@@ -298,6 +354,8 @@ export function CobrosView({
         leadById={leadById}
         modalityById={modalityById}
         productById={productById}
+        installmentById={installmentById}
+        paymentMethodById={paymentMethodById}
         accumByPaymentId={accumByPaymentId}
         canEdit={canEdit}
         filtersActive={filtersActive}
@@ -307,8 +365,6 @@ export function CobrosView({
     </div>
   );
 }
-
-// ─── Filter bar ───────────────────────────────────────────────────────────
 
 function FilterBar({
   filters,
@@ -414,20 +470,20 @@ function FilterBar({
   );
 }
 
-// ─── Sales table ──────────────────────────────────────────────────────────
+// ─── Sales table (Fase 11) ───────────────────────────────────────────────
 
 function SalesTable({
   sales,
   leadById,
-  modalityById,
-  productById,
-  memberById,
   collectedBySale,
-  payments,
+  overdueBySale,
+  installmentsBySaleId,
+  paymentsBySaleId,
   rankBySaleId,
   modalities,
   products,
   rules,
+  paymentMethods,
   teamMembers,
   canEdit,
   filtersActive,
@@ -439,21 +495,20 @@ function SalesTable({
   updateSaleProductAction,
   recalculateSaleAction,
   updateSaleAction,
+  updatePaymentInstallmentAction,
+  updatePaymentMethodAction,
 }: {
   readonly sales: ReadonlyArray<SaleRow>;
   readonly leadById: ReadonlyMap<string, LeadForCobros>;
-  readonly modalityById: ReadonlyMap<string, PaymentModalityRow>;
-  readonly productById: ReadonlyMap<string, ProductRow>;
-  readonly memberById: ReadonlyMap<
-    string,
-    Pick<TeamMemberRow, "id" | "name" | "active" | "role">
-  >;
   readonly collectedBySale: ReadonlyMap<string, number>;
-  readonly payments: ReadonlyArray<PaymentRow>;
+  readonly overdueBySale: ReadonlyMap<string, SaleOverdueSummary>;
+  readonly installmentsBySaleId: ReadonlyMap<string, ReadonlyArray<InstallmentRow>>;
+  readonly paymentsBySaleId: ReadonlyMap<string, ReadonlyArray<PaymentRow>>;
   readonly rankBySaleId: ReadonlyMap<string, number>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
   readonly products: ReadonlyArray<ProductRow>;
   readonly rules: ReadonlyArray<CommissionRuleRow>;
+  readonly paymentMethods: ReadonlyArray<PaymentMethodRow>;
   readonly teamMembers: ReadonlyArray<
     Pick<TeamMemberRow, "id" | "name" | "active" | "role">
   >;
@@ -467,25 +522,26 @@ function SalesTable({
   readonly updateSaleProductAction: UpdateSaleProductAction;
   readonly recalculateSaleAction: RecalculateSaleAction;
   readonly updateSaleAction: UpdateSaleAction;
+  readonly updatePaymentInstallmentAction: UpdatePaymentInstallmentAction;
+  readonly updatePaymentMethodAction: UpdatePaymentMethodAction;
 }) {
-  // Subtotales sobre lo filtrado: si el usuario filtra por "Cobrada", el
-  // pactado y el cobrado totales tienen que coincidir en la fila de totales.
   let totalPactado = 0;
   let totalCobrado = 0;
+  let totalVencido = 0;
+  let totalCuotasVencidas = 0;
   for (const s of sales) {
     totalPactado += Number(s.total_amount) || 0;
     totalCobrado += collectedBySale.get(s.id) ?? 0;
+    const od = overdueBySale.get(s.id);
+    if (od) {
+      totalVencido += od.overdueAmount;
+      totalCuotasVencidas += od.overdueCount;
+    }
   }
-  const totalPct = totalPactado > 0 ? (totalCobrado / totalPactado) * 100 : 0;
-  const totalPendiente = Math.max(totalPactado - totalCobrado, 0);
 
-  // Selección múltiple — sólo tiene sentido si el user puede editar.
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  // Limpiar selección cuando cambia el universo filtrado: si el usuario
-  // cambió los filtros y una venta seleccionada desapareció, se queda
-  // fantasma en el Set. Recortamos.
   const visibleIds = useMemo(() => sales.map((s) => s.id), [sales]);
   const visibleIdSet = useMemo(() => new Set(visibleIds), [visibleIds]);
   const effectiveSelected = useMemo(() => {
@@ -515,7 +571,8 @@ function SalesTable({
     });
   }
 
-  const totalColSpan = canEdit ? 5 : 4;
+  // 1 (checkbox opcional) + Alumno = 2 cols antes de los numéricos.
+  const totalColSpan = canEdit ? 2 : 1;
 
   return (
     <section className="space-y-3">
@@ -539,7 +596,7 @@ function SalesTable({
         </p>
       ) : (
         <div className="overflow-x-auto rounded-md border border-border">
-          <table className="w-full min-w-[920px] text-sm">
+          <table className="w-full min-w-[880px] text-sm">
             <thead className="bg-surface text-left text-xs uppercase tracking-wide text-fg-subtle">
               <tr>
                 {canEdit && (
@@ -557,29 +614,31 @@ function SalesTable({
                   </th>
                 )}
                 <th className="px-3 py-3 font-medium">Alumno</th>
-                <th className="px-3 py-3 font-medium">Closer</th>
-                <th className="px-3 py-3 font-medium">Producto</th>
-                <th className="px-3 py-3 font-medium">Modalidad</th>
                 <th className="px-3 py-3 text-right font-medium">Pactado</th>
                 <th className="px-3 py-3 text-right font-medium">Cobrado</th>
-                <th className="px-3 py-3 text-right font-medium">% cobrado</th>
-                <th className="px-3 py-3 font-medium">Cerrado el</th>
+                <th className="px-3 py-3 text-right font-medium">Vencido</th>
+                <th
+                  className="px-3 py-3 text-right font-medium"
+                  title="Cantidad de cuotas cuyo vencimiento + gracia ya pasó y siguen con saldo"
+                >
+                  Cuotas venc.
+                </th>
+                <th className="px-3 py-3 font-medium">Próx. vencimiento</th>
                 {canEdit && <th className="px-3 py-3 text-right font-medium">Cobros</th>}
               </tr>
             </thead>
             <tbody>
               {sales.map((s) => {
                 const lead = leadById.get(s.lead_id);
-                const modality = modalityById.get(s.payment_modality_id);
-                const product = productById.get(s.product_id);
-                // Atribución vía lead (fuente única de verdad) — no `s.team_member_id`.
-                const ownerId = lead?.team_member_id ?? null;
-                const closer = ownerId ? memberById.get(ownerId) : null;
                 const collected = collectedBySale.get(s.id) ?? 0;
                 const total = Number(s.total_amount) || 0;
-                const pct = total > 0 ? (collected / total) * 100 : 0;
-                const salePayments = payments.filter((p) => p.sale_id === s.id);
+                const od = overdueBySale.get(s.id);
+                const overdueAmount = od?.overdueAmount ?? 0;
+                const overdueCount = od?.overdueCount ?? 0;
+                const nextDue = od?.nextDueDate ?? null;
                 const isSelected = effectiveSelected.has(s.id);
+                const salePayments = paymentsBySaleId.get(s.id) ?? [];
+                const paidUp = total > 0 && collected >= total;
                 const leadForModal: Pick<
                   LeadRow,
                   "id" | "name" | "launch_id" | "team_member_id"
@@ -617,16 +676,40 @@ function SalesTable({
                       </td>
                     )}
                     <td className="px-3 py-3 font-medium text-fg">
-                      {lead?.name ?? "—"}
-                    </td>
-                    <td className="px-3 py-3 text-fg-muted">
-                      {closer?.name ?? "Sin asignar"}
-                    </td>
-                    <td className="px-3 py-3 text-fg-muted">
-                      {product?.name ?? "—"}
-                    </td>
-                    <td className="px-3 py-3 text-fg-muted">
-                      {modality?.name ?? "—"}
+                      <SaleModal
+                        triggerLabel={lead?.name ?? "—"}
+                        triggerClassName="underline-offset-2 hover:underline"
+                        lead={leadForModal}
+                        sales={[s]}
+                        saleRanks={rankBySaleId}
+                        paymentsBySaleId={new Map([[s.id, salePayments]])}
+                        installmentsBySaleId={new Map([
+                          [s.id, installmentsBySaleId.get(s.id) ?? []],
+                        ])}
+                        initialSaleId={s.id}
+                        allowCreateAnother={false}
+                        modalities={modalities}
+                        products={products}
+                        rules={rules}
+                        paymentMethods={paymentMethods}
+                        teamMembers={teamMembers}
+                        createSaleAction={createSaleAction.bind(
+                          null,
+                          leadForModal.id,
+                        )}
+                        updateProductAction={(saleId, productId) =>
+                          updateSaleProductAction(saleId, productId)
+                        }
+                        recalculateAction={recalculateSaleAction}
+                        updateSaleAction={updateSaleAction}
+                        addPaymentAction={addPaymentAction}
+                        deletePaymentAction={deletePaymentAction}
+                        deleteSaleAction={deleteSaleAction}
+                        updatePaymentInstallmentAction={
+                          updatePaymentInstallmentAction
+                        }
+                        updatePaymentMethodAction={updatePaymentMethodAction}
+                      />
                     </td>
                     <td className="px-3 py-3 text-right tabular-nums text-fg">
                       {fmtMoney(total)}
@@ -634,11 +717,30 @@ function SalesTable({
                     <td className="px-3 py-3 text-right tabular-nums text-fg">
                       {fmtMoney(collected)}
                     </td>
-                    <td className="px-3 py-3 text-right tabular-nums text-fg-muted">
-                      {fmtPercent(pct)}
+                    <td
+                      className={
+                        "px-3 py-3 text-right tabular-nums " +
+                        (overdueAmount > 0 ? "text-error" : "text-fg-subtle")
+                      }
+                    >
+                      {overdueAmount > 0 ? fmtMoney(overdueAmount) : "—"}
+                    </td>
+                    <td
+                      className={
+                        "px-3 py-3 text-right tabular-nums " +
+                        (overdueCount > 0 ? "text-error" : "text-fg-subtle")
+                      }
+                    >
+                      {overdueCount > 0 ? fmtNumber(overdueCount) : "—"}
                     </td>
                     <td className="px-3 py-3 text-fg-muted">
-                      {fmtDate(s.closed_at)}
+                      {paidUp ? (
+                        <span className="text-success">Al día</span>
+                      ) : nextDue ? (
+                        fmtDate(nextDue)
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     {canEdit && (
                       <td className="px-3 py-3 text-right">
@@ -652,14 +754,16 @@ function SalesTable({
                           lead={leadForModal}
                           sales={[s]}
                           saleRanks={rankBySaleId}
-                          paymentsBySaleId={
-                            new Map([[s.id, salePayments]])
-                          }
+                          paymentsBySaleId={new Map([[s.id, salePayments]])}
+                          installmentsBySaleId={new Map([
+                            [s.id, installmentsBySaleId.get(s.id) ?? []],
+                          ])}
                           initialSaleId={s.id}
                           allowCreateAnother={false}
                           modalities={modalities}
                           products={products}
                           rules={rules}
+                          paymentMethods={paymentMethods}
                           teamMembers={teamMembers}
                           createSaleAction={createSaleAction.bind(
                             null,
@@ -673,6 +777,10 @@ function SalesTable({
                           addPaymentAction={addPaymentAction}
                           deletePaymentAction={deletePaymentAction}
                           deleteSaleAction={deleteSaleAction}
+                          updatePaymentInstallmentAction={
+                            updatePaymentInstallmentAction
+                          }
+                          updatePaymentMethodAction={updatePaymentMethodAction}
                         />
                       </td>
                     )}
@@ -696,15 +804,13 @@ function SalesTable({
                 <td className="px-3 py-3 text-right font-semibold tabular-nums text-fg">
                   {fmtMoney(totalCobrado)}
                 </td>
-                <td className="px-3 py-3 text-right font-semibold tabular-nums text-fg">
-                  {fmtPercent(totalPct)}
+                <td className="px-3 py-3 text-right font-semibold tabular-nums text-error">
+                  {totalVencido > 0 ? fmtMoney(totalVencido) : "—"}
                 </td>
-                <td
-                  className="px-3 py-3 text-fg-muted"
-                  title="Pactado − cobrado en las ventas filtradas"
-                >
-                  Pendiente {fmtMoney(totalPendiente)}
+                <td className="px-3 py-3 text-right font-semibold tabular-nums text-error">
+                  {totalCuotasVencidas > 0 ? fmtNumber(totalCuotasVencidas) : "—"}
                 </td>
+                <td className="px-3 py-3" />
                 {canEdit && <td className="px-3 py-3" />}
               </tr>
             </tfoot>
@@ -723,6 +829,8 @@ function PaymentsTable({
   leadById,
   modalityById,
   productById,
+  installmentById,
+  paymentMethodById,
   accumByPaymentId,
   canEdit,
   filtersActive,
@@ -734,6 +842,8 @@ function PaymentsTable({
   readonly leadById: ReadonlyMap<string, LeadForCobros>;
   readonly modalityById: ReadonlyMap<string, PaymentModalityRow>;
   readonly productById: ReadonlyMap<string, ProductRow>;
+  readonly installmentById: ReadonlyMap<string, InstallmentRow>;
+  readonly paymentMethodById: ReadonlyMap<string, PaymentMethodRow>;
   readonly accumByPaymentId: ReadonlyMap<string, number>;
   readonly canEdit: boolean;
   readonly filtersActive: boolean;
@@ -768,18 +878,17 @@ function PaymentsTable({
         </p>
       ) : (
         <div className="overflow-x-auto rounded-md border border-border">
-          <table className="w-full min-w-[720px] text-sm">
+          <table className="w-full min-w-[880px] text-sm">
             <thead className="bg-surface text-left text-xs uppercase tracking-wide text-fg-subtle">
               <tr>
                 <th className="px-3 py-3 font-medium">Fecha</th>
                 <th className="px-3 py-3 font-medium">Alumno</th>
                 <th className="px-3 py-3 font-medium">Producto</th>
                 <th className="px-3 py-3 font-medium">Modalidad</th>
+                <th className="px-3 py-3 font-medium">Cuota #</th>
+                <th className="px-3 py-3 font-medium">Método</th>
                 <th className="px-3 py-3 text-right font-medium">Monto</th>
-                <th className="px-3 py-3 text-right font-medium">
-                  Acumulado venta
-                </th>
-                <th className="px-3 py-3 font-medium">Notas</th>
+                <th className="px-3 py-3 text-right font-medium">Acumulado venta</th>
                 {canEdit && <th className="px-3 py-3" aria-label="Acciones" />}
               </tr>
             </thead>
@@ -791,6 +900,12 @@ function PaymentsTable({
                   ? modalityById.get(sale.payment_modality_id)
                   : null;
                 const product = sale ? productById.get(sale.product_id) : null;
+                const inst = p.installment_id
+                  ? installmentById.get(p.installment_id) ?? null
+                  : null;
+                const method = p.payment_method_id
+                  ? paymentMethodById.get(p.payment_method_id) ?? null
+                  : null;
                 return (
                   <tr
                     key={p.id}
@@ -808,13 +923,22 @@ function PaymentsTable({
                     <td className="px-3 py-3 text-fg-muted">
                       {modality?.name ?? "—"}
                     </td>
+                    <td className="px-3 py-3 text-fg-muted">
+                      {inst ? `Cuota ${inst.number}` : (
+                        <span className="text-warning">Sin cuota</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 text-fg-muted">
+                      {method?.name ?? (
+                        <span className="text-warning">—</span>
+                      )}
+                    </td>
                     <td className="px-3 py-3 text-right tabular-nums text-fg">
                       {fmtMoney(p.amount)}
                     </td>
                     <td className="px-3 py-3 text-right tabular-nums text-fg-muted">
                       {fmtMoney(accumByPaymentId.get(p.id) ?? 0)}
                     </td>
-                    <td className="px-3 py-3 text-fg-muted">{p.notes ?? ""}</td>
                     {canEdit && (
                       <td className="px-3 py-3 text-right">
                         <DeletePaymentButton
@@ -832,7 +956,7 @@ function PaymentsTable({
               <tr>
                 <td
                   className="px-3 py-3 font-semibold text-fg"
-                  colSpan={4}
+                  colSpan={6}
                 >
                   {filtersActive
                     ? `Subtotal filtrado · ${payments.length} cobro${payments.length === 1 ? "" : "s"}`
@@ -841,7 +965,6 @@ function PaymentsTable({
                 <td className="px-3 py-3 text-right font-semibold tabular-nums text-fg">
                   {fmtMoney(totalMonto)}
                 </td>
-                <td className="px-3 py-3" />
                 <td className="px-3 py-3" />
                 {canEdit && <td className="px-3 py-3" />}
               </tr>
@@ -884,16 +1007,6 @@ function DeletePaymentButton({
   );
 }
 
-/**
- * Barra de acciones en bulk que aparece cuando el operador seleccionó al
- * menos una venta. Hoy tiene una sola acción — reasignar producto — que es
- * la de mayor throughput (post backfill 0038 hay muchas ventas en
- * "Sin categoría" que hay que migrar al catálogo real).
- *
- * Aplica en paralelo con Promise.allSettled: si algunas fallan (RLS, FK, etc)
- * se muestra el resumen. No hace optimistic update — dejamos que el
- * revalidatePath del server refresque la vista.
- */
 function BulkAssignBar({
   selectedCount,
   selectedIds,

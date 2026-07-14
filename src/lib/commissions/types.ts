@@ -96,6 +96,14 @@ export interface CommissionRuleSnapshot {
   }>;
 }
 
+/**
+ * Frecuencia del plan de cuotas (`sales.installment_frequency`).
+ *   - `single`: una sola cuota con due_date = closed_at (default).
+ *   - `weekly`: N cuotas cada 7 días desde closed_at.
+ *   - `monthly`: N cuotas cada mes desde closed_at.
+ */
+export type InstallmentFrequency = "single" | "weekly" | "monthly";
+
 export interface SaleRow {
   id: string;
   project_id: string;
@@ -112,6 +120,11 @@ export interface SaleRow {
   product_id: string;
   total_amount: number;
   closed_at: string;
+  /** Fase 11 — plan de cuotas. Default 1 cuota (backfill). */
+  installment_count: number;
+  installment_frequency: InstallmentFrequency;
+  /** Días de tolerancia antes de considerar una cuota vencida. Default 5. */
+  grace_days: number;
   /**
    * Regla congelada al cierre. NULL solo para ventas legacy que no lograron
    * backfill en la migración 0039 (sin regla que matchee ese día). Cuando
@@ -128,6 +141,35 @@ export interface PaymentRow {
   amount: number;
   paid_at: string;
   notes: string | null;
+  /**
+   * Cuota a la que se aplica este cobro. NULL para históricos previos a
+   * Fase 11 o cobros que quedaron huérfanos tras regenerar el plan
+   * (política `on delete set null`). La UI muestra warning + dropdown de
+   * re-asignación cuando aparecen null.
+   */
+  installment_id: string | null;
+  /**
+   * Método de pago (transferencia, Stripe, efectivo, etc). NULL para
+   * históricos sin backfill — obligatorio para cobros nuevos.
+   */
+  payment_method_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Fase 11 — Una cuota del plan de pagos de una venta. Se genera en el server
+ * llamando `generate_installments_for_sale(sale_id)` al crear/editar la
+ * venta. La regeneración deja los payments huérfanos (installment_id=NULL)
+ * y la UI expone el re-linkeo manual.
+ */
+export interface InstallmentRow {
+  id: string;
+  sale_id: string;
+  /** 1-based: la primera cuota es number=1. */
+  number: number;
+  due_date: string;
+  amount: number;
   created_at: string;
   updated_at: string;
 }

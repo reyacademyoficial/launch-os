@@ -66,6 +66,9 @@ function sale(
     product_id: "prod-1",
     total_amount: 1000,
     closed_at: "2026-06-10T00:00:00Z",
+    installment_count: 1,
+    installment_frequency: "single",
+    grace_days: 5,
     commission_rule_snapshot: null,
     created_at: TS,
     updated_at: TS,
@@ -80,6 +83,8 @@ function payment(saleId: string, amount: number): PaymentRow {
     amount,
     paid_at: "2026-06-11",
     notes: null,
+    installment_id: null,
+    payment_method_id: null,
     created_at: TS,
     updated_at: TS,
   };

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
-import type { PaymentRow, SaleRow } from "@/lib/commissions/types";
+import type { InstallmentRow, PaymentRow, SaleRow } from "@/lib/commissions/types";
 import type { LeadRow } from "@/lib/leads/types";
 
 import {
@@ -29,6 +29,7 @@ import {
 export interface LaunchSalesData {
   sales: SaleRow[];
   payments: PaymentRow[];
+  installments: InstallmentRow[];
   leads: Pick<
     LeadRow,
     "id" | "status" | "launch_id" | "name" | "team_member_id"
@@ -54,17 +55,17 @@ export async function listLaunchSalesData(
   const sales = (salesRes.data ?? []) as unknown as SaleRow[];
 
   if (sales.length === 0) {
-    return { sales: [], payments: [], leads: [] };
+    return { sales: [], payments: [], installments: [], leads: [] };
   }
 
   // Traemos los leads de las sales que ya seleccionamos — no filtramos por
   // `lead.launch_id` porque después de Fase 8 un lead puede haberse movido
   // a otro launch pero su venta vieja sigue anclada acá. Y traemos
-  // payments en paralelo.
+  // payments + installments en paralelo (Fase 11).
   const leadIds = Array.from(new Set(sales.map((s) => s.lead_id)));
   const saleIds = sales.map((s) => s.id);
 
-  const [leadsRes, paymentsRes] = await Promise.all([
+  const [leadsRes, paymentsRes, installmentsRes] = await Promise.all([
     supabase
       .from("leads")
       .select("id, status, launch_id, name, team_member_id")
@@ -74,13 +75,20 @@ export async function listLaunchSalesData(
       .select("*")
       .in("sale_id", saleIds)
       .order("paid_at", { ascending: true }),
+    supabase
+      .from("installments")
+      .select("*")
+      .in("sale_id", saleIds)
+      .order("sale_id", { ascending: true })
+      .order("number", { ascending: true }),
   ]);
 
   const leads = (leadsRes.data ?? []) as Array<
     Pick<LeadRow, "id" | "status" | "launch_id" | "name" | "team_member_id">
   >;
   const payments = (paymentsRes.data ?? []) as unknown as PaymentRow[];
-  return { sales, payments, leads };
+  const installments = (installmentsRes.data ?? []) as unknown as InstallmentRow[];
+  return { sales, payments, installments, leads };
 }
 
 /**

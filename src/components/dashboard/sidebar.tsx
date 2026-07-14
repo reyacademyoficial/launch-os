@@ -47,6 +47,7 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
               "/leaderboard",
               ...(showProducts ? ["/productos"] : []),
               ...(showCommissions ? ["/comisiones"] : []),
+              ...(showProducts ? ["/metodos-pago"] : []),
             ]}
           >
             <NavLink scopedSuffix="/leads">Leads</NavLink>
@@ -57,6 +58,9 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
             )}
             {showCommissions && (
               <NavLink scopedSuffix="/comisiones">Comisiones</NavLink>
+            )}
+            {showProducts && (
+              <NavLink scopedSuffix="/metodos-pago">Métodos de pago</NavLink>
             )}
           </NavGroup>
         )}

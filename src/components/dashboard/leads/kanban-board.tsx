@@ -12,12 +12,14 @@ import { computeCommission, findApplicableRule } from "@/lib/commissions/calc";
 import { buildSaleRanks } from "@/lib/commissions/ranking";
 import type {
   CommissionRuleRow,
+  InstallmentRow,
   PaymentModalityRow,
   PaymentRow,
   SaleRow,
 } from "@/lib/commissions/types";
 import { fmtMoney } from "@/lib/format";
 import { LEAD_STATUSES, LEAD_STATUS_LABELS, type LeadRow, type LeadStatus } from "@/lib/leads/types";
+import type { PaymentMethodRow } from "@/lib/payment-methods/types";
 import type { ProductRow } from "@/lib/products/types";
 import type { TeamMemberRow } from "@/lib/team/types";
 
@@ -62,6 +64,14 @@ type UpdateSaleAction = (
   prev: SaleActionState,
   formData: FormData,
 ) => Promise<SaleActionState>;
+type UpdatePaymentInstallmentAction = (
+  paymentId: string,
+  installmentId: string | null,
+) => Promise<{ ok: true } | { error: string }>;
+type UpdatePaymentMethodAction = (
+  paymentId: string,
+  paymentMethodId: string | null,
+) => Promise<{ ok: true } | { error: string }>;
 
 /**
  * Tablero kanban del pipeline. Columnas = LEAD_STATUSES, ordenadas según el
@@ -84,9 +94,11 @@ export function KanbanBoard({
   // Sales 4b
   salesByLeadId,
   paymentsBySaleId,
+  installmentsBySaleId,
   modalities,
   products,
   rules,
+  paymentMethods,
   createSaleAction,
   addPaymentAction,
   deletePaymentAction,
@@ -94,6 +106,8 @@ export function KanbanBoard({
   updateSaleProductAction,
   recalculateSaleAction,
   updateSaleAction,
+  updatePaymentInstallmentAction,
+  updatePaymentMethodAction,
 }: {
   readonly leads: ReadonlyArray<LeadRow>;
   readonly teamMembers: ReadonlyArray<
@@ -111,9 +125,11 @@ export function KanbanBoard({
    */
   readonly salesByLeadId: ReadonlyMap<string, ReadonlyArray<SaleRow>>;
   readonly paymentsBySaleId: ReadonlyMap<string, ReadonlyArray<PaymentRow>>;
+  readonly installmentsBySaleId: ReadonlyMap<string, ReadonlyArray<InstallmentRow>>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
   readonly products: ReadonlyArray<ProductRow>;
   readonly rules: ReadonlyArray<CommissionRuleRow>;
+  readonly paymentMethods: ReadonlyArray<PaymentMethodRow>;
   readonly createSaleAction: CreateSaleAction;
   readonly addPaymentAction: AddPaymentAction;
   readonly deletePaymentAction: DeletePaymentAction;
@@ -121,6 +137,8 @@ export function KanbanBoard({
   readonly updateSaleProductAction: UpdateSaleProductAction;
   readonly recalculateSaleAction: RecalculateSaleAction;
   readonly updateSaleAction: UpdateSaleAction;
+  readonly updatePaymentInstallmentAction: UpdatePaymentInstallmentAction;
+  readonly updatePaymentMethodAction: UpdatePaymentMethodAction;
 }) {
   const [, startTransition] = useTransition();
   const [dragOverCol, setDragOverCol] = useState<LeadStatus | null>(null);
@@ -381,9 +399,11 @@ export function KanbanBoard({
                               sales={leadSales}
                               saleRanks={rankBySaleId}
                               paymentsBySaleId={paymentsBySaleId}
+                              installmentsBySaleId={installmentsBySaleId}
                               modalities={modalities}
                               products={products}
                               rules={rules}
+                              paymentMethods={paymentMethods}
                               teamMembers={teamMembers}
                               createSaleAction={createSaleAction.bind(null, lead.id)}
                               updateProductAction={(saleId, productId) =>
@@ -394,6 +414,10 @@ export function KanbanBoard({
                               addPaymentAction={addPaymentAction}
                               deletePaymentAction={deletePaymentAction}
                               deleteSaleAction={deleteSaleAction}
+                              updatePaymentInstallmentAction={
+                                updatePaymentInstallmentAction
+                              }
+                              updatePaymentMethodAction={updatePaymentMethodAction}
                             />
                             <LeadRowActions
                               lead={lead}

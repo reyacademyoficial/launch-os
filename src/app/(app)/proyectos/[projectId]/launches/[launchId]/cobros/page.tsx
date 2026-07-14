@@ -11,6 +11,7 @@ import { fmtMoney, fmtNumber, fmtPercent } from "@/lib/format";
 import { aggregateKanbanSales } from "@/lib/launch-sales/aggregate";
 import { listLaunchSalesData } from "@/lib/launch-sales/list";
 import { getLaunch } from "@/lib/launches/get";
+import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { listProductsForProject } from "@/lib/products/list";
 import { userCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { listTeamMembers } from "@/lib/team/list";
@@ -23,6 +24,8 @@ import {
   previewRecalculateCommissionsBulk,
   recalculateCommissionsBulk,
   recalculateSaleCommission,
+  updatePaymentInstallment,
+  updatePaymentMethod,
   updateSale,
   updateSaleProduct,
 } from "../../../leads/sale-actions";
@@ -55,6 +58,7 @@ export default async function LaunchCobrosPage({
     modalities,
     products,
     rules,
+    paymentMethods,
     teamMembers,
     canEdit,
   ] = await Promise.all([
@@ -63,6 +67,7 @@ export default async function LaunchCobrosPage({
     listPaymentModalities(projectId),
     listProductsForProject(projectId),
     listCommissionRules(projectId),
+    listPaymentMethods(projectId),
     listTeamMembers(projectId),
     userCanEditLaunchesIn(projectId),
   ]);
@@ -82,6 +87,9 @@ export default async function LaunchCobrosPage({
   const closedSaleIds = new Set(closedSales.map((s) => s.id));
   const closedPayments = salesData.payments.filter((p) =>
     closedSaleIds.has(p.sale_id),
+  );
+  const closedInstallments = salesData.installments.filter((i) =>
+    closedSaleIds.has(i.sale_id),
   );
 
   // Leads correspondientes a las ventas cerradas. Los que quedan afuera
@@ -121,6 +129,11 @@ export default async function LaunchCobrosPage({
   const updateSaleProductAction = updateSaleProduct.bind(null, projectId);
   const recalculateSaleAction = recalculateSaleCommission.bind(null, projectId);
   const updateSaleAction = updateSale.bind(null, projectId);
+  const updatePaymentInstallmentAction = updatePaymentInstallment.bind(
+    null,
+    projectId,
+  );
+  const updatePaymentMethodAction = updatePaymentMethod.bind(null, projectId);
   const previewBulkAction = previewRecalculateCommissionsBulk.bind(null, projectId);
   const executeBulkAction = recalculateCommissionsBulk.bind(null, projectId);
 
@@ -177,10 +190,12 @@ export default async function LaunchCobrosPage({
       <CobrosView
         sales={closedSales}
         payments={closedPayments}
+        installments={closedInstallments}
         leads={closedLeads}
         modalities={modalities}
         products={products}
         rules={rules}
+        paymentMethods={paymentMethods}
         teamMembers={teamForModal}
         canEdit={canEdit}
         createSaleAction={createSaleAction}
@@ -190,6 +205,8 @@ export default async function LaunchCobrosPage({
         updateSaleProductAction={updateSaleProductAction}
         recalculateSaleAction={recalculateSaleAction}
         updateSaleAction={updateSaleAction}
+        updatePaymentInstallmentAction={updatePaymentInstallmentAction}
+        updatePaymentMethodAction={updatePaymentMethodAction}
       />
     </div>
   );

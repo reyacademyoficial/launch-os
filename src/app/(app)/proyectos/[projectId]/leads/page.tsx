@@ -12,8 +12,9 @@ import {
   listCommissionRules,
   listPaymentModalities,
 } from "@/lib/commissions/list";
-import type { PaymentRow, SaleRow } from "@/lib/commissions/types";
+import type { InstallmentRow, PaymentRow, SaleRow } from "@/lib/commissions/types";
 import { listLaunchesForProject } from "@/lib/launches/list";
+import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { listProductsForProject } from "@/lib/products/list";
 import { listKanbanLeads, listLeadsPaginated } from "@/lib/leads/search";
 import {
@@ -27,6 +28,9 @@ import {
   type LeadSource,
   type LeadStatus,
 } from "@/lib/leads/types";
+import {
+  listInstallmentsForSales,
+} from "@/lib/installments/list";
 import {
   listPaymentsForProject,
   listSalesForProject,
@@ -48,6 +52,8 @@ import {
   previewRecalculateCommissionsBulk,
   recalculateCommissionsBulk,
   recalculateSaleCommission,
+  updatePaymentInstallment,
+  updatePaymentMethod,
   updateSale,
   updateSaleProduct,
 } from "./sale-actions";
@@ -93,6 +99,7 @@ export default async function LeadsPage({
     modalities,
     products,
     rules,
+    paymentMethods,
   ] = await Promise.all([
     listTeamMembers(projectId),
     listLaunchesForProject(projectId),
@@ -102,7 +109,12 @@ export default async function LeadsPage({
     listPaymentModalities(projectId),
     listProductsForProject(projectId),
     listCommissionRules(projectId),
+    listPaymentMethods(projectId),
   ]);
+
+  // Fase 11: cuotas por venta. Se cargan una vez y se agrupan por sale_id
+  // para pasárselas al SaleModal (evita N+1 en el kanban).
+  const installments = await listInstallmentsForSales(sales.map((s) => s.id));
 
   const teamForForm = teamMembers.map((m) => ({
     id: m.id,
@@ -129,6 +141,12 @@ export default async function LeadsPage({
     if (existing) existing.push(p);
     else paymentsBySaleId.set(p.sale_id, [p]);
   }
+  const installmentsBySaleId = new Map<string, InstallmentRow[]>();
+  for (const i of installments) {
+    const existing = installmentsBySaleId.get(i.sale_id);
+    if (existing) existing.push(i);
+    else installmentsBySaleId.set(i.sale_id, [i]);
+  }
 
   const createAction = createLead.bind(null, projectId);
   const moveAction = moveLeadStatus.bind(null, projectId);
@@ -141,6 +159,11 @@ export default async function LeadsPage({
   const updateSaleProductAction = updateSaleProduct.bind(null, projectId);
   const recalculateSaleAction = recalculateSaleCommission.bind(null, projectId);
   const updateSaleAction = updateSale.bind(null, projectId);
+  const updatePaymentInstallmentAction = updatePaymentInstallment.bind(
+    null,
+    projectId,
+  );
+  const updatePaymentMethodAction = updatePaymentMethod.bind(null, projectId);
   const previewBulkAction = previewRecalculateCommissionsBulk.bind(null, projectId);
   const executeBulkAction = recalculateCommissionsBulk.bind(null, projectId);
 
@@ -211,9 +234,11 @@ export default async function LeadsPage({
           deleteAction={deleteAction}
           salesByLeadId={salesByLeadId}
           paymentsBySaleId={paymentsBySaleId}
+          installmentsBySaleId={installmentsBySaleId}
           modalities={modalities}
           products={products}
           rules={rules}
+          paymentMethods={paymentMethods}
           createSaleAction={createSaleAction}
           addPaymentAction={addPaymentAction}
           deletePaymentAction={deletePaymentAction}
@@ -221,6 +246,8 @@ export default async function LeadsPage({
           updateSaleProductAction={updateSaleProductAction}
           recalculateSaleAction={recalculateSaleAction}
           updateSaleAction={updateSaleAction}
+          updatePaymentInstallmentAction={updatePaymentInstallmentAction}
+          updatePaymentMethodAction={updatePaymentMethodAction}
         />
       ) : (
         <TablaTab
@@ -371,9 +398,11 @@ async function KanbanTab({
   deleteAction,
   salesByLeadId,
   paymentsBySaleId,
+  installmentsBySaleId,
   modalities,
   products,
   rules,
+  paymentMethods,
   createSaleAction,
   addPaymentAction,
   deletePaymentAction,
@@ -381,6 +410,8 @@ async function KanbanTab({
   updateSaleProductAction,
   recalculateSaleAction,
   updateSaleAction,
+  updatePaymentInstallmentAction,
+  updatePaymentMethodAction,
 }: {
   readonly projectId: string;
   readonly teamForForm: ReadonlyArray<{
@@ -399,12 +430,15 @@ async function KanbanTab({
   readonly deleteAction: any;
   readonly salesByLeadId: ReadonlyMap<string, ReadonlyArray<SaleRow>>;
   readonly paymentsBySaleId: ReadonlyMap<string, ReadonlyArray<PaymentRow>>;
+  readonly installmentsBySaleId: ReadonlyMap<string, ReadonlyArray<InstallmentRow>>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly modalities: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly products: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly rules: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly paymentMethods: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly createSaleAction: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -419,6 +453,10 @@ async function KanbanTab({
   readonly recalculateSaleAction: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly updateSaleAction: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly updatePaymentInstallmentAction: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly updatePaymentMethodAction: any;
 }) {
   const leads = await listKanbanLeads(projectId);
 
@@ -448,9 +486,11 @@ async function KanbanTab({
       deleteAction={deleteAction}
       salesByLeadId={salesByLeadId}
       paymentsBySaleId={paymentsBySaleId}
+      installmentsBySaleId={installmentsBySaleId}
       modalities={modalities}
       products={products}
       rules={rules}
+      paymentMethods={paymentMethods}
       createSaleAction={createSaleAction}
       addPaymentAction={addPaymentAction}
       deletePaymentAction={deletePaymentAction}
@@ -458,6 +498,8 @@ async function KanbanTab({
       updateSaleProductAction={updateSaleProductAction}
       recalculateSaleAction={recalculateSaleAction}
       updateSaleAction={updateSaleAction}
+      updatePaymentInstallmentAction={updatePaymentInstallmentAction}
+      updatePaymentMethodAction={updatePaymentMethodAction}
     />
   );
 }

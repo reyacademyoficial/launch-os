@@ -6,8 +6,51 @@ import { findApplicableRule } from "@/lib/commissions/calc";
 import { listCommissionRules } from "@/lib/commissions/list";
 import { ruleToSnapshot } from "@/lib/commissions/snapshot";
 import { resolveSnapshotForSale } from "@/lib/commissions/snapshot";
+import type { InstallmentFrequency } from "@/lib/commissions/types";
 import { requireCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
+
+/**
+ * Fase 11 — límites sanos para el plan de cuotas. 24 cobre casos típicos
+ * (24 cuotas mensuales = 2 años). Más que eso pide justificación aparte.
+ */
+const MIN_INSTALLMENTS = 1;
+const MAX_INSTALLMENTS = 24;
+const VALID_FREQUENCIES: readonly InstallmentFrequency[] = [
+  "single",
+  "weekly",
+  "monthly",
+];
+
+function parseInstallmentInput(
+  formData: FormData,
+): { count: number; frequency: InstallmentFrequency; graceDays: number } | { error: string } {
+  const countRaw = String(formData.get("installment_count") ?? "1").trim();
+  const count = parseInt(countRaw, 10);
+  if (!Number.isFinite(count) || count < MIN_INSTALLMENTS || count > MAX_INSTALLMENTS) {
+    return {
+      error: `Cantidad de cuotas debe estar entre ${MIN_INSTALLMENTS} y ${MAX_INSTALLMENTS}.`,
+    };
+  }
+
+  const freqRaw = String(formData.get("installment_frequency") ?? "single").trim();
+  if (!VALID_FREQUENCIES.includes(freqRaw as InstallmentFrequency)) {
+    return { error: "Frecuencia de cuotas inválida." };
+  }
+  const frequency = freqRaw as InstallmentFrequency;
+
+  // 1 cuota siempre implica frecuencia 'single' — normalizamos para que la
+  // DB no reciba combinaciones raras como (count=1, frequency='weekly').
+  const normalizedFrequency: InstallmentFrequency = count === 1 ? "single" : frequency;
+
+  const graceRaw = String(formData.get("grace_days") ?? "5").trim();
+  const graceDays = parseInt(graceRaw, 10);
+  if (!Number.isFinite(graceDays) || graceDays < 0 || graceDays > 90) {
+    return { error: "Días de gracia debe estar entre 0 y 90." };
+  }
+
+  return { count, frequency: normalizedFrequency, graceDays };
+}
 
 export type SaleActionState = { ok: true; saleId?: string } | { error: string } | null;
 
@@ -52,6 +95,9 @@ export async function createSale(
 
   const closedAtRaw = str(formData, "closed_at");
   const closed_at = closedAtRaw === "" ? new Date().toISOString() : closedAtRaw;
+
+  const installmentInput = parseInstallmentInput(formData);
+  if ("error" in installmentInput) return installmentInput;
 
   const supabase = await createClient();
 
@@ -109,6 +155,9 @@ export async function createSale(
     product_id,
     total_amount,
     closed_at,
+    installment_count: installmentInput.count,
+    installment_frequency: installmentInput.frequency,
+    grace_days: installmentInput.graceDays,
     commission_rule_snapshot: snapshot,
   } as never;
 
@@ -122,6 +171,21 @@ export async function createSale(
     return { error: error.message };
   }
 
+  const saleId = (data as { id: string } | null)?.id;
+
+  // Generar las cuotas via función SQL. Si falla, borramos la venta recién
+  // creada para no dejar sales sin plan de cuotas (invariante Fase 11).
+  if (saleId) {
+    const { error: genError } = await supabase.rpc(
+      "generate_installments_for_sale" as never,
+      { p_sale_id: saleId } as never,
+    );
+    if (genError) {
+      await supabase.from("sales").delete().eq("id", saleId);
+      return { error: `No se pudieron generar las cuotas: ${genError.message}` };
+    }
+  }
+
   // Marcar lead cerrado (puede que ya lo esté; es idempotente).
   const leadUpdate = { status: "cerrado" } as never;
   await supabase
@@ -131,7 +195,6 @@ export async function createSale(
     .eq("project_id", projectId);
 
   revalidateSalesImpact(projectId, lead.launch_id);
-  const saleId = (data as { id: string } | null)?.id;
   return { ok: true, saleId };
 }
 
@@ -171,6 +234,9 @@ export async function updateSale(
   const closedAtRaw = str(formData, "closed_at");
   const regenerate = formData.get("regenerate") !== null;
 
+  const installmentInput = parseInstallmentInput(formData);
+  if ("error" in installmentInput) return installmentInput;
+
   const supabase = await createClient();
 
   // Guard de pertenencia — mismo criterio que createSale.
@@ -186,16 +252,24 @@ export async function updateSale(
 
   // El dueño de la venta es el del lead — no se recibe del form. Mantenerlo
   // alineado preserva el invariante que el LB y el PDF asumen. También
-  // necesitamos launch_id para regenerar el snapshot si aplica.
+  // necesitamos launch_id para regenerar el snapshot si aplica y los
+  // campos del plan actual para saber si tocamos cuotas.
   const { data: saleRow } = await supabase
     .from("sales")
-    .select("lead_id, launch_id")
+    .select(
+      "lead_id, launch_id, total_amount, closed_at, installment_count, installment_frequency, grace_days",
+    )
     .eq("id", saleId)
     .eq("project_id", projectId)
     .maybeSingle();
   const saleRef = saleRow as {
     lead_id: string;
     launch_id: string | null;
+    total_amount: number;
+    closed_at: string;
+    installment_count: number;
+    installment_frequency: InstallmentFrequency;
+    grace_days: number;
   } | null;
   if (!saleRef) return { error: "Venta inexistente." };
   const { data: leadRow } = await supabase
@@ -228,6 +302,9 @@ export async function updateSale(
     product_id,
     total_amount,
     team_member_id,
+    installment_count: installmentInput.count,
+    installment_frequency: installmentInput.frequency,
+    grace_days: installmentInput.graceDays,
     ...(closedAtRaw && { closed_at: closedAtRaw }),
     ...snapshotUpdate,
   } as never;
@@ -238,6 +315,27 @@ export async function updateSale(
     .eq("id", saleId)
     .eq("project_id", projectId);
   if (error) return { error: error.message };
+
+  // Regenerar cuotas si CUALQUIER campo del plan cambió (count / frequency /
+  // total / closed_at). Grace days no dispara regeneración porque no cambia
+  // el cronograma — sólo la clasificación de "vencido". Regenerar deja los
+  // payments huérfanos vía `on delete set null`; la ficha del alumno los
+  // muestra flotando para re-linkeo manual.
+  const planChanged =
+    installmentInput.count !== saleRef.installment_count ||
+    installmentInput.frequency !== saleRef.installment_frequency ||
+    total_amount !== Number(saleRef.total_amount) ||
+    (closedAtRaw && closedAtRaw !== saleRef.closed_at.slice(0, 10));
+
+  if (planChanged) {
+    const { error: genError } = await supabase.rpc(
+      "generate_installments_for_sale" as never,
+      { p_sale_id: saleId } as never,
+    );
+    if (genError) {
+      return { error: `No se pudieron regenerar las cuotas: ${genError.message}` };
+    }
+  }
 
   await revalidateForSale(projectId, saleId);
   return { ok: true };
@@ -425,6 +523,9 @@ function revalidateSalesImpact(
   revalidatePath(`/proyectos/${projectId}`);
   revalidatePath(`/proyectos/${projectId}/launches`);
   revalidatePath(`/proyectos/${projectId}/leads`);
+  // Fase 11: la página de métodos de pago muestra totales por método —
+  // cualquier alta/edición de cobro cambia esos números.
+  revalidatePath(`/proyectos/${projectId}/metodos-pago`);
   if (launchId) {
     revalidatePath(`/proyectos/${projectId}/launches/${launchId}`);
     revalidatePath(`/proyectos/${projectId}/launches/${launchId}/cobros`);
@@ -472,18 +573,127 @@ export async function addPayment(
   const paidAt = str(formData, "paid_at");
   const notes = nullable(str(formData, "notes"));
 
+  const installmentIdRaw = str(formData, "installment_id");
+  const installment_id = installmentIdRaw === "" ? null : installmentIdRaw;
+  const paymentMethodIdRaw = str(formData, "payment_method_id");
+  const payment_method_id = paymentMethodIdRaw === "" ? null : paymentMethodIdRaw;
+
+  if (!installment_id) {
+    return { error: "Elegí a qué cuota se aplica el cobro." };
+  }
+  if (!payment_method_id) {
+    return { error: "Elegí el método de pago." };
+  }
+
   const supabase = await createClient();
+
+  // Guard de integridad: la cuota tiene que ser de esta venta. RLS y la FK
+  // ya lo cubren indirectamente, pero un error temprano es más claro que un
+  // 23503 de Postgres.
+  const { data: instRow } = await supabase
+    .from("installments")
+    .select("sale_id")
+    .eq("id", installment_id)
+    .maybeSingle();
+  const inst = instRow as { sale_id: string } | null;
+  if (!inst || inst.sale_id !== saleId) {
+    return { error: "La cuota seleccionada no pertenece a esta venta." };
+  }
+
   const payload = {
     sale_id: saleId,
     amount,
     ...(paidAt && { paid_at: paidAt }),
     notes,
+    installment_id,
+    payment_method_id,
   } as never;
 
   const { error } = await supabase.from("payments").insert(payload);
   if (error) return { error: error.message };
 
   await revalidateForSale(projectId, saleId);
+  return { ok: true };
+}
+
+/**
+ * Re-linkea un cobro histórico (o huérfano tras regenerar cuotas) a una
+ * cuota puntual de su venta. Sirve para el flujo de carga de clientes
+ * existentes que describía el brief de Fase 11: cambio el plan de la venta,
+ * los payments quedan flotando, el operador los asigna uno por uno.
+ *
+ * `installmentId=null` es válido — desasigna el cobro (queda huérfano de
+ * vuelta). El método de pago se toca por separado con `updatePaymentMethod`.
+ */
+export async function updatePaymentInstallment(
+  projectId: string,
+  paymentId: string,
+  installmentId: string | null,
+): Promise<{ ok: true } | { error: string }> {
+  await requireCanEditLaunchesIn(projectId);
+  const supabase = await createClient();
+
+  // Lookup del sale_id del payment para revalidar y validar integridad.
+  const { data: payRow } = await supabase
+    .from("payments")
+    .select("sale_id")
+    .eq("id", paymentId)
+    .maybeSingle();
+  const pay = payRow as { sale_id: string } | null;
+  if (!pay) return { error: "Cobro inexistente." };
+
+  if (installmentId) {
+    const { data: instRow } = await supabase
+      .from("installments")
+      .select("sale_id")
+      .eq("id", installmentId)
+      .maybeSingle();
+    const inst = instRow as { sale_id: string } | null;
+    if (!inst || inst.sale_id !== pay.sale_id) {
+      return { error: "La cuota no pertenece a esta venta." };
+    }
+  }
+
+  const payload = { installment_id: installmentId } as never;
+  const { error } = await supabase
+    .from("payments")
+    .update(payload)
+    .eq("id", paymentId);
+  if (error) return { error: error.message };
+
+  await revalidateForSale(projectId, pay.sale_id);
+  return { ok: true };
+}
+
+/**
+ * Setea/limpia el método de pago de un cobro. Pensado para backfill de
+ * cobros históricos que quedaron con `payment_method_id = NULL` tras la
+ * migración 0043.
+ */
+export async function updatePaymentMethod(
+  projectId: string,
+  paymentId: string,
+  paymentMethodId: string | null,
+): Promise<{ ok: true } | { error: string }> {
+  await requireCanEditLaunchesIn(projectId);
+  const supabase = await createClient();
+
+  const { data: payRow } = await supabase
+    .from("payments")
+    .select("sale_id")
+    .eq("id", paymentId)
+    .maybeSingle();
+  const pay = payRow as { sale_id: string } | null;
+  if (!pay) return { error: "Cobro inexistente." };
+
+  const payload = { payment_method_id: paymentMethodId } as never;
+  const { error } = await supabase
+    .from("payments")
+    .update(payload)
+    .eq("id", paymentId);
+  if (error) return { error: error.message };
+
+  await revalidateForSale(projectId, pay.sale_id);
   return { ok: true };
 }
 
