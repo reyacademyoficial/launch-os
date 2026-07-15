@@ -71,6 +71,7 @@ type CollectionStatus = "all" | "paid" | "partial" | "unpaid";
 
 interface FilterState {
   query: string;
+  launchId: string;
   closerId: string;
   modalityId: string;
   productId: string;
@@ -79,11 +80,14 @@ interface FilterState {
 
 const EMPTY_FILTERS: FilterState = {
   query: "",
+  launchId: "all",
   closerId: "all",
   modalityId: "all",
   productId: "all",
   collection: "all",
 };
+
+const UNASSIGNED_LAUNCH = "__unassigned__";
 
 /**
  * Vista interactiva del tab Cobros. Fase 11: la tabla principal se reduce a
@@ -96,6 +100,7 @@ export function CobrosView({
   payments,
   installments,
   leads,
+  launches,
   modalities,
   products,
   rules,
@@ -116,6 +121,11 @@ export function CobrosView({
   readonly payments: ReadonlyArray<PaymentRow>;
   readonly installments: ReadonlyArray<InstallmentRow>;
   readonly leads: ReadonlyArray<LeadForCobros>;
+  /**
+   * Universo de launches para el filtro. Omitido → vista por launch única
+   * (no se muestra el filtro). Presente → vista project-wide con dropdown.
+   */
+  readonly launches?: ReadonlyArray<{ id: string; name: string }>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
   readonly products: ReadonlyArray<ProductRow>;
   readonly rules: ReadonlyArray<CommissionRuleRow>;
@@ -234,6 +244,14 @@ export function CobrosView({
       return false;
     }
 
+    if (filters.launchId !== "all") {
+      if (filters.launchId === UNASSIGNED_LAUNCH) {
+        if (sale.launch_id !== null) return false;
+      } else if (sale.launch_id !== filters.launchId) {
+        return false;
+      }
+    }
+
     if (filters.closerId !== "all") {
       const ownerId = lead.team_member_id;
       if (filters.closerId === "unassigned") {
@@ -289,10 +307,13 @@ export function CobrosView({
 
   const filtersActive =
     filters.query !== "" ||
+    filters.launchId !== "all" ||
     filters.closerId !== "all" ||
     filters.modalityId !== "all" ||
     filters.productId !== "all" ||
     filters.collection !== "all";
+
+  const hasUnassignedLaunch = sales.some((s) => s.launch_id === null);
 
   const closersInSales = useMemo(() => {
     const ids = new Set<string>();
@@ -312,9 +333,11 @@ export function CobrosView({
       <FilterBar
         filters={filters}
         onChange={setFilters}
+        launches={launches}
         closers={closersInSales}
         modalities={modalities}
         products={products}
+        hasUnassignedLaunch={hasUnassignedLaunch}
         hasUnassignedSales={hasUnassignedSales}
         totalSalesCount={sales.length}
         filteredSalesCount={filteredSales.length}
@@ -369,9 +392,11 @@ export function CobrosView({
 function FilterBar({
   filters,
   onChange,
+  launches,
   closers,
   modalities,
   products,
+  hasUnassignedLaunch,
   hasUnassignedSales,
   totalSalesCount,
   filteredSalesCount,
@@ -379,9 +404,12 @@ function FilterBar({
 }: {
   readonly filters: FilterState;
   readonly onChange: (next: FilterState) => void;
+  /** Omitido = vista single-launch (sin dropdown de launch). */
+  readonly launches?: ReadonlyArray<{ id: string; name: string }>;
   readonly closers: ReadonlyArray<Pick<TeamMemberRow, "id" | "name" | "active">>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
   readonly products: ReadonlyArray<ProductRow>;
+  readonly hasUnassignedLaunch: boolean;
   readonly hasUnassignedSales: boolean;
   readonly totalSalesCount: number;
   readonly filteredSalesCount: number;
@@ -397,6 +425,24 @@ function FilterBar({
         className="min-w-[14rem] flex-1 rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg placeholder:text-fg-subtle"
         aria-label="Buscar alumno"
       />
+      {launches && (
+        <select
+          value={filters.launchId}
+          onChange={(e) => onChange({ ...filters, launchId: e.target.value })}
+          className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg"
+          aria-label="Filtrar por lanzamiento"
+        >
+          <option value="all">Todos los lanzamientos</option>
+          {hasUnassignedLaunch && (
+            <option value={UNASSIGNED_LAUNCH}>Sin launch</option>
+          )}
+          {launches.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name}
+            </option>
+          ))}
+        </select>
+      )}
       <select
         value={filters.closerId}
         onChange={(e) => onChange({ ...filters, closerId: e.target.value })}
