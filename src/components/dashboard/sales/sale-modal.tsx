@@ -85,6 +85,8 @@ type BoundDeleteSale = () => Promise<void>;
 export function SaleModal({
   triggerLabel,
   triggerClassName,
+  triggerAriaLabel,
+  variant = "full",
   lead,
   sales,
   saleRanks,
@@ -109,6 +111,15 @@ export function SaleModal({
 }: {
   readonly triggerLabel: string;
   readonly triggerClassName?: string;
+  /** Accessible label del botón trigger. Necesario cuando `triggerLabel` es solo un ícono ("+") y no describe la acción a lectores de pantalla. */
+  readonly triggerAriaLabel?: string;
+  /**
+   * `"full"` (default) muestra la ficha completa del alumno (encabezado, cronograma,
+   * historial, borrar venta). `"add-payment"` reduce el modal solo al form de
+   * cargar cobro — pensado para el botón "+" de la tabla de ventas cerradas
+   * donde el operador solo quiere sumar plata sin ver toda la ficha.
+   */
+  readonly variant?: "full" | "add-payment";
   readonly lead: Pick<LeadRow, "id" | "name" | "launch_id" | "team_member_id">;
   readonly sales: ReadonlyArray<SaleRow>;
   readonly saleRanks: ReadonlyMap<string, number>;
@@ -157,26 +168,34 @@ export function SaleModal({
   }, [open, sales, initialSaleId]);
 
   const selectedSale =
-    (mode === "list" || mode === "edit") && selectedSaleId
-      ? sales.find((s) => s.id === selectedSaleId) ?? null
-      : null;
+    variant === "add-payment"
+      ? initialSaleId
+        ? sales.find((s) => s.id === initialSaleId) ?? sales[0] ?? null
+        : sales[0] ?? null
+      : (mode === "list" || mode === "edit") && selectedSaleId
+        ? sales.find((s) => s.id === selectedSaleId) ?? null
+        : null;
 
   const headerTitle =
-    mode === "new"
-      ? sales.length > 0
-        ? "Nueva venta para este lead"
-        : "Registrar venta"
-      : mode === "edit"
-        ? "Editar venta"
-        : sales.length > 1
-          ? `Ventas (${sales.length})`
-          : "Ficha del alumno";
+    variant === "add-payment"
+      ? "Cargar cobro"
+      : mode === "new"
+        ? sales.length > 0
+          ? "Nueva venta para este lead"
+          : "Registrar venta"
+        : mode === "edit"
+          ? "Editar venta"
+          : sales.length > 1
+            ? `Ventas (${sales.length})`
+            : "Ficha del alumno";
 
   return (
     <>
       <button
         type="button"
         onClick={() => setOpen(true)}
+        aria-label={triggerAriaLabel}
+        title={triggerAriaLabel}
         className={
           triggerClassName ??
           "rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg hover:bg-bg-elevated"
@@ -210,7 +229,7 @@ export function SaleModal({
               </button>
             </header>
 
-            {mode === "list" && sales.length > 0 && (
+            {variant === "full" && mode === "list" && sales.length > 0 && (
               <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface/40 px-6 py-3">
                 {sales.length > 1 && (
                   <SaleTabs
@@ -233,7 +252,26 @@ export function SaleModal({
             )}
 
             <div className="flex-1 overflow-y-auto px-6 py-6">
-              {mode === "new" ? (
+              {variant === "add-payment" ? (
+                selectedSale ? (
+                  <AddPaymentOnly
+                    sale={selectedSale}
+                    payments={paymentsBySaleId.get(selectedSale.id) ?? []}
+                    installments={
+                      installmentsBySaleId.get(selectedSale.id) ?? []
+                    }
+                    paymentMethods={paymentMethods}
+                    addPaymentAction={(prev, fd) =>
+                      addPaymentAction(selectedSale.id, prev, fd)
+                    }
+                    onSuccess={() => setOpen(false)}
+                  />
+                ) : (
+                  <p className="text-sm text-fg-muted">
+                    No hay venta cargada para este alumno.
+                  </p>
+                )
+              ) : mode === "new" ? (
                 <NewSaleForm
                   lead={lead}
                   modalities={modalities}
@@ -981,11 +1019,14 @@ function PaymentForm({
   statuses,
   paymentMethods,
   addPaymentAction,
+  onSuccess,
 }: {
   readonly installments: ReadonlyArray<InstallmentRow>;
   readonly statuses: ReadonlyArray<InstallmentStatus>;
   readonly paymentMethods: ReadonlyArray<PaymentMethodRow>;
   readonly addPaymentAction: BoundAddPayment;
+  /** Callback tras cargar cobro OK. Usado por el variant `add-payment` para cerrar el modal — en el flujo full se omite para permitir cargar varios cobros seguidos. */
+  readonly onSuccess?: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -1026,6 +1067,7 @@ function PaymentForm({
       formRef.current?.reset();
       setUserInstallmentId(null);
       setUserAmount(null);
+      onSuccess?.();
     });
   }
 
@@ -1488,5 +1530,56 @@ function EditSaleForm({
         {state && "error" in state && <FieldError>{state.error}</FieldError>}
       </div>
     </form>
+  );
+}
+
+/**
+ * Cuerpo compacto para `variant="add-payment"`. Muestra un resumen mínimo de la
+ * venta (producto + pactado + cobrado) para que el operador confirme que está
+ * cargando el cobro donde corresponde, más el `PaymentForm` cerrado en success.
+ */
+function AddPaymentOnly({
+  sale,
+  payments,
+  installments,
+  paymentMethods,
+  addPaymentAction,
+  onSuccess,
+}: {
+  readonly sale: SaleRow;
+  readonly payments: ReadonlyArray<PaymentRow>;
+  readonly installments: ReadonlyArray<InstallmentRow>;
+  readonly paymentMethods: ReadonlyArray<PaymentMethodRow>;
+  readonly addPaymentAction: BoundAddPayment;
+  readonly onSuccess: () => void;
+}) {
+  const today = todayInAR();
+  const statuses = useMemo(
+    () =>
+      computeInstallmentStatuses(installments, payments, sale.grace_days, today),
+    [installments, payments, sale.grace_days, today],
+  );
+  const collected = payments.reduce((acc, p) => acc + Number(p.amount), 0);
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-md border border-border bg-surface/40 px-3 py-2 text-xs text-fg-muted">
+        Pactado <b className="tabular-nums text-fg">{fmtMoney(sale.total_amount)}</b>
+        {" · "}
+        Cobrado <b className="tabular-nums text-fg">{fmtMoney(collected)}</b>
+        {" · "}
+        Saldo{" "}
+        <b className="tabular-nums text-fg">
+          {fmtMoney(Math.max(Number(sale.total_amount) - collected, 0))}
+        </b>
+      </div>
+      <PaymentForm
+        installments={installments}
+        statuses={statuses}
+        paymentMethods={paymentMethods}
+        addPaymentAction={addPaymentAction}
+        onSuccess={onSuccess}
+      />
+    </div>
   );
 }

@@ -7,8 +7,11 @@ import { NavLink } from "./nav-link";
  * Sidebar links are cosmetic — RLS is the real gate on what each user can
  * reach. We hide entries here so the UI doesn't dangle dead links:
  *   - Calculadora: visible para todos los roles (decisión 2026-06-09).
- *   - Equipo / Leads (CRM Fase 4): ocultos para cliente. La page.tsx también
- *     hace bounce — esto evita el link colgado.
+ *   - Equipo (CRM Fase 4): oculto para cliente. La page.tsx también hace
+ *     bounce — esto evita el link colgado.
+ *   - Leads: oculto (2026-07-15). La ruta sigue viva porque el kanban se usa
+ *     internamente. Se sacó del nav por perf: con ~15k leads × 20 launches
+ *     abrir esa página ralentiza el resto. Se decidirá más adelante si vuelve.
  *   - Admin section: solo superadmin.
  *
  * Audit log: ruta sigue existiendo (`/proyectos/[id]/audit`) pero la sacamos
@@ -42,7 +45,6 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
           <NavGroup
             label="Ventas"
             scopedSuffixes={[
-              "/leads",
               "/equipo",
               "/leaderboard",
               ...(showProducts ? ["/productos"] : []),
@@ -50,7 +52,6 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
               ...(showProducts ? ["/metodos-pago"] : []),
             ]}
           >
-            <NavLink scopedSuffix="/leads">Leads</NavLink>
             <NavLink scopedSuffix="/equipo">Equipo</NavLink>
             <NavLink scopedSuffix="/leaderboard">Leaderboard</NavLink>
             {showProducts && (

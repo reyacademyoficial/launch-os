@@ -624,7 +624,14 @@ function SalesTable({
                   Cuotas venc.
                 </th>
                 <th className="px-3 py-3 font-medium">Próx. vencimiento</th>
-                {canEdit && <th className="px-3 py-3 text-right font-medium">Cobros</th>}
+                {canEdit && (
+                  <th
+                    className="px-3 py-3 text-right font-medium"
+                    title="Cargar un cobro rápido. Para ver el historial completo, tocá el nombre del alumno."
+                  >
+                    Cargar cobro
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -745,12 +752,10 @@ function SalesTable({
                     {canEdit && (
                       <td className="px-3 py-3 text-right">
                         <SaleModal
-                          triggerLabel={
-                            salePayments.length === 0
-                              ? "+ Cobro"
-                              : `Cobros (${salePayments.length})`
-                          }
-                          triggerClassName="rounded-md border border-accent/40 bg-accent/10 px-2 py-1 text-xs text-accent hover:bg-accent/20"
+                          triggerLabel="+"
+                          triggerAriaLabel={`Cargar cobro a ${lead?.name ?? "alumno"}`}
+                          triggerClassName="inline-flex h-7 w-7 items-center justify-center rounded-md border border-accent/40 bg-accent/10 text-base font-bold leading-none text-accent hover:bg-accent/20"
+                          variant="add-payment"
                           lead={leadForModal}
                           sales={[s]}
                           saleRanks={rankBySaleId}
@@ -867,8 +872,8 @@ function PaymentsTable({
         <p className="rounded-md border border-dashed border-border bg-surface/40 p-8 text-center text-sm text-fg-muted">
           {totalPaymentsCount === 0 ? (
             <>
-              Sin cobros registrados todavía. Usá <b>+ Cobro</b> en la tabla de
-              ventas para cargar el primero.
+              Sin cobros registrados todavía. Usá el botón <b>+</b> en la tabla
+              de ventas para cargar el primero.
             </>
           ) : filtersActive ? (
             "Ningún cobro coincide con los filtros aplicados."
