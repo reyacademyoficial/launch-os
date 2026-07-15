@@ -15,6 +15,29 @@ function str(formData: FormData, key: string): string {
 }
 
 /**
+ * Parsea `bank_id` del form: "" (Sin banco) → null; UUID → validado contra la
+ * DB para asegurar que sea del mismo proyecto (RLS ya bloquea inserts a
+ * banks ajenos, pero adelantar el check da mejor mensaje).
+ */
+async function parseBankId(
+  projectId: string,
+  formData: FormData,
+): Promise<{ bankId: string | null } | { error: string }> {
+  const raw = str(formData, "bank_id");
+  if (raw === "") return { bankId: null };
+
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("banks")
+    .select("id")
+    .eq("id", raw)
+    .eq("project_id", projectId)
+    .maybeSingle();
+  if (!data) return { error: "Banco inexistente o de otro proyecto." };
+  return { bankId: raw };
+}
+
+/**
  * Mismo shape que createProduct — admin-only, unique por (project_id, name).
  * Métodos "transferencia", "Stripe", "efectivo"… son project-scoped porque
  * la política contable es del proyecto entero.
@@ -28,10 +51,14 @@ export async function createPaymentMethod(
   const name = str(formData, "name");
   if (!name) return { error: "El nombre es obligatorio." };
 
+  const bankParsed = await parseBankId(projectId, formData);
+  if ("error" in bankParsed) return bankParsed;
+
   const supabase = await createClient();
   const payload = {
     project_id: projectId,
     name,
+    bank_id: bankParsed.bankId,
     active: true,
   } as never;
   const { error } = await supabase.from("payment_methods").insert(payload);
@@ -57,8 +84,11 @@ export async function updatePaymentMethod(
   if (!name) return { error: "El nombre es obligatorio." };
   const active = formData.get("active") !== null;
 
+  const bankParsed = await parseBankId(projectId, formData);
+  if ("error" in bankParsed) return bankParsed;
+
   const supabase = await createClient();
-  const payload = { name, active } as never;
+  const payload = { name, active, bank_id: bankParsed.bankId } as never;
   const { error } = await supabase
     .from("payment_methods")
     .update(payload)

@@ -2,49 +2,45 @@
 
 import { useState } from "react";
 
-import type { PaymentMethodActionState } from "@/app/(app)/proyectos/[projectId]/metodos-pago/actions";
-import { Button } from "@/components/ui/button";
-import type { BankRow } from "@/lib/banks/types";
-import type { PaymentMethodRow } from "@/lib/payment-methods/types";
+import type { BankMovementActionState } from "@/app/(app)/proyectos/[projectId]/bancos/actions";
+import type { BankMovementRow } from "@/lib/banks/types";
 
-import { PaymentMethodForm } from "./payment-method-form";
+import { MovementForm } from "./movement-form";
 
 type FormAction = (
-  prev: PaymentMethodActionState,
+  prev: BankMovementActionState,
   formData: FormData,
-) => Promise<PaymentMethodActionState>;
+) => Promise<BankMovementActionState>;
 
-export function PaymentMethodModal({
+export function MovementModal({
   triggerLabel,
-  triggerVariant = "primary",
   triggerClassName,
   title,
   submitLabel,
   action,
   initial,
-  banks,
 }: {
   readonly triggerLabel: string;
-  readonly triggerVariant?: "primary" | "secondary";
   readonly triggerClassName?: string;
   readonly title: string;
   readonly submitLabel: string;
   readonly action: FormAction;
-  readonly initial?: PaymentMethodRow;
-  readonly banks?: ReadonlyArray<Pick<BankRow, "id" | "name" | "active">>;
+  readonly initial?: BankMovementRow;
 }) {
   const [open, setOpen] = useState(false);
 
   return (
     <>
-      <Button
+      <button
         type="button"
-        variant={triggerVariant}
         onClick={() => setOpen(true)}
-        className={triggerClassName}
+        className={
+          triggerClassName ??
+          "rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg hover:bg-bg-elevated"
+        }
       >
         {triggerLabel}
-      </Button>
+      </button>
       {open && (
         <div
           role="dialog"
@@ -67,10 +63,9 @@ export function PaymentMethodModal({
               </button>
             </header>
             <div className="px-6 py-6">
-              <PaymentMethodForm
+              <MovementForm
                 action={action}
                 initial={initial}
-                banks={banks}
                 submitLabel={submitLabel}
                 onSuccess={() => setOpen(false)}
               />

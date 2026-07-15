@@ -48,22 +48,36 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
               "/ventas",
               "/equipo",
               "/leaderboard",
-              ...(showProducts ? ["/productos"] : []),
               ...(showCommissions ? ["/comisiones"] : []),
-              ...(showProducts ? ["/metodos-pago"] : []),
             ]}
           >
             <NavLink scopedSuffix="/ventas">Ventas</NavLink>
             <NavLink scopedSuffix="/equipo">Equipo</NavLink>
             <NavLink scopedSuffix="/leaderboard">Leaderboard</NavLink>
-            {showProducts && (
-              <NavLink scopedSuffix="/productos">Productos</NavLink>
-            )}
             {showCommissions && (
               <NavLink scopedSuffix="/comisiones">Comisiones</NavLink>
             )}
+          </NavGroup>
+        )}
+        {showCrm && (
+          <NavGroup
+            label="Administración y finanzas"
+            scopedSuffixes={[
+              "/cobros",
+              ...(showProducts ? ["/bancos"] : []),
+              ...(showProducts ? ["/metodos-pago"] : []),
+              ...(showProducts ? ["/productos"] : []),
+            ]}
+          >
+            <NavLink scopedSuffix="/cobros">Cobros</NavLink>
+            {showProducts && (
+              <NavLink scopedSuffix="/bancos">Bancos</NavLink>
+            )}
             {showProducts && (
               <NavLink scopedSuffix="/metodos-pago">Métodos de pago</NavLink>
+            )}
+            {showProducts && (
+              <NavLink scopedSuffix="/productos">Productos</NavLink>
             )}
           </NavGroup>
         )}

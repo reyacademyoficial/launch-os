@@ -2,19 +2,18 @@
 
 import { useState } from "react";
 
-import type { PaymentMethodActionState } from "@/app/(app)/proyectos/[projectId]/metodos-pago/actions";
+import type { BankActionState } from "@/app/(app)/proyectos/[projectId]/bancos/actions";
 import { Button } from "@/components/ui/button";
 import type { BankRow } from "@/lib/banks/types";
-import type { PaymentMethodRow } from "@/lib/payment-methods/types";
 
-import { PaymentMethodForm } from "./payment-method-form";
+import { BankForm } from "./bank-form";
 
 type FormAction = (
-  prev: PaymentMethodActionState,
+  prev: BankActionState,
   formData: FormData,
-) => Promise<PaymentMethodActionState>;
+) => Promise<BankActionState>;
 
-export function PaymentMethodModal({
+export function BankModal({
   triggerLabel,
   triggerVariant = "primary",
   triggerClassName,
@@ -22,7 +21,6 @@ export function PaymentMethodModal({
   submitLabel,
   action,
   initial,
-  banks,
 }: {
   readonly triggerLabel: string;
   readonly triggerVariant?: "primary" | "secondary";
@@ -30,8 +28,7 @@ export function PaymentMethodModal({
   readonly title: string;
   readonly submitLabel: string;
   readonly action: FormAction;
-  readonly initial?: PaymentMethodRow;
-  readonly banks?: ReadonlyArray<Pick<BankRow, "id" | "name" | "active">>;
+  readonly initial?: BankRow;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -67,10 +64,9 @@ export function PaymentMethodModal({
               </button>
             </header>
             <div className="px-6 py-6">
-              <PaymentMethodForm
+              <BankForm
                 action={action}
                 initial={initial}
-                banks={banks}
                 submitLabel={submitLabel}
                 onSuccess={() => setOpen(false)}
               />

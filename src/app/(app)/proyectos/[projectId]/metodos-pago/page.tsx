@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 
 import { PaymentMethodDelete } from "@/components/dashboard/payment-methods/payment-method-delete";
 import { PaymentMethodModal } from "@/components/dashboard/payment-methods/payment-method-modal";
+import { listBanksForProject } from "@/lib/banks/list";
 import { fmtMoney } from "@/lib/format";
 import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { requireSessionProfile, userCanEditProject } from "@/lib/supabase/auth";
@@ -36,14 +37,21 @@ export default async function PaymentMethodsPage({
   if (!canEdit) redirect(`/proyectos/${projectId}`);
   void profile;
 
-  const [methods, totals] = await Promise.all([
+  const [methods, totals, banks] = await Promise.all([
     listPaymentMethods(projectId),
     aggregateAmountByMethod(projectId),
+    listBanksForProject(projectId),
   ]);
 
   const createAction = createPaymentMethod.bind(null, projectId);
   const grandTotal = Array.from(totals.values()).reduce((a, b) => a + b, 0);
   const unassigned = totals.get(UNASSIGNED_KEY) ?? 0;
+  const bankById = new Map(banks.map((b) => [b.id, b]));
+  const banksForModal = banks.map((b) => ({
+    id: b.id,
+    name: b.name,
+    active: b.active,
+  }));
 
   return (
     <section className="space-y-6">
@@ -66,6 +74,7 @@ export default async function PaymentMethodsPage({
             title="Nuevo método de pago"
             submitLabel="Crear"
             action={createAction}
+            banks={banksForModal}
           />
         </header>
         {methods.length === 0 ? (
@@ -80,6 +89,9 @@ export default async function PaymentMethodsPage({
                 <tr>
                   <th scope="col" className="px-4 py-3 font-medium">
                     Nombre
+                  </th>
+                  <th scope="col" className="px-4 py-3 font-medium">
+                    Banco destino
                   </th>
                   <th scope="col" className="px-4 py-3 font-medium">
                     Estado
@@ -109,9 +121,20 @@ export default async function PaymentMethodsPage({
                     m.id,
                   );
                   const total = totals.get(m.id) ?? 0;
+                  const bank = m.bank_id ? bankById.get(m.bank_id) : null;
                   return (
                     <tr key={m.id} className="border-t border-border">
                       <td className="px-4 py-3 font-medium text-fg">{m.name}</td>
+                      <td className="px-4 py-3">
+                        {bank ? (
+                          <span className="text-fg-muted">
+                            {bank.name}
+                            {!bank.active ? " (inactivo)" : ""}
+                          </span>
+                        ) : (
+                          <span className="text-warning">Sin banco</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3">
                         {m.active ? (
                           <span className="rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">
@@ -136,6 +159,7 @@ export default async function PaymentMethodsPage({
                             submitLabel="Guardar"
                             action={updateAction}
                             initial={m}
+                            banks={banksForModal}
                           />
                           <PaymentMethodDelete
                             name={m.name}
@@ -154,6 +178,7 @@ export default async function PaymentMethodsPage({
                     <td className="px-4 py-3 font-medium text-fg-muted">
                       Sin método asignado
                     </td>
+                    <td className="px-4 py-3 text-fg-muted">—</td>
                     <td className="px-4 py-3">
                       <span className="rounded-full bg-warning/15 px-2 py-0.5 text-xs font-medium text-warning">
                         Pendiente de backfill
@@ -168,7 +193,7 @@ export default async function PaymentMethodsPage({
               </tbody>
               <tfoot className="border-t-2 border-border bg-surface/60 text-sm">
                 <tr>
-                  <td className="px-4 py-3 font-semibold text-fg" colSpan={2}>
+                  <td className="px-4 py-3 font-semibold text-fg" colSpan={3}>
                     Total ingresado
                   </td>
                   <td className="px-4 py-3 text-right font-semibold tabular-nums text-fg">

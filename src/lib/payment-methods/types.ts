@@ -11,6 +11,13 @@ export interface PaymentMethodRow {
   project_id: string;
   name: string;
   active: boolean;
+  /**
+   * Banco donde depositan los cobros que entran por este método (Fase 12,
+   * mig 0044). NULL = método sin depósito (efectivo en mano, histórico sin
+   * backfill). Los cobros con `payment_method_id` cuyo method tiene bank_id
+   * suman al saldo del banco en runtime.
+   */
+  bank_id: string | null;
   created_at: string;
   updated_at: string;
 }
