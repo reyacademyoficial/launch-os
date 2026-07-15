@@ -92,6 +92,62 @@ export async function listLaunchSalesData(
 }
 
 /**
+ * Versión project-wide de `listLaunchSalesData` — trae TODAS las sales del
+ * proyecto (sin filtro por launch) con sus payments, installments y leads
+ * asociados. Sirve para la página `/proyectos/[id]/ventas` que lista ventas
+ * a lo largo de todos los lanzamientos.
+ *
+ * No filtramos por lead.status='cerrado' acá: el caller (Ventas project-wide)
+ * quiere ver TODAS las ventas registradas, incluso si el lead se movió a otra
+ * columna después. La página de Cobros por launch sí filtra a cerrado para
+ * cuadrar con el KPI de kanban.
+ */
+export async function listProjectSalesData(
+  projectId: string,
+): Promise<LaunchSalesData> {
+  const supabase = await createClient();
+
+  const salesRes = await supabase
+    .from("sales")
+    .select("*")
+    .eq("project_id", projectId)
+    .order("closed_at", { ascending: false });
+  const sales = (salesRes.data ?? []) as unknown as SaleRow[];
+
+  if (sales.length === 0) {
+    return { sales: [], payments: [], installments: [], leads: [] };
+  }
+
+  const leadIds = Array.from(new Set(sales.map((s) => s.lead_id)));
+  const saleIds = sales.map((s) => s.id);
+
+  const [leadsRes, paymentsRes, installmentsRes] = await Promise.all([
+    supabase
+      .from("leads")
+      .select("id, status, launch_id, name, team_member_id")
+      .in("id", leadIds),
+    supabase
+      .from("payments")
+      .select("*")
+      .in("sale_id", saleIds)
+      .order("paid_at", { ascending: true }),
+    supabase
+      .from("installments")
+      .select("*")
+      .in("sale_id", saleIds)
+      .order("sale_id", { ascending: true })
+      .order("number", { ascending: true }),
+  ]);
+
+  const leads = (leadsRes.data ?? []) as Array<
+    Pick<LeadRow, "id" | "status" | "launch_id" | "name" | "team_member_id">
+  >;
+  const payments = (paymentsRes.data ?? []) as unknown as PaymentRow[];
+  const installments = (installmentsRes.data ?? []) as unknown as InstallmentRow[];
+  return { sales, payments, installments, leads };
+}
+
+/**
  * Calcula el agregado de kanban (sales+payments en cerrado) para un launch.
  * Helper de conveniencia que combina `listLaunchSalesData` + agregado.
  */

@@ -45,6 +45,7 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
           <NavGroup
             label="Ventas"
             scopedSuffixes={[
+              "/ventas",
               "/equipo",
               "/leaderboard",
               ...(showProducts ? ["/productos"] : []),
@@ -52,6 +53,7 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
               ...(showProducts ? ["/metodos-pago"] : []),
             ]}
           >
+            <NavLink scopedSuffix="/ventas">Ventas</NavLink>
             <NavLink scopedSuffix="/equipo">Equipo</NavLink>
             <NavLink scopedSuffix="/leaderboard">Leaderboard</NavLink>
             {showProducts && (
