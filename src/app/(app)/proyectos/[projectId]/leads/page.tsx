@@ -39,6 +39,7 @@ import { requireSessionProfile, userCanEditLaunchesIn } from "@/lib/supabase/aut
 import { listTeamMembers } from "@/lib/team/list";
 
 import {
+  assignLeadOwner,
   createLead,
   deleteLead,
   moveLeadStatus,
@@ -164,6 +165,7 @@ export default async function LeadsPage({
     projectId,
   );
   const updatePaymentMethodAction = updatePaymentMethod.bind(null, projectId);
+  const assignLeadOwnerAction = assignLeadOwner.bind(null, projectId);
   const previewBulkAction = previewRecalculateCommissionsBulk.bind(null, projectId);
   const executeBulkAction = recalculateCommissionsBulk.bind(null, projectId);
 
@@ -248,6 +250,7 @@ export default async function LeadsPage({
           updateSaleAction={updateSaleAction}
           updatePaymentInstallmentAction={updatePaymentInstallmentAction}
           updatePaymentMethodAction={updatePaymentMethodAction}
+          assignLeadOwnerAction={assignLeadOwnerAction}
         />
       ) : (
         <TablaTab
@@ -412,6 +415,7 @@ async function KanbanTab({
   updateSaleAction,
   updatePaymentInstallmentAction,
   updatePaymentMethodAction,
+  assignLeadOwnerAction,
 }: {
   readonly projectId: string;
   readonly teamForForm: ReadonlyArray<{
@@ -457,6 +461,8 @@ async function KanbanTab({
   readonly updatePaymentInstallmentAction: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly updatePaymentMethodAction: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly assignLeadOwnerAction: any;
 }) {
   const leads = await listKanbanLeads(projectId);
 
@@ -500,6 +506,7 @@ async function KanbanTab({
       updateSaleAction={updateSaleAction}
       updatePaymentInstallmentAction={updatePaymentInstallmentAction}
       updatePaymentMethodAction={updatePaymentMethodAction}
+      assignLeadOwnerAction={assignLeadOwnerAction}
     />
   );
 }

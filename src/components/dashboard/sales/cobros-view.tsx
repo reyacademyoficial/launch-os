@@ -61,6 +61,10 @@ type UpdatePaymentMethodAction = (
   paymentId: string,
   paymentMethodId: string | null,
 ) => Promise<{ ok: true } | { error: string }>;
+type AssignLeadOwnerAction = (
+  leadId: string,
+  teamMemberId: string | null,
+) => Promise<{ ok: true } | { error: string }>;
 
 type LeadForCobros = Pick<
   LeadRow,
@@ -116,6 +120,7 @@ export function CobrosView({
   updateSaleAction,
   updatePaymentInstallmentAction,
   updatePaymentMethodAction,
+  assignLeadOwnerAction,
 }: {
   readonly sales: ReadonlyArray<SaleRow>;
   readonly payments: ReadonlyArray<PaymentRow>;
@@ -143,6 +148,7 @@ export function CobrosView({
   readonly updateSaleAction: UpdateSaleAction;
   readonly updatePaymentInstallmentAction: UpdatePaymentInstallmentAction;
   readonly updatePaymentMethodAction: UpdatePaymentMethodAction;
+  readonly assignLeadOwnerAction: AssignLeadOwnerAction;
 }) {
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
 
@@ -369,6 +375,7 @@ export function CobrosView({
         updateSaleAction={updateSaleAction}
         updatePaymentInstallmentAction={updatePaymentInstallmentAction}
         updatePaymentMethodAction={updatePaymentMethodAction}
+        assignLeadOwnerAction={assignLeadOwnerAction}
       />
 
       <PaymentsTable
@@ -543,6 +550,7 @@ function SalesTable({
   updateSaleAction,
   updatePaymentInstallmentAction,
   updatePaymentMethodAction,
+  assignLeadOwnerAction,
 }: {
   readonly sales: ReadonlyArray<SaleRow>;
   readonly leadById: ReadonlyMap<string, LeadForCobros>;
@@ -570,6 +578,7 @@ function SalesTable({
   readonly updateSaleAction: UpdateSaleAction;
   readonly updatePaymentInstallmentAction: UpdatePaymentInstallmentAction;
   readonly updatePaymentMethodAction: UpdatePaymentMethodAction;
+  readonly assignLeadOwnerAction: AssignLeadOwnerAction;
 }) {
   let totalPactado = 0;
   let totalCobrado = 0;
@@ -762,6 +771,9 @@ function SalesTable({
                           updatePaymentInstallmentAction
                         }
                         updatePaymentMethodAction={updatePaymentMethodAction}
+                        assignLeadOwnerAction={
+                          canEdit ? assignLeadOwnerAction : undefined
+                        }
                       />
                     </td>
                     <td className="px-3 py-3 text-right tabular-nums text-fg">
@@ -832,6 +844,9 @@ function SalesTable({
                             updatePaymentInstallmentAction
                           }
                           updatePaymentMethodAction={updatePaymentMethodAction}
+                          assignLeadOwnerAction={
+                            canEdit ? assignLeadOwnerAction : undefined
+                          }
                         />
                       </td>
                     )}

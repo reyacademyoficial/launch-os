@@ -61,6 +61,10 @@ type UpdatePaymentMethodAction = (
   paymentId: string,
   paymentMethodId: string | null,
 ) => Promise<{ ok: true } | { error: string }>;
+type AssignLeadOwnerAction = (
+  leadId: string,
+  teamMemberId: string | null,
+) => Promise<{ ok: true } | { error: string }>;
 
 type BoundAddPayment = (
   prev: PaymentActionState,
@@ -108,6 +112,7 @@ export function SaleModal({
   deleteSaleAction,
   updatePaymentInstallmentAction,
   updatePaymentMethodAction,
+  assignLeadOwnerAction,
 }: {
   readonly triggerLabel: string;
   readonly triggerClassName?: string;
@@ -148,6 +153,7 @@ export function SaleModal({
   readonly deleteSaleAction?: DeleteSaleAction;
   readonly updatePaymentInstallmentAction?: UpdatePaymentInstallmentAction;
   readonly updatePaymentMethodAction?: UpdatePaymentMethodAction;
+  readonly assignLeadOwnerAction?: AssignLeadOwnerAction;
 }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"list" | "new" | "edit">("list");
@@ -335,6 +341,12 @@ export function SaleModal({
                   }
                   updatePaymentInstallmentAction={updatePaymentInstallmentAction}
                   updatePaymentMethodAction={updatePaymentMethodAction}
+                  assignOwnerAction={
+                    assignLeadOwnerAction
+                      ? (teamMemberId) =>
+                          assignLeadOwnerAction(lead.id, teamMemberId)
+                      : undefined
+                  }
                   onSaleDeleted={() => {
                     if (sales.length > 1) {
                       setSelectedSaleId(null);
@@ -565,6 +577,7 @@ function SalePanel({
   deleteSaleAction,
   updatePaymentInstallmentAction,
   updatePaymentMethodAction,
+  assignOwnerAction,
   onSaleDeleted,
 }: {
   readonly sale: SaleRow;
@@ -588,6 +601,10 @@ function SalePanel({
   readonly deleteSaleAction?: BoundDeleteSale;
   readonly updatePaymentInstallmentAction?: UpdatePaymentInstallmentAction;
   readonly updatePaymentMethodAction?: UpdatePaymentMethodAction;
+  /** Reasigna el vendedor del lead — propaga a todas sus sales. */
+  readonly assignOwnerAction?: (
+    teamMemberId: string | null,
+  ) => Promise<{ ok: true } | { error: string }>;
   readonly onSaleDeleted: () => void;
 }) {
   const modality = modalities.find((m) => m.id === sale.payment_modality_id);
@@ -639,7 +656,15 @@ function SalePanel({
         </div>
 
         <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
-          <FieldRow label="Closer" value={closerName ?? "Sin asignar"} />
+          {assignOwnerAction ? (
+            <CloserAssignField
+              currentOwnerId={lead.team_member_id ?? null}
+              teamMembers={teamMembers}
+              assignOwnerAction={assignOwnerAction}
+            />
+          ) : (
+            <FieldRow label="Closer" value={closerName ?? "Sin asignar"} />
+          )}
           <FieldRow label="Producto" value={product?.name ?? "—"} />
           <FieldRow label="Modalidad" value={modality?.name ?? "—"} />
           <FieldRow label="Fecha de cierre" value={fmtDate(sale.closed_at)} />
@@ -782,6 +807,67 @@ function FieldRow({
     <div className="rounded-md border border-border bg-surface/40 px-3 py-2">
       <div className="uppercase tracking-wide text-fg-subtle">{label}</div>
       <div className="mt-1 text-fg">{value}</div>
+    </div>
+  );
+}
+
+/**
+ * Reemplaza el `FieldRow` estático de "Closer" cuando el operador tiene
+ * permiso de edición. Cambiar acá dispara `updateLead` + sync a sales — un
+ * solo lead puede tener varias sales, todas heredan el nuevo dueño. El
+ * dropdown incluye una opción "Sin asignar" para desasignar explícitamente.
+ *
+ * Miembros inactivos se listan solo si son el owner actual (para no dejarlo
+ * "colgado" en el label sin poder deseleccionarlo).
+ */
+function CloserAssignField({
+  currentOwnerId,
+  teamMembers,
+  assignOwnerAction,
+}: {
+  readonly currentOwnerId: string | null;
+  readonly teamMembers: ReadonlyArray<
+    Pick<TeamMemberRow, "id" | "name" | "active" | "role">
+  >;
+  readonly assignOwnerAction: (
+    teamMemberId: string | null,
+  ) => Promise<{ ok: true } | { error: string }>;
+}) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  const selectable = teamMembers.filter(
+    (t) => t.active || t.id === currentOwnerId,
+  );
+
+  return (
+    <div className="rounded-md border border-border bg-surface/40 px-3 py-2">
+      <div className="uppercase tracking-wide text-fg-subtle">Closer</div>
+      <Select
+        value={currentOwnerId ?? ""}
+        disabled={pending}
+        onChange={(e) => {
+          const next = e.target.value === "" ? null : e.target.value;
+          if (next === currentOwnerId) return;
+          setError(null);
+          startTransition(async () => {
+            const res = await assignOwnerAction(next);
+            if ("error" in res) setError(res.error);
+          });
+        }}
+        className="mt-1 w-full !border-0 !bg-transparent !px-0 !py-0 !text-fg"
+      >
+        <option value="">Sin asignar</option>
+        {selectable.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.name}
+            {!t.active ? " (inactivo)" : ""}
+          </option>
+        ))}
+      </Select>
+      {error && (
+        <div className="mt-1 text-[10px] text-error">{error}</div>
+      )}
     </div>
   );
 }

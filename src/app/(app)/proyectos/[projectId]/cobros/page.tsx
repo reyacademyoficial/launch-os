@@ -18,6 +18,7 @@ import {
 } from "@/lib/supabase/auth";
 import { listTeamMembers } from "@/lib/team/list";
 
+import { assignLeadOwner } from "../leads/actions";
 import {
   addPayment,
   createSale,
@@ -129,6 +130,7 @@ export default async function ProjectCobrosPage({
     projectId,
   );
   const updatePaymentMethodAction = updatePaymentMethod.bind(null, projectId);
+  const assignLeadOwnerAction = assignLeadOwner.bind(null, projectId);
   const previewBulkAction = previewRecalculateCommissionsBulk.bind(
     null,
     projectId,
@@ -202,6 +204,7 @@ export default async function ProjectCobrosPage({
         updateSaleAction={updateSaleAction}
         updatePaymentInstallmentAction={updatePaymentInstallmentAction}
         updatePaymentMethodAction={updatePaymentMethodAction}
+        assignLeadOwnerAction={assignLeadOwnerAction}
       />
     </section>
   );

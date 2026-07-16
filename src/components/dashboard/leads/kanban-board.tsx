@@ -72,6 +72,10 @@ type UpdatePaymentMethodAction = (
   paymentId: string,
   paymentMethodId: string | null,
 ) => Promise<{ ok: true } | { error: string }>;
+type AssignLeadOwnerAction = (
+  leadId: string,
+  teamMemberId: string | null,
+) => Promise<{ ok: true } | { error: string }>;
 
 /**
  * Tablero kanban del pipeline. Columnas = LEAD_STATUSES, ordenadas según el
@@ -108,6 +112,7 @@ export function KanbanBoard({
   updateSaleAction,
   updatePaymentInstallmentAction,
   updatePaymentMethodAction,
+  assignLeadOwnerAction,
 }: {
   readonly leads: ReadonlyArray<LeadRow>;
   readonly teamMembers: ReadonlyArray<
@@ -139,6 +144,7 @@ export function KanbanBoard({
   readonly updateSaleAction: UpdateSaleAction;
   readonly updatePaymentInstallmentAction: UpdatePaymentInstallmentAction;
   readonly updatePaymentMethodAction: UpdatePaymentMethodAction;
+  readonly assignLeadOwnerAction: AssignLeadOwnerAction;
 }) {
   const [, startTransition] = useTransition();
   const [dragOverCol, setDragOverCol] = useState<LeadStatus | null>(null);
@@ -418,6 +424,9 @@ export function KanbanBoard({
                                 updatePaymentInstallmentAction
                               }
                               updatePaymentMethodAction={updatePaymentMethodAction}
+                              assignLeadOwnerAction={
+                                canEdit ? assignLeadOwnerAction : undefined
+                              }
                             />
                             <LeadRowActions
                               lead={lead}

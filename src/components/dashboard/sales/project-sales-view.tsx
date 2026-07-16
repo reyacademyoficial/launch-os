@@ -61,6 +61,10 @@ type UpdatePaymentMethodAction = (
   paymentId: string,
   paymentMethodId: string | null,
 ) => Promise<{ ok: true } | { error: string }>;
+type AssignLeadOwnerAction = (
+  leadId: string,
+  teamMemberId: string | null,
+) => Promise<{ ok: true } | { error: string }>;
 
 type LeadForSales = Pick<
   LeadRow,
@@ -125,6 +129,7 @@ export function ProjectSalesView({
   updateSaleAction,
   updatePaymentInstallmentAction,
   updatePaymentMethodAction,
+  assignLeadOwnerAction,
 }: {
   readonly sales: ReadonlyArray<SaleRow>;
   readonly payments: ReadonlyArray<PaymentRow>;
@@ -149,6 +154,7 @@ export function ProjectSalesView({
   readonly updateSaleAction: UpdateSaleAction;
   readonly updatePaymentInstallmentAction: UpdatePaymentInstallmentAction;
   readonly updatePaymentMethodAction: UpdatePaymentMethodAction;
+  readonly assignLeadOwnerAction: AssignLeadOwnerAction;
 }) {
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
 
@@ -265,7 +271,10 @@ export function ProjectSalesView({
     }
 
     if (filters.closerId !== "all") {
-      const closerId = sale.team_member_id;
+      // Atribución autoritativa: el dueño del lead. `sale.team_member_id`
+      // es denorm y puede driftear — la ficha del alumno y el leaderboard
+      // (post-0047) también leen del lead.
+      const closerId = leadById.get(sale.lead_id)?.team_member_id ?? null;
       if (filters.closerId === UNASSIGNED_CLOSER) {
         if (closerId !== null) return false;
       } else if (closerId !== filters.closerId) {
@@ -310,7 +319,10 @@ export function ProjectSalesView({
   );
 
   const hasUnassignedLaunch = sales.some((s) => s.launch_id === null);
-  const hasUnassignedCloser = sales.some((s) => s.team_member_id === null);
+  // Mismo criterio autoritativo que la fila de tabla y el filtro.
+  const hasUnassignedCloser = sales.some(
+    (s) => (leadById.get(s.lead_id)?.team_member_id ?? null) === null,
+  );
   const hasNoMethodPayment = payments.some((p) => p.payment_method_id === null);
 
   const filtersActive =
@@ -391,9 +403,11 @@ export function ProjectSalesView({
               {filteredSales.map((s) => {
                 const lead = leadById.get(s.lead_id);
                 const product = productById.get(s.product_id);
-                const closer = s.team_member_id
-                  ? teamById.get(s.team_member_id)
-                  : null;
+                // Atribución del dueño del lead (autoritativa). Ver notas
+                // en el filtro `closerId` sobre por qué no leemos
+                // `sale.team_member_id`.
+                const closerId = lead?.team_member_id ?? null;
+                const closer = closerId ? teamById.get(closerId) : null;
                 const launch = s.launch_id
                   ? launchById.get(s.launch_id)
                   : null;
@@ -463,6 +477,9 @@ export function ProjectSalesView({
                           updatePaymentInstallmentAction
                         }
                         updatePaymentMethodAction={updatePaymentMethodAction}
+                        assignLeadOwnerAction={
+                          canEdit ? assignLeadOwnerAction : undefined
+                        }
                       />
                     </td>
                     <td className="px-3 py-3 text-fg-muted">
@@ -530,6 +547,9 @@ export function ProjectSalesView({
                             }
                             updatePaymentMethodAction={
                               updatePaymentMethodAction
+                            }
+                            assignLeadOwnerAction={
+                              canEdit ? assignLeadOwnerAction : undefined
                             }
                           />
                           <DeleteSaleButton

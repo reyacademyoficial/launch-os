@@ -152,6 +152,42 @@ export async function deleteLead(
 }
 
 /**
+ * Reasigna el vendedor de un lead — UPDATE puntual solo del team_member_id.
+ * Sincroniza la denorm en `sales` para que la tabla de Ventas y el filtro
+ * por vendor reflejen el cambio (post-0047 el leaderboard atribuye por
+ * lead directo, pero mantener la denorm alineada evita drifts futuros).
+ *
+ * Diseñado para el dropdown inline del SalePanel — el operador no quiere
+ * abrir el LeadForm completo solo para reasignar el closer de una venta.
+ * Cambiar el vendor del lead propaga a TODAS las ventas del lead (por
+ * diseño: un lead tiene un dueño único; sus ventas heredan).
+ */
+export async function assignLeadOwner(
+  projectId: string,
+  leadId: string,
+  teamMemberId: string | null,
+): Promise<{ ok: true } | { error: string }> {
+  await requireCanEditLaunchesIn(projectId);
+
+  const supabase = await createClient();
+  const payload = { team_member_id: teamMemberId } as never;
+  const { error } = await supabase
+    .from("leads")
+    .update(payload)
+    .eq("id", leadId)
+    .eq("project_id", projectId);
+  if (error) return { error: error.message };
+
+  await syncSalesOwnerForLeads(supabase, projectId, [leadId]);
+
+  revalidatePath(`/proyectos/${projectId}/leads`);
+  revalidatePath(`/proyectos/${projectId}/ventas`);
+  revalidatePath(`/proyectos/${projectId}/cobros`);
+  revalidatePath(`/proyectos/${projectId}/leaderboard`);
+  return { ok: true };
+}
+
+/**
  * Mueve un lead de columna en el kanban — UPDATE puntual solo del status.
  * Se llama desde un client component cuando el usuario suelta una card en otra
  * columna. RLS valida en la DB; el helper revalida la ruta.

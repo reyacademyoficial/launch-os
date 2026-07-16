@@ -16,6 +16,7 @@ import {
 } from "@/lib/supabase/auth";
 import { listTeamMembers } from "@/lib/team/list";
 
+import { assignLeadOwner } from "../leads/actions";
 import {
   addPayment,
   createSale,
@@ -92,6 +93,7 @@ export default async function ProjectSalesPage({
     projectId,
   );
   const updatePaymentMethodAction = updatePaymentMethod.bind(null, projectId);
+  const assignLeadOwnerAction = assignLeadOwner.bind(null, projectId);
 
   return (
     <section className="space-y-6">
@@ -126,6 +128,7 @@ export default async function ProjectSalesPage({
         updateSaleAction={updateSaleAction}
         updatePaymentInstallmentAction={updatePaymentInstallmentAction}
         updatePaymentMethodAction={updatePaymentMethodAction}
+        assignLeadOwnerAction={assignLeadOwnerAction}
       />
     </section>
   );
