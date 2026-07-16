@@ -42,21 +42,16 @@ export async function listPaymentsForSale(saleId: string): Promise<PaymentRow[]>
 const ROWS_PAGE_SIZE = 1000;
 const SALES_LIST_HARD_CAP = 50_000;
 const PAYMENTS_LIST_HARD_CAP = 100_000;
-const PAYMENTS_SALE_ID_CHUNK = 500;
 
-export async function listSalesForProject(projectId: string): Promise<SaleRow[]> {
-  const supabase = await createClient();
-  const out: SaleRow[] = [];
+async function fetchPaginated<T>(
+  hardCap: number,
+  fetchPage: (from: number, to: number) => Promise<readonly T[]>,
+): Promise<T[]> {
+  const out: T[] = [];
   let from = 0;
-  while (from < SALES_LIST_HARD_CAP) {
+  while (from < hardCap) {
     const to = from + ROWS_PAGE_SIZE - 1;
-    const { data } = await supabase
-      .from("sales")
-      .select("*")
-      .eq("project_id", projectId)
-      .order("closed_at", { ascending: false })
-      .range(from, to);
-    const rows = (data ?? []) as unknown as SaleRow[];
+    const rows = await fetchPage(from, to);
     if (rows.length === 0) break;
     out.push(...rows);
     if (rows.length < ROWS_PAGE_SIZE) break;
@@ -65,40 +60,39 @@ export async function listSalesForProject(projectId: string): Promise<SaleRow[]>
   return out;
 }
 
+export async function listSalesForProject(projectId: string): Promise<SaleRow[]> {
+  const supabase = await createClient();
+  return fetchPaginated<SaleRow>(SALES_LIST_HARD_CAP, async (from, to) => {
+    const { data } = await supabase
+      .from("sales")
+      .select("*")
+      .eq("project_id", projectId)
+      .order("closed_at", { ascending: false })
+      .range(from, to);
+    return (data ?? []) as unknown as SaleRow[];
+  });
+}
+
 /**
- * Todos los payments del proyecto vía join implícito por sale_id. RLS filtra
- * por has_project_access(project_of_sale(...)) — un sale de otro proyecto
- * devuelve 0 payments. Para 4b alcanza con este pull; si crece, switcheamos a
- * un query agregado en la DB.
- *
- * Doble paginación: chunkea sale_ids a 500 por `.in()` (URL length) Y dentro
- * de cada chunk pagina la respuesta de a 1000 (cap server-side de Supabase).
+ * Todos los payments del proyecto. Migración 0045 denormalizó `project_id` en
+ * `payments` con trigger + RLS reescrita, así que este pull es una sola
+ * consulta paginada (~1 request por cada 1000 filas). Antes había que traer
+ * TODAS las sales, chunkear los sale_ids a 500 y paginar cada chunk contra
+ * `payments.in("sale_id", ...)` — ~25+ requests con RLS N×1 por fila
+ * (subquery `project_of_sale` per row). Eso era el culpable de los 3 minutos
+ * de carga del leaderboard.
  */
 export async function listPaymentsForProject(
   projectId: string,
 ): Promise<PaymentRow[]> {
   const supabase = await createClient();
-  const sales = await listSalesForProject(projectId);
-  if (sales.length === 0) return [];
-  const saleIds = sales.map((s) => s.id);
-  const all: PaymentRow[] = [];
-  for (let i = 0; i < saleIds.length; i += PAYMENTS_SALE_ID_CHUNK) {
-    const slice = saleIds.slice(i, i + PAYMENTS_SALE_ID_CHUNK);
-    let from = 0;
-    while (from < PAYMENTS_LIST_HARD_CAP) {
-      const to = from + ROWS_PAGE_SIZE - 1;
-      const { data } = await supabase
-        .from("payments")
-        .select("*")
-        .in("sale_id", slice)
-        .order("paid_at", { ascending: false })
-        .range(from, to);
-      const rows = (data ?? []) as unknown as PaymentRow[];
-      if (rows.length === 0) break;
-      all.push(...rows);
-      if (rows.length < ROWS_PAGE_SIZE) break;
-      from += ROWS_PAGE_SIZE;
-    }
-  }
-  return all;
+  return fetchPaginated<PaymentRow>(PAYMENTS_LIST_HARD_CAP, async (from, to) => {
+    const { data } = await supabase
+      .from("payments")
+      .select("*")
+      .eq("project_id", projectId)
+      .order("paid_at", { ascending: false })
+      .range(from, to);
+    return (data ?? []) as unknown as PaymentRow[];
+  });
 }
