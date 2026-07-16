@@ -61,7 +61,7 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
         )}
         {showCrm && (
           <NavGroup
-            label="Administración y finanzas"
+            label="Admin y finanzas"
             scopedSuffixes={[
               "/cobros",
               ...(showProducts ? ["/bancos"] : []),
