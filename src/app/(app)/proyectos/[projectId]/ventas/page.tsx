@@ -19,6 +19,7 @@ import { listTeamMembers } from "@/lib/team/list";
 import {
   addPayment,
   createSale,
+  createSaleWithLead,
   deletePayment,
   deleteSale,
   recalculateSaleCommission,
@@ -79,6 +80,7 @@ export default async function ProjectSalesPage({
   }));
 
   const createSaleAction = createSale.bind(null, projectId);
+  const createSaleWithLeadAction = createSaleWithLead.bind(null, projectId);
   const addPaymentAction = addPayment.bind(null, projectId);
   const deletePaymentAction = deletePayment.bind(null, projectId);
   const deleteSaleAction = deleteSale.bind(null, projectId);
@@ -115,6 +117,7 @@ export default async function ProjectSalesPage({
         teamMembers={teamForModal}
         canEdit={canEdit}
         createSaleAction={createSaleAction}
+        createSaleWithLeadAction={createSaleWithLeadAction}
         addPaymentAction={addPaymentAction}
         deletePaymentAction={deletePaymentAction}
         deleteSaleAction={deleteSaleAction}

@@ -21,10 +21,15 @@ import type { PaymentMethodRow } from "@/lib/payment-methods/types";
 import type { ProductRow } from "@/lib/products/types";
 import type { TeamMemberRow } from "@/lib/team/types";
 
+import { AddSaleModal } from "./add-sale-modal";
 import { SaleModal } from "./sale-modal";
 
 type CreateSaleAction = (
   leadId: string,
+  prev: SaleActionState,
+  formData: FormData,
+) => Promise<SaleActionState>;
+type CreateSaleWithLeadAction = (
   prev: SaleActionState,
   formData: FormData,
 ) => Promise<SaleActionState>;
@@ -111,6 +116,7 @@ export function ProjectSalesView({
   teamMembers,
   canEdit,
   createSaleAction,
+  createSaleWithLeadAction,
   addPaymentAction,
   deletePaymentAction,
   deleteSaleAction,
@@ -134,6 +140,7 @@ export function ProjectSalesView({
   >;
   readonly canEdit: boolean;
   readonly createSaleAction: CreateSaleAction;
+  readonly createSaleWithLeadAction: CreateSaleWithLeadAction;
   readonly addPaymentAction: AddPaymentAction;
   readonly deletePaymentAction: DeletePaymentAction;
   readonly deleteSaleAction: DeleteSaleAction;
@@ -326,6 +333,17 @@ export function ProjectSalesView({
 
   return (
     <div className="space-y-6">
+      {canEdit && (
+        <div className="flex justify-end">
+          <AddSaleModal
+            launches={launches}
+            modalities={modalities}
+            products={products}
+            teamMembers={teamMembers}
+            createSaleWithLeadAction={createSaleWithLeadAction}
+          />
+        </div>
+      )}
       <FilterBar
         filters={filters}
         onChange={setFilters}

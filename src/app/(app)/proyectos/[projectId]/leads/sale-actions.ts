@@ -199,6 +199,137 @@ export async function createSale(
 }
 
 /**
+ * Alta de venta desde la vista project-wide de Ventas. Crea el lead y la venta
+ * en un mismo paso: el operador viene con la info de la venta ya cerrada y no
+ * quiere pasar por el kanban de leads (Fase 12+).
+ *
+ * El lead se crea con `status='cerrado'` y `source='manual'`. Si la venta falla
+ * o la generación de cuotas revienta, se hace rollback manual del lead para no
+ * dejar huérfanos.
+ *
+ * Los campos launch_id / team_member_id son opcionales — se guardan tanto en el
+ * lead como en la sale (denormalización habitual). `createSale` hereda del lead;
+ * acá los seteamos directo porque el lead se crea acá mismo con esos valores.
+ */
+export async function createSaleWithLead(
+  projectId: string,
+  _prev: SaleActionState,
+  formData: FormData,
+): Promise<SaleActionState> {
+  await requireCanEditLaunchesIn(projectId);
+
+  const lead_name = str(formData, "lead_name");
+  if (!lead_name) return { error: "Cargá el nombre del alumno." };
+
+  const lead_contact = nullable(str(formData, "lead_contact"));
+  const launch_id = nullable(str(formData, "launch_id"));
+  const team_member_id = nullable(str(formData, "team_member_id"));
+
+  const payment_modality_id = str(formData, "payment_modality_id");
+  if (!payment_modality_id) return { error: "Elegí una modalidad." };
+
+  const product_id = str(formData, "product_id");
+  if (!product_id) return { error: "Elegí un producto." };
+
+  const totalRaw = str(formData, "total_amount");
+  const total_amount = parseFloat(totalRaw);
+  if (!Number.isFinite(total_amount) || total_amount < 0) {
+    return { error: "Monto pactado inválido." };
+  }
+
+  const closedAtRaw = str(formData, "closed_at");
+  const closed_at = closedAtRaw === "" ? new Date().toISOString() : closedAtRaw;
+
+  const installmentInput = parseInstallmentInput(formData);
+  if ("error" in installmentInput) return installmentInput;
+
+  const supabase = await createClient();
+
+  const { data: productData } = await supabase
+    .from("products")
+    .select("id")
+    .eq("id", product_id)
+    .eq("project_id", projectId)
+    .maybeSingle();
+  if (!productData) {
+    return { error: "Producto inexistente o de otro proyecto." };
+  }
+
+  const snapshot = await resolveSnapshotForSale(
+    projectId,
+    payment_modality_id,
+    launch_id,
+    product_id,
+  );
+  if (!snapshot) {
+    return {
+      error:
+        "No hay comisión configurada para esa combinación de producto y modalidad. Pedile al admin que la cargue en Comisiones.",
+    };
+  }
+
+  const leadInsert = {
+    project_id: projectId,
+    name: lead_name,
+    contact: lead_contact,
+    launch_id,
+    team_member_id,
+    status: "cerrado",
+  } as never;
+  const { data: leadRow, error: leadErr } = await supabase
+    .from("leads")
+    .insert(leadInsert)
+    .select("id")
+    .maybeSingle();
+  if (leadErr) return { error: leadErr.message };
+  const leadId = (leadRow as { id: string } | null)?.id;
+  if (!leadId) return { error: "No se pudo crear el lead." };
+
+  const saleInsert = {
+    project_id: projectId,
+    lead_id: leadId,
+    launch_id,
+    team_member_id,
+    payment_modality_id,
+    product_id,
+    total_amount,
+    closed_at,
+    installment_count: installmentInput.count,
+    installment_frequency: installmentInput.frequency,
+    grace_days: installmentInput.graceDays,
+    commission_rule_snapshot: snapshot,
+  } as never;
+
+  const { data: saleRow, error: saleErr } = await supabase
+    .from("sales")
+    .insert(saleInsert)
+    .select("id")
+    .maybeSingle();
+  if (saleErr) {
+    await supabase.from("leads").delete().eq("id", leadId);
+    return { error: saleErr.message };
+  }
+  const saleId = (saleRow as { id: string } | null)?.id;
+
+  if (saleId) {
+    const { error: genErr } = await supabase.rpc(
+      "generate_installments_for_sale" as never,
+      { p_sale_id: saleId } as never,
+    );
+    if (genErr) {
+      await supabase.from("sales").delete().eq("id", saleId);
+      await supabase.from("leads").delete().eq("id", leadId);
+      return {
+        error: `No se pudieron generar las cuotas: ${genErr.message}`,
+      };
+    }
+  }
+
+  revalidateSalesImpact(projectId, launch_id);
+  return { ok: true, saleId };
+}
+
+/**
  * Edita una venta: producto, modalidad, monto pactado, fecha de cierre.
  * NO cambia `launch_id` (para eso el operador crea nueva venta) ni
  * `team_member_id` (se hereda del lead, denormalización mantenida por
@@ -523,6 +654,10 @@ function revalidateSalesImpact(
   revalidatePath(`/proyectos/${projectId}`);
   revalidatePath(`/proyectos/${projectId}/launches`);
   revalidatePath(`/proyectos/${projectId}/leads`);
+  // Vistas project-wide de ventas y cobros (Fase 12) — sino la fila recién
+  // creada no aparece hasta el próximo hard reload.
+  revalidatePath(`/proyectos/${projectId}/ventas`);
+  revalidatePath(`/proyectos/${projectId}/cobros`);
   // Fase 11: la página de métodos de pago muestra totales por método —
   // cualquier alta/edición de cobro cambia esos números.
   revalidatePath(`/proyectos/${projectId}/metodos-pago`);
