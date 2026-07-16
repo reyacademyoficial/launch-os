@@ -164,8 +164,31 @@ export function computeCommission(
   saleRank: number,
 ): CommissionBreakdown {
   const collected = payments.reduce((acc, p) => acc + toNum(p.amount), 0);
-  const pledged = toNum(sale.total_amount);
   const paymentCount = payments.length;
+  return computeCommissionFromAgg(
+    sale,
+    { collected, paymentCount },
+    rule,
+    saleRank,
+  );
+}
+
+/**
+ * Variante de `computeCommission` que recibe `{collected, paymentCount}` ya
+ * agregados en la DB — pensada para el leaderboard, que hoy pide esos números
+ * pre-calculados via RPC en vez de traer todos los payments crudos. Toda la
+ * lógica de tiers/threshold/accrual es idéntica a `computeCommission`; ese
+ * ahora es un wrapper delgado sobre esta función.
+ */
+export function computeCommissionFromAgg(
+  sale: Pick<SaleRow, "total_amount" | "commission_rule_snapshot">,
+  agg: { collected: number; paymentCount: number },
+  rule: CommissionRuleRow | null,
+  saleRank: number,
+): CommissionBreakdown {
+  const collected = toNum(agg.collected);
+  const pledged = toNum(sale.total_amount);
+  const paymentCount = agg.paymentCount;
 
   // Preferimos el snapshot: es la regla congelada al cierre y es la que
   // define el histórico. Solo caemos a `rule` (findApplicableRule vigente)

@@ -1,7 +1,11 @@
-import { computeCommission, findApplicableRule } from "@/lib/commissions/calc";
+import {
+  computeCommissionFromAgg,
+  findApplicableRule,
+} from "@/lib/commissions/calc";
 import { buildSaleRanks } from "@/lib/commissions/ranking";
 import type {
   CommissionRuleRow,
+  CommissionRuleSnapshot,
   PaymentRow,
   SaleRow,
 } from "@/lib/commissions/types";
@@ -77,61 +81,71 @@ export interface LeaderboardRow {
  *   no cambia. Lo mismo si se filtra por launch: el bucket sigue siendo
  *   (dueño_del_lead, launch_of_lead).
  */
-export function aggregateLeaderboard(input: {
+/**
+ * Shape pre-agregada que devuelven las RPCs de leaderboard (migración 0046).
+ * Reemplaza el pull crudo de leads/sales/payments — para 100k+ leads eso era
+ * inviable por PostgREST. Todo el filtrado por launch/período ya vino
+ * aplicado desde SQL; el JS solo hace tier walk + suma por miembro.
+ */
+export interface LeaderboardLeadStats {
+  team_member_id: string | null;
+  leads_worked: number;
+  closed: number;
+}
+
+export interface LeaderboardSaleStats {
+  id: string;
+  team_member_id: string | null;
+  launch_id: string | null;
+  product_id: string;
+  payment_modality_id: string;
+  total_amount: number;
+  closed_at: string;
+  commission_rule_snapshot: CommissionRuleSnapshot | null;
+  /** Rank 0-based dentro de (team_member_id, launch_id) — ya calculado en SQL. */
+  sale_rank: number;
+  /** sum(payments.amount) para la venta — ya calculado en SQL. */
+  collected: number;
+  /** count(payments) para la venta — ya calculado en SQL. */
+  payment_count: number;
+}
+
+/**
+ * Core del leaderboard sobre datos pre-agregados. El pipeline nuevo del page
+ * (via RPC) llama directamente esta función. La API vieja `aggregateLeaderboard`
+ * es un wrapper que convierte raw → stats en JS y delega acá — así los tests
+ * unitarios que arman fixtures de leads/sales/payments siguen valiendo.
+ *
+ * Filtros: el aggregator ya recibe los stats FILTRADOS. Pero payouts sigue
+ * filtrando en JS (tabla chica) y necesitamos `filters` para decidir si
+ * agregar la fila "Sin asignar" cuando NO hay leads pero sí hay sales
+ * unassigned (o viceversa).
+ */
+export function aggregateLeaderboardFromStats(input: {
   teamMembers: ReadonlyArray<TeamMemberRow>;
-  leads: ReadonlyArray<LeadRow>;
-  sales: ReadonlyArray<SaleRow>;
-  payments: ReadonlyArray<PaymentRow>;
+  leadStats: ReadonlyArray<LeaderboardLeadStats>;
+  saleStats: ReadonlyArray<LeaderboardSaleStats>;
   rules: ReadonlyArray<CommissionRuleRow>;
   payouts?: ReadonlyArray<TeamMemberPayoutRow>;
   filters: LeaderboardFilters;
 }): LeaderboardRow[] {
-  const { teamMembers, leads, sales, payments, rules, filters } = input;
+  const { teamMembers, leadStats, saleStats, rules, filters } = input;
   const payouts = input.payouts ?? [];
 
-  // 1) Filtrar leads por launch (si hay filtro). El filtro de período no
-  //    aplica a leads (no se filtra "trabajados" por fecha). El "launch del
-  //    lead" sigue siendo el lugar donde el lead entró al pipeline — no lo
-  //    tocamos con multi-venta (Fase 8).
-  const leadsFiltered = filters.launchId
-    ? leads.filter((l) => l.launch_id === filters.launchId)
-    : leads;
-
-  // Index lead → owner (team_member_id). Atribución autoritativa.
-  const ownerByLead = new Map<string, string | null>(
-    leads.map((l) => [l.id, l.team_member_id]),
+  // Index por owner: leadStats y saleStats vienen ya filtrados por launch +
+  // período desde la RPC, así que acá solo agrupamos por miembro.
+  const leadStatsByMember = new Map<string | null, LeaderboardLeadStats>(
+    leadStats.map((s) => [s.team_member_id, s]),
   );
-
-  // 2) Filtrar sales por launch (Fase 8: `sale.launch_id` propio) y por
-  //    período (sales.closed_at en rango).
-  const inDateRange = (closedAt: string): boolean => {
-    if (filters.dateFrom && closedAt.slice(0, 10) < filters.dateFrom) return false;
-    if (filters.dateTo && closedAt.slice(0, 10) > filters.dateTo) return false;
-    return true;
-  };
-
-  const salesFiltered = sales.filter((s) => {
-    if (!inDateRange(s.closed_at)) return false;
-    if (filters.launchId && s.launch_id !== filters.launchId) return false;
-    return true;
-  });
-
-  // 3) Index payments por sale_id.
-  const paymentsBySale = new Map<string, PaymentRow[]>();
-  for (const p of payments) {
-    const arr = paymentsBySale.get(p.sale_id);
-    if (arr) arr.push(p);
-    else paymentsBySale.set(p.sale_id, [p]);
+  const saleStatsByOwner = new Map<string | null, LeaderboardSaleStats[]>();
+  for (const s of saleStats) {
+    const arr = saleStatsByOwner.get(s.team_member_id);
+    if (arr) arr.push(s);
+    else saleStatsByOwner.set(s.team_member_id, [s]);
   }
 
-  // 4) Rank por venta dentro de (team_member, launch). Fase 8: viene de la
-  //    sale directamente. Se calcula sobre TODAS las ventas (no las
-  //    filtradas) — un filtro de UI no debe correr el tier histórico.
-  const rankBySaleId = buildSaleRanks(sales);
-
-  // 5) Filtrar payouts. Mismo criterio que sales: respeta launchId y rango de
-  //    fechas, pero acá la fecha es `paid_at` (date) — la pregunta es "qué le
-  //    pagué en este período", paralela a "qué se cerró en este período".
+  // Payouts filtrados: la RPC no filtra payouts (tabla chica). Mismo criterio
+  // que sales — por launch y por rango de `paid_at`.
   const payoutsFiltered = payouts.filter((p) => {
     if (filters.launchId && p.launch_id !== filters.launchId) return false;
     if (filters.dateFrom && p.paid_at < filters.dateFrom) return false;
@@ -139,38 +153,30 @@ export function aggregateLeaderboard(input: {
     return true;
   });
 
-  // Pre-cálculo: agrupar sales por dueño del lead una sola vez (más barato y
-  // legible que filtrar dentro del loop de miembros).
-  const salesByOwner = new Map<string | null, SaleRow[]>();
-  for (const s of salesFiltered) {
-    const owner = ownerByLead.get(s.lead_id) ?? null;
-    const arr = salesByOwner.get(owner);
-    if (arr) arr.push(s);
-    else salesByOwner.set(owner, [s]);
-  }
-
   function buildRow(
     teamMember: TeamMemberRow | null,
     memberId: string | null,
   ): LeaderboardRow {
-    const memberLeads = leadsFiltered.filter((l) => l.team_member_id === memberId);
-    const memberSales = salesByOwner.get(memberId) ?? [];
+    const memberLeadStats = leadStatsByMember.get(memberId);
+    const memberSales = saleStatsByOwner.get(memberId) ?? [];
 
     let revenueCollected = 0;
     let commissionAccrued = 0;
     for (const sale of memberSales) {
-      const pays = paymentsBySale.get(sale.id) ?? [];
-      // Regla aplicable — cascada Fase 7: producto → launch → default. Solo
-      // se usa como fallback si la venta no tiene snapshot. `sale.launch_id`
-      // es la atribución Fase 8.
+      // Cascada Fase 7 — sólo se usa como fallback si la venta no tiene
+      // snapshot congelado (el 99% lo tiene).
       const rule = findApplicableRule(
         rules,
         sale.payment_modality_id,
         sale.launch_id,
         sale.product_id,
       );
-      const saleRank = rankBySaleId.get(sale.id) ?? 0;
-      const breakdown = computeCommission(sale, pays, rule, saleRank);
+      const breakdown = computeCommissionFromAgg(
+        { total_amount: sale.total_amount, commission_rule_snapshot: sale.commission_rule_snapshot },
+        { collected: sale.collected, paymentCount: sale.payment_count },
+        rule,
+        sale.sale_rank,
+      );
       revenueCollected += breakdown.collected;
       commissionAccrued += breakdown.commission;
     }
@@ -181,15 +187,14 @@ export function aggregateLeaderboard(input: {
           .reduce((sum, p) => sum + Number(p.amount), 0)
       : 0;
 
-    const closed = memberLeads.filter((l) => l.status === "cerrado").length;
-    // Porcentaje 0-100 — `fmtPercent` no multiplica, espera el valor ya
-    // escalado (igual que showRate/closeRate en kpis.ts).
+    const leadsWorked = memberLeadStats?.leads_worked ?? 0;
+    const closed = memberLeadStats?.closed ?? 0;
     const conversionRate =
-      memberLeads.length === 0 ? 0 : (closed / memberLeads.length) * 100;
+      leadsWorked === 0 ? 0 : (closed / leadsWorked) * 100;
 
     return {
       teamMember,
-      leadsWorked: memberLeads.length,
+      leadsWorked,
       closed,
       conversionRate,
       revenueCollected,
@@ -201,13 +206,109 @@ export function aggregateLeaderboard(input: {
 
   const rows: LeaderboardRow[] = teamMembers.map((tm) => buildRow(tm, tm.id));
 
-  // Fila "Sin asignar" — solo si hay algo que mostrar (leads sin dueño O
-  // sales sobre leads sin dueño en el período/launch filtrado).
-  const hasUnassignedLeads = leadsFiltered.some((l) => l.team_member_id === null);
-  const hasUnassignedSales = (salesByOwner.get(null)?.length ?? 0) > 0;
+  const hasUnassignedLeads = leadStatsByMember.has(null);
+  const hasUnassignedSales = (saleStatsByOwner.get(null)?.length ?? 0) > 0;
   if (hasUnassignedLeads || hasUnassignedSales) {
     rows.push(buildRow(null, null));
   }
 
   return rows;
+}
+
+/**
+ * Wrapper legacy que acepta raw leads/sales/payments (tests + callers que
+ * arman todo el fixture en memoria). Convierte a la shape pre-agregada
+ * aplicando los mismos filtros que hacía la RPC 0046, y delega en el core.
+ * La agregación in-JS que hace acá es idéntica al SQL — cualquier cambio de
+ * política se toca en un lugar (el core).
+ */
+export function aggregateLeaderboard(input: {
+  teamMembers: ReadonlyArray<TeamMemberRow>;
+  leads: ReadonlyArray<LeadRow>;
+  sales: ReadonlyArray<SaleRow>;
+  payments: ReadonlyArray<PaymentRow>;
+  rules: ReadonlyArray<CommissionRuleRow>;
+  payouts?: ReadonlyArray<TeamMemberPayoutRow>;
+  filters: LeaderboardFilters;
+}): LeaderboardRow[] {
+  const { teamMembers, leads, sales, payments, rules, filters } = input;
+
+  const inDateRange = (closedAt: string): boolean => {
+    if (filters.dateFrom && closedAt.slice(0, 10) < filters.dateFrom) return false;
+    if (filters.dateTo && closedAt.slice(0, 10) > filters.dateTo) return false;
+    return true;
+  };
+
+  // leadStats — GROUP BY team_member_id, filter por launch (nunca por fecha).
+  const leadsFiltered = filters.launchId
+    ? leads.filter((l) => l.launch_id === filters.launchId)
+    : leads;
+  const leadStatsAcc = new Map<
+    string | null,
+    { leads_worked: number; closed: number }
+  >();
+  for (const l of leadsFiltered) {
+    const acc = leadStatsAcc.get(l.team_member_id) ?? {
+      leads_worked: 0,
+      closed: 0,
+    };
+    acc.leads_worked += 1;
+    if (l.status === "cerrado") acc.closed += 1;
+    leadStatsAcc.set(l.team_member_id, acc);
+  }
+  const leadStats: LeaderboardLeadStats[] = Array.from(leadStatsAcc, ([id, v]) => ({
+    team_member_id: id,
+    leads_worked: v.leads_worked,
+    closed: v.closed,
+  }));
+
+  // saleStats — filter por launch + período, join payments + rank.
+  const rankBySaleId = buildSaleRanks(sales);
+  const paymentsBySale = new Map<string, PaymentRow[]>();
+  for (const p of payments) {
+    const arr = paymentsBySale.get(p.sale_id);
+    if (arr) arr.push(p);
+    else paymentsBySale.set(p.sale_id, [p]);
+  }
+
+  // Atribución legacy: la venta se imputa al DUEÑO DEL LEAD, no a
+  // sale.team_member_id (que es denorm y puede divergir en fixtures de
+  // tests). El path RPC usa sale.team_member_id porque el invariante DB
+  // lo garantiza; acá replicamos lo que hacía el aggregador viejo.
+  const ownerByLead = new Map<string, string | null>(
+    leads.map((l) => [l.id, l.team_member_id]),
+  );
+
+  const saleStats: LeaderboardSaleStats[] = [];
+  for (const s of sales) {
+    if (!inDateRange(s.closed_at)) continue;
+    if (filters.launchId && s.launch_id !== filters.launchId) continue;
+    const pays = paymentsBySale.get(s.id) ?? [];
+    const collected = pays.reduce(
+      (acc, p) => acc + Number(p.amount || 0),
+      0,
+    );
+    saleStats.push({
+      id: s.id,
+      team_member_id: ownerByLead.get(s.lead_id) ?? null,
+      launch_id: s.launch_id,
+      product_id: s.product_id,
+      payment_modality_id: s.payment_modality_id,
+      total_amount: Number(s.total_amount) || 0,
+      closed_at: s.closed_at,
+      commission_rule_snapshot: s.commission_rule_snapshot,
+      sale_rank: rankBySaleId.get(s.id) ?? 0,
+      collected,
+      payment_count: pays.length,
+    });
+  }
+
+  return aggregateLeaderboardFromStats({
+    teamMembers,
+    leadStats,
+    saleStats,
+    rules,
+    payouts: input.payouts,
+    filters,
+  });
 }

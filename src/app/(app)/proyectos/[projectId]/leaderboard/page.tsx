@@ -10,16 +10,15 @@ import {
 } from "@/lib/commissions/list";
 import { fmtMoney, fmtNumber } from "@/lib/format";
 import { listLaunchesForProject } from "@/lib/launches/list";
-import { aggregateLeaderboard } from "@/lib/leaderboard/aggregate";
-import { aggregateProductBreakdown } from "@/lib/leaderboard/product-breakdown";
-import { listLeads } from "@/lib/leads/list";
+import { aggregateLeaderboardFromStats } from "@/lib/leaderboard/aggregate";
+import { aggregateProductBreakdownFromStats } from "@/lib/leaderboard/product-breakdown";
+import {
+  fetchLeaderboardLeadStats,
+  fetchLeaderboardSaleStats,
+} from "@/lib/leaderboard/rpc";
 import { listPayoutsForProject } from "@/lib/payouts/list";
 import type { TeamMemberPayoutRow } from "@/lib/payouts/types";
 import { listProductsForProject } from "@/lib/products/list";
-import {
-  listPaymentsForProject,
-  listSalesForProject,
-} from "@/lib/sales/list";
 import {
   requireSessionProfile,
   userCanEditLaunchesIn,
@@ -54,11 +53,19 @@ export default async function LeaderboardPage({
   const dateFrom = strParam(sp.from);
   const dateTo = strParam(sp.to);
 
+  const commonFilters = {
+    launchId: launchId || null,
+    dateFrom: dateFrom || null,
+    dateTo: dateTo || null,
+  };
+
+  // Pull pre-agregado via RPCs de migración 0046. Reemplaza el pull crudo de
+  // leads + sales + payments que traía 100k+ filas y demoraba minutos. Todo
+  // el filtrado por launch/período ya viene aplicado desde Postgres.
   const [
     teamMembers,
-    leads,
-    sales,
-    payments,
+    leadStats,
+    saleStats,
     rules,
     launches,
     payouts,
@@ -66,9 +73,13 @@ export default async function LeaderboardPage({
     canEdit,
   ] = await Promise.all([
     listTeamMembers(projectId),
-    listLeads(projectId),
-    listSalesForProject(projectId),
-    listPaymentsForProject(projectId),
+    fetchLeaderboardLeadStats(projectId, commonFilters.launchId),
+    fetchLeaderboardSaleStats(
+      projectId,
+      commonFilters.launchId,
+      commonFilters.dateFrom,
+      commonFilters.dateTo,
+    ),
     listCommissionRules(projectId),
     listLaunchesForProject(projectId),
     listPayoutsForProject(projectId),
@@ -80,30 +91,20 @@ export default async function LeaderboardPage({
   // miembro. Para esta versión no — el agregador deriva todo internamente.
   void listPaymentModalities;
 
-  const commonFilters = {
-    launchId: launchId || null,
-    dateFrom: dateFrom || null,
-    dateTo: dateTo || null,
-  };
-
-  const rows = aggregateLeaderboard({
+  const rows = aggregateLeaderboardFromStats({
     teamMembers,
-    leads,
-    sales,
-    payments,
+    leadStats,
+    saleStats,
     rules,
     payouts,
     filters: commonFilters,
   });
 
-  const productBreakdown = aggregateProductBreakdown({
+  const productBreakdown = aggregateProductBreakdownFromStats({
     teamMembers,
-    leads,
-    sales,
-    payments,
+    saleStats,
     rules,
     products,
-    filters: commonFilters,
   });
 
   // Index payouts por team_member_id para alimentar al modal (que ofrece un
