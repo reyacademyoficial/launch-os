@@ -53,7 +53,7 @@ export function Sidebar({ profile }: { readonly profile: SessionProfile }) {
           >
             <NavLink scopedSuffix="/ventas">Ventas</NavLink>
             <NavLink scopedSuffix="/equipo">Equipo</NavLink>
-            <NavLink scopedSuffix="/leaderboard">Leaderboard</NavLink>
+            <NavLink scopedSuffix="/leaderboard">Ranking</NavLink>
             {showCommissions && (
               <NavLink scopedSuffix="/comisiones">Comisiones</NavLink>
             )}

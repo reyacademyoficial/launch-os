@@ -27,7 +27,7 @@ import { listTeamMembers } from "@/lib/team/list";
 
 import { createPayout, deletePayout } from "./actions";
 
-export const metadata: Metadata = { title: "Leaderboard" };
+export const metadata: Metadata = { title: "Ranking" };
 
 function strParam(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? "";
@@ -136,7 +136,7 @@ export default async function LeaderboardPage({
   return (
     <section className="space-y-6">
       <header>
-        <h1 className="text-2xl font-bold">Leaderboard</h1>
+        <h1 className="text-2xl font-bold">Ranking</h1>
         <p className="mt-1 text-sm text-fg-muted">
           Ranking del equipo. La comisión se calcula sobre lo efectivamente
           cobrado y se recalcula con cada cobro. Los pagos registrados al
