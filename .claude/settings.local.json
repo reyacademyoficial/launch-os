@@ -54,7 +54,20 @@
       "Bash(node .audit-temp.mjs)",
       "Bash(node .audit-orphans.mjs)",
       "Bash(rm .audit-orphans.mjs)",
-      "Bash(npx tsx *)"
+      "Bash(npx tsx *)",
+      "Bash(command -v node)",
+      "Bash(command -v npm)",
+      "Bash(npm --version)",
+      "Bash(command -v npx)",
+      "Bash(npx --no-install supabase --version)",
+      "Bash(command -v psql)",
+      "Bash(ls -la src/hooks src/types)",
+      "Bash(ls -la vercel.* .nvmrc .node-version)",
+      "Bash(ls -la .claude)",
+      "Bash(ls -la .env.example .env.local)",
+      "Bash(cat .env.example)",
+      "Bash(grep -v \"//\")",
+      "Bash(npx --no-install next build)"
     ]
   }
 }
