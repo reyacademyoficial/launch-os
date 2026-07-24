@@ -38,7 +38,7 @@ export const metadata: Metadata = { title: "Ventas" };
  * borrar. Sustituye a la vista por-launch cuando querés mirar el negocio en
  * su conjunto (todos los lanzamientos a la vez).
  *
- * A diferencia de `/launches/[id]/cobros` NO filtramos por lead.status='cerrado':
+ * A diferencia de `/proyectos/[id]/cobros` NO filtramos por lead.status='cerrado':
  * si existe una sale, la mostramos, aunque el lead se haya movido a otra
  * columna del kanban. Se prioriza que el operador vea toda la plata registrada
  * sin filtros silenciosos.

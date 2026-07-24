@@ -663,7 +663,6 @@ function revalidateSalesImpact(
   revalidatePath(`/proyectos/${projectId}/metodos-pago`);
   if (launchId) {
     revalidatePath(`/proyectos/${projectId}/launches/${launchId}`);
-    revalidatePath(`/proyectos/${projectId}/launches/${launchId}/cobros`);
     revalidatePath(`/proyectos/${projectId}/launches/${launchId}/kpi`);
   }
 }

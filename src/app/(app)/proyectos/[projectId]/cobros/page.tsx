@@ -37,14 +37,11 @@ export const metadata: Metadata = { title: "Cobros" };
 
 /**
  * Cobros a nivel proyecto (Fase 12). Reusa CobrosView agregando un filtro
- * por launch en la FilterBar. La vista por launch (`/launches/[id]/cobros`)
- * queda viva para focus por lanzamiento; esta agrega la mirada completa
- * "toda la plata cobrada del proyecto" con vencimientos, cronogramas y
- * re-linkeo de cobros huérfanos.
+ * por launch en la FilterBar. Es la única vista de cobros del sistema —
+ * antes había una duplicada por launch, se retiró para consolidar acá.
  *
- * Semántica: igual que la vista por launch, filtramos por lead.status='cerrado'.
- * Es la definición canónica de "cobros" en el sistema (cuadra con el KPI
- * revenue del kanban).
+ * Semántica: filtramos por lead.status='cerrado'. Es la definición canónica
+ * de "cobros" en el sistema (cuadra con el KPI revenue del kanban).
  */
 export default async function ProjectCobrosPage({
   params,
