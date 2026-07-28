@@ -190,7 +190,7 @@ on conflict (project_id, name) do nothing;
 -- - UPDATE/DELETE bloqueado por USING → fila se filtra silencioso, 0 filas.
 --   Lo testeamos con `is_empty(WITH ... RETURNING 1)`.
 --
-insert into _smoke_results(result) values (plan(89));
+insert into _smoke_results(result) values (plan(101));
 
 -- 1) cliente NO puede insertar launches (WITH CHECK falla) → 42501
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
@@ -1440,6 +1440,112 @@ insert into _smoke_results(result) values (is(
 
 delete from public.projects
  where id = 'cafecafe-cafe-cafe-cafe-cafecafecafe';
+
+-- ── Tests del Bloque 1 (Kingrow) — 0053/0055/0056 + bancos 0057 ───────────
+-- Frontera dura sobre las 3 tablas nuevas de nivel org (settlement_rules,
+-- launch_settlements, client_transfers): cliente_role rebota pre-RLS por
+-- falta de grant (42501). admin normal tiene grant pero la policy con
+-- can_edit_organization filtra a 0. Superadmin llega y lee.
+--
+-- Además: 0057 sumó organization_id a banks / bank_movements de forma
+-- aditiva. Chequeamos backfill (cero nulls) y que la RLS project-scope
+-- histórica sigue funcionando (no rompimos la UX de bancos por proyecto).
+
+-- 90) cliente_role NO accede a settlement_rules (sin grant → 42501 pre-RLS)
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.settlement_rules'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a settlement_rules (sin grant, pre-RLS)'::text
+));
+
+-- 91) cliente_role NO accede a launch_settlements
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.launch_settlements'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a launch_settlements (sin grant, pre-RLS)'::text
+));
+
+-- 92) cliente_role NO accede a client_transfers
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.client_transfers'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a client_transfers (sin grant, pre-RLS)'::text
+));
+
+-- 93) admin normal NO ve settlement_rules — grant existe (authenticated
+--     tiene SELECT), pero can_edit_organization() = is_kingrow_admin() =
+--     is_superadmin(); admin1 es 'admin', no 'superadmin'/'dev' → filtra a 0.
+--     lives_ok prueba que el grant está; is_empty prueba que la policy filtra.
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.settlement_rules'::text,
+  'admin normal tiene grant SELECT en settlement_rules (llega a RLS)'
+));
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.settlement_rules'::text,
+  'admin normal NO ve settlement_rules (policy org-scope filtra)'
+));
+
+-- 94) admin normal NO ve launch_settlements
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.launch_settlements'::text,
+  'admin normal NO ve launch_settlements (policy org-scope filtra)'
+));
+
+-- 95) admin normal NO ve client_transfers
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.client_transfers'::text,
+  'admin normal NO ve client_transfers (policy org-scope filtra)'
+));
+
+-- 96) superadmin lee settlement_rules (grant + policy OK — tabla vacía,
+--     pero el SELECT completa sin error). Prueba end-to-end del path.
+select pg_temp.login_as('11111111-1111-1111-1111-111111111111');
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.settlement_rules'::text,
+  'superadmin lee settlement_rules (path grant+policy OK)'
+));
+
+-- 97) superadmin lee launch_settlements
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.launch_settlements'::text,
+  'superadmin lee launch_settlements (path grant+policy OK)'
+));
+
+-- 98) superadmin lee client_transfers
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.client_transfers'::text,
+  'superadmin lee client_transfers (path grant+policy OK)'
+));
+
+-- 99) 0057 backfill: cero nulls en banks.organization_id
+reset role;
+insert into _smoke_results(result) values (is(
+  (select count(*)::int from public.banks where organization_id is null),
+  0,
+  'banks.organization_id: cero nulls tras backfill 0057'
+));
+
+-- 100) 0057 backfill: cero nulls en bank_movements.organization_id
+insert into _smoke_results(result) values (is(
+  (select count(*)::int from public.bank_movements where organization_id is null),
+  0,
+  'bank_movements.organization_id: cero nulls tras backfill 0057'
+));
+
+-- 101) Regresión banks: admin del proyecto sigue insertando bank en su
+--      proyecto (RLS project-scope intacta post-0057, aditivo puro).
+--      El default de organization_id se aplica solo — no hay que pasarlo.
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+insert into _smoke_results(result) values (lives_ok(
+  format(
+    'insert into public.banks (project_id, name) values (%L, %L)',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'Banco regresión 0057'
+  ),
+  'banks: admin del proyecto sigue insertando (RLS project-scope intacta)'
+));
 
 insert into _smoke_results(result) select * from finish();
 
