@@ -1,19 +1,23 @@
 import { redirect } from "next/navigation";
 
-import { Shell } from "@/components/dashboard/shell";
-import { listAccessibleProjects } from "@/lib/projects/list";
 import { requireSessionProfile } from "@/lib/supabase/auth";
-import { readThemeCookie } from "@/lib/theme-cookie";
 
 /**
- * Protected layout — auth defense layer #2 + the app chrome.
- * Real navigation lives in <Shell>; this file gates, fetches accessible
- * projects (for the topbar switcher), and forwards.
+ * Protected layout — auth defense layer #2.
  *
- * Cliente queda fuera del shell del equipo: tiene su propio shell bajo
- * `(cliente)/portal/…`. El redirect acá garantiza que un cliente que tipea
- * cualquier URL del equipo aterrice en su portal en lugar de ver una UI a
- * medio renderizar (la barrera dura igual es DB — cliente_role sin grants).
+ * Ya NO monta shell: la elección KingrowShell vs ProjectShell la hacen los
+ * sub-layouts de este árbol:
+ *   - `(app)/(kg)/layout.tsx`     → KingrowShell (Ejecutivo, Financiero,
+ *     Lanzamientos, Clientes, Operaciones, Academia, Marketing, Calculadora,
+ *     Configuración, /dev/auditoria, /admin/*).
+ *   - `(app)/proyectos/[projectId]/layout.tsx` → ProjectShell (vista LaunchOS
+ *     scopeada al proyecto).
+ *
+ * Este layout solo gatea autenticación y salta cliente al portal. La razón
+ * de mantener el cross-guard acá y no en cada sub-layout: cliente nunca debe
+ * ver NADA del árbol `(app)` — ni el shell equipo, ni el shell proyecto.
+ * Un solo redirect al top del subárbol es más simple y más seguro que
+ * repetirlo en dos lugares.
  */
 export default async function AppLayout({
   children,
@@ -22,14 +26,5 @@ export default async function AppLayout({
 }) {
   const profile = await requireSessionProfile();
   if (profile.role === "cliente") redirect("/portal");
-
-  const [projects, theme] = await Promise.all([
-    listAccessibleProjects(),
-    readThemeCookie(),
-  ]);
-  return (
-    <Shell profile={profile} projects={projects} theme={theme}>
-      {children}
-    </Shell>
-  );
+  return <>{children}</>;
 }

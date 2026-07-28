@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { PasswordForm, ProfileForm } from "@/app/(app)/configuracion/forms";
+import { PasswordForm, ProfileForm } from "@/app/(app)/(kg)/configuracion/forms";
 import { requireRole } from "@/lib/supabase/auth";
 
 export const metadata: Metadata = { title: "Configuración · Portal" };

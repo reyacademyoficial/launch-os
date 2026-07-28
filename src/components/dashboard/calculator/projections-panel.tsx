@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useState, useTransition } from "react";
 
-import type { ProjectionActionState } from "@/app/(app)/calculadora/actions";
+import type { ProjectionActionState } from "@/app/(app)/(kg)/calculadora/actions";
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field-error";
 import { Input } from "@/components/ui/input";
