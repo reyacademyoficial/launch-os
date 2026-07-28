@@ -174,6 +174,15 @@ insert into public.launches (id, project_id, name) values
   ('dddddddd-dddd-dddd-dddd-dddddddddddd','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','Launch Dos')
 on conflict (id) do nothing;
 
+-- Post-0038: sales.product_id es NOT NULL. Sembramos un producto genérico
+-- "Sin categoría" por cada proyecto (mismo nombre que usa el backfill de
+-- 0038 para ventas huérfanas) para que todos los inserts de sales del smoke
+-- puedan referenciarlo. `unique (project_id, name)` hace la seed idempotente.
+insert into public.products (project_id, name) values
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Sin categoría'),
+  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Sin categoría')
+on conflict (project_id, name) do nothing;
+
 -- =====================  TESTS  =====================
 --
 -- Semántica:
@@ -181,7 +190,7 @@ on conflict (id) do nothing;
 -- - UPDATE/DELETE bloqueado por USING → fila se filtra silencioso, 0 filas.
 --   Lo testeamos con `is_empty(WITH ... RETURNING 1)`.
 --
-insert into _smoke_results(result) values (plan(82));
+insert into _smoke_results(result) values (plan(89));
 
 -- 1) cliente NO puede insertar launches (WITH CHECK falla) → 42501
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
@@ -565,12 +574,15 @@ insert into _smoke_results(result) values (pg_temp.throws_ok(
   'operador NO inserta payment_modality (es admin-only)'::text
 ));
 
--- 32) admin SÍ inserta commission_rule vía RPC (1 tier 10%, default, 1 modalidad)
+-- 32) admin SÍ inserta commission_rule vía RPC (1 tier 10%, default, 1 modalidad).
+--     Post-0040 la firma es (project, launch, product, accrual_mode, thr_type,
+--     thr_value, modalidades, tiers): pasamos null en launch y product porque
+--     la regla es default de proyecto (no override).
 select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
 insert into _smoke_results(result) values (lives_ok(
   format(
     $sql$select public.create_commission_rule(
-      %L, null,
+      %L, null, null,
       'proportional', null, null,
       array[(select id from public.payment_modalities where project_id = %L and name = 'Pago total')],
       '[{"min_count":0,"max_count":null,"type":"percent","value":10}]'::jsonb
@@ -586,7 +598,7 @@ select pg_temp.login_as('44444444-4444-4444-4444-444444444444');
 insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
     $sql$select public.create_commission_rule(
-      %L, null,
+      %L, null, null,
       'proportional', null, null,
       array[(select id from public.payment_modalities where project_id = %L and name = 'Pago total')],
       '[{"min_count":0,"max_count":null,"type":"fixed","value":500}]'::jsonb
@@ -604,7 +616,7 @@ select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
 insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
     $sql$select public.create_commission_rule(
-      %L, null,
+      %L, null, null,
       'proportional', null, null,
       array[(select id from public.payment_modalities where project_id = %L and name = 'Pago total')],
       '[{"min_count":0,"max_count":null,"type":"fixed","value":999}]'::jsonb
@@ -617,16 +629,20 @@ insert into _smoke_results(result) values (pg_temp.throws_ok(
 ));
 
 -- 35) operador SÍ inserta sale (can_edit_launches_in). Necesita un lead +
---     una modalidad: usamos el lead que el operador creó en el test 28 y la
---     modalidad de pago total. Operador hace todo el flujo.
+--     una modalidad + un producto (post-0038 product_id es NOT NULL): usamos
+--     el lead que el operador creó en el test 28, la modalidad de pago total
+--     y el producto "Sin categoría" sembrado arriba. Operador hace todo el
+--     flujo.
 select pg_temp.login_as('44444444-4444-4444-4444-444444444444');
 insert into _smoke_results(result) values (lives_ok(
   format(
-    $sql$insert into public.sales (project_id, lead_id, payment_modality_id, total_amount)
+    $sql$insert into public.sales (project_id, lead_id, payment_modality_id, product_id, total_amount)
          select %L,
                 (select id from public.leads where project_id = %L limit 1),
                 (select id from public.payment_modalities where project_id = %L and name = 'Pago total'),
+                (select id from public.products where project_id = %L and name = 'Sin categoría'),
                 1000$sql$,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
@@ -638,11 +654,13 @@ insert into _smoke_results(result) values (lives_ok(
 select pg_temp.login_as('55555555-5555-5555-5555-555555555555');
 insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
-    $sql$insert into public.sales (project_id, lead_id, payment_modality_id, total_amount)
+    $sql$insert into public.sales (project_id, lead_id, payment_modality_id, product_id, total_amount)
          select %L,
                 (select id from public.leads where project_id = %L limit 1),
                 (select id from public.payment_modalities where project_id = %L limit 1),
+                (select id from public.products where project_id = %L and name = 'Sin categoría'),
                 500$sql$,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
@@ -690,10 +708,11 @@ insert into public.payment_modalities (project_id, name) values
   ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Cross-tenant total');
 insert into public.leads (project_id, name) values
   ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Cross-tenant lead');
-insert into public.sales (project_id, lead_id, payment_modality_id, total_amount)
+insert into public.sales (project_id, lead_id, payment_modality_id, product_id, total_amount)
   select 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
          (select id from public.leads where project_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' limit 1),
          (select id from public.payment_modalities where project_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' limit 1),
+         (select id from public.products where project_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' and name = 'Sin categoría'),
          5000;
 
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
@@ -1229,7 +1248,7 @@ from (values
      ) as v(n, p, s);
 
 -- Sale para L3 — esto lo excluye del reciclado (NOT EXISTS sale).
-insert into public.sales (project_id, lead_id, payment_modality_id, total_amount)
+insert into public.sales (project_id, lead_id, payment_modality_id, product_id, total_amount)
 select 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
        (select id from public.leads
          where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
@@ -1237,6 +1256,9 @@ select 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
        (select id from public.payment_modalities
          where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
            and name = 'Pago total 8a'),
+       (select id from public.products
+         where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+           and name = 'Sin categoría'),
        1000;
 
 -- 76) recycle_evergreen_leads sobre un launch NO evergreen (target launch
@@ -1342,6 +1364,82 @@ insert into _smoke_results(result) values (is(
   2,
   '8a: segunda llamada no re-mueve leads (idempotente vía recycled_from filter)'
 ));
+
+-- ── Tests de nivel organización (post-0050/0051/0052 — Bloque 0 Kingrow) ──
+-- Regla central: el rol `cliente` (Portal del cliente) jamás toca datos de
+-- nivel org. La barrera dura es pre-RLS: `cliente_role` no tiene ningún
+-- grant sobre `organization`, así que PostgREST responde 42501 antes de
+-- evaluar policy. Además chequeamos que no rompimos lo que el cliente ya
+-- podía leer (regresión) y que superadmin sí llega.
+--
+-- Tests de esquema (backfill + defaults) van al final: se corren como owner
+-- (postgres/service) porque son verificaciones estructurales, no de RLS.
+
+-- 83) cliente_role NO accede a organization (sin grant → 42501 pre-RLS).
+--     Esta es la garantía central del bloque.
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.organization'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a organization (sin grant, pre-RLS)'::text
+));
+
+-- 84) Regresión: cliente_role sigue leyendo lo project-scope que ya leía.
+--     Usamos launches del Proyecto A del cliente — path canónico.
+insert into _smoke_results(result) values (isnt_empty(
+  format('select 1 from public.launches where project_id = %L',
+         'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  'cliente_role sigue leyendo launches de su proyecto (no rompimos nada)'
+));
+
+-- 85) superadmin SÍ lee organization (ve la semilla Kingrow).
+select pg_temp.login_as('11111111-1111-1111-1111-111111111111');
+insert into _smoke_results(result) values (isnt_empty(
+  $sql$select 1 from public.organization where name = 'Kingrow'$sql$,
+  'superadmin SÍ lee organization (semilla Kingrow visible)'
+));
+
+-- 86) admin normal (no superadmin) NO lee organization todavía.
+--     is_kingrow_admin() hoy = is_superadmin(); admin1 es 'admin', no
+--     'superadmin'/'dev' → policy filtra. Prueba que la frontera no depende
+--     sólo del grant sino también de la policy.
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+insert into _smoke_results(result) values (is_empty(
+  $sql$select 1 from public.organization$sql$,
+  'admin normal NO lee organization (no es kingrow admin todavía)'
+));
+
+-- 87) Backfill: cero rows en projects con organization_id null.
+reset role;
+insert into _smoke_results(result) values (is(
+  (select count(*)::int from public.projects where organization_id is null),
+  0,
+  'projects.organization_id: cero nulls tras backfill 0050'
+));
+
+-- 88) Default de ownership funciona: nuevo project sin ownership → 'externa'.
+--     Insertamos un project temporal (sin especificar ownership ni org_id) y
+--     leemos las columnas. Cleanup al final del bloque.
+insert into public.projects (id, name)
+values ('cafecafe-cafe-cafe-cafe-cafecafecafe', 'Proyecto default-check');
+
+insert into _smoke_results(result) values (is(
+  (select ownership from public.projects
+    where id = 'cafecafe-cafe-cafe-cafe-cafecafecafe'),
+  'externa',
+  'projects.ownership default = externa cuando se omite'
+));
+
+-- 89) Default de organization_id funciona: mismo project apunta a Kingrow.
+insert into _smoke_results(result) values (is(
+  (select organization_id from public.projects
+    where id = 'cafecafe-cafe-cafe-cafe-cafecafecafe'),
+  '00000000-0000-0000-0000-000000000001'::uuid,
+  'projects.organization_id default = Kingrow cuando se omite'
+));
+
+delete from public.projects
+ where id = 'cafecafe-cafe-cafe-cafe-cafecafecafe';
 
 insert into _smoke_results(result) select * from finish();
 
