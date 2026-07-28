@@ -44,21 +44,36 @@ export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
         {LAYERS.map((layer) => (
           <LayerGroup key={layer.id} label={layer.label}>
             {layer.modules.map((m) => (
-              <KgNavItem key={m.id} href={m.href} label={m.label} icon={m.icon} />
+              <KgNavItem
+                key={m.id}
+                href={m.href}
+                label={m.label}
+                icon={<m.icon size={18} />}
+              />
             ))}
           </LayerGroup>
         ))}
 
         <LayerGroup label="Utilidades">
           {UTILITY_MODULES.map((m) => (
-            <KgNavItem key={m.id} href={m.href} label={m.label} icon={m.icon} />
+            <KgNavItem
+              key={m.id}
+              href={m.href}
+              label={m.label}
+              icon={<m.icon size={18} />}
+            />
           ))}
         </LayerGroup>
 
         {showSystem && (
           <LayerGroup label="Sistema">
             {SYSTEM_MODULES.map((m) => (
-              <KgNavItem key={m.id} href={m.href} label={m.label} icon={m.icon} />
+              <KgNavItem
+                key={m.id}
+                href={m.href}
+                label={m.label}
+                icon={<m.icon size={18} />}
+              />
             ))}
           </LayerGroup>
         )}

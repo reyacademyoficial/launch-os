@@ -2,25 +2,28 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ComponentType } from "react";
-
-type IconProps = Readonly<{ size?: number; className?: string }>;
+import type { ReactNode } from "react";
 
 /**
  * KG · Sidebar nav item.
  *
  * Regla de "activo": prefijo, excepto para la home ("/") que exige match
  * exacto — sino Ejecutivo quedaría activo dentro de cualquier subruta.
+ *
+ * `icon` viene YA renderizado (ReactNode), no como componente. Es un boundary
+ * server→client: pasar componentes-como-función cruza esa frontera y Next
+ * los rechaza porque no son serializables. Renderizar en el padre server y
+ * pasar la JSX (que sí serializa) es la única forma limpia.
  */
 export function KgNavItem({
   href,
   label,
-  icon: Icon,
+  icon,
   onNavigate,
 }: {
   readonly href: string;
   readonly label: string;
-  readonly icon: ComponentType<IconProps>;
+  readonly icon: ReactNode;
   readonly onNavigate?: () => void;
 }) {
   const pathname = usePathname();
@@ -45,7 +48,7 @@ export function KgNavItem({
         className="flex h-5 w-5 shrink-0 items-center justify-center"
         style={{ color: isActive ? "var(--kg-accent-text)" : "var(--kg-text-3)" }}
       >
-        <Icon size={18} />
+        {icon}
       </span>
       <span className="truncate">{label}</span>
     </Link>
