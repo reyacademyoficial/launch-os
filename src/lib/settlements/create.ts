@@ -28,11 +28,12 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { computeLaunchAggregates } from "./aggregates";
 import { computeSettlement, type SettlementInputs } from "./calc";
+import { resolveActiveRule } from "./rule-resolver";
 import {
   toSettlementRuleSnapshot,
   type LaunchSettlementStatus,
-  type SettlementRuleRow,
   type SettlementRuleSnapshot,
 } from "./types";
 
@@ -220,43 +221,13 @@ export async function createSettlement(
   const draftsCount = draftsRes.data?.length ?? 0;
 
   // ─── 4) Agregados de sales y payments (sin fan-out) ──────────────────
-  // Query independiente sobre `sales`. Esto da salesCount y totalSold sin
-  // multiplicar por la cantidad de pagos.
-  const salesRes = await supabase
-    .from("sales")
-    .select("id, total_amount")
-    .eq("launch_id", input.launchId);
-
-  const salesRows = (salesRes.data ?? []) as unknown as Array<{
-    id: string;
-    total_amount: number;
-  }>;
-
-  const salesCount = salesRows.length;
-  const totalSold = salesRows.reduce(
-    (acc, s) => acc + Number(s.total_amount ?? 0),
-    0,
+  // Delegado a computeLaunchAggregates — misma función que consume el
+  // simulador del formulario de reglas. Antes había dos implementaciones
+  // idénticas de este cálculo; unificarlas evita que diverjan.
+  const { collectedTotal, totalSold, salesCount } = await computeLaunchAggregates(
+    supabase,
+    input.launchId,
   );
-
-  // Query independiente sobre `payments`, filtrada por los sale_ids del
-  // launch. collectedTotal = SUM(amount). Es la ÚNICA fuente de verdad
-  // de "cuánto se cobró" para este launch.
-  let collectedTotal = 0;
-  if (salesRows.length > 0) {
-    const saleIds = salesRows.map((s) => s.id);
-    const paymentsRes = await supabase
-      .from("payments")
-      .select("amount")
-      .in("sale_id", saleIds);
-
-    const paymentRows = (paymentsRes.data ?? []) as unknown as Array<{
-      amount: number;
-    }>;
-    collectedTotal = paymentRows.reduce(
-      (acc, p) => acc + Number(p.amount ?? 0),
-      0,
-    );
-  }
 
   if (collectedTotal === 0) {
     return {
@@ -326,34 +297,4 @@ function extractOrgId(
   if (!projects) return null;
   if (Array.isArray(projects)) return projects[0]?.organization_id ?? null;
   return projects.organization_id ?? null;
-}
-
-/**
- * Regla vigente para (launchId, projectId): primero la específica del
- * launch; si no hay, la default del proyecto (launch_id IS NULL).
- * Ambas deben estar `active=true`.
- */
-async function resolveActiveRule(
-  supabase: AnySupabase,
-  scope: { launchId: string; projectId: string },
-): Promise<SettlementRuleRow | null> {
-  const launchScoped = await supabase
-    .from("settlement_rules")
-    .select("*")
-    .eq("launch_id", scope.launchId)
-    .eq("active", true)
-    .maybeSingle();
-
-  const launchRule = launchScoped.data as unknown as SettlementRuleRow | null;
-  if (launchRule) return launchRule;
-
-  const projectDefault = await supabase
-    .from("settlement_rules")
-    .select("*")
-    .eq("project_id", scope.projectId)
-    .is("launch_id", null)
-    .eq("active", true)
-    .maybeSingle();
-
-  return (projectDefault.data as unknown as SettlementRuleRow | null) ?? null;
 }

@@ -2,8 +2,10 @@ import type { SessionProfile } from "@/lib/supabase/auth";
 
 import { KgBrand } from "./brand";
 import {
+  canSeeOrganization,
   canSeeSystem,
   LAYERS,
+  ORGANIZATION_MODULES,
   SYSTEM_MODULES,
   UTILITY_MODULES,
 } from "./layers";
@@ -27,6 +29,7 @@ import { KgUserBlock } from "./user-block";
  */
 export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
   const showSystem = canSeeSystem(profile.role);
+  const showOrganization = canSeeOrganization(profile.role);
 
   return (
     <aside
@@ -64,6 +67,19 @@ export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
             />
           ))}
         </LayerGroup>
+
+        {showOrganization && (
+          <LayerGroup label="Organización">
+            {ORGANIZATION_MODULES.map((m) => (
+              <KgNavItem
+                key={m.id}
+                href={m.href}
+                label={m.label}
+                icon={<m.icon size={18} />}
+              />
+            ))}
+          </LayerGroup>
+        )}
 
         {showSystem && (
           <LayerGroup label="Sistema">

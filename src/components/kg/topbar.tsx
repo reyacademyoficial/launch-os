@@ -21,7 +21,7 @@ import { KgThemeToggle } from "./theme-toggle";
 export function KgTopbar({ theme }: { readonly theme: Theme }) {
   const pathname = usePathname();
   const active = resolveActive(pathname);
-  const layerLabel = active?.layer?.label ?? "Sistema";
+  const layerLabel = active?.layerLabel ?? "Sistema";
   const moduleLabel = active?.module.label ?? "Kingrow";
 
   return (

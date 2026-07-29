@@ -12,6 +12,7 @@ import {
   IconLaunch,
   IconMkt,
   IconOps,
+  IconOrg,
 } from "./icons";
 
 type IconProps = Readonly<{ size?: number; className?: string }>;
@@ -77,6 +78,20 @@ export const UTILITY_MODULES: readonly KgModule[] = [
 ];
 
 /**
+ * Sección "Organización" — configuración a nivel org (Kingrow). Personas
+ * alimenta la nómina; Reglas de split determina cómo se reparten los cobros.
+ * Ambas están gateadas por `can_edit_organization` en RLS; la sidebar se
+ * derriba a nivel UI para que ni siquiera aparezca a quien no puede editar.
+ *
+ * El prefijo `/organizacion` nombra exactamente el scope del gate SQL, así
+ * el vocabulario del código, la URL y la RLS coinciden.
+ */
+export const ORGANIZATION_MODULES: readonly KgModule[] = [
+  { id: "org-personas", label: "Personas", href: "/organizacion/personas", icon: IconOrg },
+  { id: "org-reglas-split", label: "Reglas de split", href: "/organizacion/reglas-split", icon: IconOrg },
+];
+
+/**
  * Sección "Sistema" — separada de las capas, sólo visible para roles con
  * capacidad de administrar la plataforma. El artefacto no la define, la
  * agregamos porque LaunchOS ya tiene /admin/proyectos y /admin/usuarios y
@@ -101,20 +116,46 @@ export function canSeeSystem(role: Role): boolean {
   return role === "superadmin" || role === "dev";
 }
 
+export function canSeeOrganization(role: Role): boolean {
+  return role === "superadmin" || role === "dev";
+}
+
 /**
- * Resolvedor: dado un pathname, devuelve el módulo activo y su capa. Usado por
- * el topbar para renderizar "Capa X · Módulo". Matchea por prefijo — el módulo
- * más específico gana. El caso "/" queda para "Ejecutivo" explícito, sino "/"
- * matchearía cualquier prefijo.
+ * Grupos "planos" — no son capas del artefacto, pero cada uno rinde una
+ * etiqueta propia en el topbar. Antes existía un solo balde "Sistema" para
+ * todo lo no-layer; con la sección Organización el balde se rompió: cada
+ * grupo declara su propia etiqueta.
+ */
+interface FlatGroup {
+  readonly label: string;
+  readonly modules: readonly KgModule[];
+}
+
+const FLAT_GROUPS: readonly FlatGroup[] = [
+  { label: "Organización", modules: ORGANIZATION_MODULES },
+  { label: "Sistema", modules: SYSTEM_MODULES },
+  { label: "Utilidades", modules: UTILITY_MODULES },
+  // HIDDEN_MODULES conservan la etiqueta "Sistema" — no se renderizan en la
+  // sidebar, sirven sólo para que el topbar tenga título cuando el usuario
+  // aterriza en /configuracion o /dev/auditoria.
+  { label: "Sistema", modules: HIDDEN_MODULES },
+];
+
+/**
+ * Resolvedor: dado un pathname, devuelve el módulo activo, su capa y la
+ * etiqueta de capa. Usado por el topbar para renderizar "Capa X · Módulo".
+ * Matchea por prefijo — el módulo más específico gana. El caso "/" queda para
+ * "Ejecutivo" explícito, sino "/" matchearía cualquier prefijo.
  */
 export function resolveActive(pathname: string):
-  | { readonly layer: KgLayer; readonly module: KgModule }
-  | { readonly layer: null; readonly module: KgModule }
+  | { readonly layer: KgLayer; readonly layerLabel: string; readonly module: KgModule }
+  | { readonly layer: null; readonly layerLabel: string; readonly module: KgModule }
   | null {
-  const flatSystemLike = [...SYSTEM_MODULES, ...UTILITY_MODULES, ...HIDDEN_MODULES];
-  for (const m of flatSystemLike) {
-    if (pathname === m.href || pathname.startsWith(`${m.href}/`)) {
-      return { layer: null, module: m };
+  for (const group of FLAT_GROUPS) {
+    for (const m of group.modules) {
+      if (pathname === m.href || pathname.startsWith(`${m.href}/`)) {
+        return { layer: null, layerLabel: group.label, module: m };
+      }
     }
   }
   let best: { layer: KgLayer; module: KgModule; score: number } | null = null;
@@ -131,5 +172,5 @@ export function resolveActive(pathname: string):
       }
     }
   }
-  return best ? { layer: best.layer, module: best.module } : null;
+  return best ? { layer: best.layer, layerLabel: best.layer.label, module: best.module } : null;
 }

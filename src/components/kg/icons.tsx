@@ -172,3 +172,14 @@ export function IconLogout(props: IconProps) {
     </Svg>
   );
 }
+
+export function IconOrg(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3 21V7l6-3v17" />
+      <path d="M9 21V11h11v10" />
+      <path d="M13 14h3M13 17h3" />
+      <path d="M5 10h1M5 13h1M5 16h1" />
+    </Svg>
+  );
+}
