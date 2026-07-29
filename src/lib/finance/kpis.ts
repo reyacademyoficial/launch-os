@@ -15,6 +15,11 @@
  * rows ya filtradas — mismo criterio que `computeRevenue` en `revenue.ts`.
  */
 
+import {
+  classifyInvoice,
+  type Ownership,
+} from "./invoice-classification";
+import type { OwnershipResolver } from "./revenue";
 import type {
   FinanceAssetRow,
   FinanceBankMovementRow,
@@ -182,34 +187,49 @@ export function computeNetWorth(inputs: NetWorthInputs): NetWorthBreakdown {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * AR = invoices emitidas o vencidas (no cobradas ni anuladas) NETO de IVA.
+ * AR SEPARA dos magnitudes que la regla del bloque 6b-rev exige no mezclar:
  *
- * // REVISAR CON CONTADOR: NETO de IVA es criterio de balance típico.
- * Si se prefiere ver el BRUTO (que es lo que efectivamente se va a cobrar
- * en caja), pedirlo — está en un campo separado `totalReceivableGross`.
+ *   · Por cobrar de Kingrow:  invoices pendientes clasificadas como
+ *     'kingrow-income' (proyecto propio + sin launch), más el saldo a favor
+ *     de Kingrow con clientes (`favorKingrowBalance`, positivo cuando un
+ *     cliente le debe a Kingrow). Es la plata que Kingrow espera cobrar.
+ *   · Cobros de terceros:     el resto de invoices pendientes
+ *     ('group-volume' + 'third-party'). Kingrow eventualmente procesa esos
+ *     pagos pero no es su AR. Visible, pero NUNCA sumado a las de Kingrow.
  *
- * `favorKingrowBalance` es el hueco para "saldos a favor de Kingrow con
- * clientes" (poco común — pasa cuando el cliente adelantó menos que lo
- * devengado y hay una liquidación pendiente sin transferir). El caller lo
- * calcula con `clientBalance(...)` si aplica; por defecto 0.
+ * Una factura impaga de un cliente externo es plata que espera ese cliente,
+ * no Kingrow. Sumar ambas daría un total que no es AR de nadie.
+ *
+ * // REVISAR CON CONTADOR: NETO de IVA es criterio de balance típico. Si
+ * se prefiere ver BRUTO (lo que efectivamente entra a caja), está en el
+ * campo `*Gross` correspondiente.
  */
 export interface AccountsReceivableInputs {
   invoices: FinanceInvoiceRow[];
+  /** Igual que en `computeRevenue`. Ver `revenue.ts`. */
+  resolveOwnership: OwnershipResolver;
   /** Positivo si algún cliente le debe a Kingrow. Default 0. */
   favorKingrowBalance?: number;
 }
 
 export interface AccountsReceivableBreakdown {
-  /** Σ (amount_gross − tax_amount) de invoices no-cobradas y no-anuladas. */
+  // ─── Por cobrar de Kingrow (sí es AR de Kingrow) ────────────────────
+  /** Σ neto de invoices pendientes 'kingrow-income'. */
   invoicesReceivableNet: number;
-  /** Σ amount_gross (para verlo bruto si hace falta). */
+  /** Σ bruto (para ver caja esperada si hace falta). */
   invoicesReceivableGross: number;
-  /** Cantidad de facturas contadas. Útil para el UI. */
+  /** Cantidad de facturas de Kingrow contadas. */
   invoicesCount: number;
-  /** Pasado por el caller. */
+  /** Saldo a favor de Kingrow con clientes (pasado por el caller). */
   favorKingrowBalance: number;
   /** invoicesReceivableNet + favorKingrowBalance. */
   totalReceivable: number;
+
+  // ─── Cobros de terceros (visibles pero fuera del AR de Kingrow) ─────
+  /** Σ neto de invoices pendientes 'group-volume' + 'third-party'. */
+  thirdPartyReceivableNet: number;
+  /** Cantidad de facturas de terceros contadas. */
+  thirdPartyCount: number;
 }
 
 function isInvoicePending(i: FinanceInvoiceRow): boolean {
@@ -219,27 +239,115 @@ function isInvoicePending(i: FinanceInvoiceRow): boolean {
 export function computeAccountsReceivable(
   inputs: AccountsReceivableInputs,
 ): AccountsReceivableBreakdown {
-  const pending = inputs.invoices.filter(isInvoicePending);
+  let invoicesReceivableNet = 0;
+  let invoicesReceivableGross = 0;
+  let invoicesCount = 0;
+  let thirdPartyReceivableNet = 0;
+  let thirdPartyCount = 0;
 
-  const invoicesReceivableNet = pending.reduce(
-    (acc, i) => acc + (i.amount_gross - i.tax_amount),
-    0,
-  );
-  const invoicesReceivableGross = pending.reduce(
-    (acc, i) => acc + i.amount_gross,
-    0,
-  );
+  for (const i of inputs.invoices) {
+    if (!isInvoicePending(i)) continue;
+    const net = i.amount_gross - i.tax_amount;
+    const cls = classifyInvoice(i, inputs.resolveOwnership(i.project_id));
+    if (cls === "kingrow-income") {
+      invoicesReceivableNet += net;
+      invoicesReceivableGross += i.amount_gross;
+      invoicesCount += 1;
+    } else {
+      thirdPartyReceivableNet += net;
+      thirdPartyCount += 1;
+    }
+  }
 
   const favorKingrowBalance = inputs.favorKingrowBalance ?? 0;
 
   return {
     invoicesReceivableNet,
     invoicesReceivableGross,
-    invoicesCount: pending.length,
+    invoicesCount,
     favorKingrowBalance,
     totalReceivable: invoicesReceivableNet + favorKingrowBalance,
+    thirdPartyReceivableNet,
+    thirdPartyCount,
   };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Volumen de facturación del grupo — KPI de contexto (NO ingreso)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Facturación del grupo (bruto) = total de facturas cobradas de todas las
+ * empresas, propias y externas, sin distinguir clasificación.
+ *
+ * Es el volumen que Kingrow gestionó como grupo — NO su ingreso. La regla
+ * del bloque 6b-rev es que este número NUNCA se suma al ingreso de Kingrow
+ * ni al estado de resultados. Se muestra como KPI de contexto para que el
+ * dueño pueda leer el tamaño operativo del holding sin confundirlo con la
+ * plata que le queda a Kingrow.
+ *
+ * "Bruto" acá refiere a "sin diferenciar por origen", no a "con IVA": el
+ * monto sigue siendo NETO de IVA para ser coherente con el resto del
+ * módulo. Si se necesita también el gross-with-tax, expandir el shape.
+ */
+export interface GroupInvoicingBreakdown {
+  /** Σ (amount_gross − tax_amount) de todas las invoices cobradas. */
+  totalNet: number;
+  /** Cantidad de facturas cobradas. */
+  count: number;
+}
+
+export function computeGroupInvoicing(
+  invoices: FinanceInvoiceRow[],
+): GroupInvoicingBreakdown {
+  let totalNet = 0;
+  let count = 0;
+  for (const i of invoices) {
+    if (i.status !== "cobrada") continue;
+    totalNet += i.amount_gross - i.tax_amount;
+    count += 1;
+  }
+  return { totalNet, count };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Calidad de dato — invoices con vínculo incompleto
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Kingrow no emite facturas — las emiten las operativas, y toda operativa
+ * es un proyecto. Una factura sin project_id o sin launch_id (cuando debía
+ * tenerlo) es un dato incompleto, y el sistema no puede diferenciar una
+ * venta suelta legítima de un vínculo faltante. Estos contadores exponen
+ * el problema en el dashboard para que alguien lo revise.
+ *
+ * Son DOS contadores separados porque se arreglan de formas distintas:
+ *   · missingProject: hay que asignar el project (o descartar la factura).
+ *   · missingLaunch:  hay que vincularla al lanzamiento — o confirmar que
+ *     efectivamente es una venta suelta (no todo faltante es un bug).
+ *
+ * Se cuentan solo facturas NO anuladas: las anuladas no son "reales".
+ */
+export interface InvoiceDataQuality {
+  missingProject: number;
+  missingLaunch: number;
+}
+
+export function computeInvoiceDataQuality(
+  invoices: FinanceInvoiceRow[],
+): InvoiceDataQuality {
+  let missingProject = 0;
+  let missingLaunch = 0;
+  for (const i of invoices) {
+    if (i.status === "anulada") continue;
+    if (i.project_id == null) missingProject += 1;
+    if (i.launch_id == null) missingLaunch += 1;
+  }
+  return { missingProject, missingLaunch };
+}
+
+// Re-export para consumidores del módulo — evita un import más.
+export type { Ownership };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Cuentas por pagar (AP)

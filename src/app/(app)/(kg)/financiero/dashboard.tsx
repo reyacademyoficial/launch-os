@@ -93,6 +93,10 @@ export interface FinancieroDashboardData {
     readonly settlementsInPeriod: number;
     readonly expensesInPeriod: number;
     readonly payrollInPeriod: number;
+    /** Facturas no anuladas sin project_id — defecto de carga a resolver. */
+    readonly invoicesMissingProject: number;
+    /** Facturas no anuladas sin launch_id — venta suelta legítima o vínculo faltante. */
+    readonly invoicesMissingLaunch: number;
   };
   readonly stats: {
     readonly expensesTotal: number;
@@ -100,6 +104,15 @@ export interface FinancieroDashboardData {
     readonly clientBalance: number;
   };
   readonly revenue: FinancieroKpi;
+  /**
+   * Facturación del grupo (todas las empresas, bruto de origen). KPI de
+   * CONTEXTO — NO se suma al ingreso ni al estado de resultados. La regla
+   * del bloque 6b-rev es magnitudes separadas siempre.
+   */
+  readonly groupVolume: {
+    readonly value: number;
+    readonly count: number;
+  };
   readonly revenueSeries: RevenueSeries;
   readonly netProfit: FinancieroKpi;
   readonly cash: CashSnapshot;
@@ -154,7 +167,7 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
     switch (open) {
       case "revenue":
         return {
-          title: "Facturación",
+          title: "Ingreso de Kingrow",
           value: fMoney(data.revenue.value),
           parts: data.revenue.parts,
           sources: data.revenue.sources,
@@ -262,10 +275,10 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
       <div style={gridStyle}>
         <div style={span(3)}>
           <HeroKpi
-            label="Facturación"
+            label="Ingreso de Kingrow"
             value={data.revenue.value}
             format={fMoney}
-            sub={`Período · ${data.period.label}`}
+            sub={`Liquidaciones + ventas sueltas propias · ${data.period.label}`}
             tone="positive"
             featured
             spark={shownRevenueTrend.map((b) => b.revenue)}
@@ -449,16 +462,29 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
           />
         </div>
         <div style={span(2)}>
+          {/*
+            Volumen bruto del grupo (todas las empresas). Está acá como
+            SupportKpi — jerárquicamente subordinado al Ingreso de Kingrow
+            de arriba — para que quede visualmente claro que NO es plata
+            de Kingrow. Regla del bloque 6b-rev: nunca sumadas.
+            El burn mensual ya se lee en el subtítulo del HeroKpi de Runway
+            (arriba), así que este slot no pierde información.
+          */}
           <SupportKpi
-            label="Burn mensual"
-            value={data.burn}
+            label="Facturación del grupo"
+            value={data.groupVolume.value}
             format={fMoneyK}
-            tone={data.burn > 0 ? "warning" : "neutral"}
+            tone="neutral"
           />
         </div>
       </div>
 
-      {/* ═════════════════════ StatRow (nivel 3) ═════════════════════ */}
+      {/* ═════════════════════ StatRow (nivel 3) ═════════════════════
+        Contadores de calidad de dato al final: el sistema no puede
+        diferenciar una venta suelta legítima (sin lanzamiento a propósito)
+        de un vínculo faltante. Que estén a la vista para que alguien los
+        revise — la diferencia es plata contada o no contada.
+      */}
       <StatRow
         items={[
           { l: "Gastos del período", v: fMoney(data.stats.expensesTotal) },
@@ -466,6 +492,9 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
           { l: clientBalanceLabel(data.stats.clientBalance), v: fMoney(Math.abs(data.stats.clientBalance)) },
           { l: "Facturas pendientes", v: fCount(data.counts.invoicesPending) },
           { l: "Liquidaciones del período", v: fCount(data.counts.settlementsInPeriod) },
+          { l: "Facturas del grupo (cobradas)", v: fCount(data.groupVolume.count) },
+          { l: "Facturas sin proyecto", v: fCount(data.counts.invoicesMissingProject) },
+          { l: "Facturas sin lanzamiento", v: fCount(data.counts.invoicesMissingLaunch) },
         ]}
       />
 

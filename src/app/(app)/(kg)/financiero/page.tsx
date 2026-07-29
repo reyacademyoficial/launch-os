@@ -6,12 +6,15 @@ import {
   computeAccountsReceivable,
   computeBurnRate,
   computeCashFlow,
+  computeGroupInvoicing,
+  computeInvoiceDataQuality,
   computeNetWorth,
   computeProfit,
   sumExpensesNet,
   sumPayrollTotal,
 } from "@/lib/finance/kpis";
 import { fPct } from "@/lib/finance/format";
+import type { Ownership } from "@/lib/finance/invoice-classification";
 import {
   inPeriodDate,
   inPeriodTs,
@@ -21,7 +24,7 @@ import {
   resolveFetchFloor,
   resolvePeriod,
 } from "@/lib/finance/period";
-import { computeRevenue } from "@/lib/finance/revenue";
+import { computeRevenue, type OwnershipResolver } from "@/lib/finance/revenue";
 import { classifyRunway } from "@/lib/finance/runway";
 import type {
   FinanceAssetRow,
@@ -66,6 +69,10 @@ type AssetRowWithMeta = FinanceAssetRow & {
   readonly updated_at: string;
 };
 type LaunchNameRow = { readonly id: string; readonly name: string | null };
+type ProjectOwnershipRow = {
+  readonly id: string;
+  readonly ownership: "propia" | "externa";
+};
 
 export default async function FinancieroPage({
   searchParams,
@@ -108,10 +115,12 @@ export default async function FinancieroPage({
     // Invoices: OR entre "paid_at NULL" (pendientes → alimentan AR sin filtro
     // de fecha) y "paid_at >= piso" (cobradas dentro de la ventana). Un
     // `.gte("paid_at", ...)` a secas descartaría las pendientes y rompería AR.
+    // `project_id` + `launch_id` (0064 + 0098) alimentan la clasificación de
+    // 6b-rev — sin ellos no se puede decidir qué factura es ingreso propio.
     supabase
       .from("invoices")
       .select(
-        "amount_gross, tax_amount, status, paid_at, due_date, issue_date",
+        "project_id, launch_id, amount_gross, tax_amount, status, paid_at, due_date, issue_date",
       )
       .or(`paid_at.is.null,paid_at.gte.${fetchFloorYmd}`),
     supabase
@@ -159,6 +168,35 @@ export default async function FinancieroPage({
     );
   }
 
+  // Ownership de los projects referenciados por las invoices. Se resuelve
+  // UNA sola vez: el mapa alimenta tanto al selector del período como a las
+  // 12 iteraciones del sparkline. Sin este pooling, computeRevenue haría 12
+  // queries idénticas y las inicializaciones del clasificador se volverían
+  // pesadas sin motivo. Regla del feedback del brief.
+  const projectIdsInInvoices = Array.from(
+    new Set(
+      invoices
+        .map((i) => i.project_id)
+        .filter((pid): pid is string => pid != null),
+    ),
+  );
+  const ownershipByProjectId = new Map<string, Ownership>();
+  if (projectIdsInInvoices.length > 0) {
+    const projectsRes = await supabase
+      .from("projects")
+      .select("id, ownership")
+      .in("id", projectIdsInInvoices);
+    const projectRows = (projectsRes.data ?? []) as ProjectOwnershipRow[];
+    for (const row of projectRows) {
+      ownershipByProjectId.set(row.id, row.ownership);
+    }
+  }
+  // Si un project_id de la factura no aparece en el mapa (borrado, RLS,
+  // race), el resolver devuelve null y el clasificador lo trata como
+  // third-party (nunca inflar el ingreso).
+  const resolveOwnership: OwnershipResolver = (projectId) =>
+    projectId == null ? null : ownershipByProjectId.get(projectId) ?? null;
+
   // ═════════════════════════════════════════════════════════════════════════
   // Filtrado por período. Los selectores no filtran por fecha (regla del
   // módulo); el caller elige la función por TIPO de columna:
@@ -192,7 +230,17 @@ export default async function FinancieroPage({
   const revenue = computeRevenue({
     settlements: settlementsInPeriod,
     invoices: invoicesRevenueInPeriod,
+    resolveOwnership,
   });
+
+  // Volumen del grupo: total de facturas cobradas en el período de TODAS las
+  // empresas. KPI de contexto que NUNCA se suma al ingreso ni al P&L.
+  const groupInvoicing = computeGroupInvoicing(invoicesRevenueInPeriod);
+
+  // Calidad de dato: contadores sobre TODAS las facturas no anuladas de la
+  // ventana traída (no solo las cobradas). Dos contadores separados porque
+  // se arreglan de formas distintas (asignar project vs vincular launch).
+  const invoiceDataQuality = computeInvoiceDataQuality(invoices);
 
   const opExNet = sumExpensesNet(expensesInPeriod);
   const payrollTotal = sumPayrollTotal(payrollInPeriod);
@@ -211,6 +259,7 @@ export default async function FinancieroPage({
 
   const ar = computeAccountsReceivable({
     invoices, // AR = todas las pendientes, sin filtro de período
+    resolveOwnership,
     favorKingrowBalance: Math.max(-clientBalance(clientTransfers), 0),
   });
   const ap = computeAccountsPayable({
@@ -276,11 +325,15 @@ export default async function FinancieroPage({
   // Sparkline: itera sobre las arrays COMPLETAS (no las `*InPeriod`) para tener
   // los 12 meses. Bucket comparte shape con Period (`fromYmd`/`toYmd`), así que
   // reutilizamos las mismas dos funciones — timestamptz vs date — por columna.
+  // Sparkline: `resolveOwnership` se calcula UNA vez arriba y se reutiliza
+  // en las 12 iteraciones. Pooling explícito porque el hot loop no puede
+  // ir a Supabase por bucket (regla del feedback del brief).
   const buckets = lastMonths(12);
   const revenueBuckets = buckets.map((b) => {
     const rev = computeRevenue({
       settlements: settlements.filter((s) => inPeriodTs(s.closed_at, b)),
       invoices: invoices.filter((i) => inPeriodDate(i.paid_at, b)),
+      resolveOwnership,
     });
     return { label: b.label, revenue: rev.revenueTotal };
   });
@@ -356,6 +409,8 @@ export default async function FinancieroPage({
       settlementsInPeriod: settlementsInPeriod.length,
       expensesInPeriod: expensesInPeriod.length,
       payrollInPeriod: payrollInPeriod.length,
+      invoicesMissingProject: invoiceDataQuality.missingProject,
+      invoicesMissingLaunch: invoiceDataQuality.missingLaunch,
     },
     stats: {
       expensesTotal: opExNet,
@@ -366,8 +421,14 @@ export default async function FinancieroPage({
       value: revenue.revenueTotal,
       tone: "positive",
       parts: [
-        { l: "Liquidaciones (Kingrow retenido)", v: revenue.revenueFromSettlements },
-        { l: "Facturas cobradas (neto)", v: revenue.revenueFromInvoices },
+        {
+          l: "Liquidaciones (Kingrow retenido)",
+          v: revenue.revenueFromSettlements,
+        },
+        {
+          l: "Ventas sueltas de empresas propias",
+          v: revenue.revenueFromDirectSales,
+        },
         { l: "Otros ingresos", v: revenue.otherIncome },
       ],
       sources: [
@@ -379,9 +440,13 @@ export default async function FinancieroPage({
         {
           table: "invoices",
           field: "amount_gross − tax_amount",
-          cond: "status = cobrada",
+          cond: "status=cobrada · sin launch_id · projects.ownership=propia",
         },
       ],
+    },
+    groupVolume: {
+      value: groupInvoicing.totalNet,
+      count: groupInvoicing.count,
     },
     revenueSeries: { buckets: revenueBuckets, delta: revDelta },
     netProfit: {
@@ -434,7 +499,7 @@ export default async function FinancieroPage({
         {
           table: "invoices",
           field: "amount_gross − tax_amount",
-          cond: "status ∉ {cobrada, anulada}",
+          cond: "status ∉ {cobrada, anulada} · sin launch_id · projects.ownership=propia",
         },
         {
           table: "client_transfers",

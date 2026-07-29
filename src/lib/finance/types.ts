@@ -34,11 +34,19 @@ export interface FinanceLaunchSettlementRow {
 export type InvoiceStatus = "emitida" | "cobrada" | "vencida" | "anulada";
 
 /**
- * Subset de `invoices` (0064). Se factura el fee de Kingrow al cliente
- * externo. Solo cuentan como ingreso las de status='cobrada' con paid_at.
+ * Subset de `invoices` (0064 + 0098). `project_id` identifica a la empresa
+ * que emite (0064) — el ownership vive en `projects.ownership` y se resuelve
+ * en el caller, no acá. `launch_id` (0098) distingue una factura de
+ * lanzamiento (volumen del grupo) de una venta suelta; NULL = suelta.
  * amount_gross incluye IVA; el selector usa el NETO (gross - tax).
+ *
+ * La clasificación de una factura en `kingrow-income | group-volume |
+ * third-party` NO vive en el shape — vive en `invoice-classification.ts`.
+ * Cambiar la regla es UN solo lugar.
  */
 export interface FinanceInvoiceRow {
+  project_id: string | null;
+  launch_id: string | null;
   amount_gross: number;
   tax_amount: number;
   status: InvoiceStatus;

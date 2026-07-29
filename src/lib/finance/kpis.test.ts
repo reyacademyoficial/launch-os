@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { computeRevenue } from "./revenue";
+import type { Ownership } from "./invoice-classification";
+import { computeRevenue, type OwnershipResolver } from "./revenue";
 import {
   clientBalance,
   computeAccountsPayable,
   computeAccountsReceivable,
   computeBurnRate,
   computeCashFlow,
+  computeGroupInvoicing,
+  computeInvoiceDataQuality,
   computeNetWorth,
   computeProfit,
   computeRunway,
@@ -50,6 +53,8 @@ function payroll(overrides: Partial<FinancePayrollRow> = {}): FinancePayrollRow 
 
 function invoice(overrides: Partial<FinanceInvoiceRow> = {}): FinanceInvoiceRow {
   return {
+    project_id: null,
+    launch_id: null,
     amount_gross: 0,
     tax_amount: 0,
     status: "emitida",
@@ -59,6 +64,13 @@ function invoice(overrides: Partial<FinanceInvoiceRow> = {}): FinanceInvoiceRow 
     ...overrides,
   };
 }
+
+/** Resolver de ownership a partir de un mapa simple. */
+function resolver(map: Record<string, Ownership>): OwnershipResolver {
+  return (pid) => (pid == null ? null : map[pid] ?? null);
+}
+
+const NO_OWNERSHIP: OwnershipResolver = () => null;
 
 function transfer(
   overrides: Partial<FinanceClientTransferRow> = {},
@@ -227,27 +239,134 @@ describe("computeNetWorth", () => {
 // ══════════════════ AR / AP ══════════════════
 
 describe("computeAccountsReceivable", () => {
-  it("cuenta invoices emitida + vencida (no cobradas ni anuladas)", () => {
+  it("cuenta como AR de Kingrow solo las 'kingrow-income' pendientes", () => {
+    // Todas propias + sin launch → todas 'kingrow-income'. Solo las
+    // pendientes cuentan; cobrada y anulada quedan fuera.
     const ar = computeAccountsReceivable({
       invoices: [
-        invoice({ amount_gross: 1210, tax_amount: 210, status: "emitida" }),
-        invoice({ amount_gross: 6050, tax_amount: 1050, status: "vencida" }),
-        invoice({ amount_gross: 5000, tax_amount: 0, status: "cobrada" }),   // NO
-        invoice({ amount_gross: 3000, tax_amount: 0, status: "anulada" }),  // NO
+        invoice({
+          project_id: "propia-1",
+          amount_gross: 1210,
+          tax_amount: 210,
+          status: "emitida",
+        }),
+        invoice({
+          project_id: "propia-1",
+          amount_gross: 6050,
+          tax_amount: 1050,
+          status: "vencida",
+        }),
+        invoice({
+          project_id: "propia-1",
+          amount_gross: 5000,
+          status: "cobrada",
+        }),
+        invoice({
+          project_id: "propia-1",
+          amount_gross: 3000,
+          status: "anulada",
+        }),
       ],
+      resolveOwnership: resolver({ "propia-1": "propia" }),
     });
     expect(ar.invoicesCount).toBe(2);
-    expect(ar.invoicesReceivableGross).toBe(7260);      // 1210 + 6050
-    expect(ar.invoicesReceivableNet).toBe(6000);        // 1000 + 5000
+    expect(ar.invoicesReceivableGross).toBe(7260); // 1210 + 6050
+    expect(ar.invoicesReceivableNet).toBe(6000); // 1000 + 5000
     expect(ar.totalReceivable).toBe(6000);
+    expect(ar.thirdPartyReceivableNet).toBe(0);
   });
 
-  it("suma favorKingrowBalance al totalReceivable", () => {
+  it("nunca mezcla plata de Kingrow con plata de terceros", () => {
+    // Una factura pendiente de Maestro Charcutero (externa, sin launch)
+    // es plata que espera Maestro, no Kingrow. Va al balde de terceros y
+    // NUNCA se suma al total AR.
+    const ar = computeAccountsReceivable({
+      invoices: [
+        invoice({
+          project_id: "rey",
+          amount_gross: 10000,
+          status: "emitida",
+        }),
+        invoice({
+          project_id: "maestro",
+          amount_gross: 50000,
+          status: "emitida",
+        }),
+        // Factura de lanzamiento de una empresa propia: group-volume,
+        // tampoco es AR de Kingrow (la liquidación la resolverá).
+        invoice({
+          project_id: "rey",
+          launch_id: "launch-1",
+          amount_gross: 20000,
+          status: "vencida",
+        }),
+      ],
+      resolveOwnership: resolver({ rey: "propia", maestro: "externa" }),
+    });
+    expect(ar.invoicesCount).toBe(1);
+    expect(ar.invoicesReceivableNet).toBe(10000);
+    expect(ar.totalReceivable).toBe(10000); // NUNCA 80000
+    expect(ar.thirdPartyCount).toBe(2);
+    expect(ar.thirdPartyReceivableNet).toBe(70000);
+  });
+
+  it("factura sin project_id (defecto de carga) cae a terceros, no a Kingrow", () => {
+    const ar = computeAccountsReceivable({
+      invoices: [
+        invoice({ project_id: null, amount_gross: 5000, status: "emitida" }),
+      ],
+      resolveOwnership: NO_OWNERSHIP,
+    });
+    expect(ar.invoicesCount).toBe(0);
+    expect(ar.totalReceivable).toBe(0);
+    expect(ar.thirdPartyReceivableNet).toBe(5000);
+  });
+
+  it("suma favorKingrowBalance al totalReceivable de Kingrow", () => {
     const ar = computeAccountsReceivable({
       invoices: [],
+      resolveOwnership: NO_OWNERSHIP,
       favorKingrowBalance: 4000,
     });
     expect(ar.totalReceivable).toBe(4000);
+  });
+});
+
+// ══════════════════ Volumen del grupo (contexto, NO ingreso) ══════════════════
+
+describe("computeGroupInvoicing", () => {
+  it("suma neto de TODAS las facturas cobradas sin distinguir clasificación", () => {
+    const g = computeGroupInvoicing([
+      invoice({ project_id: "rey", amount_gross: 12100, tax_amount: 2100, status: "cobrada" }),
+      invoice({ project_id: "maestro", amount_gross: 6050, tax_amount: 1050, status: "cobrada" }),
+      invoice({ project_id: "rey", launch_id: "l1", amount_gross: 20000, status: "cobrada" }),
+      invoice({ project_id: "rey", amount_gross: 999, status: "emitida" }), // NO
+      invoice({ project_id: "rey", amount_gross: 999, status: "anulada" }), // NO
+    ]);
+    expect(g.count).toBe(3);
+    expect(g.totalNet).toBe(35000); // 10k + 5k + 20k
+  });
+
+  it("input vacío → todo en 0", () => {
+    const g = computeGroupInvoicing([]);
+    expect(g.count).toBe(0);
+    expect(g.totalNet).toBe(0);
+  });
+});
+
+// ══════════════════ Calidad de dato ══════════════════
+
+describe("computeInvoiceDataQuality", () => {
+  it("dos contadores separados; ignora anuladas", () => {
+    const q = computeInvoiceDataQuality([
+      invoice({ project_id: "p", launch_id: "l" }),
+      invoice({ project_id: null, launch_id: "l" }), // sin project
+      invoice({ project_id: "p", launch_id: null }), // sin launch
+      invoice({ project_id: null, launch_id: null }), // ambos
+      invoice({ project_id: null, launch_id: null, status: "anulada" }), // ignorada
+    ]);
+    expect(q.missingProject).toBe(2);
+    expect(q.missingLaunch).toBe(2);
   });
 });
 
@@ -362,29 +481,42 @@ describe("computeRunway", () => {
 
 describe("Pipeline integrado — cifras que se compone entre módulos", () => {
   it("revenue → profit → margin cierra la aritmética", () => {
-    // Escenario: mes con 1 liquidación (Kingrow retiene 30k), 1 factura de
-    // fee cobrada (10k neto), gastos operativos 8k neto, nómina 15k. Sin
-    // impuestos ni costos directos separados.
+    // Escenario: mes con 1 liquidación (Kingrow retiene 30k) + 1 factura
+    // de retainer de una empresa propia (10k neto, kingrow-income),
+    // gastos operativos 8k neto, nómina 15k. Sin impuestos ni costos
+    // directos separados.
     const revenue = computeRevenue({
       settlements: [
-        { kingrow_retained: 30000, status: "liquidada",
-          closed_at: "2026-07-15", created_at: "2026-07-01" },
+        {
+          kingrow_retained: 30000,
+          status: "liquidada",
+          closed_at: "2026-07-15",
+          created_at: "2026-07-01",
+        },
       ],
       invoices: [
-        { amount_gross: 12100, tax_amount: 2100, status: "cobrada",
-          paid_at: "2026-07-20", due_date: "2026-07-15",
-          issue_date: "2026-07-01" },
+        {
+          project_id: "rey",
+          launch_id: null,
+          amount_gross: 12100,
+          tax_amount: 2100,
+          status: "cobrada",
+          paid_at: "2026-07-20",
+          due_date: "2026-07-15",
+          issue_date: "2026-07-01",
+        },
       ],
+      resolveOwnership: resolver({ rey: "propia" }),
     });
-    expect(revenue.revenueTotal).toBe(40000);   // 30k + 10k
+    expect(revenue.revenueTotal).toBe(40000); // 30k + 10k
 
     const profit = computeProfit({
       revenue: revenue.revenueTotal,
       operatingExpenses: 8000,
       payroll: 15000,
     });
-    expect(profit.grossProfit).toBe(40000);      // sin directCosts
-    expect(profit.operatingProfit).toBe(17000);  // 40k − 8k − 15k
+    expect(profit.grossProfit).toBe(40000); // sin directCosts
+    expect(profit.operatingProfit).toBe(17000); // 40k − 8k − 15k
     expect(profit.netProfit).toBe(17000);
     expect(profit.netMargin).toBeCloseTo(0.425); // 42.5%
   });
@@ -402,8 +534,14 @@ describe("Pipeline integrado — cifras que se compone entre módulos", () => {
 
     const ar = computeAccountsReceivable({
       invoices: [
-        invoice({ amount_gross: 6050, tax_amount: 1050, status: "emitida" }),
+        invoice({
+          project_id: "rey",
+          amount_gross: 6050,
+          tax_amount: 1050,
+          status: "emitida",
+        }),
       ],
+      resolveOwnership: resolver({ rey: "propia" }),
     });
     expect(ar.totalReceivable).toBe(5000);
 
