@@ -68,7 +68,11 @@
       "Bash(cat .env.example)",
       "Bash(grep -v \"//\")",
       "Bash(npx --no-install next build)",
-      "Read(//c/Users/40306/AppData/Local/Temp/claude/C--Users-40306-Desktop-Rey-academy-Descargas-launch-os/46a6ae87-bc11-43f8-b67e-07583f0ccb92/tasks/**)"
+      "Read(//c/Users/40306/AppData/Local/Temp/claude/C--Users-40306-Desktop-Rey-academy-Descargas-launch-os/46a6ae87-bc11-43f8-b67e-07583f0ccb92/tasks/**)",
+      "Bash(echo \"tsc-exit=$?\")",
+      "Bash(tee /tmp/dev.log)",
+      "Bash(kill %1)",
+      "Bash(jobs)"
     ]
   }
 }
