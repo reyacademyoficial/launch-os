@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  firstDayNMonthsAgo,
   inPeriodDate,
   inPeriodTs,
   KG_TZ,
+  lastClosedMonths,
   lastMonths,
   overlapsPeriodDate,
+  resolveFetchFloor,
   resolvePeriod,
   toCalendarYmd,
 } from "./period";
@@ -185,6 +188,83 @@ describe("lastMonths", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // KG_TZ / toCalendarYmd — sanity
 // ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// lastClosedMonths + firstDayNMonthsAgo + resolveFetchFloor (Bloque 6b-fix)
+// ═══════════════════════════════════════════════════════════════════════════
+describe("lastClosedMonths — ventana fija para el burn", () => {
+  it("excluye el mes en curso (day-3 no infla el runway)", () => {
+    const early = new Date("2026-07-03T09:00:00Z"); // día 3 de julio
+    const late = new Date("2026-07-30T09:00:00Z"); // día 30 de julio
+    const w1 = lastClosedMonths(3, early);
+    const w2 = lastClosedMonths(3, late);
+    // Mismo mes → misma ventana. `now` intra-mes no la mueve.
+    expect(w1.fromYmd).toBe("2026-04-01");
+    expect(w1.toYmd).toBe("2026-06-30");
+    expect(w2.fromYmd).toBe("2026-04-01");
+    expect(w2.toYmd).toBe("2026-06-30");
+  });
+
+  it("3 meses cerrados anteriores al mes actual", () => {
+    const w = lastClosedMonths(3, NOW); // now = 2026-07-15
+    expect(w.fromYmd).toBe("2026-04-01");
+    expect(w.toYmd).toBe("2026-06-30");
+    expect(w.monthsInWindow).toBe(3);
+  });
+
+  it("wrap enero: 3 meses cerrados desde diciembre del año anterior", () => {
+    const jan = new Date("2026-01-10T09:00:00Z");
+    const w = lastClosedMonths(3, jan);
+    expect(w.fromYmd).toBe("2025-10-01");
+    expect(w.toYmd).toBe("2025-12-31");
+  });
+
+  it("la ventana NO depende de `?range` — se llama sin período", () => {
+    // Test estructural: la firma no acepta `range/period` como parámetro.
+    // Verificamos por inspección de tipo (TS lo enforza en compile-time);
+    // el test es un guardián documental.
+    const w = lastClosedMonths(3, NOW);
+    expect(w).toEqual({
+      fromYmd: "2026-04-01",
+      toYmd: "2026-06-30",
+      monthsInWindow: 3,
+    });
+  });
+});
+
+describe("firstDayNMonthsAgo", () => {
+  it("13 meses atrás desde 2026-07-15 → 2025-06-01", () => {
+    expect(firstDayNMonthsAgo(13, NOW)).toBe("2025-06-01");
+  });
+  it("0 meses atrás → primer día del mes actual", () => {
+    expect(firstDayNMonthsAgo(0, NOW)).toBe("2026-07-01");
+  });
+  it("wrap enero: 3 meses atrás desde 2026-01-10 → 2025-10-01", () => {
+    expect(firstDayNMonthsAgo(3, new Date("2026-01-10T09:00:00Z"))).toBe(
+      "2025-10-01",
+    );
+  });
+});
+
+describe("resolveFetchFloor — guard del piso de 13 meses", () => {
+  it("caso normal: período dentro del piso → devuelve el piso", () => {
+    // period.fromYmd = 2026-07-01 (mes actual), piso 13m = 2025-06-01
+    const piso = resolveFetchFloor("2026-07-01", 13, NOW);
+    expect(piso).toBe("2025-06-01");
+  });
+
+  it("guard: período que empieza ANTES del piso → devuelve period.fromYmd (no trunca)", () => {
+    // Simula un preset largo (?from=2024-01-01) — el fetch se abre hasta
+    // ese piso ampliado para que el KPI del período no pierda rows.
+    const piso = resolveFetchFloor("2024-01-01", 13, NOW);
+    expect(piso).toBe("2024-01-01");
+  });
+
+  it("empate exacto: período empieza el mismo día que el piso → devuelve el piso", () => {
+    const piso = resolveFetchFloor("2025-06-01", 13, NOW);
+    expect(piso).toBe("2025-06-01");
+  });
+});
+
 describe("KG_TZ constant + toCalendarYmd", () => {
   it("la zona vive en una única constante", () => {
     expect(KG_TZ).toBe("America/Argentina/Buenos_Aires");

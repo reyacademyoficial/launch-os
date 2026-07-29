@@ -73,7 +73,8 @@
       "Bash(tee /tmp/dev.log)",
       "Bash(kill %1)",
       "Bash(jobs)",
-      "Bash(echo \"tsc=$?\")"
+      "Bash(echo \"tsc=$?\")",
+      "Bash(command -v npx supabase)"
     ]
   }
 }

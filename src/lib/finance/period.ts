@@ -230,6 +230,67 @@ export interface MonthBucket extends YmdRange {
  * Últimos N meses completos + mes en curso hasta hoy. Cronológico: viejo → nuevo.
  * El último bucket se corta a `now` en KG_TZ para no dibujar futuro.
  */
+// ═══════════════════════════════════════════════════════════════════════════
+// Ventanas cerradas y pisos de fetch (Bloque 6b-fix)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Ventana de N meses calendario CERRADOS, terminando en el mes anterior a
+ * `now`. El mes en curso queda excluido porque está incompleto — usada por el
+ * cálculo del burn, que necesita gastos representativos (no la foto del día 3).
+ *
+ * Ej: `lastClosedMonths(3, now=2026-07-15)` → 2026-04-01..2026-06-30.
+ */
+export function lastClosedMonths(
+  n: number,
+  now: Date = new Date(),
+): YmdRange & { readonly monthsInWindow: number } {
+  const nowYmd = toCalendarYmd(now);
+  const [nowY, nowM] = nowYmd.split("-").map(Number) as [number, number, number];
+  // Mes anterior al actual — el último cerrado (con wrap enero → dic año anterior).
+  const lastY = nowM === 1 ? nowY - 1 : nowY;
+  const lastM = nowM === 1 ? 12 : nowM - 1;
+  const firstTotalMonths = lastY * 12 + (lastM - 1) - (n - 1);
+  const firstY = Math.floor(firstTotalMonths / 12);
+  const firstM = (firstTotalMonths % 12) + 1;
+  const fromYmd = `${firstY}-${pad2(firstM)}-01`;
+  const toYmd = `${lastY}-${pad2(lastM)}-${pad2(lastDayOfMonth(lastY, lastM))}`;
+  return { fromYmd, toYmd, monthsInWindow: n };
+}
+
+/**
+ * Primer día calendario (KG_TZ) del mes que está N meses atrás desde `now`,
+ * contando el mes actual como 0. Ej: con now=2026-07-15 y n=13 → "2025-06-01".
+ * Usado por `resolveFetchFloor` para el piso del fetch del sparkline.
+ */
+export function firstDayNMonthsAgo(
+  n: number,
+  now: Date = new Date(),
+): string {
+  const nowYmd = toCalendarYmd(now);
+  const [nowY, nowM] = nowYmd.split("-").map(Number) as [number, number, number];
+  const total = nowY * 12 + (nowM - 1) - n;
+  const y = Math.floor(total / 12);
+  const m = (total % 12) + 1;
+  return `${y}-${pad2(m)}-01`;
+}
+
+/**
+ * Piso de `.gte()` para el fetch del sparkline de N meses, con guard: si el
+ * período pedido (`periodFromYmd`) empieza ANTES del piso natural, el piso se
+ * amplía para no truncar el KPI del período. Hoy los 3 presets caen dentro de
+ * 13 meses; el guard blinda contra futuros presets más largos o un `?from=`
+ * ad-hoc por URL.
+ */
+export function resolveFetchFloor(
+  periodFromYmd: string,
+  monthsBack: number,
+  now: Date = new Date(),
+): string {
+  const piso = firstDayNMonthsAgo(monthsBack, now);
+  return periodFromYmd < piso ? periodFromYmd : piso;
+}
+
 export function lastMonths(n: number, now: Date = new Date()): MonthBucket[] {
   const nowYmd = toCalendarYmd(now);
   const [nowY, nowM] = nowYmd.split("-").map(Number) as [number, number, number];

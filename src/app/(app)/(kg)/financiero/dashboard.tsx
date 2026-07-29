@@ -57,10 +57,15 @@ export interface CashSnapshot {
   readonly bucketCount: number;
 }
 
+/**
+ * Runway ya CLASIFICADO por `classifyRunway` (src/lib/finance/runway.ts):
+ * `months = null` cuando hay que mostrar em-dash; `reason` guía el hint y el
+ * tono. El "∞" no se usa en ningún caso — burn = 0 se interpreta como "no hay
+ * datos" y ese es su propio `reason`.
+ */
 export interface RunwaySnapshot {
-  /** null = burn ≤ 0 (infinito). undefined si snapshot stale. */
-  readonly months: number | null | undefined;
-  readonly stale: boolean;
+  readonly months: number | null;
+  readonly reason: "ok" | "stale-snapshot" | "no-burn-data";
 }
 
 export interface ExpenseCategory {
@@ -213,16 +218,17 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
     }
   }, [open, data]);
 
+  // Runway tone: si el clasificador no dio "ok" (stale-snapshot o no-burn-data)
+  // → neutral, no queremos pintar advertencia sobre un dato ausente. Con "ok"
+  // los umbrales son los de siempre (≥12 positivo, ≥6 warning, resto negativo).
   const runwayTone: HeroKpiTone =
-    data.runway.stale || data.runway.months === undefined
+    data.runway.reason !== "ok" || data.runway.months == null
       ? "neutral"
-      : data.runway.months === null
+      : data.runway.months >= 12
         ? "positive"
-        : data.runway.months >= 12
-          ? "positive"
-          : data.runway.months >= 6
-            ? "warning"
-            : "negative";
+        : data.runway.months >= 6
+          ? "warning"
+          : "negative";
 
   const cfTone: SupportKpiTone = data.cashFlow.value >= 0 ? "positive" : "negative";
   const netTone: HeroKpiTone = data.netProfit.value >= 0 ? "positive" : "negative";
@@ -300,16 +306,8 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
           <HeroKpi
             label="Runway"
             value={data.runway.months ?? 0}
-            format={(n) => {
-              if (data.runway.stale) return "—";
-              if (data.runway.months === null) return "∞";
-              return fMonths(n);
-            }}
-            sub={
-              data.runway.stale
-                ? "Requiere actualizar el snapshot de caja"
-                : `Burn ${fMoneyK(data.burn)}/mes`
-            }
+            format={(n) => (data.runway.months == null ? "—" : fMonths(n))}
+            sub={runwaySubtitle(data.runway.reason, data.burn)}
             tone={runwayTone}
           />
         </div>
@@ -644,6 +642,17 @@ function cashSubtitle(cash: CashSnapshot): string {
   const d = new Date(cash.snapshotDate);
   const formatted = d.toLocaleDateString("es-AR", { day: "numeric", month: "short" });
   return `Snapshot de activos · ${formatted}`;
+}
+
+function runwaySubtitle(
+  reason: RunwaySnapshot["reason"],
+  burn: number,
+): string {
+  if (reason === "stale-snapshot") return "Requiere actualizar el snapshot de caja";
+  if (reason === "no-burn-data") return "Sin gastos registrados en los últimos 3 meses";
+  // Explicita la ventana: el usuario no puede creer que el burn responde al
+  // ?range elegido arriba — es fijo, 3 meses cerrados.
+  return `Burn ${fMoneyK(burn)}/mes · promedio de los últimos 3 meses cerrados`;
 }
 
 function statusLabel(s: "abierta" | "liquidada" | "transferida"): string {

@@ -8,7 +8,6 @@ import {
   computeCashFlow,
   computeNetWorth,
   computeProfit,
-  computeRunway,
   sumExpensesNet,
   sumPayrollTotal,
 } from "@/lib/finance/kpis";
@@ -16,11 +15,14 @@ import { fPct } from "@/lib/finance/format";
 import {
   inPeriodDate,
   inPeriodTs,
+  lastClosedMonths,
   lastMonths,
   overlapsPeriodDate,
+  resolveFetchFloor,
   resolvePeriod,
 } from "@/lib/finance/period";
 import { computeRevenue } from "@/lib/finance/revenue";
+import { classifyRunway } from "@/lib/finance/runway";
 import type {
   FinanceAssetRow,
   FinanceBankMovementRow,
@@ -76,6 +78,13 @@ export default async function FinancieroPage({
 
   const supabase = await createClient();
 
+  // Piso del fetch para las dos tablas que alimentan el sparkline de 12 meses:
+  // `.gte()` a 13 meses atrás (calendario KG_TZ) para no traer historia entera.
+  // El `resolveFetchFloor` blinda contra que el período pedido empiece antes
+  // del piso — hoy los 3 presets caen dentro, pero un preset más largo o un
+  // `?from=` ad-hoc por URL bajarían el piso automáticamente.
+  const fetchFloorYmd = resolveFetchFloor(period.fromYmd, 13);
+
   // ───────────── Fetch: RLS org-scope filtra por `can_edit_organization`.
   // Un rol cliente ni siquiera llega acá (el gate está en `(app)/layout.tsx`);
   // aunque llegara, la RLS le devuelve arrays vacíos. Las escrituras están
@@ -94,12 +103,17 @@ export default async function FinancieroPage({
       .from("launch_settlements")
       .select(
         "kingrow_retained, collected_total, owed_to_client, status, closed_at, created_at, launch_id",
-      ),
+      )
+      .gte("closed_at", fetchFloorYmd),
+    // Invoices: OR entre "paid_at NULL" (pendientes → alimentan AR sin filtro
+    // de fecha) y "paid_at >= piso" (cobradas dentro de la ventana). Un
+    // `.gte("paid_at", ...)` a secas descartaría las pendientes y rompería AR.
     supabase
       .from("invoices")
       .select(
         "amount_gross, tax_amount, status, paid_at, due_date, issue_date",
-      ),
+      )
+      .or(`paid_at.is.null,paid_at.gte.${fetchFloorYmd}`),
     supabase
       .from("expenses")
       .select(
@@ -228,18 +242,32 @@ export default async function FinancieroPage({
       : null;
   const stale = ageDays != null && ageDays > CASH_SNAPSHOT_STALE_DAYS;
 
+  // Burn: ventana FIJA de 3 meses calendario cerrados en KG_TZ, independiente
+  // del `?range` elegido. Mes en curso excluido por incompleto (a día 3 el burn
+  // saldría subestimado y el runway inflado). El sub del Runway lo declara
+  // explícitamente en el dashboard para no engañar al lector.
+  const burnWindow = lastClosedMonths(3);
+  const burnExpenses = expenses.filter((e) =>
+    inPeriodDate(e.expense_date, burnWindow),
+  );
+  const burnPayroll = payroll.filter((p) =>
+    overlapsPeriodDate(p.period_start, p.period_end, burnWindow),
+  );
   const burn = computeBurnRate({
-    expenses: expensesInPeriod,
-    payroll: payrollInPeriod,
-    monthsInWindow: period.monthsInWindow,
+    expenses: burnExpenses,
+    payroll: burnPayroll,
+    monthsInWindow: burnWindow.monthsInWindow,
   });
 
-  // Runway `undefined` cuando el snapshot está stale — la UI muestra "—".
-  // Runway `null` cuando burn ≤ 0 → "∞". Runway `number` en cualquier otro
-  // caso. La distinción viaja explícita hasta el componente.
-  const runwayMonths = stale
-    ? undefined
-    : computeRunway({ cashOnHand, monthlyBurn: burn });
+  // Runway: política de UI (stale-snapshot / no-burn-data / ok) delegada en
+  // `classifyRunway`. Reemplaza el mapeo previo que devolvía "∞" cuando el burn
+  // era 0 — hoy asumimos que burn=0 = "no hay gastos cargados", no que Kingrow
+  // no gaste (regla acordada en 6b-fix, sección 1.1).
+  const runway = classifyRunway({
+    cashOnHand,
+    monthlyBurn: burn,
+    snapshotStale: stale,
+  });
 
   // ═════════════════════════════════════════════════════════════════════════
   // Tendencia mensual (12 meses) — únicamente revenue. Es la ÚNICA serie
@@ -377,7 +405,7 @@ export default async function FinancieroPage({
       stale,
       bucketCount: cashAssets.length,
     },
-    runway: { months: runwayMonths, stale },
+    runway,
     burn,
     cashFlow: {
       value: cashFlow.netCashFlow,
