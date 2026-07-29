@@ -72,7 +72,8 @@
       "Bash(echo \"tsc-exit=$?\")",
       "Bash(tee /tmp/dev.log)",
       "Bash(kill %1)",
-      "Bash(jobs)"
+      "Bash(jobs)",
+      "Bash(echo \"tsc=$?\")"
     ]
   }
 }

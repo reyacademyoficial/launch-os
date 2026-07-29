@@ -14,9 +14,10 @@ import {
 } from "@/lib/finance/kpis";
 import { fPct } from "@/lib/finance/format";
 import {
-  inPeriod,
+  inPeriodDate,
+  inPeriodTs,
   lastMonths,
-  overlapsPeriod,
+  overlapsPeriodDate,
   resolvePeriod,
 } from "@/lib/finance/period";
 import { computeRevenue } from "@/lib/finance/revenue";
@@ -145,24 +146,30 @@ export default async function FinancieroPage({
   }
 
   // ═════════════════════════════════════════════════════════════════════════
-  // Filtrado por período — hecho acá (no en el selector), respetando la regla
-  // acordada: los selectores no filtran por fecha, el caller pasa rows filtr.
+  // Filtrado por período. Los selectores no filtran por fecha (regla del
+  // módulo); el caller elige la función por TIPO de columna:
+  //   - `closed_at` de settlements es TIMESTAMPTZ → inPeriodTs (calendario AR)
+  //   - todo el resto (paid_at, expense_date, period_*, occurred_at, date)
+  //     son DATE → inPeriodDate / overlapsPeriodDate (slice-safe)
+  // El sparkline replica esa misma decisión row-a-row más abajo.
   // ═════════════════════════════════════════════════════════════════════════
   const settlementsInPeriod = settlements.filter((s) =>
-    inPeriod(s.closed_at, period),
+    inPeriodTs(s.closed_at, period),
   );
-  const invoicesRevenueInPeriod = invoices.filter((i) => inPeriod(i.paid_at, period));
+  const invoicesRevenueInPeriod = invoices.filter((i) =>
+    inPeriodDate(i.paid_at, period),
+  );
   const expensesInPeriod = expenses.filter((e) =>
-    inPeriod(e.expense_date, period),
+    inPeriodDate(e.expense_date, period),
   );
   const payrollInPeriod = payroll.filter((p) =>
-    overlapsPeriod(p.period_start, p.period_end, period),
+    overlapsPeriodDate(p.period_start, p.period_end, period),
   );
   const bankMovementsInPeriod = bankMovements.filter((m) =>
-    inPeriod(m.occurred_at, period),
+    inPeriodDate(m.occurred_at, period),
   );
   const clientTransfersInPeriod = clientTransfers.filter((t) =>
-    inPeriod(t.date, period),
+    inPeriodDate(t.date, period),
   );
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -238,19 +245,14 @@ export default async function FinancieroPage({
   // Tendencia mensual (12 meses) — únicamente revenue. Es la ÚNICA serie
   // temporal real a nivel org (regla del artefacto, sección 4 del OK).
   // ═════════════════════════════════════════════════════════════════════════
+  // Sparkline: itera sobre las arrays COMPLETAS (no las `*InPeriod`) para tener
+  // los 12 meses. Bucket comparte shape con Period (`fromYmd`/`toYmd`), así que
+  // reutilizamos las mismas dos funciones — timestamptz vs date — por columna.
   const buckets = lastMonths(12);
   const revenueBuckets = buckets.map((b) => {
     const rev = computeRevenue({
-      settlements: settlements.filter((s) => {
-        if (!s.closed_at) return false;
-        const t = new Date(s.closed_at).getTime();
-        return t >= b.from.getTime() && t <= b.to.getTime();
-      }),
-      invoices: invoices.filter((i) => {
-        if (!i.paid_at) return false;
-        const t = new Date(i.paid_at).getTime();
-        return t >= b.from.getTime() && t <= b.to.getTime();
-      }),
+      settlements: settlements.filter((s) => inPeriodTs(s.closed_at, b)),
+      invoices: invoices.filter((i) => inPeriodDate(i.paid_at, b)),
     });
     return { label: b.label, revenue: rev.revenueTotal };
   });
@@ -318,8 +320,8 @@ export default async function FinancieroPage({
     period: {
       key: period.key,
       label: period.label,
-      rangeStart: period.from.toISOString(),
-      rangeEnd: period.to.toISOString(),
+      rangeStart: period.fromYmd,
+      rangeEnd: period.toYmd,
     },
     counts: {
       invoicesPending: ar.invoicesCount,
