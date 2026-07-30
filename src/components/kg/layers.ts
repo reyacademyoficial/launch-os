@@ -34,11 +34,13 @@ export interface KgLayer {
  * v1 Kingrow — capas + módulos habilitados.
  *
  * Diferencia con el artefacto original:
- *   - Comercial-módulo (Comercial ≠ capa Comercial) fuera de v1.
  *   - IA descartada.
  *   - "Lanzamientos" acá es la puerta al project picker de LaunchOS, no un
  *     dashboard más — el módulo lleva a /lanzamientos donde se elige proyecto,
  *     y de ahí se entra al ProjectShell.
+ *   - "Comercial" (módulo, no capa) agregado en 6d-C: hostea la
+ *     administración cross-proyecto de productos, equipo de ventas,
+ *     comisiones y ranking, que antes vivía en `/proyectos/[id]/*`.
  */
 export const LAYERS: readonly KgLayer[] = [
   {
@@ -54,6 +56,7 @@ export const LAYERS: readonly KgLayer[] = [
     label: "Comercial",
     modules: [
       { id: "marketing", label: "Marketing", href: "/marketing", icon: IconMkt },
+      { id: "comercial", label: "Comercial", href: "/comercial", icon: IconOrg },
       { id: "lanzamientos", label: "Lanzamientos", href: "/lanzamientos", icon: IconLaunch },
       { id: "clientes", label: "Clientes", href: "/clientes", icon: IconCli },
     ],

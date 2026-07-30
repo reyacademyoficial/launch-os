@@ -19,7 +19,6 @@ export function ProjectSidebar({ profile }: { readonly profile: SessionProfile }
     profile.role === "superadmin" ||
     profile.role === "admin" ||
     profile.role === "dev";
-  const showProducts = showCommissions;
 
   return (
     <aside
@@ -42,34 +41,29 @@ export function ProjectSidebar({ profile }: { readonly profile: SessionProfile }
           label="Ventas"
           scopedSuffixes={[
             "/ventas",
-            "/equipo",
-            "/leaderboard",
             ...(showCommissions ? ["/comisiones"] : []),
           ]}
         >
+          {/*
+            "Equipo" y "Ranking" salieron en 6d-C1: ambos son cross-proyecto
+            y se administran desde /comercial/equipo (ranking migra en C2).
+            Comisiones sigue provisionalmente acá hasta 6d-C2.
+          */}
           <NavLink scopedSuffix="/ventas">Ventas</NavLink>
-          <NavLink scopedSuffix="/equipo">Equipo</NavLink>
-          <NavLink scopedSuffix="/leaderboard">Ranking</NavLink>
           {showCommissions && (
             <NavLink scopedSuffix="/comisiones">Comisiones</NavLink>
           )}
         </NavGroup>
         <NavGroup
           label="Admin y finanzas"
-          scopedSuffixes={[
-            "/cobros",
-            ...(showProducts ? ["/productos"] : []),
-          ]}
+          scopedSuffixes={["/cobros"]}
         >
           {/*
-            "Bancos" salió en 6d-A y "Métodos de pago" en 6d-B: ambos son
-            de Kingrow y se administran desde /financiero. Productos sigue
-            provisionalmente acá y migra en un bloque futuro (6d-C).
+            "Bancos" y "Métodos de pago" salieron en 6d-A/B, "Productos" en
+            6d-C1: todos viven en Kingrow. Solo queda Cobros — es operación
+            del lanzamiento, no configuración administrativa.
           */}
           <NavLink scopedSuffix="/cobros">Cobros</NavLink>
-          {showProducts && (
-            <NavLink scopedSuffix="/productos">Productos</NavLink>
-          )}
         </NavGroup>
       </nav>
     </aside>
