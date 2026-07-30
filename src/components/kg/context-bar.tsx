@@ -11,14 +11,23 @@ export interface ContextBarStat {
 
 /**
  * KG · ContextBar. Barra STICKY con el contexto de la vista mientras el
- * usuario scrollea. `top: 62` deja espacio a la topbar (ajustable si el
- * shell cambia de altura). Usa glass-2 para diferenciar del header.
+ * usuario scrollea.
+ *
+ * top=0: el scroll parent es `<main>` (ver `KingrowShell`), y la topbar vive
+ * FUERA del main. Es decir, "arriba" del scroll parent es el borde superior
+ * del main — que está pegado a la topbar. Antes usábamos `top: 62` asumiendo
+ * que el scroll era del viewport; era incorrecto para el shell actual y hacía
+ * que la barra "flotara" con un hueco por encima al scrollear.
+ *
+ * Fondo SÓLIDO: al ser sticky, si el fondo es semitransparente el contenido
+ * scrolleado se ve borrosamente por detrás — se percibía como "pisar la
+ * información". Con --kg-surface-1-solid la barra tapa limpio.
  */
 export function ContextBar({
   icon,
   title,
   stats,
-  top = 62,
+  top = 0,
 }: {
   readonly icon: ReactNode;
   readonly title: string;
@@ -27,11 +36,11 @@ export function ContextBar({
 }) {
   return (
     <div
-      className="kg-glass-2"
       style={{
         position: "sticky",
         top,
         zIndex: 40,
+        background: "var(--kg-surface-1-solid)",
         borderRadius: "var(--kg-r-16)",
         border: "1px solid var(--kg-border-subtle)",
         padding: "12px 20px",

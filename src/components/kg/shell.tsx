@@ -36,7 +36,14 @@ export function KingrowShell({
         </MobileSidebar>
         <div className="flex min-w-0 flex-1 flex-col">
           <KgTopbar theme={theme} />
-          <main className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 md:px-8 md:py-8">
+          {/*
+            Padding-top corto (pt-4) para que la ContextBar sticky de cada
+            página quede visualmente pegada a la topbar apenas se scrollea,
+            en vez de aparecer flotando con un hueco. El padding lateral y
+            el inferior se mantienen para respirar. Antes era `py-6 md:py-8`
+            — el eje Y arriba se recortó a propósito.
+          */}
+          <main className="flex-1 overflow-y-auto px-4 pb-6 pt-4 sm:px-6 md:px-8 md:pb-8">
             <div className="mx-auto w-full max-w-[1360px]">{children}</div>
           </main>
         </div>
