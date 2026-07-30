@@ -21,3 +21,20 @@ export async function listPaymentMethods(
 
   return (data ?? []) as unknown as PaymentMethodRow[];
 }
+
+/**
+ * Todos los métodos de pago que el usuario ve por RLS (todos los proyectos
+ * accesibles). Superadmin ve todos. Usado por la pantalla de saldos de
+ * bancos en Kingrow — un banco puede recibir cobros de métodos de múltiples
+ * proyectos, así que necesitamos el universo completo para computar bien
+ * el `fromPayments` de cada banco.
+ */
+export async function listAllPaymentMethods(): Promise<PaymentMethodRow[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("payment_methods")
+    .select("*")
+    .order("active", { ascending: false })
+    .order("name", { ascending: true });
+  return (data ?? []) as unknown as PaymentMethodRow[];
+}

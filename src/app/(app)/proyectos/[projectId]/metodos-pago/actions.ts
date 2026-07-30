@@ -16,11 +16,12 @@ function str(formData: FormData, key: string): string {
 
 /**
  * Parsea `bank_id` del form: "" (Sin banco) → null; UUID → validado contra la
- * DB para asegurar que sea del mismo proyecto (RLS ya bloquea inserts a
- * banks ajenos, pero adelantar el check da mejor mensaje).
+ * DB para asegurar que exista. Post 0101 los bancos son org-scope; RLS ya
+ * bloquea references a bancos de otras orgs. El adelanto es solo para dar
+ * mejor mensaje UX.
  */
 async function parseBankId(
-  projectId: string,
+  _projectId: string,
   formData: FormData,
 ): Promise<{ bankId: string | null } | { error: string }> {
   const raw = str(formData, "bank_id");
@@ -31,9 +32,8 @@ async function parseBankId(
     .from("banks")
     .select("id")
     .eq("id", raw)
-    .eq("project_id", projectId)
     .maybeSingle();
-  if (!data) return { error: "Banco inexistente o de otro proyecto." };
+  if (!data) return { error: "Banco inexistente." };
   return { bankId: raw };
 }
 

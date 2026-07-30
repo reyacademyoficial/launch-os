@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 
 import { PaymentMethodDelete } from "@/components/dashboard/payment-methods/payment-method-delete";
 import { PaymentMethodModal } from "@/components/dashboard/payment-methods/payment-method-modal";
-import { listBanksForProject } from "@/lib/banks/list";
+import { listBanks } from "@/lib/banks/list";
 import { fmtMoney } from "@/lib/format";
 import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { requireSessionProfile, userCanEditProject } from "@/lib/supabase/auth";
@@ -40,7 +40,7 @@ export default async function PaymentMethodsPage({
   const [methods, totals, banks] = await Promise.all([
     listPaymentMethods(projectId),
     aggregateAmountByMethod(projectId),
-    listBanksForProject(projectId),
+    listBanks(),
   ]);
 
   const createAction = createPaymentMethod.bind(null, projectId);

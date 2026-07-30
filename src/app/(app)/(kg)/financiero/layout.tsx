@@ -29,6 +29,7 @@ export default async function FinancieroLayout({
     { href: "/financiero/facturas", label: "Facturas" },
     { href: "/financiero/gastos", label: "Gastos" },
     { href: "/financiero/nomina", label: "Nómina" },
+    { href: "/financiero/bancos", label: "Bancos" },
     { href: "/financiero/movimientos", label: "Movimientos" },
     { href: "/financiero/transferencias", label: "Transferencias" },
     { href: "/financiero/liquidaciones", label: "Liquidaciones" },
