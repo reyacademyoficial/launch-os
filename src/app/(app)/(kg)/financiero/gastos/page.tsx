@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
-import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { IconFin } from "@/components/kg/icons";
 import { KgPaginator } from "@/components/kg/paginator";
 import { KgParamPills } from "@/components/kg/param-pills";
@@ -10,6 +9,9 @@ import { fCount, fMoney } from "@/lib/finance/format";
 import { resolvePeriod, type Period } from "@/lib/finance/period";
 import type { FinanceExpenseRow } from "@/lib/finance/types";
 import { createClient } from "@/lib/supabase/server";
+
+import type { UnconciledMovement } from "./link-payment-drawer";
+import { GastosView, type ExpenseRowData } from "./gastos-view";
 
 export const metadata: Metadata = { title: "Gastos · Financiero" };
 
@@ -35,9 +37,32 @@ interface ExpenseDbRow extends FinanceExpenseRow {
   readonly description: string;
   readonly supplier_id: string | null;
   readonly bank_movement_id: string | null;
+  readonly currency: string | null;
+  readonly notes: string | null;
+  readonly due_date: string | null;
 }
 
 interface SupplierRow {
+  readonly id: string;
+  readonly name: string;
+}
+
+interface BankMovementDbRow {
+  readonly id: string;
+  readonly bank_id: string;
+  readonly kind: "in" | "out";
+  readonly amount: number;
+  readonly occurred_at: string;
+  readonly description: string | null;
+}
+
+interface BankRow {
+  readonly id: string;
+  readonly name: string;
+  readonly project_id: string;
+}
+
+interface ProjectNameRow {
   readonly id: string;
   readonly name: string;
 }
@@ -57,10 +82,11 @@ export default async function GastosPage({
 
   const supabase = await createClient();
 
+  // ─── Expenses filtrados por el estado + rango elegidos ────────────────
   let query = supabase
     .from("expenses")
     .select(
-      "id, description, category, supplier_id, amount_gross, tax_amount, expense_date, due_date, paid_at, bank_movement_id",
+      "id, description, category, supplier_id, amount_gross, tax_amount, currency, expense_date, due_date, paid_at, bank_movement_id, notes",
     )
     .order("expense_date", { ascending: false });
 
@@ -75,20 +101,70 @@ export default async function GastosPage({
   const expensesRes = await query;
   const expenses = (expensesRes.data ?? []) as unknown as ExpenseDbRow[];
 
+  // ─── Bank movements NO conciliados (para el drawer de vincular pago + contador) ─
+  // "No conciliado" = no aparece como bank_movement_id de NINGÚN expense.
+  // Se resuelve con una query aparte + set difference. postgrest-js no
+  // tiene NOT EXISTS elegante — dos queries es la forma pragmática.
+  //
+  // El fetch de bank_movements se limita a los últimos 12 meses para no
+  // traer historia entera cuando eventualmente crezca. Cuando el humano
+  // vincule un pago viejo (>12m) el drawer no lo va a mostrar — decisión
+  // pragmática: los pagos frescos son el 99% del uso.
+  const twelveMonthsAgo = ymdMonthsAgo(12);
+  const [allMovementsRes, allExpensesBankIdsRes] = await Promise.all([
+    supabase
+      .from("bank_movements")
+      .select("id, bank_id, kind, amount, occurred_at, description")
+      .gte("occurred_at", twelveMonthsAgo)
+      .order("occurred_at", { ascending: false }),
+    supabase
+      .from("expenses")
+      .select("bank_movement_id")
+      .not("bank_movement_id", "is", null),
+  ]);
+
+  const allMovements =
+    (allMovementsRes.data ?? []) as unknown as BankMovementDbRow[];
+  const linkedBankIds = new Set<string>();
+  for (const r of (allExpensesBankIdsRes.data ?? []) as {
+    bank_movement_id: string | null;
+  }[]) {
+    if (r.bank_movement_id) linkedBankIds.add(r.bank_movement_id);
+  }
+  const unconciled = allMovements.filter((m) => !linkedBankIds.has(m.id));
+
+  // ─── Resolver nombres de suppliers, banks, projects ──────────────────
   const supplierIds = Array.from(
     new Set(
       expenses.map((e) => e.supplier_id).filter((id): id is string => id != null),
     ),
   );
-  const suppliersRes =
+  const bankIds = Array.from(new Set(unconciled.map((m) => m.bank_id)));
+
+  const [suppliersRes, banksRes] = await Promise.all([
     supplierIds.length > 0
-      ? await supabase
-          .from("suppliers")
-          .select("id, name")
-          .in("id", supplierIds)
-      : { data: [] as SupplierRow[] };
+      ? supabase.from("suppliers").select("id, name").in("id", supplierIds)
+      : Promise.resolve({ data: [] as SupplierRow[] }),
+    bankIds.length > 0
+      ? supabase
+          .from("banks")
+          .select("id, name, project_id")
+          .in("id", bankIds)
+      : Promise.resolve({ data: [] as BankRow[] }),
+  ]);
+
   const supplierNameById = new Map<string, string>(
     ((suppliersRes.data ?? []) as SupplierRow[]).map((s) => [s.id, s.name]),
+  );
+  const banks = (banksRes.data ?? []) as BankRow[];
+  const bankById = new Map<string, BankRow>(banks.map((b) => [b.id, b]));
+  const projectIds = Array.from(new Set(banks.map((b) => b.project_id)));
+  const projectsRes =
+    projectIds.length > 0
+      ? await supabase.from("projects").select("id, name").in("id", projectIds)
+      : { data: [] as ProjectNameRow[] };
+  const projectNameById = new Map<string, string>(
+    ((projectsRes.data ?? []) as ProjectNameRow[]).map((p) => [p.id, p.name]),
   );
 
   const totalCount = expenses.length;
@@ -102,78 +178,40 @@ export default async function GastosPage({
     .filter((e) => e.paid_at == null)
     .reduce((a, e) => a + (e.amount_gross - e.tax_amount), 0);
 
-  interface Row {
-    readonly id: string;
-    readonly expenseDate: string;
-    readonly description: string;
-    readonly category: string;
-    readonly supplier: string;
-    readonly amountGross: number;
-    readonly taxAmount: number;
-    readonly amountNet: number;
-    readonly dueDate: string | null;
-    readonly paidAt: string | null;
-  }
-  const rows: Row[] = paged.map((e) => ({
+  // ─── Serializar filas para el cliente ────────────────────────────────
+  const rows: ExpenseRowData[] = paged.map((e) => ({
     id: e.id,
     expenseDate: e.expense_date,
     description: e.description,
-    category: e.category ?? "—",
+    category: e.category ?? null,
     supplier: e.supplier_id
       ? supplierNameById.get(e.supplier_id) ?? "—"
       : "—",
     amountGross: Number(e.amount_gross),
     taxAmount: Number(e.tax_amount),
     amountNet: Number(e.amount_gross) - Number(e.tax_amount),
+    currency: e.currency ?? "ARS",
     dueDate: e.due_date,
     paidAt: e.paid_at,
+    bankMovementId: e.bank_movement_id,
+    notes: e.notes,
   }));
 
-  const columns: Column<Row>[] = [
-    { key: "date", label: "Fecha", render: (r) => fmtDate(r.expenseDate) },
-    {
-      key: "description",
-      label: "Descripción",
-      render: (r) => (
-        <span title={r.description} style={ellipsis}>
-          {r.description}
-        </span>
-      ),
-    },
-    { key: "category", label: "Categoría", render: (r) => r.category },
-    { key: "supplier", label: "Proveedor", render: (r) => r.supplier },
-    {
-      key: "gross",
-      label: "Bruto",
-      align: "right",
-      numeric: true,
-      render: (r) => fMoney(r.amountGross),
-    },
-    {
-      key: "iva",
-      label: "IVA",
-      align: "right",
-      numeric: true,
-      render: (r) => fMoney(r.taxAmount),
-    },
-    {
-      key: "net",
-      label: "Neto",
-      align: "right",
-      numeric: true,
-      render: (r) => fMoney(r.amountNet),
-    },
-    {
-      key: "due",
-      label: "Vence",
-      render: (r) => (r.dueDate ? fmtDate(r.dueDate) : "—"),
-    },
-    {
-      key: "paid",
-      label: "Estado",
-      render: (r) => <PaidPill paidAt={r.paidAt} />,
-    },
-  ];
+  const unconciledForDrawer: UnconciledMovement[] = unconciled.map((m) => {
+    const bank = bankById.get(m.bank_id);
+    return {
+      id: m.id,
+      amount: Number(m.amount),
+      occurredAt: m.occurred_at,
+      currency: "ARS",
+      kind: m.kind,
+      bankName: bank?.name ?? "—",
+      projectName: bank
+        ? projectNameById.get(bank.project_id) ?? "—"
+        : "—",
+      description: m.description ?? "",
+    };
+  });
 
   function buildHref(overrides: {
     paid?: PaidParam;
@@ -197,9 +235,15 @@ export default async function GastosPage({
         icon={<IconFin size={16} />}
         title="Gastos"
         stats={[
-          { l: "Total en la vista", v: fCount(totalCount) },
+          { l: "En la vista", v: fCount(totalCount) },
           { l: "Neto acumulado", v: fMoney(totalNet) },
           { l: "Pendientes de pago (neto)", v: fMoney(impagoNet) },
+          {
+            l: "Movimientos sin conciliar",
+            v: fCount(unconciled.length),
+            // Warning tone si hay muchos — señal de brecha activa.
+            c: unconciled.length > 0 ? "#FFB800" : undefined,
+          },
         ]}
       />
 
@@ -223,13 +267,10 @@ export default async function GastosPage({
       </div>
 
       <Panel title="Gastos" pad={false}>
-        <KgDataTable
-          columns={columns}
+        <GastosView
           rows={rows}
-          rowKey={(r) => r.id}
           totalCount={totalCount}
-          emptyTitle="No hay gastos cargados"
-          emptyHint="Sin gastos cargados, los KPIs Gastos operativos, Utilidad neta y Burn del dashboard financiero quedan en cero. Los movimientos bancarios de salida (pestaña Movimientos) NO alimentan estos KPIs — cargar el gasto acá es lo que los hace visibles."
+          unconciledMovements={unconciledForDrawer}
         />
         <KgPaginator
           page={page}
@@ -241,15 +282,6 @@ export default async function GastosPage({
     </div>
   );
 }
-
-const ellipsis: React.CSSProperties = {
-  display: "inline-block",
-  maxWidth: 320,
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-  verticalAlign: "middle",
-};
 
 function parsePaid(v: string | string[] | undefined): PaidParam {
   if (typeof v !== "string") return "todos";
@@ -266,42 +298,11 @@ function parsePage(v: string | string[] | undefined): number {
   const n = Number.parseInt(v, 10);
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
-function fmtDate(iso: string): string {
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  return d.toLocaleDateString("es-AR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
+function ymdMonthsAgo(months: number): string {
+  const d = new Date();
+  d.setMonth(d.getMonth() - months);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
-
-function PaidPill({ paidAt }: { readonly paidAt: string | null }) {
-  const paid = paidAt != null;
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "3px 10px",
-        borderRadius: 999,
-        background: paid ? "rgba(0,208,132,0.15)" : "rgba(138,138,153,0.15)",
-        color: paid ? "#00D084" : "var(--kg-text-2)",
-        fontSize: 11,
-        fontWeight: 700,
-      }}
-    >
-      <span
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: 999,
-          background: paid ? "#00D084" : "#8A8A99",
-          display: "inline-block",
-        }}
-      />
-      {paid ? `Pagado ${fmtDate(paidAt!)}` : "Impago"}
-    </span>
-  );
+function pad(n: number): string {
+  return n < 10 ? `0${n}` : String(n);
 }
