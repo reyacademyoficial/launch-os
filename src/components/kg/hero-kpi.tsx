@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { CircleBtn } from "./circle-btn";
 import { Delta } from "./delta";
 import { Halo } from "./halo";
+import { KgInfoTooltip } from "./info-tooltip";
 import { Spark } from "./spark";
 import { StateDot } from "./state-dot";
 import type { KgTone } from "./tone";
@@ -58,6 +59,13 @@ export interface HeroKpiProps {
   readonly onOpen?: () => void;
   /** Un solo KPI del bento debería llevar `featured`. */
   readonly featured?: boolean;
+  /**
+   * Explicación del KPI que aparece como tooltip ⓘ al lado del label. Va
+   * para KPIs derivados (Runway, Burn, Ingreso) donde el humano necesita
+   * saber cómo se calcula. Los directos (Caja, Facturación) suelen no
+   * necesitar tooltip.
+   */
+  readonly help?: string;
 }
 
 /**
@@ -107,6 +115,7 @@ export function HeroKpi({
   deltaDir,
   onOpen,
   featured,
+  help,
 }: HeroKpiProps) {
   const shown = useCountUp(value);
   const haloColor = HALO_BY_TONE[tone];
@@ -142,6 +151,7 @@ export function HeroKpi({
           <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
             {label}
           </div>
+          {help && <KgInfoTooltip content={help} />}
         </div>
         {onOpen && <CircleBtn onClick={onOpen} title={`Ver origen de ${label}`} />}
       </div>

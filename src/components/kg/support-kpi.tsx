@@ -1,6 +1,7 @@
 "use client";
 
 import { CircleBtn } from "./circle-btn";
+import { KgInfoTooltip } from "./info-tooltip";
 import { StateDot } from "./state-dot";
 import type { KgTone } from "./tone";
 
@@ -21,6 +22,8 @@ export interface SupportKpiProps {
   readonly format: (n: number) => string;
   readonly tone?: SupportKpiTone;
   readonly onOpen?: () => void;
+  /** Ver `HeroKpiProps.help` — mismo contrato. */
+  readonly help?: string;
 }
 
 export function SupportKpi({
@@ -29,6 +32,7 @@ export function SupportKpi({
   format,
   tone = "neutral",
   onOpen,
+  help,
 }: SupportKpiProps) {
   return (
     <div
@@ -53,6 +57,7 @@ export function SupportKpi({
           <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
             {label}
           </div>
+          {help && <KgInfoTooltip content={help} />}
         </div>
         {onOpen && <CircleBtn onClick={onOpen} title={`Ver origen de ${label}`} />}
       </div>

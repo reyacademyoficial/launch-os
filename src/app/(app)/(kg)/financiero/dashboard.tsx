@@ -315,6 +315,7 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
               format={fMoney}
               sub={cashSubtitle(data.cash)}
               tone="neutral"
+              help="Suma del saldo de todos los activos activos tipo Caja o Banco. Es un snapshot manual: se actualiza cuando editás el saldo desde Financiero → Activos. No se deriva de los movimientos bancarios."
             />
           )}
         </div>
@@ -325,6 +326,7 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
             format={(n) => (data.runway.months == null ? "—" : fMonths(n))}
             sub={runwaySubtitle(data.runway.reason, data.burn)}
             tone={runwayTone}
+            help="Runway = Caja ÷ Burn mensual. Estima cuántos meses te alcanza la caja actual si seguís gastando al ritmo promedio de los últimos 3 meses calendario cerrados. El mes en curso se excluye para no subestimar el burn (a día 3 saldría muy bajo). Muestra '—' cuando no hay gastos en la ventana, '0 meses' cuando la caja se agotó."
           />
         </div>
       </div>
@@ -480,6 +482,7 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
             value={data.burn}
             format={fMoneyK}
             tone={data.burn > 0 ? "warning" : "neutral"}
+            help="Promedio mensual de gastos + nómina de los últimos 3 meses calendario cerrados (ventana fija; el mes en curso queda excluido). Alimenta el cálculo del Runway. Si acabás de cargar gastos con fecha del mes en curso, no van a aparecer acá hasta el mes siguiente — usá la fecha del devengo (cuándo se generó el servicio), no la del pago."
           />
         </div>
       </div>
