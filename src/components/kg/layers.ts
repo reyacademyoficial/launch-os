@@ -89,7 +89,6 @@ export const UTILITY_MODULES: readonly KgModule[] = [
 export const ORGANIZATION_MODULES: readonly KgModule[] = [
   { id: "org-personas", label: "Personas", href: "/organizacion/personas", icon: IconOrg },
   { id: "org-reglas-split", label: "Reglas de split", href: "/organizacion/reglas-split", icon: IconOrg },
-  { id: "liquidaciones", label: "Liquidaciones", href: "/liquidaciones", icon: IconFin },
 ];
 
 /**

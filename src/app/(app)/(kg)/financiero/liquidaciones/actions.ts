@@ -95,7 +95,7 @@ export async function commitCreateSettlement(
     };
   }
 
-  revalidatePath("/liquidaciones");
+  revalidatePath("/financiero/liquidaciones");
   return { ok: true, settlementId: result.settlementId };
 }
 
@@ -151,7 +151,7 @@ export async function closeLaunchSettlement(
     };
   }
 
-  revalidatePath("/liquidaciones");
+  revalidatePath("/financiero/liquidaciones");
   revalidatePath("/financiero");
   return { ok: true, settlementId: closed.id, status: closed.status };
 }
