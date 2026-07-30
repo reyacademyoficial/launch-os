@@ -30,6 +30,7 @@ export default async function FinancieroLayout({
     { href: "/financiero/gastos", label: "Gastos" },
     { href: "/financiero/nomina", label: "Nómina" },
     { href: "/financiero/bancos", label: "Bancos" },
+    { href: "/financiero/metodos-pago", label: "Métodos de pago" },
     { href: "/financiero/movimientos", label: "Movimientos" },
     { href: "/financiero/transferencias", label: "Transferencias" },
     { href: "/financiero/liquidaciones", label: "Liquidaciones" },

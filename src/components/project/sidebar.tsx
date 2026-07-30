@@ -58,18 +58,15 @@ export function ProjectSidebar({ profile }: { readonly profile: SessionProfile }
           label="Admin y finanzas"
           scopedSuffixes={[
             "/cobros",
-            ...(showProducts ? ["/metodos-pago", "/productos"] : []),
+            ...(showProducts ? ["/productos"] : []),
           ]}
         >
           {/*
-            "Bancos" salió de acá en 6d-A: los bancos son de Kingrow, no del
-            proyecto. Se administran desde /financiero/bancos. Métodos de
-            pago y Productos siguen provisionalmente acá y migran en 6d-B.
+            "Bancos" salió en 6d-A y "Métodos de pago" en 6d-B: ambos son
+            de Kingrow y se administran desde /financiero. Productos sigue
+            provisionalmente acá y migra en un bloque futuro (6d-C).
           */}
           <NavLink scopedSuffix="/cobros">Cobros</NavLink>
-          {showProducts && (
-            <NavLink scopedSuffix="/metodos-pago">Métodos de pago</NavLink>
-          )}
           {showProducts && (
             <NavLink scopedSuffix="/productos">Productos</NavLink>
           )}

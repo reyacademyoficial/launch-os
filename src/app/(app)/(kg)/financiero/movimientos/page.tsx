@@ -1,14 +1,20 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
-import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { IconFin } from "@/components/kg/icons";
 import { KgPaginator } from "@/components/kg/paginator";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
+import { listBanks } from "@/lib/banks/list";
 import { fCount, fMoney } from "@/lib/finance/format";
 import { resolvePeriod, type Period } from "@/lib/finance/period";
 import { createClient } from "@/lib/supabase/server";
+
+import type { BankOption } from "./movement-form-drawer";
+import {
+  MovimientosView,
+  type MovementRowData,
+} from "./movimientos-view";
 
 export const metadata: Metadata = { title: "Movimientos · Financiero" };
 
@@ -42,7 +48,8 @@ interface MovementDbRow {
 interface BankRow {
   readonly id: string;
   readonly name: string;
-  readonly project_id: string;
+  readonly project_id: string | null;
+  readonly active: boolean;
 }
 
 interface ProjectNameRow {
@@ -65,9 +72,6 @@ export default async function MovimientosPage({
 
   const supabase = await createClient();
 
-  // Fetch: bank_movements es project-scope pero superadmin ve todo por RLS.
-  // Traemos todo el histórico filtrado y paginamos en TS (44 filas hoy;
-  // llega a miles → migrar a .range() cuando pique el volumen).
   let query = supabase
     .from("bank_movements")
     .select("id, bank_id, kind, amount, occurred_at, description, created_at")
@@ -84,25 +88,33 @@ export default async function MovimientosPage({
   const movRes = await query;
   const movements = (movRes.data ?? []) as unknown as MovementDbRow[];
 
-  // Resolver banco → proyecto en dos queries encadenadas (menos overhead
-  // que un join anidado con `banks(project_id, name, projects(name))` y más
-  // fácil de leer).
-  const bankIds = Array.from(new Set(movements.map((m) => m.bank_id)));
-  const banksRes =
-    bankIds.length > 0
-      ? await supabase.from("banks").select("id, name, project_id").in("id", bankIds)
-      : { data: [] as BankRow[] };
-  const banks = (banksRes.data ?? []) as BankRow[];
+  // Traemos TODOS los bancos (no solo los de los movimientos) para el
+  // selector del drawer de "Nuevo movimiento". `listBanks()` post 0101
+  // trae org-wide con RLS.
+  const banks = (await listBanks()) as unknown as BankRow[];
   const bankById = new Map<string, BankRow>(banks.map((b) => [b.id, b]));
 
-  const projectIds = Array.from(new Set(banks.map((b) => b.project_id)));
-  const projectsRes =
-    projectIds.length > 0
-      ? await supabase.from("projects").select("id, name").in("id", projectIds)
-      : { data: [] as ProjectNameRow[] };
-  const projectNameById = new Map<string, string>(
-    ((projectsRes.data ?? []) as ProjectNameRow[]).map((p) => [p.id, p.name]),
+  // Nombre de proyectos que aparecen ligados a algún banco. Post 0101 el
+  // project_id es NULL para todos, así que en la práctica esto queda vacío
+  // — mostramos "—" en la columna. Se conserva la query por si algún banco
+  // "escrow de proyecto" aparece en el futuro.
+  const projectIds = Array.from(
+    new Set(
+      banks
+        .map((b) => b.project_id)
+        .filter((id): id is string => id != null),
+    ),
   );
+  const projectNameById = new Map<string, string>();
+  if (projectIds.length > 0) {
+    const { data } = await supabase
+      .from("projects")
+      .select("id, name")
+      .in("id", projectIds);
+    for (const p of (data ?? []) as ProjectNameRow[]) {
+      projectNameById.set(p.id, p.name);
+    }
+  }
 
   const totalCount = movements.length;
   const paged = movements.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -115,59 +127,27 @@ export default async function MovimientosPage({
     .reduce((a, m) => a + Number(m.amount), 0);
   const net = cashIn - cashOut;
 
-  interface Row {
-    readonly id: string;
-    readonly occurredAt: string;
-    readonly bank: string;
-    readonly project: string;
-    readonly kind: "in" | "out";
-    readonly amount: number;
-    readonly description: string;
-  }
-  const rows: Row[] = paged.map((m) => {
+  const rows: MovementRowData[] = paged.map((m) => {
     const bank = bankById.get(m.bank_id);
     return {
       id: m.id,
-      occurredAt: m.occurred_at,
-      bank: bank?.name ?? "—",
-      project: bank ? projectNameById.get(bank.project_id) ?? "—" : "—",
+      bankId: m.bank_id,
+      bankName: bank?.name ?? "—",
+      projectName: bank?.project_id
+        ? projectNameById.get(bank.project_id) ?? "—"
+        : "—",
       kind: m.kind,
       amount: Number(m.amount),
+      occurredAt: m.occurred_at,
       description: m.description ?? "",
     };
   });
 
-  const columns: Column<Row>[] = [
-    { key: "date", label: "Fecha", render: (r) => fmtDate(r.occurredAt) },
-    { key: "project", label: "Proyecto", render: (r) => r.project },
-    { key: "bank", label: "Banco", render: (r) => r.bank },
-    {
-      key: "kind",
-      label: "Tipo",
-      render: (r) => <KindPill kind={r.kind} />,
-    },
-    {
-      key: "amount",
-      label: "Monto",
-      align: "right",
-      numeric: true,
-      // Salidas con signo negativo — el color se comunica por la pill de
-      // "Tipo", no por pintar el número. Regla del design system KG.
-      render: (r) => (r.kind === "out" ? fMoney(-r.amount) : fMoney(r.amount)),
-    },
-    {
-      key: "description",
-      label: "Descripción",
-      render: (r) =>
-        r.description ? (
-          <span title={r.description} style={ellipsis}>
-            {r.description}
-          </span>
-        ) : (
-          "—"
-        ),
-    },
-  ];
+  const banksForDrawer: BankOption[] = banks.map((b) => ({
+    id: b.id,
+    name: b.name,
+    active: b.active,
+  }));
 
   function buildHref(overrides: {
     kind?: KindParam;
@@ -218,13 +198,10 @@ export default async function MovimientosPage({
       </div>
 
       <Panel title="Ingresos y egresos bancarios" pad={false}>
-        <KgDataTable
-          columns={columns}
+        <MovimientosView
           rows={rows}
-          rowKey={(r) => r.id}
           totalCount={totalCount}
-          emptyTitle="No hay movimientos bancarios cargados"
-          emptyHint="Los movimientos alimentan el KPI Flujo de caja del dashboard. Cobros de ventas NO se duplican acá — viven en payments; esta tabla es para ingresos/egresos manuales (gastos, retiros, transferencias, ajustes)."
+          banks={banksForDrawer}
         />
         <KgPaginator
           page={page}
@@ -236,15 +213,6 @@ export default async function MovimientosPage({
     </div>
   );
 }
-
-const ellipsis: React.CSSProperties = {
-  display: "inline-block",
-  maxWidth: 360,
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-  verticalAlign: "middle",
-};
 
 function parseKind(v: string | string[] | undefined): KindParam {
   if (typeof v !== "string") return "todos";
@@ -260,45 +228,4 @@ function parsePage(v: string | string[] | undefined): number {
   if (typeof v !== "string") return 1;
   const n = Number.parseInt(v, 10);
   return Number.isFinite(n) && n > 0 ? n : 1;
-}
-function fmtDate(iso: string): string {
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  return d.toLocaleDateString("es-AR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
-}
-
-function KindPill({ kind }: { readonly kind: "in" | "out" }) {
-  const positive = kind === "in";
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "3px 10px",
-        borderRadius: 999,
-        background: positive
-          ? "rgba(0,208,132,0.15)"
-          : "rgba(239,68,68,0.15)",
-        color: positive ? "#00D084" : "#EF4444",
-        fontSize: 11,
-        fontWeight: 700,
-      }}
-    >
-      <span
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: 999,
-          background: positive ? "#00D084" : "#EF4444",
-          display: "inline-block",
-        }}
-      />
-      {positive ? "Entrada" : "Salida"}
-    </span>
-  );
 }
