@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
-import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { IconFin } from "@/components/kg/icons";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount, fMoney } from "@/lib/finance/format";
 import { createClient } from "@/lib/supabase/server";
+
+import { PasivosView, type LiabilityRowData } from "./pasivos-view";
 
 export const metadata: Metadata = { title: "Pasivos · Financiero" };
 
@@ -25,11 +26,14 @@ interface LiabilityDbRow {
   readonly id: string;
   readonly name: string;
   readonly liability_type: string;
+  readonly description: string | null;
   readonly amount: number;
+  readonly currency: string | null;
   readonly incurred_at: string | null;
   readonly due_date: string | null;
   readonly settled_at: string | null;
   readonly active: boolean;
+  readonly notes: string | null;
 }
 
 export default async function PasivosPage({
@@ -44,7 +48,7 @@ export default async function PasivosPage({
   let query = supabase
     .from("liabilities")
     .select(
-      "id, name, liability_type, amount, incurred_at, due_date, settled_at, active",
+      "id, name, liability_type, description, amount, currency, incurred_at, due_date, settled_at, active, notes",
     )
     .order("amount", { ascending: false });
 
@@ -62,53 +66,19 @@ export default async function PasivosPage({
     .filter((l) => l.active && l.settled_at == null)
     .reduce((acc, l) => acc + Number(l.amount), 0);
 
-  interface Row {
-    readonly id: string;
-    readonly name: string;
-    readonly type: string;
-    readonly amount: number;
-    readonly incurredAt: string | null;
-    readonly dueDate: string | null;
-    readonly settledAt: string | null;
-    readonly active: boolean;
-  }
-  const rows: Row[] = liabilities.map((l) => ({
+  const rows: LiabilityRowData[] = liabilities.map((l) => ({
     id: l.id,
     name: l.name,
     type: l.liability_type,
+    description: l.description,
     amount: Number(l.amount),
+    currency: l.currency ?? "ARS",
     incurredAt: l.incurred_at,
     dueDate: l.due_date,
     settledAt: l.settled_at,
+    notes: l.notes,
     active: l.active,
   }));
-
-  const columns: Column<Row>[] = [
-    { key: "name", label: "Nombre", render: (r) => r.name },
-    { key: "type", label: "Tipo", render: (r) => r.type },
-    {
-      key: "amount",
-      label: "Monto",
-      align: "right",
-      numeric: true,
-      render: (r) => fMoney(r.amount),
-    },
-    {
-      key: "incurred",
-      label: "Incurrido",
-      render: (r) => (r.incurredAt ? fmtDate(r.incurredAt) : "—"),
-    },
-    {
-      key: "due",
-      label: "Vence",
-      render: (r) => (r.dueDate ? fmtDate(r.dueDate) : "—"),
-    },
-    {
-      key: "state",
-      label: "Estado",
-      render: (r) => <StatePill row={r} />,
-    },
-  ];
 
   function buildHref(state: StateParam): string {
     if (state === "vigentes") return "/financiero/pasivos";
@@ -138,14 +108,7 @@ export default async function PasivosPage({
       </div>
 
       <Panel title="Pasivos" pad={false}>
-        <KgDataTable
-          columns={columns}
-          rows={rows}
-          rowKey={(r) => r.id}
-          totalCount={totalCount}
-          emptyTitle="No hay pasivos registrados"
-          emptyHint="Los pasivos vigentes (active=true AND settled_at IS NULL) restan del Patrimonio neto del dashboard. Sin pasivos cargados, el patrimonio se estima solo por activos + AP corriente."
-        />
+        <PasivosView rows={rows} totalCount={totalCount} />
       </Panel>
     </div>
   );
@@ -155,69 +118,4 @@ function parseState(v: string | string[] | undefined): StateParam {
   if (typeof v !== "string") return "vigentes";
   const allowed: StateParam[] = ["vigentes", "saldados", "todos"];
   return (allowed as string[]).includes(v) ? (v as StateParam) : "vigentes";
-}
-function fmtDate(iso: string): string {
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  return d.toLocaleDateString("es-AR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
-}
-
-function StatePill({
-  row,
-}: {
-  readonly row: {
-    readonly settledAt: string | null;
-    readonly active: boolean;
-  };
-}) {
-  let label: string;
-  let bg: string;
-  let fg: string;
-  let dot: string;
-  if (row.settledAt != null) {
-    label = `Saldado ${fmtDate(row.settledAt)}`;
-    bg = "rgba(0,208,132,0.15)";
-    fg = "#00D084";
-    dot = "#00D084";
-  } else if (!row.active) {
-    label = "Inactivo";
-    bg = "rgba(138,138,153,0.15)";
-    fg = "var(--kg-text-2)";
-    dot = "#8A8A99";
-  } else {
-    label = "Vigente";
-    bg = "rgba(255,184,0,0.15)";
-    fg = "#FFB800";
-    dot = "#FFB800";
-  }
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "3px 10px",
-        borderRadius: 999,
-        background: bg,
-        color: fg,
-        fontSize: 11,
-        fontWeight: 700,
-      }}
-    >
-      <span
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: 999,
-          background: dot,
-          display: "inline-block",
-        }}
-      />
-      {label}
-    </span>
-  );
 }

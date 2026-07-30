@@ -13,6 +13,7 @@ import {
   sumExpensesNet,
   sumPayrollTotal,
 } from "@/lib/finance/kpis";
+import { CASH_ASSET_TYPES } from "@/lib/finance/asset-types";
 import { fPct } from "@/lib/finance/format";
 import type { Ownership } from "@/lib/finance/invoice-classification";
 import {
@@ -50,7 +51,6 @@ export const metadata: Metadata = { title: "Financiero" };
 // vuelve `—`. Un runway con snapshot viejo y cara de certeza es peor que
 // ningún runway (decisión del bloque 6b, sección 1.1).
 const CASH_SNAPSHOT_STALE_DAYS = 45;
-const CASH_ASSET_TYPES: readonly string[] = ["caja", "banco"];
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
 // ═══════════════════════════════════════════════════════════════════════════
