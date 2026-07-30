@@ -102,6 +102,9 @@ export interface FinancieroDashboardData {
     readonly expensesTotal: number;
     readonly payrollTotal: number;
     readonly clientBalance: number;
+    /** Σ neto de invoices pendientes 'group-volume' + 'third-party'. */
+    readonly thirdPartyReceivable: number;
+    readonly thirdPartyReceivableCount: number;
   };
   readonly revenue: FinancieroKpi;
   /**
@@ -463,18 +466,20 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
         </div>
         <div style={span(2)}>
           {/*
-            Volumen bruto del grupo (todas las empresas). Está acá como
-            SupportKpi — jerárquicamente subordinado al Ingreso de Kingrow
-            de arriba — para que quede visualmente claro que NO es plata
-            de Kingrow. Regla del bloque 6b-rev: nunca sumadas.
-            El burn mensual ya se lee en el subtítulo del HeroKpi de Runway
-            (arriba), así que este slot no pierde información.
+            Burn mensual. Antes se leía en el subtítulo del Runway, pero
+            ese sub solo lo muestra cuando `reason === 'ok'`. En los otros
+            dos estados (stale-snapshot, no-burn-data) el burn desaparecía
+            de la pantalla — justo cuando más importa saber cuánto se está
+            gastando. Está siempre visible acá.
+            Facturación del grupo (que ocupaba este slot) pasa al StatRow.
+            Regla 6b-rev: en las tarjetas, plata de Kingrow; en el StatRow,
+            volumen del grupo.
           */}
           <SupportKpi
-            label="Facturación del grupo"
-            value={data.groupVolume.value}
+            label="Burn mensual"
+            value={data.burn}
             format={fMoneyK}
-            tone="neutral"
+            tone={data.burn > 0 ? "warning" : "neutral"}
           />
         </div>
       </div>
@@ -490,9 +495,16 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
           { l: "Gastos del período", v: fMoney(data.stats.expensesTotal) },
           { l: "Nómina del período", v: fMoney(data.stats.payrollTotal) },
           { l: clientBalanceLabel(data.stats.clientBalance), v: fMoney(Math.abs(data.stats.clientBalance)) },
+          {
+            l: `Facturación del grupo (${fCount(data.groupVolume.count)})`,
+            v: fMoney(data.groupVolume.value),
+          },
+          {
+            l: `Cobros de terceros (${fCount(data.stats.thirdPartyReceivableCount)})`,
+            v: fMoney(data.stats.thirdPartyReceivable),
+          },
           { l: "Facturas pendientes", v: fCount(data.counts.invoicesPending) },
           { l: "Liquidaciones del período", v: fCount(data.counts.settlementsInPeriod) },
-          { l: "Facturas del grupo (cobradas)", v: fCount(data.groupVolume.count) },
           { l: "Facturas sin proyecto", v: fCount(data.counts.invoicesMissingProject) },
           { l: "Facturas sin lanzamiento", v: fCount(data.counts.invoicesMissingLaunch) },
         ]}
@@ -675,13 +687,14 @@ function cashSubtitle(cash: CashSnapshot): string {
 
 function runwaySubtitle(
   reason: RunwaySnapshot["reason"],
-  burn: number,
+  _burn: number,
 ): string {
   if (reason === "stale-snapshot") return "Requiere actualizar el snapshot de caja";
   if (reason === "no-burn-data") return "Sin gastos registrados en los últimos 3 meses";
-  // Explicita la ventana: el usuario no puede creer que el burn responde al
-  // ?range elegido arriba — es fijo, 3 meses cerrados.
-  return `Burn ${fMoneyK(burn)}/mes · promedio de los últimos 3 meses cerrados`;
+  // Ventana explícita: el usuario no puede creer que el runway responde al
+  // ?range elegido arriba — es 3 meses cerrados, fijo. El burn ya tiene su
+  // propia tarjeta (SupportKpi de "Burn mensual"), no lo duplicamos acá.
+  return "Promedio de los últimos 3 meses cerrados";
 }
 
 function statusLabel(s: "abierta" | "liquidada" | "transferida"): string {

@@ -416,6 +416,11 @@ export default async function FinancieroPage({
       expensesTotal: opExNet,
       payrollTotal,
       clientBalance: clientBalance(clientTransfersInPeriod),
+      // Contexto separado del AR de Kingrow — regla 6b-rev: magnitudes
+      // distintas nunca sumadas. Se muestran en el StatRow (nivel 3) con
+      // conteo aparte para que quede claro que son cobros ajenos.
+      thirdPartyReceivable: ar.thirdPartyReceivableNet,
+      thirdPartyReceivableCount: ar.thirdPartyCount,
     },
     revenue: {
       value: revenue.revenueTotal,
