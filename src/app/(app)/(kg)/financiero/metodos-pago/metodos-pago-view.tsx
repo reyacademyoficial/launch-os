@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 
 import { KgDataTable, type Column } from "@/components/kg/data-table";
-import { fMoney } from "@/lib/finance/format";
+import { fmtNative } from "@/lib/money";
 
 import { deletePaymentMethod, setPaymentMethodActive } from "./actions";
 import {
@@ -20,6 +20,10 @@ export interface PaymentMethodRowData {
   readonly bankId: string | null;
   readonly bankName: string | null;
   readonly bankActive: boolean | null;
+  /** Moneda efectiva: del banco si tiene, sino del método. Para render nativo. */
+  readonly effectiveCurrency: "ARS" | "USD";
+  /** Currency del método (nullable en DB, usado al editar). */
+  readonly currency: "ARS" | "USD" | null;
   readonly amountCollected: number;
   readonly active: boolean;
 }
@@ -72,7 +76,7 @@ export function MetodosPagoView({
       label: "Cobrado",
       align: "right",
       numeric: true,
-      render: (r) => fMoney(r.amountCollected),
+      render: (r) => fmtNative(r.amountCollected, r.effectiveCurrency),
     },
     {
       key: "state",
@@ -154,6 +158,7 @@ export function MetodosPagoView({
             projectId: editingRow.projectId,
             name: editingRow.name,
             bankId: editingRow.bankId,
+            currency: editingRow.currency,
           }}
         />
       )}

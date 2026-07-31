@@ -36,6 +36,7 @@ export default async function FinancieroLayout({
     { href: "/financiero/liquidaciones", label: "Liquidaciones" },
     { href: "/financiero/activos", label: "Activos" },
     { href: "/financiero/pasivos", label: "Pasivos" },
+    { href: "/financiero/tasas", label: "Tasas FX" },
   ];
 
   return (

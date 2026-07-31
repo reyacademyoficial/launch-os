@@ -32,6 +32,7 @@ export type ToggleBankActiveResult = { ok: true } | { error: string };
 interface BankPayload {
   readonly name: string;
   readonly openingBalance: number;
+  readonly currency: "ARS" | "USD";
 }
 
 function parseBankFormData(formData: FormData): BankPayload | string {
@@ -47,7 +48,12 @@ function parseBankFormData(formData: FormData): BankPayload | string {
     return "El saldo inicial tiene que ser un número positivo o 0.";
   }
 
-  return { name, openingBalance };
+  const currency = String(formData.get("currency") ?? "").trim();
+  if (currency !== "ARS" && currency !== "USD") {
+    return "La moneda del banco tiene que ser ARS o USD.";
+  }
+
+  return { name, openingBalance, currency };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -82,6 +88,7 @@ export async function createBank(
     project_id: null,
     name: parsed.name,
     opening_balance: parsed.openingBalance,
+    currency: parsed.currency,
     active: true,
   } as never;
 
@@ -119,6 +126,7 @@ export async function updateBank(
   const payload = {
     name: parsed.name,
     opening_balance: parsed.openingBalance,
+    currency: parsed.currency,
   } as never;
 
   const { error } = await supabase

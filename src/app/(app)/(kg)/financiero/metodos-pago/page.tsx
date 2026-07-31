@@ -5,7 +5,8 @@ import { IconFin } from "@/components/kg/icons";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { listBanks } from "@/lib/banks/list";
-import { fCount, fMoney } from "@/lib/finance/format";
+import { fCount } from "@/lib/finance/format";
+import { effectiveCurrency, fmtArs, fmtUsd } from "@/lib/money";
 import { listAllPaymentMethods } from "@/lib/payment-methods/list";
 import { listAccessibleProjects } from "@/lib/projects/list";
 import { createClient } from "@/lib/supabase/server";
@@ -82,7 +83,7 @@ export default async function MetodosPagoPage({
 
   const rows: PaymentMethodRowData[] = filtered.map((m) => {
     const project = projectById.get(m.project_id);
-    const bank = m.bank_id ? bankById.get(m.bank_id) : null;
+    const bank = m.bank_id ? bankById.get(m.bank_id) ?? null : null;
     return {
       id: m.id,
       projectId: m.project_id,
@@ -91,13 +92,22 @@ export default async function MetodosPagoPage({
       bankId: m.bank_id,
       bankName: bank?.name ?? null,
       bankActive: bank?.active ?? null,
+      effectiveCurrency: effectiveCurrency(m, bank),
+      currency: m.currency,
       amountCollected: collectedByMethod.get(m.id) ?? 0,
       active: m.active,
     };
   });
 
   const totalCount = rows.length;
-  const totalCollected = rows.reduce((a, r) => a + r.amountCollected, 0);
+  // Sumamos separado por moneda — sumar ARS + USD no tiene sentido físico.
+  // El total consolidado en USD sale en el dashboard financiero (task #8).
+  const totalCollectedARS = rows
+    .filter((r) => r.effectiveCurrency === "ARS")
+    .reduce((a, r) => a + r.amountCollected, 0);
+  const totalCollectedUSD = rows
+    .filter((r) => r.effectiveCurrency === "USD")
+    .reduce((a, r) => a + r.amountCollected, 0);
   const withoutBank = rows.filter((r) => !r.bankId).length;
 
   // ─── Opciones para el drawer ──────────────────────────────────────────
@@ -108,6 +118,7 @@ export default async function MetodosPagoPage({
   const banksForDrawer: BankOption[] = banks.map((b) => ({
     id: b.id,
     name: b.name,
+    currency: b.currency,
     active: b.active,
   }));
 
@@ -135,7 +146,8 @@ export default async function MetodosPagoPage({
         title="Métodos de pago"
         stats={[
           { l: "En la vista", v: fCount(totalCount) },
-          { l: "Cobrado por estos métodos", v: fMoney(totalCollected) },
+          { l: "Cobrado ARS", v: fmtArs(totalCollectedARS) },
+          { l: "Cobrado USD", v: fmtUsd(totalCollectedUSD) },
           {
             l: "Sin banco asignado",
             v: fCount(withoutBank),

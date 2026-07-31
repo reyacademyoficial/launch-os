@@ -25,6 +25,7 @@ export interface BankInitial {
   readonly id?: string;
   readonly name?: string;
   readonly openingBalance?: number;
+  readonly currency?: "ARS" | "USD";
 }
 
 export interface BankFormDrawerProps {
@@ -109,6 +110,28 @@ function BankFormBody({
         </div>
       </Field>
 
+      <Field label="Moneda" htmlFor="currency" required>
+        <select
+          id="currency"
+          name="currency"
+          required
+          defaultValue={initial?.currency ?? "ARS"}
+          style={inputStyle}
+        >
+          <option value="ARS">ARS — Pesos argentinos</option>
+          <option value="USD">USD — Dólares</option>
+        </select>
+        <div
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)", marginTop: 6 }}
+        >
+          Moneda nativa del banco. El saldo se muestra siempre en esta moneda
+          para coincidir con el banco real; los dashboards convierten a USD
+          usando la tasa del lanzamiento (para cobros) o la tasa mensual del
+          proyecto (para gastos y movimientos).
+        </div>
+      </Field>
+
       <Field label="Saldo inicial" htmlFor="opening_balance">
         <input
           id="opening_balance"
@@ -124,10 +147,10 @@ function BankFormBody({
           className="kg-t7"
           style={{ color: "var(--kg-text-3)", marginTop: 6 }}
         >
-          Saldo del banco al empezar a usar el sistema. Después, cobros
-          (vía métodos de pago) y movimientos manuales lo ajustan
-          automáticamente. Cambiar este valor desplaza todos los saldos
-          calculados hacia adelante.
+          Saldo del banco al empezar a usar el sistema, en la moneda nativa
+          del banco. Después, cobros (vía métodos de pago) y movimientos
+          manuales lo ajustan automáticamente. Cambiar este valor desplaza
+          todos los saldos calculados hacia adelante.
         </div>
       </Field>
 

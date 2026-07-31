@@ -36,6 +36,12 @@ interface PaymentMethodPayload {
   readonly projectId: string;
   readonly name: string;
   readonly bankId: string | null;
+  /**
+   * Solo se persiste cuando el método NO tiene banco. Con banco, la moneda
+   * efectiva se hereda del banco al leer — la columna del método queda null
+   * para evitar dos fuentes de verdad que puedan divergir.
+   */
+  readonly currency: "ARS" | "USD" | null;
 }
 
 function parseFormData(formData: FormData): PaymentMethodPayload | string {
@@ -48,7 +54,16 @@ function parseFormData(formData: FormData): PaymentMethodPayload | string {
   const bankRaw = String(formData.get("bank_id") ?? "").trim();
   const bankId = bankRaw.length === 0 ? null : bankRaw;
 
-  return { projectId, name, bankId };
+  let currency: "ARS" | "USD" | null = null;
+  if (bankId === null) {
+    const raw = String(formData.get("currency") ?? "").trim();
+    if (raw !== "ARS" && raw !== "USD") {
+      return "Elegí la moneda del método (obligatorio cuando no tiene banco).";
+    }
+    currency = raw;
+  }
+
+  return { projectId, name, bankId, currency };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -80,6 +95,7 @@ export async function createPaymentMethod(
     project_id: parsed.projectId,
     name: parsed.name,
     bank_id: parsed.bankId,
+    currency: parsed.currency,
     active: true,
   } as never;
 
@@ -135,6 +151,7 @@ export async function updatePaymentMethod(
   const payload = {
     name: parsed.name,
     bank_id: parsed.bankId,
+    currency: parsed.currency,
     // project_id NO se toca — ver comentario.
   } as never;
 

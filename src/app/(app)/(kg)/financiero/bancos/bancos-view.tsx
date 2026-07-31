@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 
 import { KgDataTable, type Column } from "@/components/kg/data-table";
-import { fMoney } from "@/lib/finance/format";
+import { fmtNative } from "@/lib/money";
 
 import { setBankActive } from "./actions";
 import { BankFormDrawer } from "./bank-form-drawer";
@@ -11,6 +11,7 @@ import { BankFormDrawer } from "./bank-form-drawer";
 export interface BankRowData {
   readonly id: string;
   readonly name: string;
+  readonly currency: "ARS" | "USD";
   readonly openingBalance: number;
   readonly fromPayments: number;
   readonly movementsIn: number;
@@ -35,39 +36,44 @@ export function BancosView({
   const columns: Column<BankRowData>[] = [
     { key: "name", label: "Nombre", render: (r) => r.name },
     {
+      key: "currency",
+      label: "Moneda",
+      render: (r) => r.currency,
+    },
+    {
       key: "opening",
       label: "Saldo inicial",
       align: "right",
       numeric: true,
-      render: (r) => fMoney(r.openingBalance),
+      render: (r) => fmtNative(r.openingBalance, r.currency),
     },
     {
       key: "in",
       label: "Cobros",
       align: "right",
       numeric: true,
-      render: (r) => fMoney(r.fromPayments),
+      render: (r) => fmtNative(r.fromPayments, r.currency),
     },
     {
       key: "mvIn",
       label: "Movim. +",
       align: "right",
       numeric: true,
-      render: (r) => fMoney(r.movementsIn),
+      render: (r) => fmtNative(r.movementsIn, r.currency),
     },
     {
       key: "mvOut",
       label: "Movim. −",
       align: "right",
       numeric: true,
-      render: (r) => fMoney(-r.movementsOut),
+      render: (r) => fmtNative(-r.movementsOut, r.currency),
     },
     {
       key: "total",
       label: "Saldo total",
       align: "right",
       numeric: true,
-      render: (r) => fMoney(r.total),
+      render: (r) => fmtNative(r.total, r.currency),
     },
     {
       key: "state",
@@ -137,6 +143,7 @@ export function BancosView({
             id: editingRow.id,
             name: editingRow.name,
             openingBalance: editingRow.openingBalance,
+            currency: editingRow.currency,
           }}
         />
       )}

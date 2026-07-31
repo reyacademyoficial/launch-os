@@ -6,7 +6,8 @@ import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { computeBankBalances } from "@/lib/banks/balance";
 import { listBanks, listBankMovements } from "@/lib/banks/list";
-import { fCount, fMoney } from "@/lib/finance/format";
+import { fCount } from "@/lib/finance/format";
+import { fmtArs, fmtUsd } from "@/lib/money";
 import { listAllPaymentMethods } from "@/lib/payment-methods/list";
 import { createClient } from "@/lib/supabase/server";
 
@@ -74,6 +75,7 @@ export default async function BancosPage({
     return {
       id: b.id,
       name: b.name,
+      currency: b.currency,
       openingBalance: bal?.opening ?? Number(b.opening_balance),
       fromPayments: bal?.fromPayments ?? 0,
       movementsIn: bal?.movementsIn ?? 0,
@@ -84,12 +86,16 @@ export default async function BancosPage({
   });
 
   const totalCount = rows.length;
-  const totalActivo = rows
-    .filter((r) => r.active)
+  // Sumamos separado por moneda: sumar ARS + USD en la misma numérica no tiene
+  // sentido físico. El total consolidado en USD sale en el dashboard financiero
+  // aplicando la conversión con las tasas del proyecto (task #9).
+  const activeRows = rows.filter((r) => r.active);
+  const totalActivoARS = activeRows
+    .filter((r) => r.currency === "ARS")
     .reduce((acc, r) => acc + r.total, 0);
-  const totalCobros = rows.reduce((acc, r) => acc + r.fromPayments, 0);
-  const totalMovIn = rows.reduce((acc, r) => acc + r.movementsIn, 0);
-  const totalMovOut = rows.reduce((acc, r) => acc + r.movementsOut, 0);
+  const totalActivoUSD = activeRows
+    .filter((r) => r.currency === "USD")
+    .reduce((acc, r) => acc + r.total, 0);
 
   function buildHref(state: ActiveParam): string {
     if (state === "activos") return "/financiero/bancos";
@@ -103,12 +109,8 @@ export default async function BancosPage({
         title="Bancos"
         stats={[
           { l: "En la vista", v: fCount(totalCount) },
-          { l: "Saldo total (activos)", v: fMoney(totalActivo) },
-          { l: "Cobros acumulados", v: fMoney(totalCobros) },
-          {
-            l: "Movim. netos",
-            v: fMoney(totalMovIn - totalMovOut),
-          },
+          { l: "Saldo ARS (activos)", v: fmtArs(totalActivoARS) },
+          { l: "Saldo USD (activos)", v: fmtUsd(totalActivoUSD) },
         ]}
       />
 

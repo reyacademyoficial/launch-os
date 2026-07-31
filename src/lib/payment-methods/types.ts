@@ -18,6 +18,13 @@ export interface PaymentMethodRow {
    * suman al saldo del banco en runtime.
    */
   bank_id: string | null;
+  /**
+   * Moneda del método CUANDO no tiene banco (efectivo, otros). Si `bank_id`
+   * está seteado, la moneda efectiva se hereda del banco y esta columna
+   * queda null para evitar dos fuentes de verdad. Ver `effectiveCurrency`
+   * en `@/lib/money`.
+   */
+  currency: "ARS" | "USD" | null;
   created_at: string;
   updated_at: string;
 }

@@ -74,6 +74,11 @@ interface LaunchWritePayload {
   revenue_collected_manual: number;
   is_evergreen: boolean;
   recycle_target_launch_id: string | null;
+  /**
+   * Tasa ARS por 1 USD para consolidar cobros/spend de este launch en el
+   * dashboard USD. NULL = launch operado en USD nativo, no se convierte.
+   */
+  ars_per_usd: number | null;
 }
 
 // Defaults espejados con DEFAULT_DURATIONS / migraciones del calendario.
@@ -154,8 +159,22 @@ function parseLaunchFromForm(
         str(formData, "is_evergreen") === "on"
           ? (str(formData, "recycle_target_launch_id") || null)
           : null,
+      ars_per_usd: parseFxRate(str(formData, "ars_per_usd")),
     },
   };
+}
+
+/**
+ * Parse defensivo del campo `ars_per_usd`: vacío o inválido → null (launch
+ * en USD nativo, no convierte). Solo devuelve un número > 0 — el CHECK del
+ * DB rechazaría 0/negativo pero no queremos romper el submit por eso, lo
+ * silenciamos a null.
+ */
+function parseFxRate(raw: string): number | null {
+  if (!raw) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
 }
 
 // ─── actions ──────────────────────────────────────────────────────────────────

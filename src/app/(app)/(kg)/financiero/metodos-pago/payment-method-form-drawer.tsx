@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 
 import { Drawer } from "@/components/kg/drawer";
 
@@ -27,6 +27,7 @@ export interface ProjectOption {
 export interface BankOption {
   readonly id: string;
   readonly name: string;
+  readonly currency: "ARS" | "USD";
   readonly active: boolean;
 }
 
@@ -35,6 +36,8 @@ export interface PaymentMethodInitial {
   readonly projectId?: string;
   readonly name?: string;
   readonly bankId?: string | null;
+  /** Solo relevante para métodos sin banco. */
+  readonly currency?: "ARS" | "USD" | null;
 }
 
 export interface PaymentMethodFormDrawerProps {
@@ -101,6 +104,15 @@ function FormBody({
     (b) => b.active || b.id === initial?.bankId,
   );
 
+  // Bank id controlado: cuando pasa a "sin banco" mostramos el selector de
+  // moneda (efectivo/otros necesita explicitar ARS o USD porque no puede
+  // heredar de ningún banco). Con banco elegido, ocultamos el select — la
+  // moneda efectiva la resuelve el helper via bank.currency.
+  const [selectedBankId, setSelectedBankId] = useState<string>(
+    initial?.bankId ?? "",
+  );
+  const requiresCurrency = selectedBankId === "";
+
   return (
     <form
       action={formAction}
@@ -161,13 +173,14 @@ function FormBody({
         <select
           id="bank_id"
           name="bank_id"
-          defaultValue={initial?.bankId ?? ""}
+          value={selectedBankId}
+          onChange={(e) => setSelectedBankId(e.target.value)}
           style={inputStyle}
         >
           <option value="">Sin banco (efectivo, en mano)</option>
           {banksForSelect.map((b) => (
             <option key={b.id} value={b.id}>
-              {b.name}
+              {b.name} — {b.currency}
               {!b.active ? " (inactivo)" : ""}
             </option>
           ))}
@@ -176,11 +189,33 @@ function FormBody({
           className="kg-t7"
           style={{ color: "var(--kg-text-3)", marginTop: 6 }}
         >
-          Los cobros por este método suman al saldo del banco elegido. Sin
-          banco: no impacta ningún saldo (efectivo en mano, histórico sin
-          backfill).
+          Los cobros por este método suman al saldo del banco elegido y se
+          cargan en la moneda del banco. Sin banco: no impacta ningún saldo
+          (efectivo en mano, histórico sin backfill).
         </div>
       </Field>
+
+      {requiresCurrency && (
+        <Field label="Moneda del método" htmlFor="currency" required>
+          <select
+            id="currency"
+            name="currency"
+            required
+            defaultValue={initial?.currency ?? "ARS"}
+            style={inputStyle}
+          >
+            <option value="ARS">ARS — Pesos argentinos</option>
+            <option value="USD">USD — Dólares</option>
+          </select>
+          <div
+            className="kg-t7"
+            style={{ color: "var(--kg-text-3)", marginTop: 6 }}
+          >
+            Obligatorio cuando no hay banco: define en qué moneda se cargan los
+            cobros de este método (necesario para consolidar en USD).
+          </div>
+        </Field>
+      )}
 
       {state && "error" in state && (
         <div

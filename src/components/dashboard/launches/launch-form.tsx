@@ -303,6 +303,35 @@ export function LaunchForm({
         )}
       </Section>
 
+      <Section title="Moneda del lanzamiento">
+        <p className="text-xs text-fg-subtle">
+          Si este lanzamiento se opera en pesos (cobros contra bancos ARS,
+          spend de Meta en ARS), ingresá la tasa <b>ARS por 1 USD</b>. Todos
+          los dashboards agregados van a mostrar los montos convertidos a USD
+          usando esta tasa. Dejalo vacío si el lanzamiento se opera en USD
+          nativo — no se aplica ninguna conversión.
+        </p>
+        <Field className="mt-3 max-w-md">
+          <Label htmlFor="ars_per_usd">Tasa ARS / USD</Label>
+          <Input
+            id="ars_per_usd"
+            name="ars_per_usd"
+            type="number"
+            step="0.01"
+            min="0"
+            placeholder="ej. 1200"
+            defaultValue={
+              (initial as unknown as { ars_per_usd?: number | null })
+                ?.ars_per_usd ?? ""
+            }
+          />
+          <p className="mt-1 text-xs text-fg-subtle">
+            Se puede cambiar más adelante — la conversión se aplica al render,
+            los datos crudos en DB no se tocan.
+          </p>
+        </Field>
+      </Section>
+
       <ChannelSection
         title="Meta Ads"
         prefix="meta"

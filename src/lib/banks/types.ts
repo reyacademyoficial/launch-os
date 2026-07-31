@@ -12,6 +12,8 @@ export interface BankRow {
   name: string;
   /** Saldo inicial cargado por el operador para arrancar sin backfill histórico. */
   opening_balance: number;
+  /** Moneda nativa del banco. Los cobros/movimientos se cargan siempre en esta moneda. */
+  currency: "ARS" | "USD";
   active: boolean;
   created_at: string;
   updated_at: string;
