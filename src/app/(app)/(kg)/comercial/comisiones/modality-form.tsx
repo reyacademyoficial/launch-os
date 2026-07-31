@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect } from "react";
 
-import type { CommissionActionState } from "@/app/(app)/proyectos/[projectId]/comisiones/actions";
+import type { CommissionActionState } from "./actions";
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field-error";
 import { Input } from "@/components/ui/input";

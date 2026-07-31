@@ -29,7 +29,8 @@ export default async function ComercialLayout({
   const tabs: readonly TabItem[] = [
     { href: "/comercial/productos", label: "Productos" },
     { href: "/comercial/equipo", label: "Equipo de ventas" },
-    // TODO 6d-C2: agregar Comisiones y Ranking cuando estén.
+    { href: "/comercial/comisiones", label: "Comisiones" },
+    { href: "/comercial/ranking", label: "Ranking" },
   ];
 
   return (

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 
-import type { PayoutActionState } from "@/app/(app)/proyectos/[projectId]/leaderboard/actions";
+import type { PayoutActionState } from "./actions";
 import { fmtMoney, fmtNumber, fmtPercent } from "@/lib/format";
 import type { LeaderboardRow } from "@/lib/leaderboard/aggregate";
 import type { TeamMemberPayoutRow } from "@/lib/payouts/types";

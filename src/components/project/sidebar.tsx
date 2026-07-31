@@ -14,12 +14,7 @@ import { NavLink } from "../dashboard/nav-link";
  * /portal. Por eso no defiendo con `showCrm` como lo hacía el sidebar viejo:
  * en este shell no hay clientes por construcción.
  */
-export function ProjectSidebar({ profile }: { readonly profile: SessionProfile }) {
-  const showCommissions =
-    profile.role === "superadmin" ||
-    profile.role === "admin" ||
-    profile.role === "dev";
-
+export function ProjectSidebar({ profile: _profile }: { readonly profile: SessionProfile }) {
   return (
     <aside
       className="flex w-60 shrink-0 flex-col overflow-y-auto border-r border-border bg-bg-elevated px-4 py-6"
@@ -37,32 +32,14 @@ export function ProjectSidebar({ profile }: { readonly profile: SessionProfile }
         </NavLink>
         <NavLink scopedSuffix="/launches">Lanzamientos</NavLink>
         <NavLink scopedSuffix="/analitica">Analítica</NavLink>
-        <NavGroup
-          label="Ventas"
-          scopedSuffixes={[
-            "/ventas",
-            ...(showCommissions ? ["/comisiones"] : []),
-          ]}
-        >
-          {/*
-            "Equipo" y "Ranking" salieron en 6d-C1: ambos son cross-proyecto
-            y se administran desde /comercial/equipo (ranking migra en C2).
-            Comisiones sigue provisionalmente acá hasta 6d-C2.
-          */}
+        {/*
+          Post 6d-C2, LaunchOS queda como vista OPERATIVA del lanzamiento.
+          Ventas y Cobros son la operación diaria. Todo lo que era
+          configuración/administración (Equipo, Ranking, Comisiones,
+          Productos, Métodos de pago, Bancos) vive en Kingrow.
+        */}
+        <NavGroup label="Ventas" scopedSuffixes={["/ventas", "/cobros"]}>
           <NavLink scopedSuffix="/ventas">Ventas</NavLink>
-          {showCommissions && (
-            <NavLink scopedSuffix="/comisiones">Comisiones</NavLink>
-          )}
-        </NavGroup>
-        <NavGroup
-          label="Admin y finanzas"
-          scopedSuffixes={["/cobros"]}
-        >
-          {/*
-            "Bancos" y "Métodos de pago" salieron en 6d-A/B, "Productos" en
-            6d-C1: todos viven en Kingrow. Solo queda Cobros — es operación
-            del lanzamiento, no configuración administrativa.
-          */}
           <NavLink scopedSuffix="/cobros">Cobros</NavLink>
         </NavGroup>
       </nav>

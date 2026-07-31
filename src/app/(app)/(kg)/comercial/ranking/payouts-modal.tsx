@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 
-import type { PayoutActionState } from "@/app/(app)/proyectos/[projectId]/leaderboard/actions";
+import type { PayoutActionState } from "./actions";
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field-error";
 import { Input } from "@/components/ui/input";

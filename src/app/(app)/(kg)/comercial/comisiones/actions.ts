@@ -2,13 +2,33 @@
 
 import { revalidatePath } from "next/cache";
 
-import { requireCanEditProject } from "@/lib/supabase/auth";
+import { requireRole } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import type {
   AccrualMode,
   CommissionTierType,
   ThresholdType,
 } from "@/lib/commissions/types";
+
+import { translateCommissionError } from "./translate-error";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Server actions para payment_modalities y commission_rules desde Kingrow.
+//
+// Adaptación directa de las actions de LaunchOS que sustituye. Diferencias:
+//   1. `requireRole("superadmin")` en vez de `requireCanEditProject(projectId)`.
+//   2. El `projectId` sigue curriado al bindear la action desde la page —
+//      pero la page lo obtiene del searchParam `?project=<uuid>` en vez del
+//      URL param `/proyectos/[id]/...`. El componente no cambia.
+//   3. revalidatePath apunta a `/comercial/comisiones` en vez de la ruta
+//      de LaunchOS que ya no existe. También revalida
+//      `/proyectos/[id]/leads` porque el selector de modalidad vive dentro
+//      del sale-modal — un cambio de regla afecta la comisión calculada de
+//      la próxima venta cargada.
+//
+// La estructura del código y las validaciones se copian tal cual. Motivo:
+// la lógica de tiers y XOR de scope está probada y no vale reescribirla.
+// ═══════════════════════════════════════════════════════════════════════════
 
 export type CommissionActionState = { ok: true } | { error: string } | null;
 
@@ -20,6 +40,14 @@ function nullable(value: string): string | null {
   return value === "" ? null : value;
 }
 
+function revalidateForProject(projectId: string): void {
+  revalidatePath("/comercial/comisiones");
+  revalidatePath(`/proyectos/${projectId}/leads`);
+  revalidatePath(`/proyectos/${projectId}/cobros`);
+  revalidatePath(`/proyectos/${projectId}/ventas`);
+  revalidatePath(`/proyectos/${projectId}/launches`, "layout");
+}
+
 // ─── payment_modalities ───────────────────────────────────────────────────
 
 export async function createPaymentModality(
@@ -27,16 +55,16 @@ export async function createPaymentModality(
   _prev: CommissionActionState,
   formData: FormData,
 ): Promise<CommissionActionState> {
-  await requireCanEditProject(projectId);
+  await requireRole("superadmin");
   const name = str(formData, "name");
   if (!name) return { error: "El nombre es obligatorio." };
 
   const supabase = await createClient();
   const payload = { project_id: projectId, name, active: true } as never;
   const { error } = await supabase.from("payment_modalities").insert(payload);
-  if (error) return { error: error.message };
+  if (error) return { error: translateCommissionError(error) };
 
-  revalidatePath(`/proyectos/${projectId}/comisiones`);
+  revalidateForProject(projectId);
   return { ok: true };
 }
 
@@ -46,7 +74,7 @@ export async function updatePaymentModality(
   _prev: CommissionActionState,
   formData: FormData,
 ): Promise<CommissionActionState> {
-  await requireCanEditProject(projectId);
+  await requireRole("superadmin");
   const name = str(formData, "name");
   if (!name) return { error: "El nombre es obligatorio." };
   const active = formData.get("active") !== null;
@@ -58,9 +86,9 @@ export async function updatePaymentModality(
     .update(payload)
     .eq("id", modalityId)
     .eq("project_id", projectId);
-  if (error) return { error: error.message };
+  if (error) return { error: translateCommissionError(error) };
 
-  revalidatePath(`/proyectos/${projectId}/comisiones`);
+  revalidateForProject(projectId);
   return { ok: true };
 }
 
@@ -68,14 +96,14 @@ export async function deletePaymentModality(
   projectId: string,
   modalityId: string,
 ): Promise<void> {
-  await requireCanEditProject(projectId);
+  await requireRole("superadmin");
   const supabase = await createClient();
   await supabase
     .from("payment_modalities")
     .delete()
     .eq("id", modalityId)
     .eq("project_id", projectId);
-  revalidatePath(`/proyectos/${projectId}/comisiones`);
+  revalidateForProject(projectId);
 }
 
 // ─── commission_rules ─────────────────────────────────────────────────────
@@ -126,7 +154,6 @@ function validateTiers(tiers: TierInput[]): string | null {
 }
 
 function parseTiers(formData: FormData): TierInput[] | string {
-  // Esperamos pares tiers[0][min_count], tiers[0][max_count], tiers[0][type], tiers[0][value], etc.
   const tiers: TierInput[] = [];
   let i = 0;
   while (formData.has(`tiers[${i}][type]`)) {
@@ -170,9 +197,7 @@ function parseRuleFormData(formData: FormData): ParsedRuleInput | string {
   const modalityIds = formData.getAll("modality_ids").map(String).filter(Boolean);
   if (modalityIds.length === 0) return "Elegí al menos una modalidad.";
 
-  // Scope: launch, producto o default del proyecto. Radio "scope" define
-  // cuál va con valor y cuál queda null. Guard XOR: nunca ambos.
-  const scope = str(formData, "scope"); // "default" | "launch" | "product"
+  const scope = str(formData, "scope");
   let launch_id: string | null = null;
   let product_id: string | null = null;
   if (scope === "launch") {
@@ -196,8 +221,6 @@ function parseRuleFormData(formData: FormData): ParsedRuleInput | string {
 
   let threshold_type: ThresholdType | null = null;
   let threshold_value: number | null = null;
-  // Modos que NO necesitan umbral: proportional (siempre cobra), on_close
-  // (cobra al cerrar, no espera nada).
   const needsThreshold =
     accrual_mode === "threshold_full" ||
     accrual_mode === "threshold_proportional";
@@ -240,7 +263,7 @@ export async function createCommissionRule(
   _prev: CommissionActionState,
   formData: FormData,
 ): Promise<CommissionActionState> {
-  await requireCanEditProject(projectId);
+  await requireRole("superadmin");
 
   const parsed = parseRuleFormData(formData);
   if (typeof parsed === "string") return { error: parsed };
@@ -257,19 +280,9 @@ export async function createCommissionRule(
     p_tiers: parsed.tiers,
   } as never);
 
-  if (error) {
-    // El trigger del pivot lanza con SQLSTATE 23505 si una modalidad ya
-    // tiene regla para el mismo (project, launch, producto).
-    if (error.code === "23505") {
-      return {
-        error:
-          "Una de las modalidades elegidas ya tiene regla para ese scope (launch o producto).",
-      };
-    }
-    return { error: error.message };
-  }
+  if (error) return { error: translateCommissionError(error) };
 
-  revalidatePath(`/proyectos/${projectId}/comisiones`);
+  revalidateForProject(projectId);
   return { ok: true };
 }
 
@@ -279,7 +292,7 @@ export async function updateCommissionRule(
   _prev: CommissionActionState,
   formData: FormData,
 ): Promise<CommissionActionState> {
-  await requireCanEditProject(projectId);
+  await requireRole("superadmin");
 
   const parsed = parseRuleFormData(formData);
   if (typeof parsed === "string") return { error: parsed };
@@ -296,17 +309,9 @@ export async function updateCommissionRule(
     p_tiers: parsed.tiers,
   } as never);
 
-  if (error) {
-    if (error.code === "23505") {
-      return {
-        error:
-          "Una de las modalidades elegidas ya tiene regla para ese scope (launch o producto).",
-      };
-    }
-    return { error: error.message };
-  }
+  if (error) return { error: translateCommissionError(error) };
 
-  revalidatePath(`/proyectos/${projectId}/comisiones`);
+  revalidateForProject(projectId);
   return { ok: true };
 }
 
@@ -314,13 +319,12 @@ export async function deleteCommissionRule(
   projectId: string,
   ruleId: string,
 ): Promise<void> {
-  await requireCanEditProject(projectId);
+  await requireRole("superadmin");
   const supabase = await createClient();
-  // ON DELETE CASCADE de tiers y pivot se encarga del resto.
   await supabase
     .from("commission_rules")
     .delete()
     .eq("id", ruleId)
     .eq("project_id", projectId);
-  revalidatePath(`/proyectos/${projectId}/comisiones`);
+  revalidateForProject(projectId);
 }

@@ -2,40 +2,33 @@
 
 import { useState } from "react";
 
-import type { CommissionActionState } from "@/app/(app)/proyectos/[projectId]/comisiones/actions";
+import type { CommissionActionState } from "./actions";
 import { Button } from "@/components/ui/button";
 import type { PaymentModalityRow } from "@/lib/commissions/types";
-import type { ProductRow } from "@/lib/products/types";
 
-import { RuleForm, type RuleInitial } from "./rule-form";
+import { ModalityForm } from "./modality-form";
 
 type FormAction = (
   prev: CommissionActionState,
   formData: FormData,
 ) => Promise<CommissionActionState>;
 
-export function RuleModal({
+export function ModalityModal({
   triggerLabel,
   triggerVariant = "primary",
   triggerClassName,
-  title = "Nueva regla de comisión",
-  submitLabel = "Crear regla",
+  title,
+  submitLabel,
   action,
-  modalities,
-  launches,
-  products,
   initial,
 }: {
   readonly triggerLabel: string;
   readonly triggerVariant?: "primary" | "secondary";
   readonly triggerClassName?: string;
-  readonly title?: string;
-  readonly submitLabel?: string;
+  readonly title: string;
+  readonly submitLabel: string;
   readonly action: FormAction;
-  readonly modalities: ReadonlyArray<PaymentModalityRow>;
-  readonly launches: ReadonlyArray<{ id: string; name: string }>;
-  readonly products: ReadonlyArray<ProductRow>;
-  readonly initial?: RuleInitial;
+  readonly initial?: PaymentModalityRow;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -53,13 +46,13 @@ export function RuleModal({
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 sm:p-6"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
           onClick={(e) => {
             if (e.target === e.currentTarget) setOpen(false);
           }}
         >
-          <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-md border border-border bg-bg-elevated shadow-card">
-            <header className="flex flex-shrink-0 items-start justify-between gap-4 border-b border-border px-6 py-4">
+          <div className="w-full max-w-md rounded-md border border-border bg-bg-elevated shadow-card">
+            <header className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
               <h3 className="text-lg font-bold text-fg">{title}</h3>
               <button
                 type="button"
@@ -70,14 +63,11 @@ export function RuleModal({
                 ×
               </button>
             </header>
-            <div className="flex-1 overflow-y-auto px-6 py-6">
-              <RuleForm
+            <div className="px-6 py-6">
+              <ModalityForm
                 action={action}
-                modalities={modalities}
-                launches={launches}
-                products={products}
-                submitLabel={submitLabel}
                 initial={initial}
+                submitLabel={submitLabel}
                 onSuccess={() => setOpen(false)}
               />
             </div>
