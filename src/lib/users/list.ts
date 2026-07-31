@@ -10,6 +10,7 @@ export interface UserListItem {
   fullName: string | null;
   role: Role;
   createdAt: string;
+  deletedAt: string | null;
   projects: ReadonlyArray<{ id: string; name: string }>;
 }
 
@@ -18,6 +19,7 @@ interface ProfileRow {
   full_name: string | null;
   role: string;
   created_at: string;
+  deleted_at: string | null;
 }
 
 interface MemberRow {
@@ -42,10 +44,10 @@ export async function listAllUsers(): Promise<UserListItem[]> {
 
   const [authResult, profilesResult, membersResult] = await Promise.all([
     service.auth.admin.listUsers({ perPage: 1000 }),
-    supabase
-      .from("profiles")
-      .select("id, full_name, role, created_at")
-      .is("deleted_at", null),
+    // Incluimos soft-deleted (deleted_at != null): la UI los muestra en gris
+    // con un botón "Reactivar". Filtrar acá los ocultaría del panel y no habría
+    // forma de recuperarlos sin ir a Studio.
+    supabase.from("profiles").select("id, full_name, role, created_at, deleted_at"),
     supabase.from("project_members").select("user_id, projects(id, name)"),
   ]);
 
@@ -76,10 +78,17 @@ export async function listAllUsers(): Promise<UserListItem[]> {
       fullName: profile.full_name,
       role: profile.role as Role,
       createdAt: profile.created_at,
+      deletedAt: profile.deleted_at,
       projects: projectsByUserId.get(u.id) ?? [],
     });
   }
 
-  items.sort((a, b) => a.email.localeCompare(b.email));
+  // Activos primero, inactivos al final; dentro de cada grupo, alfabético.
+  items.sort((a, b) => {
+    const aInactive = a.deletedAt !== null ? 1 : 0;
+    const bInactive = b.deletedAt !== null ? 1 : 0;
+    if (aInactive !== bInactive) return aInactive - bInactive;
+    return a.email.localeCompare(b.email);
+  });
   return items;
 }

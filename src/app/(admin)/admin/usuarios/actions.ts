@@ -97,15 +97,16 @@ export async function createUser(
 export type UpdateUserState = { ok: true } | { error: string } | null;
 
 /**
- * Updates a user's profile + project assignment.
+ * Updates a user's profile + project assignment + role.
  *
- * Currently only `full_name` and the assigned project are editable from the UI.
- * `role` is intentionally not touched because changing it would trip the
- * `guard_profile_role` trigger; that would require another migration to allow
- * service-role through and is left for a future iteration.
+ * `role` es editable desde la UI: el service_role bypass en `guard_profile_role`
+ * (migración 0034) permite el cambio sin desactivar el trigger. `superadmin` no
+ * es un rol asignable desde la UI (mismo criterio que en `createUser`) para
+ * evitar promociones accidentales; si el usuario YA es superadmin, tampoco se
+ * lo puede degradar desde acá — hay que hacerlo por Studio.
  *
- * For superadmin users the project field is ignored — superadmins don't carry
- * project_members rows by design.
+ * Para superadmin el selector de proyectos se ignora — superadmins no cargan
+ * project_members por diseño.
  */
 export async function updateUser(
   userId: string,
@@ -115,6 +116,7 @@ export async function updateUser(
   await requireRole("superadmin");
 
   const fullName = String(formData.get("full_name") ?? "").trim();
+  const submittedRole = String(formData.get("role") ?? "");
   // Multi-select form posts repeated `project_ids` entries. We accept zero or
   // more — admins/clientes can be assigned to several projects.
   const projectIds = formData
@@ -133,12 +135,26 @@ export async function updateUser(
     .eq("id", userId)
     .maybeSingle();
 
-  const role = (profileRow as { role: string } | null)?.role;
-  if (!role) return { error: "No se encontró el perfil del usuario." };
+  const currentRole = (profileRow as { role: string } | null)?.role;
+  if (!currentRole) return { error: "No se encontró el perfil del usuario." };
 
-  // Update full_name. No role change so the guard_profile_role trigger is fine.
+  // Resolver el rol efectivo tras el submit.
+  // - Si el usuario ya es superadmin, el form no envía `role` (campo oculto) y
+  //   se mantiene tal cual. No permitimos demote desde la UI.
+  // - Si envía un rol, tiene que ser uno de los creatables. Cualquier intento
+  //   de escalar a superadmin/dev vía formData se rechaza acá.
+  let effectiveRole = currentRole;
+  if (currentRole !== "superadmin") {
+    if (!submittedRole) return { error: "Tenés que elegir un rol." };
+    if (!isCreatableRole(submittedRole)) return { error: "Rol inválido." };
+    effectiveRole = submittedRole;
+  }
+
+  const roleChanged = effectiveRole !== currentRole;
+
   const profilePayload = {
     full_name: fullName.length > 0 ? fullName : null,
+    ...(roleChanged ? { role: effectiveRole } : {}),
   } as never;
 
   const { error: profileError } = await service
@@ -151,7 +167,7 @@ export async function updateUser(
   // Manage project assignments for every non-superadmin role. Superadmin
   // doesn't belong to project_members per spec; everyone else does (admin,
   // operador, analista, cliente — pertenencia define el proyecto).
-  if (role !== "superadmin") {
+  if (effectiveRole !== "superadmin") {
     if (uniqueProjectIds.length === 0) {
       return { error: "Asigná al menos un proyecto." };
     }
@@ -187,7 +203,7 @@ export async function updateUser(
  * data) AND ban via `auth.admin.updateUserById` so existing sessions get
  * invalidated and they can't sign in again.
  *
- * Reversal is manual from Studio for now (clear `deleted_at` + unban).
+ * Reversible desde la UI vía `reactivateUser`.
  */
 export async function deactivateUser(userId: string): Promise<void> {
   await requireRole("superadmin");
@@ -201,6 +217,26 @@ export async function deactivateUser(userId: string): Promise<void> {
   // "none" to unban. There's no "forever" sentinel; a very long string serves.
   await service.auth.admin.updateUserById(userId, {
     ban_duration: "876000h", // ~100 years
+  });
+
+  revalidatePath("/admin/usuarios");
+}
+
+/**
+ * Undo de `deactivateUser`: limpia `profiles.deleted_at` y desbanea al usuario
+ * en auth.users con `ban_duration: 'none'`. Deja al usuario en el mismo estado
+ * previo (mismos memberships, mismo rol).
+ */
+export async function reactivateUser(userId: string): Promise<void> {
+  await requireRole("superadmin");
+
+  const service = createServiceClient();
+
+  const payload = { deleted_at: null } as never;
+  await service.from("profiles").update(payload).eq("id", userId);
+
+  await service.auth.admin.updateUserById(userId, {
+    ban_duration: "none",
   });
 
   revalidatePath("/admin/usuarios");
