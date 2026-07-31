@@ -184,17 +184,42 @@ export function ComisionesView({
                 gap: 10,
               }}
             >
-              {rules.map((r) => (
-                <RuleCard
-                  key={r.id}
-                  rule={r}
-                  projectId={projectId}
-                  modalityById={modalityById}
-                  launchById={launchById}
-                  productById={productById}
-                  onEdit={() => setEditingRule(r)}
-                />
-              ))}
+              <div
+                style={{
+                  borderRadius: "var(--kg-r-8)",
+                  border: "1px solid var(--kg-border-subtle)",
+                  overflow: "hidden",
+                }}
+              >
+                <table
+                  style={{
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    fontSize: 12.5,
+                  }}
+                >
+                  <thead>
+                    <tr>
+                      <TH>Regla</TH>
+                      <TH align="right">Valor</TH>
+                      <TH align="right"></TH>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rules.map((r) => (
+                      <RuleRow
+                        key={r.id}
+                        rule={r}
+                        projectId={projectId}
+                        modalityById={modalityById}
+                        launchById={launchById}
+                        productById={productById}
+                        onEdit={() => setEditingRule(r)}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
               <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
                 {fCount(rules.length)}{" "}
                 {rules.length === 1 ? "regla" : "reglas"} configurada
@@ -333,7 +358,12 @@ function ModalityRow({
   );
 }
 
-function RuleCard({
+/**
+ * Una fila por regla. Columna "Regla" con modalidades + scope + accrual;
+ * columna "Valor" con la lista de tiers concatenada; columna "Acciones"
+ * con Editar / Borrar (operan sobre la regla completa). Sin bg diferenciado.
+ */
+function RuleRow({
   rule,
   projectId,
   modalityById,
@@ -367,50 +397,62 @@ function RuleCard({
   }
 
   return (
-    <article
-      style={{
-        borderRadius: "var(--kg-r-8)",
-        border: "1px solid var(--kg-border-subtle)",
-        overflow: "hidden",
-      }}
+    <tr
+      className="kg-row"
+      style={{ borderTop: "1px solid var(--kg-border-subtle)" }}
     >
-      <header
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: 12,
-          borderBottom: "1px solid var(--kg-border-subtle)",
-          background: "var(--kg-surface-2-solid)",
-          padding: "10px 14px",
-        }}
-      >
-        <div>
-          <div
-            style={{
-              fontSize: 13,
-              fontWeight: 700,
-              color: "var(--kg-text-1)",
-            }}
-          >
-            {modalityNames || "Sin modalidades"}
-          </div>
-          <div
-            className="kg-t7"
-            style={{
-              color: "var(--kg-text-3)",
-              marginTop: 3,
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 8,
-            }}
-          >
-            <span>{scopeLabel}</span>
-            <span>·</span>
-            <span>{accrualLabel(rule)}</span>
-          </div>
+      {/* Regla — modalidades / scope / accrual. Sin bg diferenciado. */}
+      <TD style={{ verticalAlign: "top", minWidth: 240 }}>
+        <div style={{ fontWeight: 700, color: "var(--kg-text-1)" }}>
+          {modalityNames || "Sin modalidades"}
         </div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <div
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)", marginTop: 3 }}
+        >
+          {scopeLabel}
+        </div>
+        <div
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)", marginTop: 2 }}
+        >
+          {accrualLabel(rule)}
+        </div>
+      </TD>
+
+      {/* Valor — un tier por línea. El rango (venta X-Y) se ve en el drawer
+          de edición; acá solo mostramos los montos, alineados a derecha. */}
+      <TD align="right" style={{ verticalAlign: "top" }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 3,
+            alignItems: "flex-end",
+            fontVariantNumeric: "tabular-nums",
+          }}
+          className="kg-num"
+        >
+          {rule.tiers.map((t) => (
+            <div
+              key={t.id}
+              style={{ color: "var(--kg-text-1)", fontWeight: 700 }}
+            >
+              {t.type === "percent" ? `${t.value}%` : `$${t.value}`}
+            </div>
+          ))}
+        </div>
+      </TD>
+
+      {/* Acciones — sin bg. */}
+      <TD align="right" style={{ verticalAlign: "top", whiteSpace: "nowrap" }}>
+        <div
+          style={{
+            display: "inline-flex",
+            gap: 6,
+            justifyContent: "flex-end",
+          }}
+        >
           <button
             type="button"
             onClick={onEdit}
@@ -433,51 +475,11 @@ function RuleCard({
             {pending ? "…" : "Borrar"}
           </button>
         </div>
-      </header>
-      <div style={{ overflowX: "auto" }}>
-        <table
-          style={{
-            width: "100%",
-            borderCollapse: "collapse",
-            fontSize: 12,
-          }}
-        >
-          <thead>
-            <tr>
-              <TH small>Tramo</TH>
-              <TH small>Desde</TH>
-              <TH small>Hasta</TH>
-              <TH small>Tipo</TH>
-              <TH small align="right">
-                Valor
-              </TH>
-            </tr>
-          </thead>
-          <tbody>
-            {rule.tiers.map((t, i) => (
-              <tr
-                key={t.id}
-                style={{ borderTop: "1px solid var(--kg-border-subtle)" }}
-              >
-                <TD style={{ color: "var(--kg-text-3)" }}>#{i + 1}</TD>
-                <TD numeric>venta {t.min_count + 1}</TD>
-                <TD numeric>
-                  {t.max_count === null ? "∞" : `venta ${t.max_count + 1}`}
-                </TD>
-                <TD style={{ color: "var(--kg-text-3)" }}>
-                  {t.type === "percent" ? "%" : "$ fijo"}
-                </TD>
-                <TD numeric align="right">
-                  {t.type === "percent" ? `${t.value}%` : `$${t.value}`}
-                </TD>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </article>
+      </TD>
+    </tr>
   );
 }
+
 
 function StatePill({ active }: { readonly active: boolean }) {
   return (
@@ -547,11 +549,13 @@ function TD({
   children,
   align,
   numeric,
+  small,
   style,
 }: {
   readonly children?: React.ReactNode;
   readonly align?: "left" | "right" | "center";
   readonly numeric?: boolean;
+  readonly small?: boolean;
   readonly style?: React.CSSProperties;
 }) {
   return (
@@ -559,9 +563,10 @@ function TD({
       className={numeric ? "kg-num" : undefined}
       style={{
         textAlign: align ?? "left",
-        padding: "8px 14px",
+        padding: small ? "6px 12px" : "8px 14px",
         color: "var(--kg-text-1)",
         fontVariantNumeric: numeric ? "tabular-nums" : undefined,
+        fontSize: small ? 12 : undefined,
         ...style,
       }}
     >

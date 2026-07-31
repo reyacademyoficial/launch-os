@@ -5,9 +5,16 @@ import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { IconFin } from "@/components/kg/icons";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
+import { listBanks } from "@/lib/banks/list";
 import { fCount, fMoney } from "@/lib/finance/format";
 import { resolvePeriod, type Period } from "@/lib/finance/period";
 import { createClient } from "@/lib/supabase/server";
+
+import { PendingPanel } from "./pending-panel";
+import type {
+  BankOption,
+  PendingSettlement,
+} from "./transfer-drawer";
 
 export const metadata: Metadata = { title: "Transferencias · Financiero" };
 
@@ -90,6 +97,120 @@ export default async function TransferenciasPage({
     .filter((t) => t.direction === "transferido")
     .reduce((a, t) => a + Number(t.amount), 0);
   const saldo = aFavor - transferido;
+
+  // ─── Settlements pendientes de transferir ─────────────────────────────
+  // Traemos TODOS los client_transfers (sin filtros de UI) para calcular
+  // el pendiente por settlement — el filtro de la lista histórica es
+  // ortogonal a esta agregación. Duplicamos la query cruda para no
+  // mezclar responsabilidades: la tabla de arriba mira TODO, la tabla de
+  // abajo mira lo filtrado por la UI.
+  const [allTransfersRes, settlementsRes, banksRes, allProjectsRes] =
+    await Promise.all([
+      supabase
+        .from("client_transfers")
+        .select("launch_settlement_id, amount, direction"),
+      // Settlements liquidados de proyectos externos — candidatos a transferir.
+      supabase
+        .from("launch_settlements")
+        .select(
+          "id, project_id, launch_id, closed_at, owed_to_client, status",
+        )
+        .eq("status", "liquidada")
+        .gt("owed_to_client", 0),
+      listBanks(),
+      supabase.from("projects").select("id, name, ownership"),
+    ]);
+
+  interface SettlementRow {
+    readonly id: string;
+    readonly project_id: string;
+    readonly launch_id: string;
+    readonly closed_at: string | null;
+    readonly owed_to_client: number;
+    readonly status: string;
+  }
+  interface ProjectRow {
+    readonly id: string;
+    readonly name: string;
+    readonly ownership: "propia" | "externa";
+  }
+  interface TransferAggRow {
+    readonly launch_settlement_id: string | null;
+    readonly amount: number;
+    readonly direction: "a_favor_cliente" | "transferido";
+  }
+
+  const settlements =
+    (settlementsRes.data ?? []) as unknown as SettlementRow[];
+  const allTransfers =
+    (allTransfersRes.data ?? []) as unknown as TransferAggRow[];
+  const allProjects =
+    (allProjectsRes.data ?? []) as unknown as ProjectRow[];
+  const projectFullById = new Map(allProjects.map((p) => [p.id, p]));
+
+  // Saldo pendiente por settlement = Σ a_favor_cliente − Σ transferido.
+  // Espeja exactamente el cálculo de la RPC 0102.
+  const pendingBySettlementId = new Map<string, number>();
+  for (const t of allTransfers) {
+    if (!t.launch_settlement_id) continue;
+    const cur = pendingBySettlementId.get(t.launch_settlement_id) ?? 0;
+    const delta =
+      t.direction === "a_favor_cliente"
+        ? Number(t.amount)
+        : -Number(t.amount);
+    pendingBySettlementId.set(t.launch_settlement_id, cur + delta);
+  }
+
+  // Nombres de launches referenciados por los pendientes (query aparte,
+  // solo por los que necesito). Si RLS de launches bloquea alguno, cae al
+  // fallback "Lanzamiento ..." como en el resto del módulo.
+  const pendingLaunchIds = Array.from(
+    new Set(settlements.map((s) => s.launch_id)),
+  );
+  const launchNamesRes =
+    pendingLaunchIds.length > 0
+      ? await supabase
+          .from("launches")
+          .select("id, name")
+          .in("id", pendingLaunchIds)
+      : { data: [] as Array<{ id: string; name: string | null }> };
+  const launchNameById = new Map<string, string>(
+    ((launchNamesRes.data ?? []) as Array<{
+      id: string;
+      name: string | null;
+    }>).map((l) => [l.id, l.name ?? `Lanzamiento ${l.id.slice(0, 6)}`]),
+  );
+
+  // Filtro final: solo settlements de proyecto EXTERNO con pendiente > 0.
+  // Los propios nunca aparecen (la RPC 0102 los rechaza igual).
+  const pendingSettlements: PendingSettlement[] = settlements
+    .map((s): PendingSettlement | null => {
+      const project = projectFullById.get(s.project_id);
+      if (!project || project.ownership !== "externa") return null;
+      const pending = pendingBySettlementId.get(s.id) ?? 0;
+      if (pending <= 0) return null;
+      return {
+        id: s.id,
+        projectName: project.name,
+        launchName: launchNameById.get(s.launch_id) ?? "—",
+        pending,
+        closedAt: s.closed_at,
+      };
+    })
+    .filter((r): r is PendingSettlement => r !== null)
+    .sort((a, b) => b.pending - a.pending);
+
+  const banksForDrawer: BankOption[] = banksRes.map((b) => ({
+    id: b.id,
+    name: b.name,
+    active: b.active,
+  }));
+
+  const pendingCount = pendingSettlements.length;
+  const pendingTotal = pendingSettlements.reduce(
+    (acc, p) => acc + p.pending,
+    0,
+  );
 
   interface Row {
     readonly id: string;
@@ -183,8 +304,20 @@ export default async function TransferenciasPage({
           { l: "A favor del cliente", v: fMoney(aFavor) },
           { l: "Transferido", v: fMoney(transferido) },
           { l: "Saldo Kingrow debe", v: fMoney(saldo) },
+          {
+            l: `Pendientes de transferir (${fCount(pendingCount)})`,
+            v: fMoney(pendingTotal),
+            c: pendingCount > 0 ? "#FFB800" : undefined,
+          },
         ]}
       />
+
+      <Panel title="Liquidaciones pendientes de transferir" pad={false}>
+        <PendingPanel
+          pending={pendingSettlements}
+          banks={banksForDrawer}
+        />
+      </Panel>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <KgParamPills
