@@ -50,6 +50,36 @@
 -- ╰──────────────────────────────────────────────────────────────────────────╯
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- 0) Backup del banks.project_id ANTES del backfill
+-- ═══════════════════════════════════════════════════════════════════════════
+-- El UPDATE de abajo sobrescribe project_id con NULL. Sin backup no hay
+-- vuelta: no queda registro de cuál era el project_id original de cada
+-- banco. Guardamos (bank_id, project_id, organization_id, backed_up_at)
+-- en una tabla `_backup_banks_project_id_0101` que sobrevive al deploy y
+-- el rollback (rollbacks/0101_rollback.sql) la consulta para restaurar.
+--
+-- Nombre prefijado con `_backup_` para señalar que NO forma parte del
+-- schema aplicativo y puede borrarse cuando la migración esté validada en
+-- producción. La retención es política operativa — no la borra la
+-- migración por prudencia.
+create table if not exists public._backup_banks_project_id_0101 (
+  bank_id           uuid primary key,
+  project_id_before uuid not null,
+  organization_id   uuid not null,
+  backed_up_at      timestamptz not null default now()
+);
+
+-- Idempotencia: si la migración se corre dos veces, el ON CONFLICT preserva
+-- el backup original (no lo sobrescribe con lo que ya está NULL después de
+-- una corrida previa).
+insert into public._backup_banks_project_id_0101
+  (bank_id, project_id_before, organization_id)
+select id, project_id, organization_id
+  from public.banks
+ where project_id is not null
+on conflict (bank_id) do nothing;
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- 1) banks.project_id → nullable + backfill a NULL para todos
 -- ═══════════════════════════════════════════════════════════════════════════
 alter table public.banks
@@ -62,8 +92,11 @@ update public.banks
  where project_id is not null;
 
 -- El UNIQUE original (project_id, name) queda sin efecto una vez que
--- project_id es NULL para todos. Lo dropeamos para no dejar ruido — el
--- reemplazo real es UNIQUE(organization_id, name) más abajo.
+-- project_id es NULL para todos. Nombre real por convención de Postgres
+-- para `unique(project_id, name)`: `banks_project_id_name_key`. Verificar
+-- ANTES del deploy con la query "check-unique-name" del checklist
+-- (`information_schema.table_constraints`) — si es distinto, actualizar
+-- este DROP para que apunte al nombre correcto.
 alter table public.banks
   drop constraint if exists banks_project_id_name_key;
 
