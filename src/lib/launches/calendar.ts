@@ -1,10 +1,11 @@
 /**
  * Calendario de etapas de un lanzamiento — funciones puras.
  *
- * Toda la lógica vive acá. El SQL `0011_launch_calendar.sql` replica el
- * cálculo de `date_start` (= inicio de captación) y `date_end` (= fin de
- * cierre) en columnas GENERATED — las etapas intermedias se derivan en TS
- * al render porque no las necesita nada server-side.
+ * Toda la lógica vive acá. El SQL `0011_launch_calendar.sql` + el ajuste de
+ * `0050_launch_calendar_start_at_creacion.sql` replican el cálculo de
+ * `date_start` (= inicio de creación) y `date_end` (= fin de cierre) en
+ * columnas GENERATED — las etapas intermedias se derivan en TS al render
+ * porque no las necesita nada server-side.
  *
  * Convención de conteo (importante, NO uniforme — replica la regla del
  * roadmap exactamente para no contradecir el ejemplo):
@@ -58,7 +59,7 @@ export interface CalendarRange {
 }
 
 export interface LaunchCalendar {
-  /** Igual a `date_start` en la DB (inicio de captación). */
+  /** Igual a `date_start` en la DB (inicio de creación). */
   windowStart: string;
   /** Igual a `date_end` en la DB (fin de cierre). */
   windowEnd: string;
@@ -159,7 +160,7 @@ export function computeLaunchCalendar(
   const cierreEnd = addDays(cierreStart, inputs.durCierre);
 
   return {
-    windowStart: fmt(captacionStart),
+    windowStart: fmt(creacionStart),
     windowEnd: fmt(cierreEnd),
     creacion: { startDate: fmt(creacionStart), endDate: fmt(creacionEnd) },
     nutricion: { startDate: fmt(nutricionStart), endDate: fmt(nutricionEnd) },
