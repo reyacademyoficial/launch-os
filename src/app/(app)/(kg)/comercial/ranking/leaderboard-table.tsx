@@ -2,11 +2,11 @@
 
 import { useMemo, useState } from "react";
 
-import type { PayoutActionState } from "./actions";
 import { fmtMoney, fmtNumber, fmtPercent } from "@/lib/format";
 import type { LeaderboardRow } from "@/lib/leaderboard/aggregate";
 import type { TeamMemberPayoutRow } from "@/lib/payouts/types";
 
+import type { PayoutActionState } from "./actions";
 import { PayoutsModal } from "./payouts-modal";
 
 type SortKey =
@@ -44,12 +44,14 @@ const COLUMNS: ReadonlyArray<{
 ];
 
 /**
- * Tabla ordenable por columna. Sort client-side sobre el array que vino del
- * server — el dataset es chico (un proyecto típico = decenas de miembros),
- * no necesita paginar ni virtualizar.
+ * Tabla ordenable por columna con estilo KG. Sort client-side sobre el
+ * array del server — dataset chico (decenas de miembros por proyecto).
  *
- * Sin filtros de DB acá: filtros aplicaron arriba en el server component (vía
- * `aggregateLeaderboard`).
+ * Regla design system: la plata NO se pinta. Únicos usos de color:
+ *   - "commissionAccrued" con acento (es el KPI destacado).
+ *   - "pending": warning si > 0 (le debemos al equipo), success si = 0.
+ *     Ambos son SEMÁNTICOS (estado de deuda), no decorativos.
+ * Los signos negativos comunican dirección.
  */
 export function LeaderboardTable({
   rows,
@@ -61,7 +63,6 @@ export function LeaderboardTable({
   deletePayoutAction,
 }: {
   readonly rows: ReadonlyArray<LeaderboardRow>;
-  /** Historial completo de pagos por miembro (el modal filtra in-memory). */
   readonly payoutsByMember: Readonly<Record<string, TeamMemberPayoutRow[]>>;
   readonly launches: ReadonlyArray<{ id: string; name: string }>;
   readonly activeLaunchId: string;
@@ -73,8 +74,6 @@ export function LeaderboardTable({
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   const sorted = useMemo(() => {
-    // "Sin asignar" (teamMember = null) se ancla al final siempre, sin
-    // importar el sort. Es una fila informativa: no compite por ranking.
     const named = rows.filter((r) => r.teamMember !== null);
     const unassigned = rows.filter((r) => r.teamMember === null);
     named.sort((a, b) => {
@@ -100,11 +99,25 @@ export function LeaderboardTable({
   }
 
   return (
-    <div className="overflow-x-auto rounded-md border border-border">
-      <table className="w-full min-w-[960px] text-sm">
-        <thead className="bg-surface text-xs uppercase tracking-wide text-fg-subtle">
+    <div style={{ overflowX: "auto" }}>
+      <table
+        style={{
+          width: "100%",
+          minWidth: 960,
+          borderCollapse: "collapse",
+          fontSize: 12.5,
+        }}
+      >
+        <thead>
           <tr>
-            <th scope="col" className="px-4 py-3 text-left font-medium">
+            <th
+              scope="col"
+              style={{
+                ...thStyle,
+                textAlign: "left",
+                width: 40,
+              }}
+            >
               #
             </th>
             {COLUMNS.map((c) => {
@@ -114,17 +127,25 @@ export function LeaderboardTable({
                 <th
                   key={c.key}
                   scope="col"
-                  className={
-                    "px-4 py-3 font-medium " +
-                    (c.align === "right" ? "text-right" : "text-left")
-                  }
+                  style={{
+                    ...thStyle,
+                    textAlign: c.align === "right" ? "right" : "left",
+                  }}
                 >
                   <button
                     type="button"
                     onClick={() => clickHeader(c.key)}
-                    className={
-                      "hover:text-fg " + (active ? "text-fg" : "")
-                    }
+                    className="kg-focus"
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      padding: 0,
+                      cursor: "pointer",
+                      color: active ? "var(--kg-text-1)" : "var(--kg-text-3)",
+                      font: "inherit",
+                      letterSpacing: "inherit",
+                      textTransform: "inherit",
+                    }}
                   >
                     {c.label}
                     {arrow}
@@ -132,9 +153,10 @@ export function LeaderboardTable({
                 </th>
               );
             })}
-            <th scope="col" className="px-4 py-3 text-right font-medium">
-              {/* Acciones — sin sort */}
-            </th>
+            <th
+              scope="col"
+              style={{ ...thStyle, textAlign: "right", width: 100 }}
+            />
           </tr>
         </thead>
         <tbody>
@@ -143,69 +165,88 @@ export function LeaderboardTable({
             return (
               <tr
                 key={row.teamMember?.id ?? "__unassigned__"}
-                className={
-                  "border-t border-border transition-colors hover:bg-surface " +
-                  (isUnassigned ? "bg-surface/40" : "")
-                }
+                className="kg-row"
+                style={{
+                  borderTop: "1px solid var(--kg-border-subtle)",
+                  background: isUnassigned
+                    ? "var(--kg-surface-2-solid)"
+                    : "transparent",
+                }}
               >
-                <td className="px-4 py-3 tabular-nums text-fg-subtle">
+                <td
+                  className="kg-num"
+                  style={{
+                    ...tdStyle,
+                    color: "var(--kg-text-3)",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
                   {isUnassigned ? "—" : idx + 1}
                 </td>
-                <td className="px-4 py-3">
+                <td style={tdStyle}>
                   {row.teamMember ? (
                     <>
-                      <div className="font-medium text-fg">
+                      <div
+                        style={{
+                          fontWeight: 600,
+                          color: "var(--kg-text-1)",
+                        }}
+                      >
                         {row.teamMember.name}
                       </div>
-                      <div className="text-xs text-fg-subtle">
+                      <div
+                        className="kg-t7"
+                        style={{ color: "var(--kg-text-3)" }}
+                      >
                         {labelForRole(row.teamMember.role)}
                         {!row.teamMember.active && " · inactivo"}
                       </div>
                     </>
                   ) : (
                     <>
-                      <div className="font-medium italic text-fg-muted">
+                      <div
+                        style={{
+                          fontWeight: 600,
+                          fontStyle: "italic",
+                          color: "var(--kg-text-2)",
+                        }}
+                      >
                         Sin asignar
                       </div>
-                      <div className="text-xs text-fg-subtle">
+                      <div
+                        className="kg-t7"
+                        style={{ color: "var(--kg-text-3)" }}
+                      >
                         Leads y ventas sin setter
                       </div>
                     </>
                   )}
                 </td>
-                <td className="px-4 py-3 text-right tabular-nums text-fg-muted">
-                  {fmtNumber(row.leadsWorked)}
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums text-fg">
-                  {fmtNumber(row.closed)}
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums text-fg-muted">
-                  {fmtPercent(row.conversionRate)}
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums text-fg">
-                  {fmtMoney(row.revenueCollected)}
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums font-bold text-accent">
+                <NumericTD>{fmtNumber(row.leadsWorked)}</NumericTD>
+                <NumericTD strong>{fmtNumber(row.closed)}</NumericTD>
+                <NumericTD>{fmtPercent(row.conversionRate)}</NumericTD>
+                <NumericTD strong>{fmtMoney(row.revenueCollected)}</NumericTD>
+                <NumericTD accent bold>
                   {fmtMoney(row.commissionAccrued)}
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums text-fg-muted">
+                </NumericTD>
+                <NumericTD muted>
                   {isUnassigned ? "—" : fmtMoney(row.paidOut)}
-                </td>
-                <td
-                  className={
-                    "px-4 py-3 text-right tabular-nums font-medium " +
-                    (isUnassigned
-                      ? "text-fg-subtle"
+                </NumericTD>
+                <NumericTD
+                  bold
+                  tone={
+                    isUnassigned
+                      ? "muted"
                       : row.pending > 0
-                        ? "text-warning"
+                        ? "warning"
                         : row.pending < 0
-                          ? "text-error"
-                          : "text-success")
+                          ? "negative"
+                          : "positive"
                   }
                 >
                   {isUnassigned ? "—" : fmtMoney(row.pending)}
-                </td>
-                <td className="px-4 py-3 text-right">
+                </NumericTD>
+                <td style={{ ...tdStyle, textAlign: "right" }}>
                   {row.teamMember ? (
                     <PayoutsModal
                       row={row}
@@ -224,6 +265,58 @@ export function LeaderboardTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+// ─── Sub-componentes ─────────────────────────────────────────────────────
+
+function NumericTD({
+  children,
+  muted,
+  strong,
+  bold,
+  accent,
+  tone,
+}: {
+  readonly children: React.ReactNode;
+  readonly muted?: boolean;
+  readonly strong?: boolean;
+  readonly bold?: boolean;
+  readonly accent?: boolean;
+  readonly tone?: "warning" | "negative" | "positive" | "muted";
+}) {
+  const toneColor: React.CSSProperties["color"] =
+    tone === "warning"
+      ? "#FFB800"
+      : tone === "negative"
+        ? "#EF4444"
+        : tone === "positive"
+          ? "#00D084"
+          : tone === "muted"
+            ? "var(--kg-text-3)"
+            : undefined;
+
+  const baseColor = accent
+    ? "var(--kg-accent-text)"
+    : strong
+      ? "var(--kg-text-1)"
+      : muted
+        ? "var(--kg-text-3)"
+        : "var(--kg-text-2)";
+
+  return (
+    <td
+      className="kg-num"
+      style={{
+        ...tdStyle,
+        textAlign: "right",
+        color: toneColor ?? baseColor,
+        fontVariantNumeric: "tabular-nums",
+        fontWeight: bold ? 700 : undefined,
+      }}
+    >
+      {children}
+    </td>
   );
 }
 
@@ -246,3 +339,21 @@ function labelForRole(role: string): string {
       return "Otro";
   }
 }
+
+const thStyle: React.CSSProperties = {
+  padding: "10px 14px",
+  borderBottom: "1px solid var(--kg-border-subtle)",
+  color: "var(--kg-text-3)",
+  fontWeight: 600,
+  fontSize: 11,
+  letterSpacing: 0.2,
+  textTransform: "uppercase",
+  whiteSpace: "nowrap",
+  background: "transparent",
+};
+
+const tdStyle: React.CSSProperties = {
+  padding: "10px 14px",
+  color: "var(--kg-text-1)",
+  whiteSpace: "nowrap",
+};

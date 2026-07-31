@@ -2,15 +2,21 @@
 
 import { useState, useTransition } from "react";
 
-import type { PayoutActionState } from "./actions";
-import { Button } from "@/components/ui/button";
-import { FieldError } from "@/components/ui/field-error";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select } from "@/components/ui/select";
+import { Drawer } from "@/components/kg/drawer";
+import { EmptyState } from "@/components/kg/empty-state";
 import { fmtDate, fmtMoney } from "@/lib/format";
 import type { LeaderboardRow } from "@/lib/leaderboard/aggregate";
 import type { TeamMemberPayoutRow } from "@/lib/payouts/types";
+
+import type { PayoutActionState } from "./actions";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Drawer por miembro: balance del filtro actual + historial + registrar pago.
+//
+// Nombre `PayoutsModal` conservado por compatibilidad de import, pero es un
+// Drawer KG en la implementación. Preserva la decisión de UX: el listado
+// respeta el filtro de launch activo con toggle para ver todo el historial.
+// ═══════════════════════════════════════════════════════════════════════════
 
 type CreateAction = (
   prev: PayoutActionState,
@@ -18,14 +24,6 @@ type CreateAction = (
 ) => Promise<PayoutActionState>;
 type DeleteAction = (payoutId: string) => Promise<void>;
 
-/**
- * Modal por miembro: muestra el balance (comisión / pagado / pendiente) en el
- * filtro actual, lista el historial de pagos y permite registrar uno nuevo.
- *
- * Decisión: el listado por default respeta el filtro de launch activo en la
- * URL (lo que ve la fila de la tabla). Si el usuario quiere ver todo el
- * historial del miembro, hay un toggle "Ver todos los lanzamientos".
- */
 export function PayoutsModal({
   row,
   payouts,
@@ -36,10 +34,8 @@ export function PayoutsModal({
   deletePayoutAction,
 }: {
   readonly row: LeaderboardRow;
-  /** Todo el historial del miembro — el modal lo filtra in-memory. */
   readonly payouts: ReadonlyArray<TeamMemberPayoutRow>;
   readonly launches: ReadonlyArray<{ id: string; name: string }>;
-  /** Launch activo en la URL (si el leaderboard está filtrado). */
   readonly activeLaunchId: string;
   readonly canEdit: boolean;
   readonly createPayoutAction: CreateAction;
@@ -50,9 +46,7 @@ export function PayoutsModal({
 
   const launchNameById = new Map(launches.map((l) => [l.id, l.name]));
 
-  // El caller (LeaderboardTable) sólo renderiza este modal cuando la fila
-  // pertenece a un miembro nombrado — la fila "Sin asignar" no tiene botón
-  // Pagos. Estrechamos el tipo acá para no esparcir `!` por el JSX.
+  // Guard: el caller sólo renderiza este componente si teamMember != null.
   if (!row.teamMember) return null;
   const member = row.teamMember;
 
@@ -66,98 +60,124 @@ export function PayoutsModal({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg hover:bg-bg-elevated"
+        className="kg-focus"
+        style={triggerBtn}
       >
         Pagos
       </button>
 
       {open && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 sm:p-6"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setOpen(false);
-          }}
+        <Drawer
+          open={open}
+          onClose={() => setOpen(false)}
+          title={`Pagos a ${member.name}`}
+          subtitle={
+            activeLaunchId
+              ? "Balance del lanzamiento filtrado"
+              : "Balance global del miembro"
+          }
+          width={640}
         >
-          <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-md border border-border bg-bg-elevated shadow-card">
-            <header className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
-              <div>
-                <h3 className="text-lg font-bold text-fg">
-                  Pagos a {member.name}
-                </h3>
-                <p className="mt-0.5 text-xs text-fg-subtle">
-                  {activeLaunchId
-                    ? "Balance del lanzamiento filtrado"
-                    : "Balance global del miembro"}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                aria-label="Cerrar"
-                className="text-fg-subtle hover:text-fg"
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <BalanceCards row={row} />
+
+            {canEdit && launches.length > 0 && (
+              <PayoutForm
+                defaultLaunchId={activeLaunchId}
+                launches={launches}
+                teamMemberId={member.id}
+                createPayoutAction={createPayoutAction}
+              />
+            )}
+            {canEdit && launches.length === 0 && (
+              <EmptyState
+                title="No hay lanzamientos"
+                hint="Creá un lanzamiento antes de registrar pagos."
+              />
+            )}
+
+            <section
+              style={{ display: "flex", flexDirection: "column", gap: 10 }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "baseline",
+                  justifyContent: "space-between",
+                  gap: 12,
+                }}
               >
-                ×
-              </button>
-            </header>
-
-            <div className="flex-1 overflow-y-auto px-6 py-6">
-              <BalanceCards row={row} />
-
-              {canEdit && launches.length > 0 && (
-                <PayoutForm
-                  defaultLaunchId={activeLaunchId}
-                  launches={launches}
-                  teamMemberId={member.id}
-                  createPayoutAction={createPayoutAction}
-                />
-              )}
-              {canEdit && launches.length === 0 && (
-                <div className="mt-6 rounded-md border border-dashed border-border bg-surface/40 p-4 text-sm text-fg-muted">
-                  No hay lanzamientos creados todavía. Creá uno antes de
-                  registrar pagos.
-                </div>
-              )}
-
-              <section className="mt-6 space-y-2">
-                <div className="flex items-baseline justify-between gap-4">
-                  <h4 className="text-xs font-semibold uppercase tracking-wide text-fg-subtle">
-                    Historial de pagos
-                  </h4>
-                  {activeLaunchId && (
-                    <button
-                      type="button"
-                      onClick={() => setShowAll((v) => !v)}
-                      className="text-xs text-fg-muted underline-offset-2 hover:text-fg hover:underline"
-                    >
-                      {showAll
-                        ? "Ver solo este lanzamiento"
-                        : "Ver todos los lanzamientos"}
-                    </button>
-                  )}
-                </div>
-                {filtered.length === 0 ? (
-                  <p className="rounded-md border border-dashed border-border bg-surface/40 p-4 text-sm text-fg-muted">
-                    Todavía no se cargó ningún pago para este miembro.
-                  </p>
-                ) : (
-                  <ul className="divide-y divide-border rounded-md border border-border">
-                    {filtered.map((p) => (
-                      <PayoutItem
-                        key={p.id}
-                        payout={p}
-                        launchName={launchNameById.get(p.launch_id) ?? "—"}
-                        canEdit={canEdit}
-                        deletePayoutAction={deletePayoutAction}
-                      />
-                    ))}
-                  </ul>
+                <h4
+                  className="kg-t7"
+                  style={{
+                    margin: 0,
+                    color: "var(--kg-text-3)",
+                    fontWeight: 700,
+                    letterSpacing: 0.4,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Historial de pagos
+                </h4>
+                {activeLaunchId && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAll((v) => !v)}
+                    className="kg-focus"
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: "var(--kg-text-3)",
+                      fontSize: 11,
+                      cursor: "pointer",
+                      textDecoration: "underline",
+                    }}
+                  >
+                    {showAll
+                      ? "Ver solo este lanzamiento"
+                      : "Ver todos los lanzamientos"}
+                  </button>
                 )}
-              </section>
-            </div>
+              </div>
+              {filtered.length === 0 ? (
+                <div
+                  style={{
+                    padding: "16px 20px",
+                    borderRadius: "var(--kg-r-8)",
+                    border: "1px dashed var(--kg-border-subtle)",
+                    background: "var(--kg-surface-2-solid)",
+                    fontSize: 12.5,
+                    color: "var(--kg-text-3)",
+                  }}
+                >
+                  Todavía no se cargó ningún pago para este miembro.
+                </div>
+              ) : (
+                <ul
+                  style={{
+                    listStyle: "none",
+                    margin: 0,
+                    padding: 0,
+                    borderRadius: "var(--kg-r-8)",
+                    border: "1px solid var(--kg-border-subtle)",
+                    overflow: "hidden",
+                  }}
+                >
+                  {filtered.map((p, i) => (
+                    <PayoutItem
+                      key={p.id}
+                      payout={p}
+                      launchName={launchNameById.get(p.launch_id) ?? "—"}
+                      canEdit={canEdit}
+                      deletePayoutAction={deletePayoutAction}
+                      first={i === 0}
+                    />
+                  ))}
+                </ul>
+              )}
+            </section>
           </div>
-        </div>
+        </Drawer>
       )}
     </>
   );
@@ -166,19 +186,25 @@ export function PayoutsModal({
 function BalanceCards({ row }: { readonly row: LeaderboardRow }) {
   const negativeBalance = row.pending < 0;
   return (
-    <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-      <Card label="Comisión" value={fmtMoney(row.commissionAccrued)} />
-      <Card label="Pagado" value={fmtMoney(row.paidOut)} />
-      <Card
+    <div
+      style={{
+        display: "grid",
+        gap: 10,
+        gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+      }}
+    >
+      <BalanceCard label="Comisión" value={fmtMoney(row.commissionAccrued)} />
+      <BalanceCard label="Pagado" value={fmtMoney(row.paidOut)} />
+      <BalanceCard
         label={negativeBalance ? "A favor del miembro" : "Pendiente"}
         value={fmtMoney(Math.abs(row.pending))}
         tone={row.pending > 0 ? "warning" : "success"}
       />
-    </section>
+    </div>
   );
 }
 
-function Card({
+function BalanceCard({
   label,
   value,
   tone,
@@ -187,18 +213,43 @@ function Card({
   readonly value: string;
   readonly tone?: "warning" | "success";
 }) {
-  const toneClass =
+  const spec: { border: string; color: string; bg: string } =
     tone === "warning"
-      ? "border-warning/40 bg-warning/5 text-warning"
+      ? { border: "#FFB800", color: "#FFB800", bg: "rgba(255,184,0,0.08)" }
       : tone === "success"
-        ? "border-success/40 bg-success/5 text-success"
-        : "border-border bg-surface/40 text-fg";
+        ? { border: "#00D084", color: "#00D084", bg: "rgba(0,208,132,0.08)" }
+        : {
+            border: "var(--kg-border-subtle)",
+            color: "var(--kg-text-1)",
+            bg: "var(--kg-surface-2-solid)",
+          };
   return (
-    <div className={`rounded-md border p-3 ${toneClass}`}>
-      <div className="text-xs uppercase tracking-wide text-fg-subtle">
+    <div
+      style={{
+        padding: "12px 14px",
+        borderRadius: "var(--kg-r-8)",
+        border: `1px solid ${spec.border}`,
+        background: spec.bg,
+      }}
+    >
+      <div
+        className="kg-t7"
+        style={{ color: "var(--kg-text-3)" }}
+      >
         {label}
       </div>
-      <div className="mt-1 text-lg font-bold tabular-nums">{value}</div>
+      <div
+        className="kg-num"
+        style={{
+          marginTop: 6,
+          fontSize: 18,
+          fontWeight: 700,
+          color: spec.color,
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {value}
+      </div>
     </div>
   );
 }
@@ -234,20 +285,37 @@ function PayoutForm({
     <form
       key={key}
       action={handleSubmit}
-      className="mt-6 space-y-3 rounded-md border border-border bg-surface/40 p-4"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+        padding: 14,
+        borderRadius: "var(--kg-r-8)",
+        border: "1px solid var(--kg-border-subtle)",
+        background: "var(--kg-surface-2-solid)",
+      }}
     >
-      <h4 className="text-xs font-semibold uppercase tracking-wide text-fg-subtle">
+      <h4
+        className="kg-t7"
+        style={{
+          margin: 0,
+          color: "var(--kg-text-3)",
+          fontWeight: 700,
+          letterSpacing: 0.4,
+          textTransform: "uppercase",
+        }}
+      >
         Registrar pago
       </h4>
       <input type="hidden" name="team_member_id" value={teamMemberId} />
 
-      <div>
-        <Label htmlFor="payout-launch">Lanzamiento *</Label>
-        <Select
+      <Field label="Lanzamiento" htmlFor="payout-launch" required>
+        <select
           id="payout-launch"
           name="launch_id"
           required
           defaultValue={defaultLaunchId}
+          style={inputStyle}
         >
           <option value="" disabled>
             Elegí un lanzamiento
@@ -257,13 +325,14 @@ function PayoutForm({
               {l.name}
             </option>
           ))}
-        </Select>
-      </div>
+        </select>
+      </Field>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div>
-          <Label htmlFor="payout-amount">Monto *</Label>
-          <Input
+      <div
+        style={{ display: "grid", gap: 10, gridTemplateColumns: "1fr 1fr" }}
+      >
+        <Field label="Monto" htmlFor="payout-amount" required>
+          <input
             id="payout-amount"
             name="amount"
             type="number"
@@ -271,29 +340,54 @@ function PayoutForm({
             min="0.01"
             required
             placeholder="100"
+            style={inputStyle}
           />
-        </div>
-        <div>
-          <Label htmlFor="payout-date">Fecha</Label>
-          <Input
+        </Field>
+        <Field label="Fecha" htmlFor="payout-date">
+          <input
             id="payout-date"
             name="paid_at"
             type="date"
             defaultValue={new Date().toISOString().slice(0, 10)}
+            style={inputStyle}
           />
-        </div>
+        </Field>
       </div>
+
+      <Field label="Notas" htmlFor="payout-notes">
+        <input
+          id="payout-notes"
+          name="notes"
+          type="text"
+          placeholder="Opcional"
+          style={inputStyle}
+        />
+      </Field>
+
+      {error && (
+        <div
+          style={{
+            padding: "8px 12px",
+            borderRadius: "var(--kg-r-8)",
+            background: "rgba(239,68,68,0.10)",
+            border: "1px solid #EF4444",
+            color: "#EF4444",
+            fontSize: 12,
+          }}
+        >
+          {error}
+        </div>
+      )}
 
       <div>
-        <Label htmlFor="payout-notes">Notas</Label>
-        <Input id="payout-notes" name="notes" placeholder="Opcional" />
-      </div>
-
-      <div className="flex items-center gap-3">
-        <Button type="submit" disabled={pending}>
+        <button
+          type="submit"
+          disabled={pending}
+          className="kg-focus"
+          style={{ ...primaryBtn, opacity: pending ? 0.7 : 1 }}
+        >
           {pending ? "Registrando…" : "+ Registrar pago"}
-        </Button>
-        {error && <FieldError>{error}</FieldError>}
+        </button>
       </div>
     </form>
   );
@@ -304,27 +398,49 @@ function PayoutItem({
   launchName,
   canEdit,
   deletePayoutAction,
+  first,
 }: {
   readonly payout: TeamMemberPayoutRow;
   readonly launchName: string;
   readonly canEdit: boolean;
   readonly deletePayoutAction: DeleteAction;
+  readonly first: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   return (
-    <li className="flex items-center justify-between gap-4 px-4 py-3 text-sm">
-      <div className="min-w-0 flex-1">
-        <div className="font-medium tabular-nums text-fg">
+    <li
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        padding: "10px 14px",
+        fontSize: 12.5,
+        borderTop: first ? "none" : "1px solid var(--kg-border-subtle)",
+      }}
+    >
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div
+          className="kg-num"
+          style={{
+            fontWeight: 700,
+            color: "var(--kg-text-1)",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
           {fmtMoney(payout.amount)}
         </div>
-        <div className="mt-0.5 text-xs text-fg-subtle">
+        <div
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)", marginTop: 2 }}
+        >
           {fmtDate(payout.paid_at)}
-          <span className="mx-2">·</span>
-          <span className="text-fg-muted">{launchName}</span>
+          <span style={{ margin: "0 8px" }}>·</span>
+          <span>{launchName}</span>
           {payout.notes && (
             <>
-              <span className="mx-2">·</span>
-              <span className="text-fg-muted">{payout.notes}</span>
+              <span style={{ margin: "0 8px" }}>·</span>
+              <span>{payout.notes}</span>
             </>
           )}
         </div>
@@ -339,7 +455,19 @@ function PayoutItem({
               await deletePayoutAction(payout.id);
             });
           }}
-          className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-error hover:bg-error/10 disabled:opacity-50"
+          className="kg-focus"
+          style={{
+            padding: "3px 10px",
+            borderRadius: 999,
+            background: "transparent",
+            border: "1px solid var(--kg-border-subtle)",
+            color: "#EF4444",
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: "pointer",
+            opacity: isPending ? 0.5 : 1,
+          }}
+          aria-label="Borrar pago"
         >
           ×
         </button>
@@ -347,3 +475,68 @@ function PayoutItem({
     </li>
   );
 }
+
+// ─── Sub-componentes de layout ────────────────────────────────────────────
+
+function Field({
+  label,
+  htmlFor,
+  required,
+  children,
+}: {
+  readonly label: string;
+  readonly htmlFor: string;
+  readonly required?: boolean;
+  readonly children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label
+        htmlFor={htmlFor}
+        className="kg-t7"
+        style={{ display: "block", color: "var(--kg-text-3)", marginBottom: 6 }}
+      >
+        {label}
+        {required && (
+          <span aria-hidden="true" style={{ color: "#EF4444", marginLeft: 4 }}>
+            *
+          </span>
+        )}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+const triggerBtn: React.CSSProperties = {
+  padding: "4px 10px",
+  borderRadius: 999,
+  background: "transparent",
+  border: "1px solid var(--kg-border-subtle)",
+  color: "var(--kg-text-2)",
+  fontSize: 11,
+  fontWeight: 700,
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+};
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "8px 12px",
+  borderRadius: "var(--kg-r-8)",
+  background: "var(--kg-surface-1-solid)",
+  border: "1px solid var(--kg-border-subtle)",
+  color: "var(--kg-text-1)",
+  fontSize: 12.5,
+};
+
+const primaryBtn: React.CSSProperties = {
+  padding: "8px 16px",
+  borderRadius: 999,
+  background: "var(--kg-accent-500)",
+  border: "none",
+  color: "#fff",
+  fontSize: 12,
+  fontWeight: 700,
+  cursor: "pointer",
+};

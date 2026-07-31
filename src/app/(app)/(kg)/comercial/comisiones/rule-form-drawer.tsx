@@ -2,12 +2,7 @@
 
 import { useActionState, useEffect, useState } from "react";
 
-import type { CommissionActionState } from "./actions";
-import { Button } from "@/components/ui/button";
-import { FieldError } from "@/components/ui/field-error";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select } from "@/components/ui/select";
+import { Drawer } from "@/components/kg/drawer";
 import type {
   AccrualMode,
   CommissionTierType,
@@ -15,6 +10,17 @@ import type {
   ThresholdType,
 } from "@/lib/commissions/types";
 import type { ProductRow } from "@/lib/products/types";
+
+import type { CommissionActionState } from "./actions";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Drawer create / edit de commission_rule — estilo KG.
+//
+// Sustituye a rule-form + rule-modal. Lógica de tiers, scope XOR, threshold
+// y devengo preservada tal cual del componente original — solo cambia el
+// markup y los estilos (Drawer KG, inputStyle inline, primary/secondaryBtn).
+// La lógica es larga pero probada; reescribir en TS puro es alto riesgo.
+// ═══════════════════════════════════════════════════════════════════════════
 
 type FormAction = (
   prev: CommissionActionState,
@@ -59,27 +65,45 @@ function initialScope(initial: RuleInitial | undefined): RuleScope {
   return "default";
 }
 
-export function RuleForm({
+export interface RuleFormDrawerProps {
+  readonly open: boolean;
+  readonly onClose: () => void;
+  readonly title: string;
+  readonly submitLabel: string;
+  readonly action: FormAction;
+  readonly modalities: ReadonlyArray<PaymentModalityRow>;
+  readonly launches: ReadonlyArray<{ id: string; name: string }>;
+  readonly products: ReadonlyArray<ProductRow>;
+  readonly initial?: RuleInitial;
+}
+
+export function RuleFormDrawer(props: RuleFormDrawerProps) {
+  if (!props.open) return null;
+  return (
+    <Drawer
+      open={props.open}
+      onClose={props.onClose}
+      title={props.title}
+      width={620}
+    >
+      <FormBody {...props} />
+    </Drawer>
+  );
+}
+
+function FormBody({
   action,
   modalities,
   launches,
   products,
   submitLabel,
-  onSuccess,
+  onClose,
   initial,
-}: {
-  readonly action: FormAction;
-  readonly modalities: ReadonlyArray<PaymentModalityRow>;
-  readonly launches: ReadonlyArray<{ id: string; name: string }>;
-  readonly products: ReadonlyArray<ProductRow>;
-  readonly submitLabel: string;
-  readonly onSuccess?: () => void;
-  readonly initial?: RuleInitial;
-}) {
-  const [state, formAction, pending] = useActionState<CommissionActionState, FormData>(
-    action,
-    null,
-  );
+}: RuleFormDrawerProps) {
+  const [state, formAction, pending] = useActionState<
+    CommissionActionState,
+    FormData
+  >(action, null);
 
   const [scope, setScope] = useState<RuleScope>(() => initialScope(initial));
   const [accrualMode, setAccrualMode] = useState<AccrualMode>(
@@ -95,8 +119,8 @@ export function RuleForm({
   );
 
   useEffect(() => {
-    if (state && "ok" in state && state.ok) onSuccess?.();
-  }, [state, onSuccess]);
+    if (state && "ok" in state && state.ok) onClose();
+  }, [state, onClose]);
 
   function addTier() {
     setTiers((prev) => {
@@ -150,35 +174,54 @@ export function RuleForm({
 
   const activeModalities = modalities.filter((m) => m.active);
   const initialModalityIds = new Set(initial?.modality_ids ?? []);
-  // Ocultamos productos inactivos EXCEPTO el actualmente asignado — así una
-  // regla ligada a un producto que se desactivó sigue editable sin
-  // desasignarlo por accidente.
   const visibleProducts = products.filter(
     (p) => p.active || p.id === initial?.product_id,
   );
 
   return (
-    <form action={formAction} className="space-y-5">
+    <form
+      action={formAction}
+      style={{ display: "flex", flexDirection: "column", gap: 20 }}
+    >
       {/* Modalidades — multi-select via checkboxes */}
       <div>
-        <Label>Modalidades * (podés elegir varias)</Label>
-        <div className="mt-1 max-h-40 overflow-y-auto rounded-md border border-border bg-surface/40 p-2">
+        <FieldLabel>Modalidades (podés elegir varias) *</FieldLabel>
+        <div
+          style={{
+            marginTop: 6,
+            maxHeight: 160,
+            overflowY: "auto",
+            borderRadius: "var(--kg-r-8)",
+            border: "1px solid var(--kg-border-subtle)",
+            background: "var(--kg-surface-2-solid)",
+            padding: 8,
+          }}
+        >
           {activeModalities.length === 0 ? (
-            <p className="px-2 py-3 text-xs text-fg-subtle">
+            <p style={{ padding: "8px 4px", fontSize: 11, color: "var(--kg-text-3)" }}>
               No hay modalidades activas.
             </p>
           ) : (
             activeModalities.map((m) => (
               <label
                 key={m.id}
-                className="flex items-center gap-2 rounded px-2 py-1 text-sm hover:bg-bg-elevated"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "4px 8px",
+                  borderRadius: 4,
+                  fontSize: 13,
+                  color: "var(--kg-text-1)",
+                  cursor: "pointer",
+                }}
               >
                 <input
                   type="checkbox"
                   name="modality_ids"
                   value={m.id}
                   defaultChecked={initialModalityIds.has(m.id)}
-                  className="h-4 w-4"
+                  style={{ accentColor: "var(--kg-accent-500)" }}
                 />
                 <span>{m.name}</span>
               </label>
@@ -187,38 +230,41 @@ export function RuleForm({
         </div>
       </div>
 
-      {/* Scope — mutuamente excluyente: default / launch / producto */}
+      {/* Scope — mutuamente excluyente */}
       <div>
-        <Label>Aplica a *</Label>
+        <FieldLabel>Aplica a *</FieldLabel>
         <input type="hidden" name="scope" value={scope} />
-        <div className="mt-1 space-y-2 rounded-md border border-border bg-surface/40 p-3 text-sm">
-          <label className="flex cursor-pointer items-center gap-2">
-            <input
-              type="radio"
-              name="scope_radio"
-              checked={scope === "default"}
-              onChange={() => setScope("default")}
-              className="accent-accent"
-            />
-            <span>Default del proyecto para las modalidades elegidas</span>
-          </label>
-          <label className="flex cursor-pointer items-center gap-2">
-            <input
-              type="radio"
-              name="scope_radio"
-              checked={scope === "launch"}
-              onChange={() => setScope("launch")}
-              className="accent-accent"
-            />
-            <span>Un lanzamiento específico</span>
-          </label>
+        <div
+          style={{
+            marginTop: 6,
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            borderRadius: "var(--kg-r-8)",
+            border: "1px solid var(--kg-border-subtle)",
+            background: "var(--kg-surface-2-solid)",
+            padding: 12,
+            fontSize: 13,
+          }}
+        >
+          <ScopeRadio
+            checked={scope === "default"}
+            onSelect={() => setScope("default")}
+            label="Default del proyecto para las modalidades elegidas"
+          />
+          <ScopeRadio
+            checked={scope === "launch"}
+            onSelect={() => setScope("launch")}
+            label="Un lanzamiento específico"
+          />
           {scope === "launch" && (
-            <div className="ml-6">
-              <Select
+            <div style={{ marginLeft: 24 }}>
+              <select
                 id="rule-launch"
                 name="launch_id"
                 defaultValue={initial?.launch_id ?? ""}
                 required
+                style={inputStyle}
               >
                 <option value="" disabled>
                   Elegí un lanzamiento
@@ -228,26 +274,22 @@ export function RuleForm({
                     {l.name}
                   </option>
                 ))}
-              </Select>
+              </select>
             </div>
           )}
-          <label className="flex cursor-pointer items-center gap-2">
-            <input
-              type="radio"
-              name="scope_radio"
-              checked={scope === "product"}
-              onChange={() => setScope("product")}
-              className="accent-accent"
-            />
-            <span>Un producto específico</span>
-          </label>
+          <ScopeRadio
+            checked={scope === "product"}
+            onSelect={() => setScope("product")}
+            label="Un producto específico"
+          />
           {scope === "product" && (
-            <div className="ml-6">
-              <Select
+            <div style={{ marginLeft: 24 }}>
+              <select
                 id="rule-product"
                 name="product_id"
                 defaultValue={initial?.product_id ?? ""}
                 required
+                style={inputStyle}
               >
                 <option value="" disabled>
                   Elegí un producto
@@ -258,20 +300,32 @@ export function RuleForm({
                     {!p.active ? " (inactivo)" : ""}
                   </option>
                 ))}
-              </Select>
+              </select>
             </div>
           )}
         </div>
-        <p className="mt-1 text-xs text-fg-subtle">
+        <div className="kg-t7" style={{ color: "var(--kg-text-3)", marginTop: 6 }}>
           Prioridad al calcular: producto → launch → default.
-        </p>
+        </div>
       </div>
 
       {/* Accrual mode — radio con lenguaje operativo */}
       <div>
-        <Label>¿Cuándo se libera la comisión? *</Label>
+        <FieldLabel>¿Cuándo se libera la comisión? *</FieldLabel>
         <input type="hidden" name="accrual_mode" value={accrualMode} />
-        <div className="mt-1 space-y-2 rounded-md border border-border bg-surface/40 p-3 text-sm">
+        <div
+          style={{
+            marginTop: 6,
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            borderRadius: "var(--kg-r-8)",
+            border: "1px solid var(--kg-border-subtle)",
+            background: "var(--kg-surface-2-solid)",
+            padding: 12,
+            fontSize: 13,
+          }}
+        >
           <AccrualRadio
             value="on_close"
             checked={accrualMode === "on_close"}
@@ -304,26 +358,33 @@ export function RuleForm({
       </div>
 
       {accrualMode !== "proportional" && accrualMode !== "on_close" && (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns: "1fr 1fr",
+          }}
+        >
           <div>
-            <Label htmlFor="threshold-type">Tipo de umbral *</Label>
-            <Select
+            <FieldLabel htmlFor="threshold-type">Tipo de umbral *</FieldLabel>
+            <select
               id="threshold-type"
               name="threshold_type"
               value={thresholdType}
               onChange={(e) => setThresholdType(e.target.value as ThresholdType)}
+              style={inputStyle}
             >
               <option value="payment_count">Cantidad de cobros</option>
               <option value="paid_ratio">% cobrado del total</option>
-            </Select>
+            </select>
           </div>
           <div>
-            <Label htmlFor="threshold-value">
+            <FieldLabel htmlFor="threshold-value">
               {thresholdType === "payment_count"
                 ? "Cantidad mínima de cobros"
                 : "Ratio (0–1) — ej. 0.5 = 50%"}
-            </Label>
-            <Input
+            </FieldLabel>
+            <input
               id="threshold-value"
               name="threshold_value"
               type="number"
@@ -338,6 +399,7 @@ export function RuleForm({
                   : ""
               }
               placeholder={thresholdType === "payment_count" ? "3" : "0.5"}
+              style={inputStyle}
             />
           </div>
         </div>
@@ -345,28 +407,56 @@ export function RuleForm({
 
       {/* Tiers */}
       <div>
-        <div className="mb-2 flex items-baseline justify-between">
-          <Label>Tramos marginales por cantidad de ventas *</Label>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "baseline",
+            justifyContent: "space-between",
+            marginBottom: 6,
+          }}
+        >
+          <FieldLabel>Tramos marginales por cantidad de ventas *</FieldLabel>
           <button
             type="button"
             onClick={addTier}
-            className="text-xs text-accent hover:underline"
+            className="kg-focus"
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "var(--kg-accent-text)",
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: "pointer",
+              padding: 0,
+            }}
           >
             + Agregar tramo
           </button>
         </div>
-        <p className="mb-2 text-xs text-fg-subtle">
+        <div
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)", marginBottom: 8 }}
+        >
           Los tramos son marginales: cada venta usa el tier que matchea su
           posición. La 1ra venta del closer en el launch es venta #1 (min=0).
           El último tramo queda sin tope.
-        </p>
-        <div className="space-y-2">
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {tiers.map((t, i) => {
             const isLast = i === tiers.length - 1;
             return (
               <div
                 key={i}
-                className="grid grid-cols-12 items-end gap-2 rounded-md border border-border bg-surface/30 p-2"
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(12, 1fr)",
+                  gap: 8,
+                  alignItems: "end",
+                  borderRadius: "var(--kg-r-8)",
+                  border: "1px solid var(--kg-border-subtle)",
+                  background: "var(--kg-surface-2-solid)",
+                  padding: 10,
+                }}
               >
                 <input
                   type="hidden"
@@ -388,14 +478,27 @@ export function RuleForm({
                   name={`tiers[${i}][value]`}
                   value={t.value}
                 />
-                <div className="col-span-2">
-                  <span className="text-xs text-fg-subtle">Desde venta</span>
+                <div style={{ gridColumn: "span 2" }}>
+                  <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+                    Desde venta
+                  </span>
                   {i === 0 ? (
-                    <div className="mt-1 rounded border border-border bg-bg-elevated px-2 py-1 text-sm tabular-nums">
+                    <div
+                      style={{
+                        marginTop: 4,
+                        padding: "6px 10px",
+                        borderRadius: "var(--kg-r-8)",
+                        border: "1px solid var(--kg-border-subtle)",
+                        background: "var(--kg-surface-1-solid)",
+                        fontSize: 12.5,
+                        color: "var(--kg-text-2)",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
                       1
                     </div>
                   ) : (
-                    <Input
+                    <input
                       type="number"
                       min={1}
                       value={t.min_count + 1}
@@ -405,12 +508,15 @@ export function RuleForm({
                         if (!Number.isFinite(parsed) || parsed < 1) return;
                         patchTier(i, { min_count: parsed - 1 });
                       }}
+                      style={{ ...inputStyle, marginTop: 4 }}
                     />
                   )}
                 </div>
-                <div className="col-span-2">
-                  <span className="text-xs text-fg-subtle">Hasta venta</span>
-                  <Input
+                <div style={{ gridColumn: "span 2" }}>
+                  <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+                    Hasta venta
+                  </span>
+                  <input
                     type="number"
                     min={t.min_count + 1}
                     value={t.max_count === null ? "" : t.max_count + 1}
@@ -418,30 +524,42 @@ export function RuleForm({
                     placeholder={isLast ? "∞" : ""}
                     onChange={(e) => {
                       const raw = e.target.value;
-                      const parsed = raw === "" ? null : parseInt(raw, 10) - 1;
+                      const parsed =
+                        raw === "" ? null : parseInt(raw, 10) - 1;
                       patchTier(i, {
-                        max_count: parsed === null || Number.isNaN(parsed) ? null : parsed,
+                        max_count:
+                          parsed === null || Number.isNaN(parsed) ? null : parsed,
                       });
+                    }}
+                    style={{
+                      ...inputStyle,
+                      marginTop: 4,
+                      opacity: isLast ? 0.6 : 1,
                     }}
                   />
                 </div>
-                <div className="col-span-3">
-                  <span className="text-xs text-fg-subtle">Tipo</span>
-                  <Select
+                <div style={{ gridColumn: "span 3" }}>
+                  <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+                    Tipo
+                  </span>
+                  <select
                     value={t.type}
                     onChange={(e) =>
-                      patchTier(i, { type: e.target.value as CommissionTierType })
+                      patchTier(i, {
+                        type: e.target.value as CommissionTierType,
+                      })
                     }
+                    style={{ ...inputStyle, marginTop: 4 }}
                   >
                     <option value="percent">% del cobrado</option>
                     <option value="fixed">Monto fijo</option>
-                  </Select>
+                  </select>
                 </div>
-                <div className="col-span-3">
-                  <span className="text-xs text-fg-subtle">
+                <div style={{ gridColumn: "span 3" }}>
+                  <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
                     {t.type === "percent" ? "%" : "Monto"}
                   </span>
-                  <Input
+                  <input
                     type="number"
                     step="0.01"
                     min="0"
@@ -449,15 +567,32 @@ export function RuleForm({
                     onChange={(e) =>
                       patchTier(i, { value: parseFloat(e.target.value) || 0 })
                     }
+                    style={{ ...inputStyle, marginTop: 4 }}
                   />
                 </div>
-                <div className="col-span-2 flex justify-end">
+                <div
+                  style={{
+                    gridColumn: "span 2",
+                    display: "flex",
+                    justifyContent: "flex-end",
+                  }}
+                >
                   {tiers.length > 1 && (
                     <button
                       type="button"
                       onClick={() => removeTier(i)}
                       aria-label={`Quitar tramo ${i + 1}`}
-                      className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-fg-muted hover:text-error"
+                      className="kg-focus"
+                      style={{
+                        padding: "4px 10px",
+                        borderRadius: 999,
+                        background: "transparent",
+                        border: "1px solid var(--kg-border-subtle)",
+                        color: "#EF4444",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
                     >
                       Quitar
                     </button>
@@ -469,21 +604,102 @@ export function RuleForm({
         </div>
       </div>
 
-      <div className="flex items-center gap-4 pt-2">
-        <Button type="submit" disabled={pending}>
+      {state && "error" in state && (
+        <div
+          style={{
+            padding: "10px 14px",
+            borderRadius: "var(--kg-r-8)",
+            background: "rgba(239,68,68,0.10)",
+            border: "1px solid #EF4444",
+            color: "#EF4444",
+            fontSize: 12,
+          }}
+        >
+          {state.error}
+        </div>
+      )}
+
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          gap: 8,
+          marginTop: 4,
+        }}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={pending}
+          className="kg-focus"
+          style={secondaryBtn}
+        >
+          Cancelar
+        </button>
+        <button
+          type="submit"
+          disabled={pending}
+          className="kg-focus"
+          style={{ ...primaryBtn, opacity: pending ? 0.7 : 1 }}
+        >
           {pending ? "Guardando…" : submitLabel}
-        </Button>
-        {state && "error" in state && <FieldError>{state.error}</FieldError>}
+        </button>
       </div>
     </form>
   );
 }
 
-/**
- * Radio "amigable" para el modo de devengamiento. Muestra título + hint
- * debajo para que el operador entienda cuándo elegir cada opción sin
- * memorizar terminología técnica.
- */
+// ─── Sub-componentes ─────────────────────────────────────────────────────
+
+function FieldLabel({
+  htmlFor,
+  children,
+}: {
+  readonly htmlFor?: string;
+  readonly children: React.ReactNode;
+}) {
+  return (
+    <label
+      htmlFor={htmlFor}
+      className="kg-t7"
+      style={{ display: "block", color: "var(--kg-text-3)", marginBottom: 6 }}
+    >
+      {children}
+    </label>
+  );
+}
+
+function ScopeRadio({
+  checked,
+  onSelect,
+  label,
+}: {
+  readonly checked: boolean;
+  readonly onSelect: () => void;
+  readonly label: string;
+}) {
+  return (
+    <label
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        cursor: "pointer",
+        color: "var(--kg-text-1)",
+      }}
+    >
+      <input
+        type="radio"
+        name="scope_radio"
+        checked={checked}
+        onChange={onSelect}
+        style={{ accentColor: "var(--kg-accent-500)" }}
+      />
+      <span>{label}</span>
+    </label>
+  );
+}
+
 function AccrualRadio({
   value,
   checked,
@@ -498,18 +714,65 @@ function AccrualRadio({
   readonly hint: string;
 }) {
   return (
-    <label className="flex cursor-pointer items-start gap-2">
+    <label
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 8,
+        cursor: "pointer",
+      }}
+    >
       <input
         type="radio"
         name="accrual_mode_radio"
         checked={checked}
         onChange={() => onSelect(value)}
-        className="mt-1 accent-accent"
+        style={{
+          accentColor: "var(--kg-accent-500)",
+          marginTop: 3,
+        }}
       />
       <div>
-        <div className="text-fg">{title}</div>
-        <div className="text-xs text-fg-subtle">{hint}</div>
+        <div style={{ color: "var(--kg-text-1)" }}>{title}</div>
+        <div
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)", marginTop: 2 }}
+        >
+          {hint}
+        </div>
       </div>
     </label>
   );
 }
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "8px 12px",
+  borderRadius: "var(--kg-r-8)",
+  background: "var(--kg-surface-1-solid)",
+  border: "1px solid var(--kg-border-subtle)",
+  color: "var(--kg-text-1)",
+  fontSize: 12.5,
+};
+
+const primaryBtn: React.CSSProperties = {
+  padding: "8px 16px",
+  borderRadius: 999,
+  background: "var(--kg-accent-500)",
+  border: "none",
+  color: "#fff",
+  fontSize: 12,
+  fontWeight: 700,
+  cursor: "pointer",
+};
+
+const secondaryBtn: React.CSSProperties = {
+  padding: "8px 16px",
+  borderRadius: 999,
+  background: "transparent",
+  border: "1px solid var(--kg-border-subtle)",
+  color: "var(--kg-text-2)",
+  fontSize: 12,
+  fontWeight: 700,
+  cursor: "pointer",
+};

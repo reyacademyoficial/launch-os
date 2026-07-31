@@ -3,9 +3,6 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTransition } from "react";
 
-import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/select";
-
 /**
  * Filtros del leaderboard. La fuente de verdad es la URL — los queries del
  * server component leen los searchParams. Eso permite compartir/bookmarkear
@@ -51,23 +48,39 @@ export function FiltersBar({
     });
   }
 
-  const isFiltered = !!(initial.launchId || initial.dateFrom || initial.dateTo);
+  const isFiltered = !!(
+    initial.launchId ||
+    initial.dateFrom ||
+    initial.dateTo
+  );
 
   return (
-    <div className="flex flex-wrap items-end gap-3 rounded-md border border-border bg-surface/40 p-4">
-      <div className="flex flex-col">
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "flex-end",
+        gap: 12,
+      }}
+    >
+      <div style={{ display: "flex", flexDirection: "column" }}>
         <label
           htmlFor="lb-launch"
-          className="mb-1 text-xs font-medium text-fg-muted"
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)", marginBottom: 6 }}
         >
           Lanzamiento
         </label>
-        <Select
+        <select
           id="lb-launch"
           value={initial.launchId}
           onChange={(e) => update({ launchId: e.target.value })}
           disabled={pending}
-          className="!w-auto !min-w-[180px]"
+          style={{
+            ...inputStyle,
+            minWidth: 200,
+            opacity: pending ? 0.7 : 1,
+          }}
         >
           <option value="">Todos</option>
           {launches.map((l) => (
@@ -75,12 +88,13 @@ export function FiltersBar({
               {l.name}
             </option>
           ))}
-        </Select>
+        </select>
       </div>
-      <div className="flex flex-col">
+      <div style={{ display: "flex", flexDirection: "column" }}>
         <label
           htmlFor="lb-from"
-          className="mb-1 text-xs font-medium text-fg-muted"
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)", marginBottom: 6 }}
         >
           Desde
         </label>
@@ -90,13 +104,14 @@ export function FiltersBar({
           value={initial.dateFrom}
           onChange={(e) => update({ dateFrom: e.target.value })}
           disabled={pending}
-          className="rounded-md border border-border bg-input px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
+          style={{ ...inputStyle, opacity: pending ? 0.7 : 1 }}
         />
       </div>
-      <div className="flex flex-col">
+      <div style={{ display: "flex", flexDirection: "column" }}>
         <label
           htmlFor="lb-to"
-          className="mb-1 text-xs font-medium text-fg-muted"
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)", marginBottom: 6 }}
         >
           Hasta
         </label>
@@ -106,20 +121,39 @@ export function FiltersBar({
           value={initial.dateTo}
           onChange={(e) => update({ dateTo: e.target.value })}
           disabled={pending}
-          className="rounded-md border border-border bg-input px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
+          style={{ ...inputStyle, opacity: pending ? 0.7 : 1 }}
         />
       </div>
       {isFiltered && (
-        <Button
+        <button
           type="button"
-          variant="secondary"
           onClick={clearAll}
           disabled={pending}
-          className="!px-3 !py-2 !text-xs"
+          className="kg-focus"
+          style={{
+            padding: "8px 14px",
+            borderRadius: 999,
+            background: "transparent",
+            border: "1px solid var(--kg-border-subtle)",
+            color: "var(--kg-text-2)",
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: "pointer",
+            opacity: pending ? 0.6 : 1,
+          }}
         >
           Limpiar filtros
-        </Button>
+        </button>
       )}
     </div>
   );
 }
+
+const inputStyle: React.CSSProperties = {
+  padding: "8px 12px",
+  borderRadius: "var(--kg-r-8)",
+  background: "var(--kg-surface-2-solid)",
+  border: "1px solid var(--kg-border-subtle)",
+  color: "var(--kg-text-1)",
+  fontSize: 12.5,
+};

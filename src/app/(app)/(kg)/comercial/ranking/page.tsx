@@ -333,6 +333,14 @@ function ProjectSwitcher({
   );
 }
 
+/**
+ * Card compacto de estadística — reutilizado 6 veces en el header del ranking.
+ * `accent` marca la Comisión total (KPI destacado del ranking). `tone`
+ * (warning/success) marca el estado semántico del Pendiente (le debemos vs
+ * saldo cero). Ambos son semánticos, no decorativos — cumplen la regla del
+ * design system porque la señal está en la pill de borde/fondo, no en el
+ * número mismo por sí solo.
+ */
 function StatCard({
   label,
   value,
@@ -344,30 +352,46 @@ function StatCard({
   readonly accent?: boolean;
   readonly tone?: "warning" | "success";
 }) {
-  const toneClass =
-    tone === "warning"
-      ? "border-warning/40 bg-warning/5"
-      : tone === "success"
-        ? "border-success/40 bg-success/5"
-        : accent
-          ? "border-accent/40 bg-accent/5"
-          : "border-border bg-surface";
-
-  const valueClass =
-    tone === "warning"
-      ? "text-warning"
-      : tone === "success"
-        ? "text-success"
-        : accent
-          ? "text-accent"
-          : "text-fg";
-
+  const spec = tone
+    ? tone === "warning"
+      ? { border: "#FFB800", value: "#FFB800", bg: "rgba(255,184,0,0.06)" }
+      : { border: "#00D084", value: "#00D084", bg: "rgba(0,208,132,0.06)" }
+    : accent
+      ? {
+          border: "var(--kg-border-accent)",
+          value: "var(--kg-accent-text)",
+          bg: "var(--kg-accent-halo)",
+        }
+      : {
+          border: "var(--kg-border-subtle)",
+          value: "var(--kg-text-1)",
+          bg: "var(--kg-surface-2-solid)",
+        };
   return (
-    <div className={"rounded-md border p-4 " + toneClass}>
-      <div className="text-xs uppercase tracking-wide text-fg-subtle">
+    <div
+      style={{
+        padding: "14px 16px",
+        borderRadius: "var(--kg-r-16)",
+        border: `1px solid ${spec.border}`,
+        background: spec.bg,
+      }}
+    >
+      <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
         {label}
       </div>
-      <div className={"mt-2 text-xl font-bold " + valueClass}>{value}</div>
+      <div
+        className="kg-num"
+        style={{
+          marginTop: 8,
+          fontSize: 20,
+          fontWeight: 700,
+          color: spec.value,
+          fontVariantNumeric: "tabular-nums",
+          letterSpacing: "-0.4px",
+        }}
+      >
+        {value}
+      </div>
     </div>
   );
 }

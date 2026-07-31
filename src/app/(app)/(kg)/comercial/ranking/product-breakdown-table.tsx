@@ -1,13 +1,14 @@
+import { EmptyState } from "@/components/kg/empty-state";
 import type { ProductBreakdownRow } from "@/lib/leaderboard/product-breakdown";
 import { fmtMoney, fmtNumber } from "@/lib/format";
 
 /**
- * Tabla debajo del leaderboard principal: fila por combinación
- * (vendedor, producto). Muestra Ventas / Pactado / Cobrado / Comisión.
- * Insertamos filas de subtotal cada vez que cambia el vendedor, y una
- * fila de Total al final.
+ * Desglose por (vendedor, producto). Filas de subtotal por vendedor cuando
+ * hay más de uno + fila total al final.
  *
  * Read-only, sin filtros propios — hereda los del leaderboard.
+ * Estilo KG: usa var(--kg-*) y kg-num. La única marca de acento es la
+ * columna Comisión (KPI destacado).
  */
 export function ProductBreakdownTable({
   rows,
@@ -16,12 +17,10 @@ export function ProductBreakdownTable({
 }) {
   if (rows.length === 0) {
     return (
-      <section className="space-y-3">
-        <h2 className="text-base font-semibold text-fg">Ventas por producto</h2>
-        <p className="rounded-md border border-dashed border-border bg-surface/40 p-6 text-center text-sm text-fg-muted">
-          Sin ventas en el rango filtrado.
-        </p>
-      </section>
+      <EmptyState
+        title="Sin ventas en el rango filtrado"
+        hint="Ajustá los filtros del ranking para ver el desglose por producto."
+      />
     );
   }
 
@@ -37,17 +36,14 @@ export function ProductBreakdownTable({
     grandCommission += r.commissionAccrued;
   }
 
-  // Detectar el último índice de cada vendedor para saber dónde inyectar
-  // subtotales. Como `rows` ya está ordenado por vendedor, alcanza con
-  // recorrer una vez y armar los límites.
   const memberKey = (r: ProductBreakdownRow): string =>
     r.teamMember?.id ?? "__unassigned__";
 
   interface Group {
     key: string;
     memberName: string;
-    startIdx: number; // inclusive
-    endIdx: number; // inclusive
+    startIdx: number;
+    endIdx: number;
     sales: number;
     pledged: number;
     collected: number;
@@ -78,73 +74,64 @@ export function ProductBreakdownTable({
   });
   if (current) groups.push(current);
 
-  // Solo mostramos subtotales si hay más de un vendedor (evita ruido cuando
-  // hay solo uno y coincide con el total).
   const showSubtotals = groups.length > 1;
 
   return (
-    <section className="space-y-3">
-      <h2 className="text-base font-semibold text-fg">Ventas por producto</h2>
-      <p className="text-xs text-fg-subtle">
-        Desglose por vendedor y producto sobre el mismo universo filtrado del
-        leaderboard.
-      </p>
-      <div className="overflow-x-auto rounded-md border border-border">
-        <table className="w-full min-w-[720px] text-sm">
-          <thead className="bg-surface text-left text-xs uppercase tracking-wide text-fg-subtle">
-            <tr>
-              <th scope="col" className="px-3 py-3 font-medium">
-                Vendedor
-              </th>
-              <th scope="col" className="px-3 py-3 font-medium">
-                Producto
-              </th>
-              <th scope="col" className="px-3 py-3 text-right font-medium">
-                Ventas
-              </th>
-              <th scope="col" className="px-3 py-3 text-right font-medium">
-                Pactado
-              </th>
-              <th scope="col" className="px-3 py-3 text-right font-medium">
-                Cobrado
-              </th>
-              <th scope="col" className="px-3 py-3 text-right font-medium">
-                Comisión
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {groups.map((g) => (
-              <GroupRows
-                key={g.key}
-                group={g}
-                rows={rows}
-                showSubtotal={showSubtotals}
-              />
-            ))}
-          </tbody>
-          <tfoot className="border-t-2 border-border bg-surface/60 text-sm">
-            <tr>
-              <td className="px-3 py-3 font-semibold text-fg" colSpan={2}>
-                Total
-              </td>
-              <td className="px-3 py-3 text-right font-semibold tabular-nums text-fg">
-                {fmtNumber(grandSales)}
-              </td>
-              <td className="px-3 py-3 text-right font-semibold tabular-nums text-fg">
-                {fmtMoney(grandPledged)}
-              </td>
-              <td className="px-3 py-3 text-right font-semibold tabular-nums text-fg">
-                {fmtMoney(grandCollected)}
-              </td>
-              <td className="px-3 py-3 text-right font-semibold tabular-nums text-accent">
-                {fmtMoney(grandCommission)}
-              </td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-    </section>
+    <div style={{ overflowX: "auto" }}>
+      <table
+        style={{
+          width: "100%",
+          minWidth: 720,
+          borderCollapse: "collapse",
+          fontSize: 12.5,
+        }}
+      >
+        <thead>
+          <tr>
+            <TH>Vendedor</TH>
+            <TH>Producto</TH>
+            <TH align="right">Ventas</TH>
+            <TH align="right">Pactado</TH>
+            <TH align="right">Cobrado</TH>
+            <TH align="right">Comisión</TH>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((g) => (
+            <GroupRows
+              key={g.key}
+              group={g}
+              rows={rows}
+              showSubtotal={showSubtotals}
+            />
+          ))}
+        </tbody>
+        <tfoot>
+          <tr
+            style={{
+              borderTop: "2px solid var(--kg-border-subtle)",
+              background: "var(--kg-surface-2-solid)",
+            }}
+          >
+            <TD colSpan={2} style={{ fontWeight: 700 }}>
+              Total
+            </TD>
+            <TD align="right" numeric bold>
+              {fmtNumber(grandSales)}
+            </TD>
+            <TD align="right" numeric bold>
+              {fmtMoney(grandPledged)}
+            </TD>
+            <TD align="right" numeric bold>
+              {fmtMoney(grandCollected)}
+            </TD>
+            <TD align="right" numeric bold accent>
+              {fmtMoney(grandCommission)}
+            </TD>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
   );
 }
 
@@ -172,45 +159,128 @@ function GroupRows({
       {slice.map((r, i) => (
         <tr
           key={`${group.key}-${r.product.id}`}
-          className="border-t border-border hover:bg-surface"
+          className="kg-row"
+          style={{ borderTop: "1px solid var(--kg-border-subtle)" }}
         >
-          <td className="px-3 py-3 text-fg">
-            {i === 0 ? group.memberName : ""}
-          </td>
-          <td className="px-3 py-3 text-fg-muted">{r.product.name}</td>
-          <td className="px-3 py-3 text-right tabular-nums text-fg">
+          <TD>{i === 0 ? group.memberName : ""}</TD>
+          <TD muted>{r.product.name}</TD>
+          <TD align="right" numeric>
             {fmtNumber(r.salesCount)}
-          </td>
-          <td className="px-3 py-3 text-right tabular-nums text-fg">
+          </TD>
+          <TD align="right" numeric>
             {fmtMoney(r.pledged)}
-          </td>
-          <td className="px-3 py-3 text-right tabular-nums text-fg">
+          </TD>
+          <TD align="right" numeric>
             {fmtMoney(r.collected)}
-          </td>
-          <td className="px-3 py-3 text-right tabular-nums text-accent">
+          </TD>
+          <TD align="right" numeric accent>
             {fmtMoney(r.commissionAccrued)}
-          </td>
+          </TD>
         </tr>
       ))}
       {showSubtotal && slice.length > 1 && (
-        <tr className="border-t border-border bg-surface/30 text-xs">
-          <td className="px-3 py-2 font-semibold text-fg-subtle" colSpan={2}>
+        <tr
+          style={{
+            borderTop: "1px solid var(--kg-border-subtle)",
+            background: "var(--kg-surface-2-solid)",
+          }}
+        >
+          <TD
+            colSpan={2}
+            small
+            style={{ fontWeight: 700, color: "var(--kg-text-3)" }}
+          >
             Subtotal {group.memberName}
-          </td>
-          <td className="px-3 py-2 text-right font-semibold tabular-nums text-fg-subtle">
+          </TD>
+          <TD align="right" numeric bold small muted>
             {fmtNumber(group.sales)}
-          </td>
-          <td className="px-3 py-2 text-right font-semibold tabular-nums text-fg-subtle">
+          </TD>
+          <TD align="right" numeric bold small muted>
             {fmtMoney(group.pledged)}
-          </td>
-          <td className="px-3 py-2 text-right font-semibold tabular-nums text-fg-subtle">
+          </TD>
+          <TD align="right" numeric bold small muted>
             {fmtMoney(group.collected)}
-          </td>
-          <td className="px-3 py-2 text-right font-semibold tabular-nums text-fg-subtle">
+          </TD>
+          <TD align="right" numeric bold small muted>
             {fmtMoney(group.commission)}
-          </td>
+          </TD>
         </tr>
       )}
     </>
+  );
+}
+
+// ─── TH/TD helpers ────────────────────────────────────────────────────────
+
+function TH({
+  children,
+  align,
+}: {
+  readonly children?: React.ReactNode;
+  readonly align?: "left" | "right";
+}) {
+  return (
+    <th
+      scope="col"
+      style={{
+        textAlign: align ?? "left",
+        padding: "10px 12px",
+        borderBottom: "1px solid var(--kg-border-subtle)",
+        color: "var(--kg-text-3)",
+        fontWeight: 600,
+        fontSize: 11,
+        letterSpacing: 0.2,
+        textTransform: "uppercase",
+        whiteSpace: "nowrap",
+        background: "transparent",
+      }}
+    >
+      {children}
+    </th>
+  );
+}
+
+function TD({
+  children,
+  align,
+  numeric,
+  muted,
+  bold,
+  accent,
+  small,
+  colSpan,
+  style,
+}: {
+  readonly children?: React.ReactNode;
+  readonly align?: "left" | "right";
+  readonly numeric?: boolean;
+  readonly muted?: boolean;
+  readonly bold?: boolean;
+  readonly accent?: boolean;
+  readonly small?: boolean;
+  readonly colSpan?: number;
+  readonly style?: React.CSSProperties;
+}) {
+  const color = accent
+    ? "var(--kg-accent-text)"
+    : muted
+      ? "var(--kg-text-3)"
+      : "var(--kg-text-1)";
+  return (
+    <td
+      colSpan={colSpan}
+      className={numeric ? "kg-num" : undefined}
+      style={{
+        textAlign: align ?? "left",
+        padding: small ? "8px 12px" : "10px 12px",
+        color,
+        fontVariantNumeric: numeric ? "tabular-nums" : undefined,
+        fontWeight: bold ? 700 : undefined,
+        whiteSpace: "nowrap",
+        ...style,
+      }}
+    >
+      {children}
+    </td>
   );
 }
