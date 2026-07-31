@@ -1,18 +1,21 @@
 import { redirect } from "next/navigation";
 
+import { ProjectShell } from "@/components/project/shell";
+import { listAccessibleProjects } from "@/lib/projects/list";
+import { requireSessionProfile } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
+import { readThemeCookie } from "@/lib/theme-cookie";
 
 /**
- * Per-project access guard.
+ * ProjectShell wrapper + per-project access guard.
  *
- * RLS (`projects_select`) already restricts who can read which projects.
- * Calling `.from('projects').select('id').eq(...)` and getting `null` means
- * the caller has no access (or the id doesn't exist) — either way, bounce.
+ * Guard (RLS layer #2): un usuario no autorizado que tipea
+ * `/proyectos/<other-id>/…` es redirigido a `/` en lugar de ver una page
+ * vacía (RLS oculta todo). Útil por UX y como no-disclosure de IDs.
  *
- * This is defense layer #2: RLS is layer #3. Without this check, an
- * unauthorized user typing `/proyectos/<other-id>/launches` would see an empty
- * launches page (RLS hides everything) instead of being redirected — bad UX
- * and a useful disclosure to attackers about which IDs exist.
+ * Shell: acá se monta el ProjectShell — con la sidebar scoped al proyecto y
+ * el botón "← Kingrow" en el topbar. KingrowShell y ProjectShell son
+ * mutuamente excluyentes: éste no está anidado dentro del otro.
  */
 export default async function ProjectLayout({
   children,
@@ -31,5 +34,15 @@ export default async function ProjectLayout({
 
   if (!data) redirect("/");
 
-  return <>{children}</>;
+  const [profile, projects, theme] = await Promise.all([
+    requireSessionProfile(),
+    listAccessibleProjects(),
+    readThemeCookie(),
+  ]);
+
+  return (
+    <ProjectShell profile={profile} projects={projects} theme={theme}>
+      {children}
+    </ProjectShell>
+  );
 }

@@ -658,9 +658,11 @@ function revalidateSalesImpact(
   // creada no aparece hasta el próximo hard reload.
   revalidatePath(`/proyectos/${projectId}/ventas`);
   revalidatePath(`/proyectos/${projectId}/cobros`);
-  // Fase 11: la página de métodos de pago muestra totales por método —
-  // cualquier alta/edición de cobro cambia esos números.
-  revalidatePath(`/proyectos/${projectId}/metodos-pago`);
+  // La pestaña "Métodos de pago" en Kingrow muestra totales por método —
+  // cualquier alta/edición de cobro cambia esos números. Post 6d-B vive
+  // en /financiero/metodos-pago (antes en /proyectos/[id]/metodos-pago).
+  revalidatePath("/financiero/metodos-pago");
+  revalidatePath("/financiero/bancos");
   if (launchId) {
     revalidatePath(`/proyectos/${projectId}/launches/${launchId}`);
     revalidatePath(`/proyectos/${projectId}/launches/${launchId}/kpi`);

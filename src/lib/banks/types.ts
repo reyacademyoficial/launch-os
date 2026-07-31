@@ -1,14 +1,19 @@
 /**
- * Cuenta bancaria del proyecto (Galicia AR, Wise, PayPal, MercadoPago…).
- * Los `payment_methods` apuntan al banco donde depositan; el saldo se
- * calcula en runtime desde payments + bank_movements.
+ * Cuenta bancaria de la organización (Mercado Pago, Santander, Wise, Stripe…).
+ * Post 0101 vive a nivel org; `project_id` quedó como nullable para futuros
+ * casos "banco escrow de proyecto puntual". Hoy siempre es null. Los
+ * `payment_methods` apuntan al banco donde depositan; el saldo se calcula
+ * en runtime desde payments + bank_movements.
  */
 export interface BankRow {
   id: string;
-  project_id: string;
+  organization_id: string;
+  project_id: string | null;
   name: string;
   /** Saldo inicial cargado por el operador para arrancar sin backfill histórico. */
   opening_balance: number;
+  /** Moneda nativa del banco. Los cobros/movimientos se cargan siempre en esta moneda. */
+  currency: "ARS" | "USD";
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -25,6 +30,8 @@ export type BankMovementKind = "in" | "out";
 export interface BankMovementRow {
   id: string;
   bank_id: string;
+  /** Denormalizado desde 0057; scope efectivo desde 0101. */
+  organization_id: string;
   kind: BankMovementKind;
   amount: number;
   occurred_at: string;

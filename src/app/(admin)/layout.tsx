@@ -1,13 +1,13 @@
-import { Shell } from "@/components/dashboard/shell";
-import { listAccessibleProjects } from "@/lib/projects/list";
+import { KingrowShell } from "@/components/kg/shell";
 import { requireRole } from "@/lib/supabase/auth";
 import { readThemeCookie } from "@/lib/theme-cookie";
 
 /**
  * Admin guard — auth defense layer #2.
  *
- * Superadmin-only for now (admin/cliente delta intentionally undefined).
- * Uses the same <Shell> as the (app) group so navigation stays coherent.
+ * Superadmin-only (dev pasa por bypass del helper). Se monta dentro del
+ * KingrowShell — el sidebar KG resalta "Proyectos" o "Usuarios" en la
+ * sección "Sistema" cuando estás acá.
  */
 export default async function AdminLayout({
   children,
@@ -15,13 +15,10 @@ export default async function AdminLayout({
   readonly children: React.ReactNode;
 }) {
   const profile = await requireRole("superadmin");
-  const [projects, theme] = await Promise.all([
-    listAccessibleProjects(),
-    readThemeCookie(),
-  ]);
+  const theme = await readThemeCookie();
   return (
-    <Shell profile={profile} projects={projects} theme={theme}>
+    <KingrowShell profile={profile} theme={theme}>
       {children}
-    </Shell>
+    </KingrowShell>
   );
 }

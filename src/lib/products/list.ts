@@ -19,3 +19,18 @@ export async function listProductsForProject(
 
   return (data ?? []) as unknown as ProductRow[];
 }
+
+/**
+ * Todos los productos accesibles al usuario por RLS (todos los proyectos
+ * visibles). Superadmin ve todos. Consumido por `/comercial/productos`
+ * que administra el catálogo cross-proyecto.
+ */
+export async function listAllProducts(): Promise<ProductRow[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("products")
+    .select("*")
+    .order("active", { ascending: false })
+    .order("name", { ascending: true });
+  return (data ?? []) as unknown as ProductRow[];
+}

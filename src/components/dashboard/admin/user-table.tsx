@@ -1,4 +1,7 @@
-import { deactivateUser } from "@/app/(admin)/admin/usuarios/actions";
+import {
+  deactivateUser,
+  reactivateUser,
+} from "@/app/(admin)/admin/usuarios/actions";
 import { Badge } from "@/components/ui/badge";
 import { fmtDate } from "@/lib/format";
 import type { Role } from "@/lib/supabase/auth";
@@ -6,6 +9,7 @@ import type { UserListItem } from "@/lib/users/list";
 
 import { DeactivateUserButton } from "./deactivate-user-button";
 import { EditUserModal } from "./edit-user-modal";
+import { ReactivateUserButton } from "./reactivate-user-button";
 
 const ROLE_VARIANT: Record<Role, "info" | "warning" | "success" | "neutral"> = {
   // 'dev' es invisible: listAllUsers ya filtra estas filas. La key existe
@@ -68,6 +72,7 @@ export function UserTable({
         <tbody>
           {users.map((u) => {
             const isSelf = u.id === currentUserId;
+            const isInactive = u.deletedAt !== null;
             const editableUser = {
               id: u.id,
               email: u.email,
@@ -76,13 +81,21 @@ export function UserTable({
               currentProjectIds: u.projects.map((p) => p.id),
             };
             const deactivateAction = deactivateUser.bind(null, u.id);
+            const reactivateAction = reactivateUser.bind(null, u.id);
 
             return (
               <tr
                 key={u.id}
-                className="border-t border-border transition-colors hover:bg-surface"
+                className={`border-t border-border transition-colors hover:bg-surface ${
+                  isInactive ? "opacity-60" : ""
+                }`}
               >
-                <td className="px-4 py-3 font-medium text-fg">{u.email}</td>
+                <td className="px-4 py-3 font-medium text-fg">
+                  <div className="flex items-center gap-2">
+                    <span>{u.email}</span>
+                    {isInactive && <Badge variant="neutral">inactivo</Badge>}
+                  </div>
+                </td>
                 <td className="px-4 py-3 text-fg-muted">{u.fullName ?? "—"}</td>
                 <td className="px-4 py-3">
                   <Badge variant={ROLE_VARIANT[u.role]}>{u.role}</Badge>
@@ -109,6 +122,8 @@ export function UserTable({
                 <td className="px-4 py-3 text-right">
                   {isSelf ? (
                     <span className="text-xs text-fg-subtle">vos</span>
+                  ) : isInactive ? (
+                    <ReactivateUserButton onConfirm={reactivateAction} />
                   ) : (
                     <div className="inline-flex items-center gap-4">
                       <EditUserModal user={editableUser} projects={projects} />

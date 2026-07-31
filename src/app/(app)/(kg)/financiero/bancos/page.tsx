@@ -1,0 +1,139 @@
+import type { Metadata } from "next";
+
+import { ContextBar } from "@/components/kg/context-bar";
+import { IconFin } from "@/components/kg/icons";
+import { KgParamPills } from "@/components/kg/param-pills";
+import { Panel } from "@/components/kg/panel";
+import { computeBankBalances } from "@/lib/banks/balance";
+import { listBanks, listBankMovements } from "@/lib/banks/list";
+import { fCount } from "@/lib/finance/format";
+import { fmtArs, fmtUsd } from "@/lib/money";
+import { listAllPaymentMethods } from "@/lib/payment-methods/list";
+import { createClient } from "@/lib/supabase/server";
+
+import { BancosView, type BankRowData } from "./bancos-view";
+
+export const metadata: Metadata = { title: "Bancos · Financiero" };
+
+// Bancos son estructura, no eventos — sin filtro de período. Filtro por
+// estado (activos/inactivos/todos) como assets/pasivos.
+type ActiveParam = "activos" | "inactivos" | "todos";
+
+const ACTIVE_OPTIONS: ReadonlyArray<{ value: ActiveParam; label: string }> = [
+  { value: "activos", label: "Activos" },
+  { value: "inactivos", label: "Dados de baja" },
+  { value: "todos", label: "Todos" },
+];
+
+interface PaymentRow {
+  readonly amount: number;
+  readonly payment_method_id: string | null;
+}
+
+export default async function BancosPage({
+  searchParams,
+}: {
+  readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const sp = await searchParams;
+  const activeParam = parseActive(sp.state);
+
+  const supabase = await createClient();
+
+  // ─── Fetch en paralelo — cuatro fuentes para `computeBankBalances` ────
+  //
+  // `payments` es el bulto grande: cobros de TODAS las ventas de todos los
+  // proyectos que el usuario ve por RLS. Por diseño lo traemos completo
+  // (sin paginación) porque el saldo por banco es agregación total sobre el
+  // universo — no hay concepto de "saldo del último mes". Cuando `payments`
+  // supere ~10k filas conviene mover al backend con una view materializada;
+  // hoy hay pocas centenas.
+  const [banks, paymentMethods, movements, paymentsRes] = await Promise.all([
+    listBanks(),
+    listAllPaymentMethods(),
+    listBankMovements(),
+    supabase.from("payments").select("amount, payment_method_id"),
+  ]);
+  const payments = (paymentsRes.data ?? []) as unknown as PaymentRow[];
+
+  const filteredBanks =
+    activeParam === "activos"
+      ? banks.filter((b) => b.active)
+      : activeParam === "inactivos"
+        ? banks.filter((b) => !b.active)
+        : banks;
+
+  const balances = computeBankBalances(
+    filteredBanks,
+    paymentMethods,
+    payments,
+    movements,
+  );
+
+  const rows: BankRowData[] = filteredBanks.map((b) => {
+    const bal = balances.get(b.id);
+    return {
+      id: b.id,
+      name: b.name,
+      currency: b.currency,
+      openingBalance: bal?.opening ?? Number(b.opening_balance),
+      fromPayments: bal?.fromPayments ?? 0,
+      movementsIn: bal?.movementsIn ?? 0,
+      movementsOut: bal?.movementsOut ?? 0,
+      total: bal?.total ?? Number(b.opening_balance),
+      active: b.active,
+    };
+  });
+
+  const totalCount = rows.length;
+  // Sumamos separado por moneda: sumar ARS + USD en la misma numérica no tiene
+  // sentido físico. El total consolidado en USD sale en el dashboard financiero
+  // aplicando la conversión con las tasas del proyecto (task #9).
+  const activeRows = rows.filter((r) => r.active);
+  const totalActivoARS = activeRows
+    .filter((r) => r.currency === "ARS")
+    .reduce((acc, r) => acc + r.total, 0);
+  const totalActivoUSD = activeRows
+    .filter((r) => r.currency === "USD")
+    .reduce((acc, r) => acc + r.total, 0);
+
+  function buildHref(state: ActiveParam): string {
+    if (state === "activos") return "/financiero/bancos";
+    return `/financiero/bancos?state=${state}`;
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <ContextBar
+        icon={<IconFin size={16} />}
+        title="Bancos"
+        stats={[
+          { l: "En la vista", v: fCount(totalCount) },
+          { l: "Saldo ARS (activos)", v: fmtArs(totalActivoARS) },
+          { l: "Saldo USD (activos)", v: fmtUsd(totalActivoUSD) },
+        ]}
+      />
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <KgParamPills
+          ariaLabel="Filtrar por estado"
+          options={ACTIVE_OPTIONS.map((o) => ({
+            label: o.label,
+            href: buildHref(o.value),
+            active: activeParam === o.value,
+          }))}
+        />
+      </div>
+
+      <Panel title="Bancos de Kingrow" pad={false}>
+        <BancosView rows={rows} totalCount={totalCount} />
+      </Panel>
+    </div>
+  );
+}
+
+function parseActive(v: string | string[] | undefined): ActiveParam {
+  if (typeof v !== "string") return "activos";
+  const allowed: ActiveParam[] = ["activos", "inactivos", "todos"];
+  return (allowed as string[]).includes(v) ? (v as ActiveParam) : "activos";
+}

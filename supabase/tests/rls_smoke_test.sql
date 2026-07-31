@@ -174,6 +174,15 @@ insert into public.launches (id, project_id, name) values
   ('dddddddd-dddd-dddd-dddd-dddddddddddd','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','Launch Dos')
 on conflict (id) do nothing;
 
+-- Post-0038: sales.product_id es NOT NULL. Sembramos un producto genérico
+-- "Sin categoría" por cada proyecto (mismo nombre que usa el backfill de
+-- 0038 para ventas huérfanas) para que todos los inserts de sales del smoke
+-- puedan referenciarlo. `unique (project_id, name)` hace la seed idempotente.
+insert into public.products (project_id, name) values
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Sin categoría'),
+  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Sin categoría')
+on conflict (project_id, name) do nothing;
+
 -- =====================  TESTS  =====================
 --
 -- Semántica:
@@ -181,7 +190,7 @@ on conflict (id) do nothing;
 -- - UPDATE/DELETE bloqueado por USING → fila se filtra silencioso, 0 filas.
 --   Lo testeamos con `is_empty(WITH ... RETURNING 1)`.
 --
-insert into _smoke_results(result) values (plan(82));
+insert into _smoke_results(result) values (plan(186));
 
 -- 1) cliente NO puede insertar launches (WITH CHECK falla) → 42501
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
@@ -565,12 +574,15 @@ insert into _smoke_results(result) values (pg_temp.throws_ok(
   'operador NO inserta payment_modality (es admin-only)'::text
 ));
 
--- 32) admin SÍ inserta commission_rule vía RPC (1 tier 10%, default, 1 modalidad)
+-- 32) admin SÍ inserta commission_rule vía RPC (1 tier 10%, default, 1 modalidad).
+--     Post-0040 la firma es (project, launch, product, accrual_mode, thr_type,
+--     thr_value, modalidades, tiers): pasamos null en launch y product porque
+--     la regla es default de proyecto (no override).
 select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
 insert into _smoke_results(result) values (lives_ok(
   format(
     $sql$select public.create_commission_rule(
-      %L, null,
+      %L, null, null,
       'proportional', null, null,
       array[(select id from public.payment_modalities where project_id = %L and name = 'Pago total')],
       '[{"min_count":0,"max_count":null,"type":"percent","value":10}]'::jsonb
@@ -586,7 +598,7 @@ select pg_temp.login_as('44444444-4444-4444-4444-444444444444');
 insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
     $sql$select public.create_commission_rule(
-      %L, null,
+      %L, null, null,
       'proportional', null, null,
       array[(select id from public.payment_modalities where project_id = %L and name = 'Pago total')],
       '[{"min_count":0,"max_count":null,"type":"fixed","value":500}]'::jsonb
@@ -604,7 +616,7 @@ select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
 insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
     $sql$select public.create_commission_rule(
-      %L, null,
+      %L, null, null,
       'proportional', null, null,
       array[(select id from public.payment_modalities where project_id = %L and name = 'Pago total')],
       '[{"min_count":0,"max_count":null,"type":"fixed","value":999}]'::jsonb
@@ -617,16 +629,20 @@ insert into _smoke_results(result) values (pg_temp.throws_ok(
 ));
 
 -- 35) operador SÍ inserta sale (can_edit_launches_in). Necesita un lead +
---     una modalidad: usamos el lead que el operador creó en el test 28 y la
---     modalidad de pago total. Operador hace todo el flujo.
+--     una modalidad + un producto (post-0038 product_id es NOT NULL): usamos
+--     el lead que el operador creó en el test 28, la modalidad de pago total
+--     y el producto "Sin categoría" sembrado arriba. Operador hace todo el
+--     flujo.
 select pg_temp.login_as('44444444-4444-4444-4444-444444444444');
 insert into _smoke_results(result) values (lives_ok(
   format(
-    $sql$insert into public.sales (project_id, lead_id, payment_modality_id, total_amount)
+    $sql$insert into public.sales (project_id, lead_id, payment_modality_id, product_id, total_amount)
          select %L,
                 (select id from public.leads where project_id = %L limit 1),
                 (select id from public.payment_modalities where project_id = %L and name = 'Pago total'),
+                (select id from public.products where project_id = %L and name = 'Sin categoría'),
                 1000$sql$,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
@@ -638,11 +654,13 @@ insert into _smoke_results(result) values (lives_ok(
 select pg_temp.login_as('55555555-5555-5555-5555-555555555555');
 insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
-    $sql$insert into public.sales (project_id, lead_id, payment_modality_id, total_amount)
+    $sql$insert into public.sales (project_id, lead_id, payment_modality_id, product_id, total_amount)
          select %L,
                 (select id from public.leads where project_id = %L limit 1),
                 (select id from public.payment_modalities where project_id = %L limit 1),
+                (select id from public.products where project_id = %L and name = 'Sin categoría'),
                 500$sql$,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
@@ -690,10 +708,11 @@ insert into public.payment_modalities (project_id, name) values
   ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Cross-tenant total');
 insert into public.leads (project_id, name) values
   ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Cross-tenant lead');
-insert into public.sales (project_id, lead_id, payment_modality_id, total_amount)
+insert into public.sales (project_id, lead_id, payment_modality_id, product_id, total_amount)
   select 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
          (select id from public.leads where project_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' limit 1),
          (select id from public.payment_modalities where project_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' limit 1),
+         (select id from public.products where project_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' and name = 'Sin categoría'),
          5000;
 
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
@@ -1229,7 +1248,7 @@ from (values
      ) as v(n, p, s);
 
 -- Sale para L3 — esto lo excluye del reciclado (NOT EXISTS sale).
-insert into public.sales (project_id, lead_id, payment_modality_id, total_amount)
+insert into public.sales (project_id, lead_id, payment_modality_id, product_id, total_amount)
 select 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
        (select id from public.leads
          where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
@@ -1237,6 +1256,9 @@ select 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
        (select id from public.payment_modalities
          where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
            and name = 'Pago total 8a'),
+       (select id from public.products
+         where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+           and name = 'Sin categoría'),
        1000;
 
 -- 76) recycle_evergreen_leads sobre un launch NO evergreen (target launch
@@ -1342,6 +1364,916 @@ insert into _smoke_results(result) values (is(
   2,
   '8a: segunda llamada no re-mueve leads (idempotente vía recycled_from filter)'
 ));
+
+-- ── Tests de nivel organización (post-0050/0051/0052 — Bloque 0 Kingrow) ──
+-- Regla central: el rol `cliente` (Portal del cliente) jamás toca datos de
+-- nivel org. La barrera dura es pre-RLS: `cliente_role` no tiene ningún
+-- grant sobre `organization`, así que PostgREST responde 42501 antes de
+-- evaluar policy. Además chequeamos que no rompimos lo que el cliente ya
+-- podía leer (regresión) y que superadmin sí llega.
+--
+-- Tests de esquema (backfill + defaults) van al final: se corren como owner
+-- (postgres/service) porque son verificaciones estructurales, no de RLS.
+
+-- 83) cliente_role NO accede a organization (sin grant → 42501 pre-RLS).
+--     Esta es la garantía central del bloque.
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.organization'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a organization (sin grant, pre-RLS)'::text
+));
+
+-- 84) Regresión: cliente_role sigue leyendo lo project-scope que ya leía.
+--     Usamos launches del Proyecto A del cliente — path canónico.
+insert into _smoke_results(result) values (isnt_empty(
+  format('select 1 from public.launches where project_id = %L',
+         'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  'cliente_role sigue leyendo launches de su proyecto (no rompimos nada)'
+));
+
+-- 85) superadmin SÍ lee organization (ve la semilla Kingrow).
+select pg_temp.login_as('11111111-1111-1111-1111-111111111111');
+insert into _smoke_results(result) values (isnt_empty(
+  $sql$select 1 from public.organization where name = 'Kingrow'$sql$,
+  'superadmin SÍ lee organization (semilla Kingrow visible)'
+));
+
+-- 86) admin normal (no superadmin) NO lee organization todavía.
+--     is_kingrow_admin() hoy = is_superadmin(); admin1 es 'admin', no
+--     'superadmin'/'dev' → policy filtra. Prueba que la frontera no depende
+--     sólo del grant sino también de la policy.
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+insert into _smoke_results(result) values (is_empty(
+  $sql$select 1 from public.organization$sql$,
+  'admin normal NO lee organization (no es kingrow admin todavía)'
+));
+
+-- 87) Backfill: cero rows en projects con organization_id null.
+reset role;
+insert into _smoke_results(result) values (is(
+  (select count(*)::int from public.projects where organization_id is null),
+  0,
+  'projects.organization_id: cero nulls tras backfill 0050'
+));
+
+-- 88) Default de ownership funciona: nuevo project sin ownership → 'externa'.
+--     Insertamos un project temporal (sin especificar ownership ni org_id) y
+--     leemos las columnas. Cleanup al final del bloque.
+insert into public.projects (id, name)
+values ('cafecafe-cafe-cafe-cafe-cafecafecafe', 'Proyecto default-check');
+
+insert into _smoke_results(result) values (is(
+  (select ownership from public.projects
+    where id = 'cafecafe-cafe-cafe-cafe-cafecafecafe'),
+  'externa',
+  'projects.ownership default = externa cuando se omite'
+));
+
+-- 89) Default de organization_id funciona: mismo project apunta a Kingrow.
+insert into _smoke_results(result) values (is(
+  (select organization_id from public.projects
+    where id = 'cafecafe-cafe-cafe-cafe-cafecafecafe'),
+  '00000000-0000-0000-0000-000000000001'::uuid,
+  'projects.organization_id default = Kingrow cuando se omite'
+));
+
+delete from public.projects
+ where id = 'cafecafe-cafe-cafe-cafe-cafecafecafe';
+
+-- ── Tests del Bloque 1 (Kingrow) — 0053/0055/0056 + bancos 0057 ───────────
+-- Frontera dura sobre las 3 tablas nuevas de nivel org (settlement_rules,
+-- launch_settlements, client_transfers): cliente_role rebota pre-RLS por
+-- falta de grant (42501). admin normal tiene grant pero la policy con
+-- can_edit_organization filtra a 0. Superadmin llega y lee.
+--
+-- Además: 0057 sumó organization_id a banks / bank_movements de forma
+-- aditiva. Chequeamos backfill (cero nulls) y que la RLS project-scope
+-- histórica sigue funcionando (no rompimos la UX de bancos por proyecto).
+
+-- 90) cliente_role NO accede a settlement_rules (sin grant → 42501 pre-RLS)
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.settlement_rules'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a settlement_rules (sin grant, pre-RLS)'::text
+));
+
+-- 91) cliente_role NO accede a launch_settlements
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.launch_settlements'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a launch_settlements (sin grant, pre-RLS)'::text
+));
+
+-- 92) cliente_role NO accede a client_transfers
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.client_transfers'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a client_transfers (sin grant, pre-RLS)'::text
+));
+
+-- 93) admin normal NO ve settlement_rules — grant existe (authenticated
+--     tiene SELECT), pero can_edit_organization() = is_kingrow_admin() =
+--     is_superadmin(); admin1 es 'admin', no 'superadmin'/'dev' → filtra a 0.
+--     lives_ok prueba que el grant está; is_empty prueba que la policy filtra.
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.settlement_rules'::text,
+  'admin normal tiene grant SELECT en settlement_rules (llega a RLS)'
+));
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.settlement_rules'::text,
+  'admin normal NO ve settlement_rules (policy org-scope filtra)'
+));
+
+-- 94) admin normal NO ve launch_settlements
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.launch_settlements'::text,
+  'admin normal NO ve launch_settlements (policy org-scope filtra)'
+));
+
+-- 95) admin normal NO ve client_transfers
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.client_transfers'::text,
+  'admin normal NO ve client_transfers (policy org-scope filtra)'
+));
+
+-- 96) superadmin lee settlement_rules (grant + policy OK — tabla vacía,
+--     pero el SELECT completa sin error). Prueba end-to-end del path.
+select pg_temp.login_as('11111111-1111-1111-1111-111111111111');
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.settlement_rules'::text,
+  'superadmin lee settlement_rules (path grant+policy OK)'
+));
+
+-- 97) superadmin lee launch_settlements
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.launch_settlements'::text,
+  'superadmin lee launch_settlements (path grant+policy OK)'
+));
+
+-- 98) superadmin lee client_transfers
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.client_transfers'::text,
+  'superadmin lee client_transfers (path grant+policy OK)'
+));
+
+-- 99) 0057 backfill: cero nulls en banks.organization_id
+reset role;
+insert into _smoke_results(result) values (is(
+  (select count(*)::int from public.banks where organization_id is null),
+  0,
+  'banks.organization_id: cero nulls tras backfill 0057'
+));
+
+-- 100) 0057 backfill: cero nulls en bank_movements.organization_id
+insert into _smoke_results(result) values (is(
+  (select count(*)::int from public.bank_movements where organization_id is null),
+  0,
+  'bank_movements.organization_id: cero nulls tras backfill 0057'
+));
+
+-- 101) Regresión banks: admin del proyecto sigue insertando bank en su
+--      proyecto (RLS project-scope intacta post-0057, aditivo puro).
+--      El default de organization_id se aplica solo — no hay que pasarlo.
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+insert into _smoke_results(result) values (lives_ok(
+  format(
+    'insert into public.banks (project_id, name) values (%L, %L)',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'Banco regresión 0057'
+  ),
+  'banks: admin del proyecto sigue insertando (RLS project-scope intacta)'
+));
+
+-- ── Tests del Bloque 2 (Kingrow · Financiero) — 0058-0068 ─────────────────
+-- Frontera dura sobre las 11 tablas org-scope nuevas del módulo financiero.
+-- Mismo patrón que Bloque 1 (tests 90-98):
+--   - cliente_role rebota pre-RLS por falta de grant → 42501
+--   - admin normal (no superadmin) tiene grant pero la policy con
+--     can_edit_organization filtra a 0 filas
+--   - superadmin llega y lee sin error
+--
+-- Estos son los datos MÁS SENSIBLES de Kingrow (sueldos, cuentas por pagar,
+-- facturación interna). El gate anti-cliente es no-negociable.
+
+-- ═══════════ Bloque 2 · Grupo A: cliente_role NO accede (42501) ═══════════
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+
+-- 102) organization_people
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.organization_people'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a organization_people (identidad de personas)'::text
+));
+
+-- 103) accounts
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.accounts'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a accounts (plan de cuentas)'::text
+));
+
+-- 104) cost_centers
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.cost_centers'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a cost_centers'::text
+));
+
+-- 105) taxes
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.taxes'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a taxes'::text
+));
+
+-- 106) suppliers
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.suppliers'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a suppliers'::text
+));
+
+-- 107) expenses
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.expenses'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a expenses (gastos org)'::text
+));
+
+-- 108) invoices
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.invoices'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a invoices (facturación Kingrow→externos)'::text
+));
+
+-- 109) budgets
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.budgets'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a budgets'::text
+));
+
+-- 110) payroll — el más sensible: sueldos
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.payroll'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a payroll (sueldos — máxima confidencialidad)'::text
+));
+
+-- 111) assets
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.assets'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a assets (activos org)'::text
+));
+
+-- 112) liabilities
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.liabilities'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a liabilities (pasivos org)'::text
+));
+
+-- ═══════════ Bloque 2 · Grupo B: superadmin lee sin error ═════════════════
+-- Prueba end-to-end del path grant+policy. Tablas vacías, pero el SELECT
+-- completa — si el grant o la policy estuvieran mal, este bloque revienta.
+select pg_temp.login_as('11111111-1111-1111-1111-111111111111');
+
+-- 113) organization_people
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.organization_people'::text,
+  'superadmin lee organization_people (path grant+policy OK)'
+));
+
+-- 114) accounts
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.accounts'::text,
+  'superadmin lee accounts (path grant+policy OK)'
+));
+
+-- 115) cost_centers
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.cost_centers'::text,
+  'superadmin lee cost_centers (path grant+policy OK)'
+));
+
+-- 116) taxes
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.taxes'::text,
+  'superadmin lee taxes (path grant+policy OK)'
+));
+
+-- 117) suppliers
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.suppliers'::text,
+  'superadmin lee suppliers (path grant+policy OK)'
+));
+
+-- 118) expenses
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.expenses'::text,
+  'superadmin lee expenses (path grant+policy OK)'
+));
+
+-- 119) invoices
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.invoices'::text,
+  'superadmin lee invoices (path grant+policy OK)'
+));
+
+-- 120) budgets
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.budgets'::text,
+  'superadmin lee budgets (path grant+policy OK)'
+));
+
+-- 121) payroll
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.payroll'::text,
+  'superadmin lee payroll (path grant+policy OK)'
+));
+
+-- 122) assets
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.assets'::text,
+  'superadmin lee assets (path grant+policy OK)'
+));
+
+-- 123) liabilities
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.liabilities'::text,
+  'superadmin lee liabilities (path grant+policy OK)'
+));
+
+-- ═══════════ Bloque 2 · Grupo C: admin normal filtrado por policy ═════════
+-- Grant existe (authenticated tiene SELECT en todas), pero
+-- can_edit_organization() = is_kingrow_admin() = is_superadmin(); admin1 es
+-- 'admin', no 'superadmin' → policy filtra a 0 filas. Es la garantía de que
+-- la frontera no depende solo del grant sino de la combinación grant+policy.
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+
+-- 124) organization_people
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.organization_people'::text,
+  'admin normal NO ve organization_people (policy org-scope filtra)'
+));
+
+-- 125) accounts
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.accounts'::text,
+  'admin normal NO ve accounts (policy org-scope filtra)'
+));
+
+-- 126) cost_centers
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.cost_centers'::text,
+  'admin normal NO ve cost_centers (policy org-scope filtra)'
+));
+
+-- 127) taxes
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.taxes'::text,
+  'admin normal NO ve taxes (policy org-scope filtra)'
+));
+
+-- 128) suppliers
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.suppliers'::text,
+  'admin normal NO ve suppliers (policy org-scope filtra)'
+));
+
+-- 129) expenses
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.expenses'::text,
+  'admin normal NO ve expenses (policy org-scope filtra)'
+));
+
+-- 130) invoices
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.invoices'::text,
+  'admin normal NO ve invoices (policy org-scope filtra)'
+));
+
+-- 131) budgets
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.budgets'::text,
+  'admin normal NO ve budgets (policy org-scope filtra)'
+));
+
+-- 132) payroll
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.payroll'::text,
+  'admin normal NO ve payroll (policy org-scope filtra)'
+));
+
+-- 133) assets
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.assets'::text,
+  'admin normal NO ve assets (policy org-scope filtra)'
+));
+
+-- 134) liabilities
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.liabilities'::text,
+  'admin normal NO ve liabilities (policy org-scope filtra)'
+));
+
+-- 135) Regresión 0058: team_members.organization_person_id existe (aditivo,
+--      nullable, sin default). Chequea que la column se agregó y que las
+--      filas existentes quedaron con NULL (sin backfill).
+reset role;
+insert into _smoke_results(result) values (is(
+  (select count(*)::int from information_schema.columns
+    where table_schema = 'public'
+      and table_name   = 'team_members'
+      and column_name  = 'organization_person_id'),
+  1,
+  'team_members.organization_person_id existe (columna aditiva de 0058)'
+));
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Bloque 4 (Kingrow — Academia) — post-0070..0079
+--
+-- Setup del test suite:
+--   - Proyecto A pasa a ownership='propia' (era 'externa' por default).
+--     Los tests previos siguen andando porque `ownership` no participa en
+--     has_project_access ni can_edit_project — sólo en el guard nuevo.
+--   - Proyecto B queda 'externa' (default) — sirve para probar el guard.
+--   - Tercer proyecto proj_c = propia, admin1 miembro, para probar el
+--     cross-project consistency check (student de A + cohort de C).
+-- ═══════════════════════════════════════════════════════════════════════════
+reset role;
+update public.projects
+   set ownership = 'propia'
+ where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+
+insert into public.projects (id, name, ownership) values
+  ('77777777-7777-7777-7777-777777777777', 'Proyecto C (propia)', 'propia')
+on conflict (id) do nothing;
+
+insert into public.project_members (project_id, user_id) values
+  ('77777777-7777-7777-7777-777777777777','22222222-2222-2222-2222-222222222222')
+on conflict do nothing;
+
+-- Producto "Sin categoría" para proj_c (mismo patrón que A y B).
+insert into public.products (project_id, name) values
+  ('77777777-7777-7777-7777-777777777777', 'Sin categoría')
+on conflict (project_id, name) do nothing;
+
+-- 136) admin1 inserta student en Proyecto A (ahora propia) → OK
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+insert into _smoke_results(result) values (lives_ok(
+  format(
+    'insert into public.students (project_id, name) values (%L, %L)',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'Alumno A uno'
+  ),
+  'academia: admin inserta student en proyecto propia (A)'
+));
+
+-- 137) superadmin intenta insertar student en Proyecto B (externa) → FAIL
+--      con 23514 (guard_propia_project). Se prueba con superadmin porque
+--      admin1 no es miembro de B y sería rechazado antes por RLS (42501,
+--      otro path). El guard debe pinchar independiente del permiso.
+select pg_temp.login_as('11111111-1111-1111-1111-111111111111');
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  format(
+    'insert into public.students (project_id, name) values (%L, %L)',
+    'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+    'Alumno prohibido en externa'
+  ),
+  '23514'::text, null::text,
+  'academia: guard bloquea student en project externa (23514)'::text
+));
+
+-- 138) cliente_role SELECT students → 42501 (sin grant). Frontera pre-RLS
+--      igual que team_members / commission_rules / etc. El portal de
+--      alumno es otro bloque futuro; por ahora academia está cerrada al
+--      cliente_role.
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  format('select 1 from public.students where project_id = %L',
+         'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  '42501'::text, null::text,
+  'academia: cliente_role NO accede a students (no grant)'::text
+));
+
+-- 139) admin1 inserta course sobre el product "Sin categoría" de A → OK.
+--      El trigger before_denorm_project_id_from_product copia project_id
+--      desde products, y guard_propia_project lo valida (A es propia).
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+insert into _smoke_results(result) values (lives_ok(
+  $sql$insert into public.courses (product_id, project_id)
+       select id, project_id from public.products
+        where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+          and name = 'Sin categoría'$sql$,
+  'academia: admin inserta course sobre product de proyecto propia'
+));
+
+-- 140) admin1 inserta cohort en A → OK
+insert into _smoke_results(result) values (lives_ok(
+  format(
+    'insert into public.cohorts (project_id, name) values (%L, %L)',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'Cohorte A #1'
+  ),
+  'academia: admin inserta cohort en proyecto propia'
+));
+
+-- 141) admin1 inserta enrollment (student A + cohort A) → OK. El trigger
+--      a_check_consistency deriva project_id desde cohort y valida que
+--      coincida con el del student.
+insert into _smoke_results(result) values (lives_ok(
+  $sql$insert into public.enrollments (student_id, cohort_id, project_id)
+       values (
+         (select id from public.students where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and name = 'Alumno A uno'),
+         (select id from public.cohorts  where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and name = 'Cohorte A #1'),
+         'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+       )$sql$,
+  'academia: enrollment consistente (student A + cohort A)'
+));
+
+-- 142) cross-project: cohort en proj_c (propia), student de A. Enrollment
+--      debe pinchar con 23514 (consistency check: student.project ≠
+--      cohort.project). La cohort de C se seedea como postgres (bypass RLS)
+--      porque acá probamos el trigger, no la policy.
+reset role;
+insert into public.cohorts (project_id, name) values
+  ('77777777-7777-7777-7777-777777777777', 'Cohorte C #1');
+
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  $sql$insert into public.enrollments (student_id, cohort_id, project_id)
+       values (
+         (select id from public.students where project_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and name = 'Alumno A uno'),
+         (select id from public.cohorts  where project_id = '77777777-7777-7777-7777-777777777777' and name = 'Cohorte C #1'),
+         'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+       )$sql$,
+  '23514'::text, null::text,
+  'academia: enrollment cross-project (student A + cohort C) rebota consistency 23514'::text
+));
+
+-- 143) guard_ownership_downgrade: superadmin intenta bajar A de propia a
+--      externa con academia colgada (student + course + cohort +
+--      enrollment). Debe fallar con 23514 y no dejar A en estado
+--      inconsistente.
+select pg_temp.login_as('11111111-1111-1111-1111-111111111111');
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  format(
+    'update public.projects set ownership = %L where id = %L',
+    'externa',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  ),
+  '23514'::text, null::text,
+  'academia: guard downgrade propia→externa con academia colgada rebota 23514'::text
+));
+
+-- 144) Contra-ejemplo del guard: proj_c es propia SIN academia (borramos
+--      la cohort que creamos en 142). Bajar C a externa debe pasar. Es
+--      la garantía de que el guard es dirigido — no bloquea todo cambio
+--      de ownership, sólo el que dejaría academia huérfana.
+reset role;
+delete from public.cohorts where project_id = '77777777-7777-7777-7777-777777777777';
+
+select pg_temp.login_as('11111111-1111-1111-1111-111111111111');
+insert into _smoke_results(result) values (lives_ok(
+  format(
+    'update public.projects set ownership = %L where id = %L',
+    'externa',
+    '77777777-7777-7777-7777-777777777777'
+  ),
+  'academia: guard downgrade propia→externa SIN academia colgada pasa OK'
+));
+
+-- ── Tests del Bloque 3 (Kingrow · Clientes) — 0080-0084 ──────────────────
+-- Frontera dura sobre las 5 tablas nuevas del módulo Clientes:
+-- project_health, nps_responses, tickets, renewals, upsells. TODAS org-scope.
+--
+-- Recordatorio: en este módulo "cliente" = `project` gestionado (empresa),
+-- NO cliente final del launch. Son datos internos de Kingrow (salud
+-- comercial, NPS, tickets, renewals, upsells) que el `cliente_role` no
+-- debe ver JAMÁS — es el racional de mantener las tablas org-scope y no
+-- meterlas como columnas de `projects`.
+--
+-- Mismo patrón que Bloque 2 (tests 102-134):
+--   - cliente_role rebota pre-RLS por falta de grant → 42501
+--   - superadmin lee sin error (grant + policy OK)
+--   - admin normal (no superadmin) tiene grant pero can_edit_organization
+--     filtra a 0 filas
+
+-- ═══════════ Bloque 3 · Grupo A: cliente_role NO accede (42501) ═══════════
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+
+-- 145) project_health
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.project_health'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a project_health (salud comercial interna Kingrow)'::text
+));
+
+-- 146) nps_responses
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.nps_responses'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a nps_responses (NPS a Kingrow)'::text
+));
+
+-- 147) tickets
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.tickets'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a tickets (soporte interno Kingrow↔cliente)'::text
+));
+
+-- 148) renewals
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.renewals'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a renewals (contrato periódico Kingrow)'::text
+));
+
+-- 149) upsells
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.upsells'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a upsells (venta adicional Kingrow)'::text
+));
+
+-- ═══════════ Bloque 3 · Grupo B: superadmin lee sin error ═════════════════
+select pg_temp.login_as('11111111-1111-1111-1111-111111111111');
+
+-- 150) project_health
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.project_health'::text,
+  'superadmin lee project_health (path grant+policy OK)'
+));
+
+-- 151) nps_responses
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.nps_responses'::text,
+  'superadmin lee nps_responses (path grant+policy OK)'
+));
+
+-- 152) tickets
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.tickets'::text,
+  'superadmin lee tickets (path grant+policy OK)'
+));
+
+-- 153) renewals
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.renewals'::text,
+  'superadmin lee renewals (path grant+policy OK)'
+));
+
+-- 154) upsells
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.upsells'::text,
+  'superadmin lee upsells (path grant+policy OK)'
+));
+
+-- ═══════════ Bloque 3 · Grupo C: admin normal filtrado por policy ═════════
+-- Mismo criterio que Grupo C de Bloque 2 (tests 124-134): grant existe
+-- (authenticated tiene SELECT), pero can_edit_organization() =
+-- is_kingrow_admin() = is_superadmin(); admin1 es 'admin', no 'superadmin'
+-- → policy filtra a 0 filas.
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+
+-- 155) project_health
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.project_health'::text,
+  'admin normal NO ve project_health (policy org-scope filtra)'
+));
+
+-- 156) nps_responses
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.nps_responses'::text,
+  'admin normal NO ve nps_responses (policy org-scope filtra)'
+));
+
+-- 157) tickets
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.tickets'::text,
+  'admin normal NO ve tickets (policy org-scope filtra)'
+));
+
+-- 158) renewals
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.renewals'::text,
+  'admin normal NO ve renewals (policy org-scope filtra)'
+));
+
+-- 159) upsells
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.upsells'::text,
+  'admin normal NO ve upsells (policy org-scope filtra)'
+));
+
+-- ── Tests del Bloque 5 (Kingrow · Operaciones) — 0090-0096 ────────────────
+-- Frontera dura sobre las 9 tablas org-scope nuevas del módulo Operaciones
+-- (internal_projects, teams, team_membership, tasks, checklists,
+--  checklist_items, processes, blockers, time_entries).
+-- Mismo patrón que Bloque 2 (tests 102-134):
+--   - cliente_role rebota pre-RLS por falta de grant → 42501
+--   - superadmin lee sin error (grant + policy OK)
+--   - admin normal (no superadmin) tiene grant pero can_edit_organization
+--     filtra a 0 filas
+--
+-- Recordatorio: "internal_projects" NO es "projects". Son 2 tablas distintas
+-- en 2 niveles de tenancy distintos. Los tests confirman que la nueva no
+-- se cruza con la vieja.
+
+-- ═══════════ Bloque 5 · Grupo A: cliente_role NO accede (42501) ═══════════
+select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
+
+-- 160) internal_projects
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.internal_projects'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a internal_projects (proyectos internos de la agencia)'::text
+));
+
+-- 161) teams
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.teams'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a teams (equipos internos)'::text
+));
+
+-- 162) team_membership
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.team_membership'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a team_membership'::text
+));
+
+-- 163) tasks
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.tasks'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a tasks (tareas internas)'::text
+));
+
+-- 164) checklists
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.checklists'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a checklists'::text
+));
+
+-- 165) checklist_items
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.checklist_items'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a checklist_items'::text
+));
+
+-- 166) processes
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.processes'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a processes (SOPs internas)'::text
+));
+
+-- 167) blockers
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.blockers'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a blockers'::text
+));
+
+-- 168) time_entries
+insert into _smoke_results(result) values (pg_temp.throws_ok(
+  'select 1 from public.time_entries'::text,
+  '42501'::text, null::text,
+  'cliente_role NO accede a time_entries (horas trabajadas)'::text
+));
+
+-- ═══════════ Bloque 5 · Grupo B: superadmin lee sin error ═════════════════
+-- Prueba end-to-end del path grant+policy. Tablas vacías, pero el SELECT
+-- completa — si el grant o la policy estuvieran mal, este bloque revienta.
+select pg_temp.login_as('11111111-1111-1111-1111-111111111111');
+
+-- 169) internal_projects
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.internal_projects'::text,
+  'superadmin lee internal_projects (path grant+policy OK)'
+));
+
+-- 170) teams
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.teams'::text,
+  'superadmin lee teams (path grant+policy OK)'
+));
+
+-- 171) team_membership
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.team_membership'::text,
+  'superadmin lee team_membership (path grant+policy OK)'
+));
+
+-- 172) tasks
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.tasks'::text,
+  'superadmin lee tasks (path grant+policy OK)'
+));
+
+-- 173) checklists
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.checklists'::text,
+  'superadmin lee checklists (path grant+policy OK)'
+));
+
+-- 174) checklist_items
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.checklist_items'::text,
+  'superadmin lee checklist_items (path grant+policy OK)'
+));
+
+-- 175) processes
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.processes'::text,
+  'superadmin lee processes (path grant+policy OK)'
+));
+
+-- 176) blockers
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.blockers'::text,
+  'superadmin lee blockers (path grant+policy OK)'
+));
+
+-- 177) time_entries
+insert into _smoke_results(result) values (lives_ok(
+  'select 1 from public.time_entries'::text,
+  'superadmin lee time_entries (path grant+policy OK)'
+));
+
+-- ═══════════ Bloque 5 · Grupo C: admin normal filtrado por policy ═════════
+-- Mismo criterio que Grupo C de Bloque 2 (tests 124-134): grant existe
+-- (authenticated tiene SELECT), pero can_edit_organization() =
+-- is_kingrow_admin() = is_superadmin(); admin1 es 'admin', no 'superadmin'
+-- → policy filtra a 0 filas.
+select pg_temp.login_as('22222222-2222-2222-2222-222222222222');
+
+-- 178) internal_projects
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.internal_projects'::text,
+  'admin normal NO ve internal_projects (policy org-scope filtra)'
+));
+
+-- 179) teams
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.teams'::text,
+  'admin normal NO ve teams (policy org-scope filtra)'
+));
+
+-- 180) team_membership
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.team_membership'::text,
+  'admin normal NO ve team_membership (policy org-scope filtra)'
+));
+
+-- 181) tasks
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.tasks'::text,
+  'admin normal NO ve tasks (policy org-scope filtra)'
+));
+
+-- 182) checklists
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.checklists'::text,
+  'admin normal NO ve checklists (policy org-scope filtra)'
+));
+
+-- 183) checklist_items
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.checklist_items'::text,
+  'admin normal NO ve checklist_items (policy org-scope filtra)'
+));
+
+-- 184) processes
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.processes'::text,
+  'admin normal NO ve processes (policy org-scope filtra)'
+));
+
+-- 185) blockers
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.blockers'::text,
+  'admin normal NO ve blockers (policy org-scope filtra)'
+));
+
+-- 186) time_entries
+insert into _smoke_results(result) values (is_empty(
+  'select 1 from public.time_entries'::text,
+  'admin normal NO ve time_entries (policy org-scope filtra)'
+));
+
+reset role;
 
 insert into _smoke_results(result) select * from finish();
 

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field-error";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
 import type { Role } from "@/lib/supabase/auth";
 
 interface Project {
@@ -24,9 +25,10 @@ interface EditableUser {
 }
 
 /**
- * Per-row "Editar" trigger + edit modal. Form fields: full_name, plus a
- * project selector for non-superadmin users (superadmins don't belong to
- * project_members per spec). Role is read-only here.
+ * Per-row "Editar" trigger + edit modal. Form fields: full_name, role, y un
+ * project selector para roles distintos de superadmin (los superadmin no
+ * cargan project_members por spec). El rol de superadmin queda read-only para
+ * evitar demote accidental desde la UI — si hace falta, se hace por Studio.
  */
 export function EditUserModal({
   user,
@@ -51,7 +53,8 @@ export function EditUserModal({
     if (!pending) setOpen(false);
   }
 
-  const showProjectSelector = user.role !== "superadmin";
+  const isSuperadmin = user.role === "superadmin";
+  const showProjectSelector = !isSuperadmin;
 
   return (
     <>
@@ -138,13 +141,27 @@ export function EditUserModal({
               )}
 
               <div>
-                <Label>Rol</Label>
-                <div className="rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg-muted">
-                  {user.role}{" "}
-                  <span className="ml-2 text-xs text-fg-subtle">
-                    (no editable desde la UI)
-                  </span>
-                </div>
+                <Label htmlFor="edit-role">Rol</Label>
+                {isSuperadmin ? (
+                  <div className="rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg-muted">
+                    superadmin{" "}
+                    <span className="ml-2 text-xs text-fg-subtle">
+                      (no editable desde la UI)
+                    </span>
+                  </div>
+                ) : (
+                  <Select
+                    id="edit-role"
+                    name="role"
+                    required
+                    defaultValue={user.role}
+                  >
+                    <option value="cliente">cliente (solo lectura, scope por launch)</option>
+                    <option value="operador">operador (edita launches asignados)</option>
+                    <option value="analista">analista (lectura del proyecto + simulador)</option>
+                    <option value="admin">admin (lectura + escritura del proyecto)</option>
+                  </Select>
+                )}
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-2">
