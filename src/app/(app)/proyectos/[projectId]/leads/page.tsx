@@ -13,7 +13,9 @@ import {
   listPaymentModalities,
 } from "@/lib/commissions/list";
 import type { InstallmentRow, PaymentRow, SaleRow } from "@/lib/commissions/types";
+import { listBanks } from "@/lib/banks/list";
 import { listLaunchesForProject } from "@/lib/launches/list";
+import { buildSalesFxContext, loadProjectFxRates } from "@/lib/money";
 import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { listProductsForProject } from "@/lib/products/list";
 import { listKanbanLeads, listLeadsPaginated } from "@/lib/leads/search";
@@ -35,6 +37,7 @@ import {
   listPaymentsForProject,
   listSalesForProject,
 } from "@/lib/sales/list";
+import { createClient } from "@/lib/supabase/server";
 import { requireSessionProfile, userCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { listTeamMembers } from "@/lib/team/list";
 
@@ -91,6 +94,7 @@ export default async function LeadsPage({
   const tab: Tab = readString(sp.view) === "kanban" ? "kanban" : "tabla";
 
   // ─── Fetches compartidos por ambos tabs ────────────────────────────────
+  const supabase = await createClient();
   const [
     teamMembers,
     launches,
@@ -101,6 +105,8 @@ export default async function LeadsPage({
     products,
     rules,
     paymentMethods,
+    banks,
+    fxMap,
   ] = await Promise.all([
     listTeamMembers(projectId),
     listLaunchesForProject(projectId),
@@ -111,6 +117,8 @@ export default async function LeadsPage({
     listProductsForProject(projectId),
     listCommissionRules(projectId),
     listPaymentMethods(projectId),
+    listBanks(),
+    loadProjectFxRates(supabase, projectId),
   ]);
 
   // Fase 11: cuotas por venta. Se cargan una vez y se agrupan por sale_id

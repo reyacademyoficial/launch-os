@@ -86,7 +86,13 @@ export default async function LaunchKpiPage({
 
   return (
     <div className="space-y-10">
-      <KpiGrid kpi={kpi} />
+      <KpiGrid
+        kpi={kpi}
+        launchArsPerUsd={
+          (launch as unknown as { ars_per_usd?: number | null }).ars_per_usd ??
+          null
+        }
+      />
 
       <CommunityKpiBlock kpi={kpi} />
 

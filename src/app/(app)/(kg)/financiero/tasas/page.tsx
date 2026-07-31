@@ -7,6 +7,7 @@ import { fCount } from "@/lib/finance/format";
 import { listAccessibleProjects } from "@/lib/projects/list";
 import { createClient } from "@/lib/supabase/server";
 
+import { BackfillView } from "./backfill-view";
 import { TasasView, type FxRateRowData, type ProjectOption } from "./tasas-view";
 
 export const metadata: Metadata = { title: "Tasas FX · Financiero" };
@@ -75,6 +76,10 @@ export default async function TasasPage() {
           projects={projectsForForm}
           totalCount={totalCount}
         />
+      </Panel>
+
+      <Panel title="Backfill de cobros históricos" pad={false}>
+        <BackfillView />
       </Panel>
     </div>
   );

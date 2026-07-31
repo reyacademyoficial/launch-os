@@ -39,3 +39,9 @@ export {
 } from "./rates";
 
 export { fmtUsd, fmtUsdDecimals, fmtArs, fmtNative } from "./format";
+
+export {
+  buildSalesFxContext,
+  type SalesFxContext,
+  type BuildSalesFxContextArgs,
+} from "./sales-context";
