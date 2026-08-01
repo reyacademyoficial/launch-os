@@ -25,6 +25,8 @@ import { listRecentRuns } from "@/lib/integrations/runs";
 import { userCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { loadProjectFxRates } from "@/lib/money";
+import { listPaymentMethods } from "@/lib/payment-methods/list";
+import { listBanks } from "@/lib/banks/list";
 
 import { createDailyEntry } from "../daily-actions";
 
@@ -54,6 +56,8 @@ export default async function LaunchKpiPage({
     messagesDaily,
     recentRuns,
     fxMap,
+    paymentMethods,
+    banks,
   ] = await Promise.all([
     getLaunch(launchId),
     userCanEditLaunchesIn(projectId),
@@ -65,6 +69,8 @@ export default async function LaunchKpiPage({
     listMessagesDailyForLaunch(launchId),
     listRecentRuns(launchId, 20),
     loadProjectFxRates(supabase, projectId),
+    listPaymentMethods(projectId),
+    listBanks(),
   ]);
 
   if (!launch || launch.project_id !== projectId) notFound();
@@ -102,25 +108,55 @@ export default async function LaunchKpiPage({
     cerradoSaleIds.has(p.sale_id),
   );
 
-  let kanbanPledgedUsd = 0;
+  // Mapa de moneda efectiva por método de pago:
+  // banco del método → moneda del banco → moneda del método → 'ARS'.
+  // Replica la lógica de paymentCurrency() en sales-context.tsx.
+  const banksById = new Map(
+    (banks as unknown as Array<{ id: string; currency: "ARS" | "USD" }>).map(
+      (b) => [b.id, b],
+    ),
+  );
+  const methodEffCurrency = new Map(
+    (paymentMethods as unknown as Array<{
+      id: string;
+      bank_id: string | null;
+      currency: "ARS" | "USD" | null;
+    }>).map((m) => {
+      const bankCurrency = m.bank_id ? banksById.get(m.bank_id)?.currency : null;
+      return [m.id, bankCurrency ?? m.currency ?? "ARS"] as const;
+    }),
+  );
+
+  // null = sin ventas cerradas → calculateLaunchKPIs usará el fallback del
+  // aggregate. Con cerradoSales no vacío siempre resulta un número ≥ 0.
+  let kanbanPledgedUsd: number | null = null;
   for (const s of cerradoSales) {
-    kanbanPledgedUsd += revenueRate
+    const v = revenueRate
       ? Number(s.total_amount) / revenueRate
       : Number(s.total_amount);
+    kanbanPledgedUsd = (kanbanPledgedUsd ?? 0) + v;
   }
 
-  let kanbanCollectedUsd = 0;
+  let kanbanCollectedUsd: number | null = null;
   for (const p of cerradoPayments) {
-    const pCurrency = (p as unknown as { original_currency?: string | null })
-      .original_currency;
-    if (pCurrency === "USD") {
-      kanbanCollectedUsd += Number(p.amount);
-    } else {
-      // ARS o null (legacy, se trata como ARS si hay tasa)
-      kanbanCollectedUsd += revenueRate
+    const pRaw = p as unknown as {
+      original_currency?: string | null;
+      payment_method_id?: string | null;
+    };
+    const pCurrency: "ARS" | "USD" =
+      pRaw.original_currency === "USD"
+        ? "USD"
+        : pRaw.original_currency === "ARS"
+          ? "ARS"
+          : (pRaw.payment_method_id
+              ? (methodEffCurrency.get(pRaw.payment_method_id) ?? "ARS")
+              : "ARS");
+    const v = pCurrency === "USD"
+      ? Number(p.amount)
+      : revenueRate
         ? Number(p.amount) / revenueRate
         : Number(p.amount);
-    }
+    kanbanCollectedUsd = (kanbanCollectedUsd ?? 0) + v;
   }
 
   // Tasa para ads (Meta/Google/TikTok)
@@ -157,7 +193,7 @@ export default async function LaunchKpiPage({
       <KpiGrid
         kpi={kpi}
         launchArsPerUsd={arsPerUsd}
-        kpisInUsd={true}
+        kpisInUsd={arsPerUsd !== null}
       />
 
       <CommunityKpiBlock kpi={kpi} />
