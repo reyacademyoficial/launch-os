@@ -12,6 +12,7 @@ import { fmtNumber, fmtPercent } from "@/lib/format";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { listProjectSalesData } from "@/lib/launch-sales/list";
 import {
+  buildFxLookup,
   buildSalesFxContext,
   fmtUsd,
   loadProjectFxRates,
@@ -123,6 +124,7 @@ export default async function ProjectCobrosPage({
     sales: closedSales,
     fxMap,
   });
+  const fxLookup = buildFxLookup(fxCtx, closedSales, closedPayments);
 
   // Suma manual: el helper `paymentToUsd` / `saleToUsd` devuelve null si no
   // se puede convertir (falta tasa). Contamos esos casos aparte para avisar
@@ -238,7 +240,7 @@ export default async function ProjectCobrosPage({
         paymentMethods={paymentMethods}
         teamMembers={teamForModal}
         canEdit={canEdit}
-        fxCtx={fxCtx}
+        fxLookup={fxLookup}
         createSaleAction={createSaleAction}
         addPaymentAction={addPaymentAction}
         deletePaymentAction={deletePaymentAction}

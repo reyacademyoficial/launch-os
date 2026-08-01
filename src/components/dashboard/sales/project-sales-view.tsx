@@ -16,7 +16,7 @@ import type {
   SaleRow,
 } from "@/lib/commissions/types";
 import { fmtMoney } from "@/lib/format";
-import { fmtNative, fmtUsd, type SalesFxContext } from "@/lib/money";
+import { fmtNative, fmtUsd, type FxLookup } from "@/lib/money";
 import type { LeadRow } from "@/lib/leads/types";
 import type { PaymentMethodRow } from "@/lib/payment-methods/types";
 import type { ProductRow } from "@/lib/products/types";
@@ -131,7 +131,7 @@ export function ProjectSalesView({
   updatePaymentInstallmentAction,
   updatePaymentMethodAction,
   assignLeadOwnerAction,
-  fxCtx,
+  fxLookup,
 }: {
   readonly sales: ReadonlyArray<SaleRow>;
   readonly payments: ReadonlyArray<PaymentRow>;
@@ -147,11 +147,11 @@ export function ProjectSalesView({
   >;
   readonly canEdit: boolean;
   /**
-   * Contexto FX opcional. Cuando se pasa, cada fila muestra su moneda
-   * nativa (AR$/US$) y el footer suma en USD. Sin fxCtx, fallback al
+   * Lookup FX opcional. Cuando se pasa, cada fila muestra su moneda
+   * nativa (AR$/US$) y el footer suma en USD. Sin fxLookup, fallback al
    * comportamiento antiguo (fmtMoney sin distinción de moneda).
    */
-  readonly fxCtx?: SalesFxContext;
+  readonly fxLookup?: FxLookup;
   readonly createSaleAction: CreateSaleAction;
   readonly createSaleWithLeadAction: CreateSaleWithLeadAction;
   readonly addPaymentAction: AddPaymentAction;
@@ -342,21 +342,19 @@ export function ProjectSalesView({
     filters.collection !== "all";
 
   // Totales del subset visible.
-  // Con fxCtx: totales en USD (convierte cada sale/pay). Sin fxCtx: suma
+  // Con fxLookup: totales en USD (convierte cada sale/pay). Sin fxLookup: suma
   // cruda que asume moneda única.
   let totalPactado = 0;
   let totalCobrado = 0;
   let totalComision = 0;
-  const fmtRow = fxCtx
-    ? (amount: number, saleId: string): string => {
-        const s = sales.find((x) => x.id === saleId);
-        return fmtNative(amount, s ? fxCtx.saleCurrency(s) : "USD");
-      }
+  const fmtRow = fxLookup
+    ? (amount: number, saleId: string): string =>
+        fmtNative(amount, fxLookup.bySaleId[saleId]?.currency ?? "USD")
     : (amount: number, _saleId: string): string => fmtMoney(amount);
-  const fmtTotal = fxCtx ? fmtUsd : fmtMoney;
+  const fmtTotal = fxLookup ? fmtUsd : fmtMoney;
   for (const s of filteredSales) {
-    if (fxCtx) {
-      const usdSale = fxCtx.saleToUsd(s);
+    if (fxLookup) {
+      const usdSale = fxLookup.bySaleId[s.id]?.totalUsd ?? null;
       if (usdSale !== null) totalPactado += usdSale;
       // Cobrado / comisión: escalados a USD por la misma tasa del sale.
       const scale =
@@ -509,7 +507,7 @@ export function ProjectSalesView({
                         assignLeadOwnerAction={
                           canEdit ? assignLeadOwnerAction : undefined
                         }
-                        fxCtx={fxCtx}
+                        fxLookup={fxLookup}
                       />
                     </td>
                     <td className="px-3 py-3 text-fg-muted">
@@ -581,7 +579,7 @@ export function ProjectSalesView({
                             assignLeadOwnerAction={
                               canEdit ? assignLeadOwnerAction : undefined
                             }
-                            fxCtx={fxCtx}
+                            fxLookup={fxLookup}
                           />
                           <DeleteSaleButton
                             saleId={s.id}

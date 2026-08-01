@@ -15,7 +15,7 @@ import {
 import type { InstallmentRow, PaymentRow, SaleRow } from "@/lib/commissions/types";
 import { listBanks } from "@/lib/banks/list";
 import { listLaunchesForProject } from "@/lib/launches/list";
-import { buildSalesFxContext, loadProjectFxRates } from "@/lib/money";
+import { buildFxLookup, buildSalesFxContext, loadProjectFxRates } from "@/lib/money";
 import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { listProductsForProject } from "@/lib/products/list";
 import { listKanbanLeads, listLeadsPaginated } from "@/lib/leads/search";
@@ -262,6 +262,7 @@ export default async function LeadsPage({
           banks={banks}
           fullLaunches={launches as unknown as ReadonlyArray<{ id: string; ars_per_usd?: number | null }>}
           projectSales={sales}
+          projectPayments={payments}
           fxMap={fxMap}
         />
       ) : (
@@ -431,6 +432,7 @@ async function KanbanTab({
   banks,
   fullLaunches,
   projectSales,
+  projectPayments,
   fxMap,
 }: {
   readonly projectId: string;
@@ -482,6 +484,7 @@ async function KanbanTab({
   readonly banks: ReadonlyArray<{ id: string; currency: "ARS" | "USD" }>;
   readonly fullLaunches: ReadonlyArray<{ id: string; ars_per_usd?: number | null }>;
   readonly projectSales: ReadonlyArray<SaleRow>;
+  readonly projectPayments: ReadonlyArray<PaymentRow>;
   readonly fxMap: Map<string, number>;
 }) {
   const leads = await listKanbanLeads(projectId);
@@ -494,6 +497,7 @@ async function KanbanTab({
     sales: projectSales,
     fxMap,
   });
+  const fxLookup = buildFxLookup(fxCtx, projectSales, projectPayments);
 
   if (leads.length === 0) {
     return (
@@ -536,7 +540,7 @@ async function KanbanTab({
       updatePaymentInstallmentAction={updatePaymentInstallmentAction}
       updatePaymentMethodAction={updatePaymentMethodAction}
       assignLeadOwnerAction={assignLeadOwnerAction}
-      fxCtx={fxCtx}
+      fxLookup={fxLookup}
     />
   );
 }

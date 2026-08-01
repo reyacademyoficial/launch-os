@@ -142,6 +142,64 @@ export function buildSalesFxContext(
   };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// FxLookup — versión serializable de SalesFxContext, apta para pasar de
+// Server Components a Client Components como prop (sin funciones).
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface SaleFxEntry {
+  currency: Currency;
+  /** total_amount convertido a USD; null si falta la tasa. */
+  totalUsd: number | null;
+}
+
+export interface PaymentFxEntry {
+  currency: Currency;
+  /** amount convertido a USD; null si falta la tasa. */
+  amountUsd: number | null;
+}
+
+/** Objeto puro (sin métodos) que los Client Components usan para formatear. */
+export interface FxLookup {
+  bySaleId: Record<string, SaleFxEntry>;
+  byPaymentId: Record<string, PaymentFxEntry>;
+}
+
+type SaleForLookup = { id: string; lead_id: string; total_amount: number };
+type PaymentForLookup = {
+  id: string;
+  amount: number;
+  paid_at: string;
+  sale_id: string;
+  payment_method_id: string | null;
+};
+
+/**
+ * Convierte un SalesFxContext en un FxLookup serializable. Se llama una vez
+ * en el Server Component y el resultado se pasa como prop al Client Component.
+ */
+export function buildFxLookup(
+  fxCtx: SalesFxContext,
+  sales: ReadonlyArray<SaleForLookup>,
+  payments: ReadonlyArray<PaymentForLookup>,
+): FxLookup {
+  const bySaleId: Record<string, SaleFxEntry> = {};
+  for (const s of sales) {
+    bySaleId[s.id] = {
+      currency: fxCtx.saleCurrency(s),
+      totalUsd: fxCtx.saleToUsd(s),
+    };
+  }
+  const byPaymentId: Record<string, PaymentFxEntry> = {};
+  for (const p of payments) {
+    byPaymentId[p.id] = {
+      currency: fxCtx.paymentCurrency(p),
+      amountUsd: fxCtx.paymentToUsd(p),
+    };
+  }
+  return { bySaleId, byPaymentId };
+}
+
 // Inlined format para evitar dependencia circular con `./format` — mismo
 // resultado que `fmtNative` pero copiado acá porque este archivo lo usan
 // componentes que ya importan `fmtUsd` etc.

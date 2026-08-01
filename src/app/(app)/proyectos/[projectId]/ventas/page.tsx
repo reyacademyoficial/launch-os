@@ -9,7 +9,7 @@ import {
 } from "@/lib/commissions/list";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { listProjectSalesData } from "@/lib/launch-sales/list";
-import { buildSalesFxContext, loadProjectFxRates } from "@/lib/money";
+import { buildFxLookup, buildSalesFxContext, loadProjectFxRates } from "@/lib/money";
 import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { listProductsForProject } from "@/lib/products/list";
 import { createClient } from "@/lib/supabase/server";
@@ -92,6 +92,7 @@ export default async function ProjectSalesPage({
     sales: salesData.sales,
     fxMap,
   });
+  const fxLookup = buildFxLookup(fxCtx, salesData.sales, salesData.payments);
 
   const teamForModal = teamMembers.map((m) => ({
     id: m.id,
@@ -149,7 +150,7 @@ export default async function ProjectSalesPage({
         updatePaymentInstallmentAction={updatePaymentInstallmentAction}
         updatePaymentMethodAction={updatePaymentMethodAction}
         assignLeadOwnerAction={assignLeadOwnerAction}
-        fxCtx={fxCtx}
+        fxLookup={fxLookup}
       />
     </section>
   );

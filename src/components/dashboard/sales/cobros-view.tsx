@@ -15,7 +15,7 @@ import type {
   SaleRow,
 } from "@/lib/commissions/types";
 import { fmtDate, fmtMoney, fmtNumber } from "@/lib/format";
-import { fmtNative, fmtUsd, type Currency, type SalesFxContext } from "@/lib/money";
+import { fmtNative, fmtUsd, type FxLookup } from "@/lib/money";
 import {
   computeInstallmentStatuses,
   summarizeSaleOverdue,
@@ -112,7 +112,7 @@ export function CobrosView({
   paymentMethods,
   teamMembers,
   canEdit,
-  fxCtx,
+  fxLookup,
   createSaleAction,
   addPaymentAction,
   deletePaymentAction,
@@ -142,12 +142,11 @@ export function CobrosView({
   >;
   readonly canEdit: boolean;
   /**
-   * Contexto FX opcional. Cuando se pasa, cada fila se muestra en su moneda
-   * nativa (AR$/US$) y el footer suma en USD. Sin fxCtx, fallback al
-   * comportamiento antiguo que asume una única moneda implícita — se sigue
-   * usando en la vista per-launch del launch detail hasta que la migremos.
+   * Lookup FX opcional. Cuando se pasa, cada fila se muestra en su moneda
+   * nativa (AR$/US$) y el footer suma en USD. Sin fxLookup, fallback al
+   * comportamiento antiguo que asume una única moneda implícita.
    */
-  readonly fxCtx?: SalesFxContext;
+  readonly fxLookup?: FxLookup;
   readonly createSaleAction: CreateSaleAction;
   readonly addPaymentAction: AddPaymentAction;
   readonly deletePaymentAction: DeletePaymentAction;
@@ -373,7 +372,7 @@ export function CobrosView({
         paymentMethods={paymentMethods}
         teamMembers={teamMembers}
         canEdit={canEdit}
-        fxCtx={fxCtx}
+        fxLookup={fxLookup}
         filtersActive={filtersActive}
         totalSalesCount={sales.length}
         createSaleAction={createSaleAction}
@@ -398,7 +397,7 @@ export function CobrosView({
         paymentMethodById={paymentMethodById}
         accumByPaymentId={accumByPaymentId}
         canEdit={canEdit}
-        fxCtx={fxCtx}
+        fxLookup={fxLookup}
         filtersActive={filtersActive}
         totalPaymentsCount={payments.length}
         deletePaymentAction={deletePaymentAction}
@@ -550,7 +549,7 @@ function SalesTable({
   paymentMethods,
   teamMembers,
   canEdit,
-  fxCtx,
+  fxLookup,
   filtersActive,
   totalSalesCount,
   createSaleAction,
@@ -579,7 +578,7 @@ function SalesTable({
     Pick<TeamMemberRow, "id" | "name" | "active" | "role">
   >;
   readonly canEdit: boolean;
-  readonly fxCtx?: SalesFxContext;
+  readonly fxLookup?: FxLookup;
   readonly filtersActive: boolean;
   readonly totalSalesCount: number;
   readonly createSaleAction: CreateSaleAction;
@@ -601,15 +600,15 @@ function SalesTable({
   let totalCuotasVencidas = 0;
   let missingCount = 0;
   for (const s of sales) {
-    if (fxCtx) {
-      const usdSale = fxCtx.saleToUsd(s);
+    if (fxLookup) {
+      const usdSale = fxLookup.bySaleId[s.id]?.totalUsd ?? null;
       if (usdSale === null) missingCount++;
       else totalPactado += usdSale;
 
       // Cobrado del sale: sumamos sus payments convertidos.
       const paysForSale = (paymentsBySaleId.get(s.id) ?? []) as ReadonlyArray<PaymentRow>;
       for (const p of paysForSale) {
-        const usdPay = fxCtx.paymentToUsd(p);
+        const usdPay = fxLookup.byPaymentId[p.id]?.amountUsd ?? null;
         if (usdPay === null) missingCount++;
         else totalCobrado += usdPay;
       }
@@ -618,10 +617,9 @@ function SalesTable({
       // del sale. Convertimos con la tasa del sale para mantenerlo en USD.
       const od = overdueBySale.get(s.id);
       if (od && od.overdueAmount > 0) {
-        const rate = fxCtx.saleToUsd(s);
-        if (rate !== null && (Number(s.total_amount) || 0) > 0) {
+        if (usdSale !== null && (Number(s.total_amount) || 0) > 0) {
           totalVencido +=
-            (od.overdueAmount * rate) / (Number(s.total_amount) || 1);
+            (od.overdueAmount * usdSale) / (Number(s.total_amount) || 1);
         }
       }
       if (od) totalCuotasVencidas += od.overdueCount;
@@ -636,15 +634,12 @@ function SalesTable({
     }
   }
 
-  const fmtRowMoney = fxCtx
-    ? (amount: number, saleId: string): string => {
-        const s = sales.find((x) => x.id === saleId);
-        const currency: Currency = s ? fxCtx.saleCurrency(s) : "USD";
-        return fmtNative(amount, currency);
-      }
+  const fmtRowMoney = fxLookup
+    ? (amount: number, saleId: string): string =>
+        fmtNative(amount, fxLookup.bySaleId[saleId]?.currency ?? "USD")
     : (amount: number, _saleId: string): string => fmtMoney(amount);
 
-  const fmtTotalMoney = fxCtx ? fmtUsd : fmtMoney;
+  const fmtTotalMoney = fxLookup ? fmtUsd : fmtMoney;
 
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -826,7 +821,7 @@ function SalesTable({
                         assignLeadOwnerAction={
                           canEdit ? assignLeadOwnerAction : undefined
                         }
-                        fxCtx={fxCtx}
+                        fxLookup={fxLookup}
                       />
                     </td>
                     <td className="px-3 py-3 text-right tabular-nums text-fg">
@@ -954,7 +949,7 @@ function PaymentsTable({
   paymentMethodById,
   accumByPaymentId,
   canEdit,
-  fxCtx,
+  fxLookup,
   filtersActive,
   totalPaymentsCount,
   deletePaymentAction,
@@ -968,27 +963,27 @@ function PaymentsTable({
   readonly paymentMethodById: ReadonlyMap<string, PaymentMethodRow>;
   readonly accumByPaymentId: ReadonlyMap<string, number>;
   readonly canEdit: boolean;
-  readonly fxCtx?: SalesFxContext;
+  readonly fxLookup?: FxLookup;
   readonly filtersActive: boolean;
   readonly totalPaymentsCount: number;
   readonly deletePaymentAction: DeletePaymentAction;
 }) {
-  // Con fxCtx: total en USD (convierte cada payment). Sin fxCtx: suma cruda.
+  // Con fxLookup: total en USD (convierte cada payment). Sin fxLookup: suma cruda.
   let totalMonto = 0;
   for (const p of payments) {
-    if (fxCtx) {
-      const usd = fxCtx.paymentToUsd(p);
+    if (fxLookup) {
+      const usd = fxLookup.byPaymentId[p.id]?.amountUsd ?? null;
       if (usd !== null) totalMonto += usd;
     } else {
       totalMonto += Number(p.amount) || 0;
     }
   }
 
-  const fmtRowPay = fxCtx
+  const fmtRowPay = fxLookup
     ? (p: PaymentRow, amount: number): string =>
-        fmtNative(amount, fxCtx.paymentCurrency(p))
+        fmtNative(amount, fxLookup.byPaymentId[p.id]?.currency ?? "USD")
     : (_p: PaymentRow, amount: number): string => fmtMoney(amount);
-  const fmtTotal = fxCtx ? fmtUsd : fmtMoney;
+  const fmtTotal = fxLookup ? fmtUsd : fmtMoney;
 
   return (
     <section className="space-y-3">
