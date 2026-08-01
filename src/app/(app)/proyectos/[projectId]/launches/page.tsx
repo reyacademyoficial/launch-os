@@ -6,8 +6,14 @@ import { StatusBadge } from "@/components/dashboard/launches/status-badge";
 import { fmtLaunchWindow, fmtMoney, fmtMultiplier } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import { listAggregatesForProject } from "@/lib/launch-daily/list";
-import { getKanbanSalesAggregatesForProject } from "@/lib/launch-sales/list";
+import {
+  getKanbanSalesAggregatesForProject,
+  getProjectRevenueUsdMap,
+} from "@/lib/launch-sales/list";
 import { listLaunchesForProject } from "@/lib/launches/list";
+import { fmtUsd } from "@/lib/money";
+import { listBanks } from "@/lib/banks/list";
+import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { userCanEditProject } from "@/lib/supabase/auth";
 
 import { createLaunch } from "./actions";
@@ -20,13 +26,32 @@ export default async function LaunchesPage({
   readonly params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const [launches, canEdit, adsAggregates, kanbanSalesAggregates] =
+  const [launches, canEdit, adsAggregates, kanbanSalesAggregates, paymentMethods, banks] =
     await Promise.all([
       listLaunchesForProject(projectId),
       userCanEditProject(projectId),
       listAggregatesForProject(projectId),
       getKanbanSalesAggregatesForProject(projectId),
+      listPaymentMethods(projectId),
+      listBanks(),
     ]);
+
+  const ratePerLaunch = new Map(
+    launches.map((l) => {
+      const rate = (l as unknown as { ars_per_usd?: number | null }).ars_per_usd ?? null;
+      return [l.id, rate && rate > 0 ? rate : null] as const;
+    }),
+  );
+  const revenueUsdMap = await getProjectRevenueUsdMap(
+    projectId,
+    ratePerLaunch,
+    paymentMethods as unknown as Array<{
+      id: string;
+      bank_id: string | null;
+      currency: "ARS" | "USD" | null;
+    }>,
+    banks as unknown as Array<{ id: string; currency: "ARS" | "USD" }>,
+  );
 
   const createAction = createLaunch.bind(null, projectId);
   // El select "Copiar conexiones de" en el modal de crear listea launches
@@ -101,10 +126,27 @@ export default async function LaunchesPage({
           </thead>
           <tbody>
             {launches.map((l) => {
+              const launchRow = l as unknown as {
+                ars_per_usd?: number | null;
+                ads_currency?: string;
+              };
+              const arsPerUsd = launchRow.ars_per_usd ?? null;
+              const revenueRate = arsPerUsd && arsPerUsd > 0 ? arsPerUsd : null;
+              const usdRevenue = revenueUsdMap.get(l.id);
+
               const kpi = calculateLaunchKPIs(l, {
                 adsAggregate: adsAggregates.get(l.id),
                 kanbanSalesAggregate: kanbanSalesAggregates.get(l.id),
+                adsRatePerUsd:
+                  launchRow.ads_currency === "ARS" && revenueRate
+                    ? revenueRate
+                    : null,
+                kanbanPledgedUsd: usdRevenue?.pledgedUsd ?? null,
+                kanbanCollectedUsd: usdRevenue?.collectedUsd ?? null,
+                revenueRatePerUsd: revenueRate,
               });
+
+              const fMoney = revenueRate ? fmtUsd : fmtMoney;
               const profitColor =
                 kpi.profitEstimated > 0
                   ? "text-success"
@@ -131,16 +173,16 @@ export default async function LaunchesPage({
                     <StatusBadge status={l.status} />
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums text-fg">
-                    {fmtMoney(kpi.revenueEstimated)}
+                    {fMoney(kpi.revenueEstimated)}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums text-fg">
-                    {fmtMoney(kpi.revenueCollected)}
+                    {fMoney(kpi.revenueCollected)}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums text-fg-muted">
                     {fmtMultiplier(kpi.roasEstimated)}
                   </td>
                   <td className={`px-4 py-3 text-right tabular-nums ${profitColor}`}>
-                    {fmtMoney(kpi.profitEstimated)}
+                    {fMoney(kpi.profitEstimated)}
                   </td>
                 </tr>
               );

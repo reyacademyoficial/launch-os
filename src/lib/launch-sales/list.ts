@@ -225,6 +225,122 @@ export async function getKanbanSalesAggregatesForProject(
   return out;
 }
 
+/**
+ * Computa revenue estimado y cobrado en USD para cada launch del proyecto
+ * que tenga ars_per_usd configurado. Usa la misma lógica de detección de
+ * moneda del banco/método que kpi/page.tsx: original_currency > banco del
+ * método > moneda del método > ARS por defecto.
+ *
+ * Returns Map<launchId, { pledgedUsd, collectedUsd }>.
+ * Solo incluye launches con tasa > 0 en ratePerLaunch.
+ */
+export async function getProjectRevenueUsdMap(
+  projectId: string,
+  ratePerLaunch: ReadonlyMap<string, number | null>,
+  paymentMethods: ReadonlyArray<{
+    id: string;
+    bank_id: string | null;
+    currency: "ARS" | "USD" | null;
+  }>,
+  banks: ReadonlyArray<{ id: string; currency: "ARS" | "USD" }>,
+): Promise<Map<string, { pledgedUsd: number; collectedUsd: number }>> {
+  const supabase = await createClient();
+
+  const salesRes = await supabase
+    .from("sales")
+    .select("id, lead_id, launch_id, total_amount")
+    .eq("project_id", projectId);
+  const sales = (salesRes.data ?? []) as Array<{
+    id: string;
+    lead_id: string;
+    launch_id: string | null;
+    total_amount: number;
+  }>;
+
+  if (sales.length === 0) return new Map();
+
+  const leadIds = Array.from(new Set(sales.map((s) => s.lead_id)));
+  const saleIds = sales.map((s) => s.id);
+
+  const [leadsRes, paymentsRes] = await Promise.all([
+    supabase.from("leads").select("id, status").in("id", leadIds),
+    supabase
+      .from("payments")
+      .select("sale_id, amount, original_currency, payment_method_id")
+      .in("sale_id", saleIds),
+  ]);
+
+  const leadById = new Map(
+    ((leadsRes.data ?? []) as Array<{ id: string; status: string }>).map(
+      (l) => [l.id, l],
+    ),
+  );
+
+  const paymentsBySale = new Map<
+    string,
+    Array<{
+      amount: number;
+      original_currency: string | null;
+      payment_method_id: string | null;
+    }>
+  >();
+  for (const p of (paymentsRes.data ?? []) as Array<{
+    sale_id: string;
+    amount: number;
+    original_currency: string | null;
+    payment_method_id: string | null;
+  }>) {
+    const arr = paymentsBySale.get(p.sale_id) ?? [];
+    arr.push(p);
+    paymentsBySale.set(p.sale_id, arr);
+  }
+
+  const banksById = new Map(banks.map((b) => [b.id, b]));
+  const methodCurrency = new Map(
+    paymentMethods.map((m) => {
+      const bankCur = m.bank_id ? banksById.get(m.bank_id)?.currency : null;
+      return [m.id, bankCur ?? m.currency ?? "ARS"] as const;
+    }),
+  );
+
+  const result = new Map<string, { pledgedUsd: number; collectedUsd: number }>();
+
+  for (const [launchId, rate] of ratePerLaunch) {
+    if (!rate || rate <= 0) continue;
+
+    const cerradoSales = sales.filter(
+      (s) =>
+        s.launch_id === launchId &&
+        leadById.get(s.lead_id)?.status === "cerrado",
+    );
+
+    let pledgedUsd = 0;
+    let collectedUsd = 0;
+
+    for (const s of cerradoSales) {
+      pledgedUsd += Number(s.total_amount) / rate;
+      for (const p of paymentsBySale.get(s.id) ?? []) {
+        const pCurrency: "ARS" | "USD" =
+          p.original_currency === "USD"
+            ? "USD"
+            : p.original_currency === "ARS"
+              ? "ARS"
+              : p.payment_method_id
+                ? (methodCurrency.get(p.payment_method_id) ?? "ARS")
+                : "ARS";
+        collectedUsd +=
+          pCurrency === "USD"
+            ? Number(p.amount)
+            : Number(p.amount) / rate;
+      }
+    }
+
+    result.set(launchId, { pledgedUsd, collectedUsd });
+  }
+
+  return result;
+}
+
 /** Reexport para conveniencia del caller. */
 export { EMPTY_KANBAN_SALES_AGGREGATE };
 export type { KanbanSalesAggregate };
