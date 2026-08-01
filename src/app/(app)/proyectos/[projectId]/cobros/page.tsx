@@ -126,6 +126,13 @@ export default async function ProjectCobrosPage({
   });
   const fxLookup = buildFxLookup(fxCtx, closedSales, closedPayments);
 
+  const banksById = new Map(banks.map((b) => [b.id, b]));
+  const methodCurrencies: Record<string, "ARS" | "USD"> = {};
+  for (const m of paymentMethods) {
+    const bank = m.bank_id ? banksById.get(m.bank_id) : null;
+    methodCurrencies[m.id] = bank?.currency ?? m.currency ?? "ARS";
+  }
+
   // Suma manual: el helper `paymentToUsd` / `saleToUsd` devuelve null si no
   // se puede convertir (falta tasa). Contamos esos casos aparte para avisar
   // al operador.
@@ -241,6 +248,7 @@ export default async function ProjectCobrosPage({
         teamMembers={teamForModal}
         canEdit={canEdit}
         fxLookup={fxLookup}
+        methodCurrencies={methodCurrencies}
         createSaleAction={createSaleAction}
         addPaymentAction={addPaymentAction}
         deletePaymentAction={deletePaymentAction}

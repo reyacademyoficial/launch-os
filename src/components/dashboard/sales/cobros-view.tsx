@@ -113,6 +113,7 @@ export function CobrosView({
   teamMembers,
   canEdit,
   fxLookup,
+  methodCurrencies,
   createSaleAction,
   addPaymentAction,
   deletePaymentAction,
@@ -147,6 +148,7 @@ export function CobrosView({
    * comportamiento antiguo que asume una única moneda implícita.
    */
   readonly fxLookup?: FxLookup;
+  readonly methodCurrencies: Record<string, "ARS" | "USD">;
   readonly createSaleAction: CreateSaleAction;
   readonly addPaymentAction: AddPaymentAction;
   readonly deletePaymentAction: DeletePaymentAction;
@@ -373,6 +375,7 @@ export function CobrosView({
         teamMembers={teamMembers}
         canEdit={canEdit}
         fxLookup={fxLookup}
+        methodCurrencies={methodCurrencies}
         filtersActive={filtersActive}
         totalSalesCount={sales.length}
         createSaleAction={createSaleAction}
@@ -550,6 +553,7 @@ function SalesTable({
   teamMembers,
   canEdit,
   fxLookup,
+  methodCurrencies,
   filtersActive,
   totalSalesCount,
   createSaleAction,
@@ -579,6 +583,7 @@ function SalesTable({
   >;
   readonly canEdit: boolean;
   readonly fxLookup?: FxLookup;
+  readonly methodCurrencies: Record<string, "ARS" | "USD">;
   readonly filtersActive: boolean;
   readonly totalSalesCount: number;
   readonly createSaleAction: CreateSaleAction;
@@ -822,6 +827,7 @@ function SalesTable({
                           canEdit ? assignLeadOwnerAction : undefined
                         }
                         fxLookup={fxLookup}
+                        methodCurrencies={methodCurrencies}
                       />
                     </td>
                     <td className="px-3 py-3 text-right tabular-nums text-fg">
@@ -897,6 +903,7 @@ function SalesTable({
                           assignLeadOwnerAction={
                             canEdit ? assignLeadOwnerAction : undefined
                           }
+                          methodCurrencies={methodCurrencies}
                         />
                       </td>
                     )}

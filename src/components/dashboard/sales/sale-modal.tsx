@@ -138,6 +138,7 @@ export function SaleModal({
   updatePaymentMethodAction,
   assignLeadOwnerAction,
   fxLookup,
+  methodCurrencies,
 }: {
   readonly triggerLabel: string;
   readonly triggerClassName?: string;
@@ -185,6 +186,7 @@ export function SaleModal({
    * `fmtMoney` legacy sin distinción.
    */
   readonly fxLookup?: FxLookup;
+  readonly methodCurrencies?: Record<string, "ARS" | "USD">;
 }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"list" | "new" | "edit">("list");
@@ -304,6 +306,7 @@ export function SaleModal({
                     }
                     onSuccess={() => setOpen(false)}
                     fxLookup={fxLookup}
+                    methodCurrencies={methodCurrencies ?? {}}
                   />
                 ) : (
                   <p className="text-sm text-fg-muted">
@@ -347,6 +350,7 @@ export function SaleModal({
                   products={products}
                   rules={rules}
                   launchId={selectedSale.launch_id}
+                  methodCurrencies={methodCurrencies ?? {}}
                   lead={lead}
                   teamMembers={teamMembers}
                   onEdit={
@@ -617,6 +621,7 @@ function SalePanel({
   assignOwnerAction,
   onSaleDeleted,
   fxLookup,
+  methodCurrencies,
 }: {
   readonly sale: SaleRow;
   readonly saleRank: number;
@@ -645,6 +650,7 @@ function SalePanel({
   ) => Promise<{ ok: true } | { error: string }>;
   readonly onSaleDeleted: () => void;
   readonly fxLookup?: FxLookup;
+  readonly methodCurrencies: Record<string, "ARS" | "USD">;
 }) {
   const modality = modalities.find((m) => m.id === sale.payment_modality_id);
   const product = products.find((p) => p.id === sale.product_id);
@@ -766,6 +772,7 @@ function SalePanel({
         statuses={statuses}
         paymentMethods={paymentMethods}
         addPaymentAction={addPaymentAction}
+        methodCurrencies={methodCurrencies}
       />
 
       {/* Lista de cobros */}
@@ -1177,6 +1184,7 @@ function PaymentForm({
   paymentMethods,
   addPaymentAction,
   onSuccess,
+  methodCurrencies,
 }: {
   readonly installments: ReadonlyArray<InstallmentRow>;
   readonly statuses: ReadonlyArray<InstallmentStatus>;
@@ -1184,6 +1192,7 @@ function PaymentForm({
   readonly addPaymentAction: BoundAddPayment;
   /** Callback tras cargar cobro OK. Usado por el variant `add-payment` para cerrar el modal — en el flujo full se omite para permitir cargar varios cobros seguidos. */
   readonly onSuccess?: () => void;
+  readonly methodCurrencies: Record<string, "ARS" | "USD">;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -1209,6 +1218,8 @@ function PaymentForm({
   // vuelve a `null` para re-sugerir la próxima cuota disponible.
   const [userInstallmentId, setUserInstallmentId] = useState<string | null>(null);
   const [userAmount, setUserAmount] = useState<string | null>(null);
+  const [selectedMethodId, setSelectedMethodId] = useState<string>("");
+  const [selectedCurrency, setSelectedCurrency] = useState<"ARS" | "USD">("ARS");
   const installmentId = userInstallmentId ?? suggested?.installmentId ?? "";
   const amount =
     userAmount ?? (suggested ? String(suggested.amount) : "");
@@ -1224,6 +1235,8 @@ function PaymentForm({
       formRef.current?.reset();
       setUserInstallmentId(null);
       setUserAmount(null);
+      setSelectedMethodId("");
+      setSelectedCurrency("ARS");
       onSuccess?.();
     });
   }
@@ -1294,8 +1307,13 @@ function PaymentForm({
           <Select
             id="pay-method"
             name="payment_method_id"
-            defaultValue=""
+            value={selectedMethodId}
             required
+            onChange={(e) => {
+              const id = e.target.value;
+              setSelectedMethodId(id);
+              setSelectedCurrency(methodCurrencies[id] ?? "ARS");
+            }}
           >
             <option value="" disabled>
               Elegí un método
@@ -1308,7 +1326,7 @@ function PaymentForm({
           </Select>
         </div>
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
         <div>
           <Label htmlFor="pay-amount">Monto *</Label>
           <Input
@@ -1322,6 +1340,26 @@ function PaymentForm({
             onChange={(e) => setUserAmount(e.target.value)}
             placeholder="100"
           />
+        </div>
+        <div>
+          <Label>Moneda</Label>
+          <div className="flex gap-1 mt-1">
+            {(["ARS", "USD"] as const).map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setSelectedCurrency(c)}
+                className={`flex-1 rounded border px-2 py-1.5 text-xs font-medium transition-colors ${
+                  selectedCurrency === c
+                    ? "border-accent bg-accent text-white"
+                    : "border-border bg-surface text-fg-muted hover:text-fg"
+                }`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+          <input type="hidden" name="original_currency" value={selectedCurrency} />
         </div>
         <div>
           <Label htmlFor="pay-date">Fecha</Label>
@@ -1705,6 +1743,7 @@ function AddPaymentOnly({
   addPaymentAction,
   onSuccess,
   fxLookup,
+  methodCurrencies,
 }: {
   readonly sale: SaleRow;
   readonly payments: ReadonlyArray<PaymentRow>;
@@ -1713,6 +1752,7 @@ function AddPaymentOnly({
   readonly addPaymentAction: BoundAddPayment;
   readonly onSuccess: () => void;
   readonly fxLookup?: FxLookup;
+  readonly methodCurrencies: Record<string, "ARS" | "USD">;
 }) {
   const today = todayInAR();
   const statuses = useMemo(
@@ -1750,6 +1790,7 @@ function AddPaymentOnly({
         paymentMethods={paymentMethods}
         addPaymentAction={addPaymentAction}
         onSuccess={onSuccess}
+        methodCurrencies={methodCurrencies}
       />
     </div>
   );

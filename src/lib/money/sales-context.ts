@@ -34,6 +34,7 @@ interface PaymentLike {
   readonly paid_at: string;
   readonly sale_id: string;
   readonly payment_method_id: string | null;
+  readonly original_currency?: "ARS" | "USD" | null;
 }
 
 interface SaleLike {
@@ -101,6 +102,9 @@ export function buildSalesFxContext(
   }
 
   function paymentCurrency(payment: PaymentLike): Currency {
+    if (payment.original_currency === "ARS" || payment.original_currency === "USD") {
+      return payment.original_currency;
+    }
     const method = payment.payment_method_id
       ? methodsById.get(payment.payment_method_id) ?? null
       : null;
@@ -172,6 +176,7 @@ type PaymentForLookup = {
   paid_at: string;
   sale_id: string;
   payment_method_id: string | null;
+  original_currency?: "ARS" | "USD" | null;
 };
 
 /**
