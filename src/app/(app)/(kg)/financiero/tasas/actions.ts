@@ -2,6 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 
+import {
+  previewFxBackfill,
+  runFxBackfill,
+  type FxBackfillReport,
+} from "@/lib/backfill/fx";
 import { requireRole } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
@@ -69,6 +74,46 @@ export async function createFxRate(
   revalidatePath("/financiero/tasas");
   revalidatePath("/financiero");
   return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Backfill one-shot: convertir a USD payments/sales históricos cargados en
+// pesos contra bancos USD. `preview` no toca nada — se usa para mostrar en
+// la UI qué va a pasar antes de que el operador confirme. `run` aplica.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type FxBackfillState =
+  | { ok: true; report: FxBackfillReport }
+  | { error: string }
+  | null;
+
+export async function previewFxBackfillAction(
+  _prev: FxBackfillState,
+  _formData: FormData,
+): Promise<FxBackfillState> {
+  await requireRole("superadmin");
+  try {
+    const report = await previewFxBackfill();
+    return { ok: true, report };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Preview falló." };
+  }
+}
+
+export async function runFxBackfillAction(
+  _prev: FxBackfillState,
+  _formData: FormData,
+): Promise<FxBackfillState> {
+  await requireRole("superadmin");
+  try {
+    const report = await runFxBackfill();
+    revalidatePath("/financiero/bancos");
+    revalidatePath("/financiero/metodos-pago");
+    revalidatePath("/financiero");
+    return { ok: true, report };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Backfill falló." };
+  }
 }
 
 export async function deleteFxRate(rateId: string): Promise<{

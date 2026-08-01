@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 
 import { KgDataTable, type Column } from "@/components/kg/data-table";
-import { fmtNative } from "@/lib/money";
+import { fmtNative, fmtUsd } from "@/lib/money";
 
 import { setBankActive } from "./actions";
 import { BankFormDrawer } from "./bank-form-drawer";
@@ -17,6 +17,8 @@ export interface BankRowData {
   readonly movementsIn: number;
   readonly movementsOut: number;
   readonly total: number;
+  /** Equivalente USD. Para bancos USD = total; para ARS = total / última tasa; null si no hay tasa. */
+  readonly totalUsd: number | null;
   readonly active: boolean;
 }
 
@@ -74,6 +76,18 @@ export function BancosView({
       align: "right",
       numeric: true,
       render: (r) => fmtNative(r.total, r.currency),
+    },
+    {
+      key: "totalUsd",
+      label: "Equiv. USD",
+      align: "right",
+      numeric: true,
+      render: (r) =>
+        r.currency === "USD"
+          ? "—"
+          : r.totalUsd !== null
+            ? fmtUsd(r.totalUsd)
+            : "sin tasa",
     },
     {
       key: "state",

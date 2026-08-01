@@ -20,6 +20,30 @@ import type {
   SaleRow,
 } from "@/lib/commissions/types";
 import { fmtDate, fmtMoney, fmtPercent } from "@/lib/format";
+import { fmtNative, type FxLookup } from "@/lib/money";
+
+/**
+ * Helpers de formato que respetan la moneda nativa del sale/payment cuando
+ * hay lookup FX disponible. Sin fxLookup, fallback a `fmtMoney` legacy.
+ */
+function fmtSaleMoney(
+  fxLookup: FxLookup | undefined,
+  sale: { id: string } | null,
+  amount: number,
+): string {
+  if (!fxLookup || !sale) return fmtMoney(amount);
+  return fmtNative(amount, fxLookup.bySaleId[sale.id]?.currency ?? "USD");
+}
+function fmtPaymentMoney(
+  fxLookup: FxLookup | undefined,
+  payment: { id: string; amount: number },
+): string {
+  if (!fxLookup) return fmtMoney(payment.amount);
+  return fmtNative(
+    Number(payment.amount),
+    fxLookup.byPaymentId[payment.id]?.currency ?? "USD",
+  );
+}
 import {
   classifyClient,
   computeInstallmentStatuses,
@@ -113,6 +137,8 @@ export function SaleModal({
   updatePaymentInstallmentAction,
   updatePaymentMethodAction,
   assignLeadOwnerAction,
+  fxLookup,
+  methodCurrencies,
 }: {
   readonly triggerLabel: string;
   readonly triggerClassName?: string;
@@ -154,6 +180,13 @@ export function SaleModal({
   readonly updatePaymentInstallmentAction?: UpdatePaymentInstallmentAction;
   readonly updatePaymentMethodAction?: UpdatePaymentMethodAction;
   readonly assignLeadOwnerAction?: AssignLeadOwnerAction;
+  /**
+   * Lookup FX opcional. Cuando se pasa, todos los montos del modal se
+   * muestran en su moneda nativa (AR$ o US$). Sin fxLookup, fallback a
+   * `fmtMoney` legacy sin distinción.
+   */
+  readonly fxLookup?: FxLookup;
+  readonly methodCurrencies?: Record<string, "ARS" | "USD">;
 }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"list" | "new" | "edit">("list");
@@ -243,6 +276,7 @@ export function SaleModal({
                     products={products}
                     selectedSaleId={selectedSaleId}
                     onSelect={setSelectedSaleId}
+                    fxLookup={fxLookup}
                   />
                 )}
                 {allowCreateAnother && (
@@ -271,6 +305,8 @@ export function SaleModal({
                       addPaymentAction(selectedSale.id, prev, fd)
                     }
                     onSuccess={() => setOpen(false)}
+                    fxLookup={fxLookup}
+                    methodCurrencies={methodCurrencies ?? {}}
                   />
                 ) : (
                   <p className="text-sm text-fg-muted">
@@ -314,6 +350,7 @@ export function SaleModal({
                   products={products}
                   rules={rules}
                   launchId={selectedSale.launch_id}
+                  methodCurrencies={methodCurrencies ?? {}}
                   lead={lead}
                   teamMembers={teamMembers}
                   onEdit={
@@ -354,6 +391,7 @@ export function SaleModal({
                       setOpen(false);
                     }
                   }}
+                  fxLookup={fxLookup}
                 />
               ) : (
                 <p className="text-sm text-fg-muted">
@@ -373,11 +411,13 @@ function SaleTabs({
   products,
   selectedSaleId,
   onSelect,
+  fxLookup,
 }: {
   readonly sales: ReadonlyArray<SaleRow>;
   readonly products: ReadonlyArray<ProductRow>;
   readonly selectedSaleId: string | null;
   readonly onSelect: (saleId: string) => void;
+  readonly fxLookup?: FxLookup;
 }) {
   return (
     <div className="flex flex-wrap gap-1" role="tablist">
@@ -398,7 +438,8 @@ function SaleTabs({
                 : "border-border bg-surface text-fg-muted hover:text-fg")
             }
           >
-            #{i + 1} · {product?.name ?? "—"} · {fmtMoney(s.total_amount)}
+            #{i + 1} · {product?.name ?? "—"} ·{" "}
+            {fmtSaleMoney(fxLookup, s, Number(s.total_amount))}
           </button>
         );
       })}
@@ -579,6 +620,8 @@ function SalePanel({
   updatePaymentMethodAction,
   assignOwnerAction,
   onSaleDeleted,
+  fxLookup,
+  methodCurrencies,
 }: {
   readonly sale: SaleRow;
   readonly saleRank: number;
@@ -606,6 +649,8 @@ function SalePanel({
     teamMemberId: string | null,
   ) => Promise<{ ok: true } | { error: string }>;
   readonly onSaleDeleted: () => void;
+  readonly fxLookup?: FxLookup;
+  readonly methodCurrencies: Record<string, "ARS" | "USD">;
 }) {
   const modality = modalities.find((m) => m.id === sale.payment_modality_id);
   const product = products.find((p) => p.id === sale.product_id);
@@ -641,7 +686,7 @@ function SalePanel({
             <span className="rounded-full bg-error/10 px-2 py-0.5 text-xs font-medium text-error">
               {overdue.overdueCount} cuota{overdue.overdueCount === 1 ? "" : "s"} vencida{overdue.overdueCount === 1 ? "" : "s"}
               {" · "}
-              {fmtMoney(overdue.overdueAmount)}
+              {fmtSaleMoney(fxLookup, sale, overdue.overdueAmount)}
             </span>
           )}
           {onEdit && (
@@ -680,15 +725,15 @@ function SalePanel({
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <Card label="Pactado" value={fmtMoney(sale.total_amount)} />
+          <Card label="Pactado" value={fmtSaleMoney(fxLookup, sale, Number(sale.total_amount))} />
           <Card
             label="Cobrado"
-            value={fmtMoney(breakdown.collected)}
+            value={fmtSaleMoney(fxLookup, sale, breakdown.collected)}
             hint={`${payments.length} cobro${payments.length === 1 ? "" : "s"}`}
           />
           <Card
             label="Comisión actual"
-            value={fmtMoney(breakdown.commission)}
+            value={fmtSaleMoney(fxLookup, sale, breakdown.commission)}
             hint={breakdown.formula}
             accent
           />
@@ -708,7 +753,7 @@ function SalePanel({
       />
 
       {/* Cronograma de cuotas */}
-      <InstallmentsTimeline statuses={statuses} />
+      <InstallmentsTimeline statuses={statuses} sale={sale} fxLookup={fxLookup} />
 
       {/* Cobros huérfanos: warning + UI de re-linkeo */}
       {orphanPayments.length > 0 && updatePaymentInstallmentAction && (
@@ -716,6 +761,8 @@ function SalePanel({
           orphanPayments={orphanPayments}
           installments={installments}
           updateAction={updatePaymentInstallmentAction}
+          sale={sale}
+          fxLookup={fxLookup}
         />
       )}
 
@@ -725,6 +772,7 @@ function SalePanel({
         statuses={statuses}
         paymentMethods={paymentMethods}
         addPaymentAction={addPaymentAction}
+        methodCurrencies={methodCurrencies}
       />
 
       {/* Lista de cobros */}
@@ -756,6 +804,7 @@ function SalePanel({
                   paymentMethods={paymentMethods}
                   deletePaymentAction={deletePaymentAction}
                   updatePaymentMethodAction={updatePaymentMethodAction}
+                  fxLookup={fxLookup}
                 />
               ))}
           </ul>
@@ -915,8 +964,12 @@ function frequencyLabel(f: SaleRow["installment_frequency"]): string {
 
 function InstallmentsTimeline({
   statuses,
+  sale,
+  fxLookup,
 }: {
   readonly statuses: ReadonlyArray<InstallmentStatus>;
+  readonly sale: SaleRow;
+  readonly fxLookup?: FxLookup;
 }) {
   if (statuses.length === 0) {
     return null;
@@ -928,14 +981,27 @@ function InstallmentsTimeline({
       </h4>
       <ol className="divide-y divide-border rounded-md border border-border">
         {statuses.map((st) => (
-          <InstallmentRowItem key={st.installment.id} status={st} />
+          <InstallmentRowItem
+            key={st.installment.id}
+            status={st}
+            sale={sale}
+            fxLookup={fxLookup}
+          />
         ))}
       </ol>
     </section>
   );
 }
 
-function InstallmentRowItem({ status }: { readonly status: InstallmentStatus }) {
+function InstallmentRowItem({
+  status,
+  sale,
+  fxLookup,
+}: {
+  readonly status: InstallmentStatus;
+  readonly sale: SaleRow;
+  readonly fxLookup?: FxLookup;
+}) {
   const { installment: inst, paid, remaining, daysOverdue, state } = status;
   const label = statusLabel(state);
   return (
@@ -953,11 +1019,12 @@ function InstallmentRowItem({ status }: { readonly status: InstallmentStatus }) 
       </div>
       <div className="text-right text-xs">
         <div className="tabular-nums text-fg">
-          {fmtMoney(paid)} / {fmtMoney(inst.amount)}
+          {fmtSaleMoney(fxLookup, sale, paid)} /{" "}
+          {fmtSaleMoney(fxLookup, sale, Number(inst.amount))}
         </div>
         {remaining > 0 && state !== "paid" && (
           <div className="text-fg-subtle">
-            Saldo {fmtMoney(remaining)}
+            Saldo {fmtSaleMoney(fxLookup, sale, remaining)}
           </div>
         )}
       </div>
@@ -992,10 +1059,14 @@ function OrphanPaymentsPanel({
   orphanPayments,
   installments,
   updateAction,
+  sale,
+  fxLookup,
 }: {
   readonly orphanPayments: ReadonlyArray<PaymentRow>;
   readonly installments: ReadonlyArray<InstallmentRow>;
   readonly updateAction: UpdatePaymentInstallmentAction;
+  readonly sale: SaleRow;
+  readonly fxLookup?: FxLookup;
 }) {
   return (
     <section className="space-y-2 rounded-md border border-warning/40 bg-warning/5 p-3">
@@ -1014,6 +1085,8 @@ function OrphanPaymentsPanel({
             payment={p}
             installments={installments}
             updateAction={updateAction}
+            sale={sale}
+            fxLookup={fxLookup}
           />
         ))}
       </ul>
@@ -1025,10 +1098,14 @@ function OrphanPaymentRow({
   payment,
   installments,
   updateAction,
+  sale,
+  fxLookup,
 }: {
   readonly payment: PaymentRow;
   readonly installments: ReadonlyArray<InstallmentRow>;
   readonly updateAction: UpdatePaymentInstallmentAction;
+  readonly sale: SaleRow;
+  readonly fxLookup?: FxLookup;
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -1038,7 +1115,7 @@ function OrphanPaymentRow({
       <span className="text-fg-muted">
         {fmtDate(payment.paid_at)} ·{" "}
         <span className="tabular-nums text-fg">
-          {fmtMoney(payment.amount)}
+          {fmtPaymentMoney(fxLookup, payment)}
         </span>
       </span>
       <Select
@@ -1061,7 +1138,8 @@ function OrphanPaymentRow({
         </option>
         {installments.map((i) => (
           <option key={i.id} value={i.id}>
-            Cuota {i.number} · {fmtDate(i.due_date)} · {fmtMoney(i.amount)}
+            Cuota {i.number} · {fmtDate(i.due_date)} ·{" "}
+            {fmtSaleMoney(fxLookup, sale, Number(i.amount))}
           </option>
         ))}
       </Select>
@@ -1106,6 +1184,7 @@ function PaymentForm({
   paymentMethods,
   addPaymentAction,
   onSuccess,
+  methodCurrencies,
 }: {
   readonly installments: ReadonlyArray<InstallmentRow>;
   readonly statuses: ReadonlyArray<InstallmentStatus>;
@@ -1113,6 +1192,7 @@ function PaymentForm({
   readonly addPaymentAction: BoundAddPayment;
   /** Callback tras cargar cobro OK. Usado por el variant `add-payment` para cerrar el modal — en el flujo full se omite para permitir cargar varios cobros seguidos. */
   readonly onSuccess?: () => void;
+  readonly methodCurrencies: Record<string, "ARS" | "USD">;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -1138,6 +1218,8 @@ function PaymentForm({
   // vuelve a `null` para re-sugerir la próxima cuota disponible.
   const [userInstallmentId, setUserInstallmentId] = useState<string | null>(null);
   const [userAmount, setUserAmount] = useState<string | null>(null);
+  const [selectedMethodId, setSelectedMethodId] = useState<string>("");
+  const [selectedCurrency, setSelectedCurrency] = useState<"ARS" | "USD">("ARS");
   const installmentId = userInstallmentId ?? suggested?.installmentId ?? "";
   const amount =
     userAmount ?? (suggested ? String(suggested.amount) : "");
@@ -1153,6 +1235,8 @@ function PaymentForm({
       formRef.current?.reset();
       setUserInstallmentId(null);
       setUserAmount(null);
+      setSelectedMethodId("");
+      setSelectedCurrency("ARS");
       onSuccess?.();
     });
   }
@@ -1223,8 +1307,13 @@ function PaymentForm({
           <Select
             id="pay-method"
             name="payment_method_id"
-            defaultValue=""
+            value={selectedMethodId}
             required
+            onChange={(e) => {
+              const id = e.target.value;
+              setSelectedMethodId(id);
+              setSelectedCurrency(methodCurrencies[id] ?? "ARS");
+            }}
           >
             <option value="" disabled>
               Elegí un método
@@ -1237,7 +1326,7 @@ function PaymentForm({
           </Select>
         </div>
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
         <div>
           <Label htmlFor="pay-amount">Monto *</Label>
           <Input
@@ -1251,6 +1340,26 @@ function PaymentForm({
             onChange={(e) => setUserAmount(e.target.value)}
             placeholder="100"
           />
+        </div>
+        <div>
+          <Label>Moneda</Label>
+          <div className="flex gap-1 mt-1">
+            {(["ARS", "USD"] as const).map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setSelectedCurrency(c)}
+                className={`flex-1 rounded border px-2 py-1.5 text-xs font-medium transition-colors ${
+                  selectedCurrency === c
+                    ? "border-accent bg-accent text-white"
+                    : "border-border bg-surface text-fg-muted hover:text-fg"
+                }`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+          <input type="hidden" name="original_currency" value={selectedCurrency} />
         </div>
         <div>
           <Label htmlFor="pay-date">Fecha</Label>
@@ -1282,12 +1391,14 @@ function PaymentRowItem({
   paymentMethods,
   deletePaymentAction,
   updatePaymentMethodAction,
+  fxLookup,
 }: {
   readonly payment: PaymentRow;
   readonly installments: ReadonlyArray<InstallmentRow>;
   readonly paymentMethods: ReadonlyArray<PaymentMethodRow>;
   readonly deletePaymentAction: DeletePaymentAction;
   readonly updatePaymentMethodAction?: UpdatePaymentMethodAction;
+  readonly fxLookup?: FxLookup;
 }) {
   const [isPending, startTransition] = useTransition();
   const [methodPending, startMethodTransition] = useTransition();
@@ -1304,7 +1415,7 @@ function PaymentRowItem({
       <div className="min-w-0 flex-1 space-y-1">
         <div className="flex items-baseline gap-2">
           <span className="font-medium tabular-nums text-fg">
-            {fmtMoney(payment.amount)}
+            {fmtPaymentMoney(fxLookup, payment)}
           </span>
           <span className="text-xs text-fg-subtle">{fmtDate(payment.paid_at)}</span>
         </div>
@@ -1631,6 +1742,8 @@ function AddPaymentOnly({
   paymentMethods,
   addPaymentAction,
   onSuccess,
+  fxLookup,
+  methodCurrencies,
 }: {
   readonly sale: SaleRow;
   readonly payments: ReadonlyArray<PaymentRow>;
@@ -1638,6 +1751,8 @@ function AddPaymentOnly({
   readonly paymentMethods: ReadonlyArray<PaymentMethodRow>;
   readonly addPaymentAction: BoundAddPayment;
   readonly onSuccess: () => void;
+  readonly fxLookup?: FxLookup;
+  readonly methodCurrencies: Record<string, "ARS" | "USD">;
 }) {
   const today = todayInAR();
   const statuses = useMemo(
@@ -1650,13 +1765,23 @@ function AddPaymentOnly({
   return (
     <div className="space-y-4">
       <div className="rounded-md border border-border bg-surface/40 px-3 py-2 text-xs text-fg-muted">
-        Pactado <b className="tabular-nums text-fg">{fmtMoney(sale.total_amount)}</b>
+        Pactado{" "}
+        <b className="tabular-nums text-fg">
+          {fmtSaleMoney(fxLookup, sale, Number(sale.total_amount))}
+        </b>
         {" · "}
-        Cobrado <b className="tabular-nums text-fg">{fmtMoney(collected)}</b>
+        Cobrado{" "}
+        <b className="tabular-nums text-fg">
+          {fmtSaleMoney(fxLookup, sale, collected)}
+        </b>
         {" · "}
         Saldo{" "}
         <b className="tabular-nums text-fg">
-          {fmtMoney(Math.max(Number(sale.total_amount) - collected, 0))}
+          {fmtSaleMoney(
+            fxLookup,
+            sale,
+            Math.max(Number(sale.total_amount) - collected, 0),
+          )}
         </b>
       </div>
       <PaymentForm
@@ -1665,6 +1790,7 @@ function AddPaymentOnly({
         paymentMethods={paymentMethods}
         addPaymentAction={addPaymentAction}
         onSuccess={onSuccess}
+        methodCurrencies={methodCurrencies}
       />
     </div>
   );

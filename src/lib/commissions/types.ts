@@ -153,6 +153,12 @@ export interface PaymentRow {
    * históricos sin backfill — obligatorio para cobros nuevos.
    */
   payment_method_id: string | null;
+  /**
+   * Moneda en que el operador ingresó el monto. Si es distinta a la moneda
+   * del método/banco, el sistema convierte al mostrar. NULL en cobros legacy
+   * previos al backfill (tratados como ARS).
+   */
+  original_currency: "ARS" | "USD" | null;
   created_at: string;
   updated_at: string;
 }

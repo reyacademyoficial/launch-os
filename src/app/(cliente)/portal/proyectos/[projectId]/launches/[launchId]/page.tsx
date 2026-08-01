@@ -87,7 +87,13 @@ export default async function ClientLaunchPage({
         </div>
       </header>
 
-      <KpiGrid kpi={kpi} />
+      <KpiGrid
+        kpi={kpi}
+        launchArsPerUsd={
+          (launch as unknown as { ars_per_usd?: number | null }).ars_per_usd ??
+          null
+        }
+      />
 
       {chartRows.length > 0 && (
         <section className="space-y-3">

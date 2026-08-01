@@ -713,6 +713,11 @@ export async function addPayment(
   const installment_id = installmentIdRaw === "" ? null : installmentIdRaw;
   const paymentMethodIdRaw = str(formData, "payment_method_id");
   const payment_method_id = paymentMethodIdRaw === "" ? null : paymentMethodIdRaw;
+  const originalCurrencyRaw = str(formData, "original_currency");
+  const original_currency =
+    originalCurrencyRaw === "ARS" || originalCurrencyRaw === "USD"
+      ? originalCurrencyRaw
+      : null;
 
   if (!installment_id) {
     return { error: "Elegí a qué cuota se aplica el cobro." };
@@ -743,6 +748,7 @@ export async function addPayment(
     notes,
     installment_id,
     payment_method_id,
+    ...(original_currency && { original_currency }),
   } as never;
 
   const { error } = await supabase.from("payments").insert(payload);

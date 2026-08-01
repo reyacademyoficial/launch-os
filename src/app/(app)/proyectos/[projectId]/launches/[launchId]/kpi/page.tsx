@@ -17,11 +17,16 @@ import { listCommunityMetricsForLaunch } from "@/lib/launch-community/list";
 import { aggregateMergedDaily } from "@/lib/launch-daily/aggregate";
 import { listAdsForLaunch, listDailyForLaunch } from "@/lib/launch-daily/list";
 import { mergeDailyData } from "@/lib/launch-daily/merge";
-import { getKanbanSalesAggregateForLaunch } from "@/lib/launch-sales/list";
+import { aggregateKanbanSales } from "@/lib/launch-sales/aggregate";
+import { listLaunchSalesData } from "@/lib/launch-sales/list";
 import { getLaunch } from "@/lib/launches/get";
 import { listMessagesDailyForLaunch } from "@/lib/launch-messages/list";
 import { listRecentRuns } from "@/lib/integrations/runs";
 import { userCanEditLaunchesIn } from "@/lib/supabase/auth";
+import { createClient } from "@/lib/supabase/server";
+import { loadProjectFxRates } from "@/lib/money";
+import { listPaymentMethods } from "@/lib/payment-methods/list";
+import { listBanks } from "@/lib/banks/list";
 
 import { createDailyEntry } from "../daily-actions";
 
@@ -39,26 +44,33 @@ export default async function LaunchKpiPage({
 }) {
   const { projectId, launchId } = await params;
 
+  const supabase = await createClient();
   const [
     launch,
     canEditLaunchValue,
     daily,
     ads,
-    kanbanSalesAggregate,
+    launchSalesData,
     community,
     sendflowDaily,
     messagesDaily,
     recentRuns,
+    fxMap,
+    paymentMethods,
+    banks,
   ] = await Promise.all([
     getLaunch(launchId),
     userCanEditLaunchesIn(projectId),
     listDailyForLaunch(launchId),
     listAdsForLaunch(launchId),
-    getKanbanSalesAggregateForLaunch(projectId, launchId),
+    listLaunchSalesData(projectId, launchId),
     listCommunityMetricsForLaunch(launchId),
     listSendflowDailyForLaunch(launchId),
     listMessagesDailyForLaunch(launchId),
     listRecentRuns(launchId, 20),
+    loadProjectFxRates(supabase, projectId),
+    listPaymentMethods(projectId),
+    listBanks(),
   ]);
 
   if (!launch || launch.project_id !== projectId) notFound();
@@ -66,10 +78,102 @@ export default async function LaunchKpiPage({
   const mergedDaily = mergeDailyData(daily, ads);
   const adsAggregate = aggregateMergedDaily(mergedDaily);
   const communityAggregate = aggregateCommunityMetrics(community);
+
+  // Aggregate tradicional para counts (salesCount, paymentsCount, hasData)
+  const kanbanSalesAggregate = aggregateKanbanSales(
+    launchSalesData.sales as never,
+    launchSalesData.payments as never,
+    launchSalesData.leads as never,
+    launchId,
+  );
+
+  // Revenue convertido por moneda: filtramos ventas/cobros a "cerrado"
+  // con atribución a este launch (sale.launch_id = launchId)
+  const launchRow = launch as unknown as {
+    ars_per_usd?: number | null;
+    ads_currency?: string;
+  };
+  const arsPerUsd = launchRow.ars_per_usd ?? null;
+  const revenueRate = arsPerUsd && arsPerUsd > 0 ? arsPerUsd : null;
+
+  const leadById = new Map(launchSalesData.leads.map((l) => [l.id, l]));
+  const cerradoSales = launchSalesData.sales.filter((s) => {
+    if ((s as unknown as { launch_id?: string | null }).launch_id !== launchId)
+      return false;
+    const lead = leadById.get(s.lead_id);
+    return (lead as unknown as { status?: string })?.status === "cerrado";
+  });
+  const cerradoSaleIds = new Set(cerradoSales.map((s) => s.id));
+  const cerradoPayments = launchSalesData.payments.filter((p) =>
+    cerradoSaleIds.has(p.sale_id),
+  );
+
+  // Mapa de moneda efectiva por método de pago:
+  // banco del método → moneda del banco → moneda del método → 'ARS'.
+  // Replica la lógica de paymentCurrency() en sales-context.tsx.
+  const banksById = new Map(
+    (banks as unknown as Array<{ id: string; currency: "ARS" | "USD" }>).map(
+      (b) => [b.id, b],
+    ),
+  );
+  const methodEffCurrency = new Map(
+    (paymentMethods as unknown as Array<{
+      id: string;
+      bank_id: string | null;
+      currency: "ARS" | "USD" | null;
+    }>).map((m) => {
+      const bankCurrency = m.bank_id ? banksById.get(m.bank_id)?.currency : null;
+      return [m.id, bankCurrency ?? m.currency ?? "ARS"] as const;
+    }),
+  );
+
+  // null = sin ventas cerradas → calculateLaunchKPIs usará el fallback del
+  // aggregate. Con cerradoSales no vacío siempre resulta un número ≥ 0.
+  let kanbanPledgedUsd: number | null = null;
+  for (const s of cerradoSales) {
+    const v = revenueRate
+      ? Number(s.total_amount) / revenueRate
+      : Number(s.total_amount);
+    kanbanPledgedUsd = (kanbanPledgedUsd ?? 0) + v;
+  }
+
+  let kanbanCollectedUsd: number | null = null;
+  for (const p of cerradoPayments) {
+    const pRaw = p as unknown as {
+      original_currency?: string | null;
+      payment_method_id?: string | null;
+    };
+    const pCurrency: "ARS" | "USD" =
+      pRaw.original_currency === "USD"
+        ? "USD"
+        : pRaw.original_currency === "ARS"
+          ? "ARS"
+          : (pRaw.payment_method_id
+              ? (methodEffCurrency.get(pRaw.payment_method_id) ?? "ARS")
+              : "ARS");
+    const v = pCurrency === "USD"
+      ? Number(p.amount)
+      : revenueRate
+        ? Number(p.amount) / revenueRate
+        : Number(p.amount);
+    kanbanCollectedUsd = (kanbanCollectedUsd ?? 0) + v;
+  }
+
+  // Tasa para ads (Meta/Google/TikTok)
+  const adsRatePerUsd =
+    launchRow.ads_currency === "ARS" && revenueRate ? revenueRate : null;
+
+  // fxMap cargado para uso futuro (extensión a tasas mensuales por cobro)
+  void fxMap;
+
   const kpi = calculateLaunchKPIs(launch, {
     adsAggregate,
     kanbanSalesAggregate,
     communityAggregate,
+    adsRatePerUsd,
+    kanbanPledgedUsd,
+    kanbanCollectedUsd,
+    revenueRatePerUsd: revenueRate,
   });
   const isClosed = launch.closed_at !== null;
   const addDailyAction = createDailyEntry.bind(null, projectId, launchId);
@@ -86,7 +190,11 @@ export default async function LaunchKpiPage({
 
   return (
     <div className="space-y-10">
-      <KpiGrid kpi={kpi} />
+      <KpiGrid
+        kpi={kpi}
+        launchArsPerUsd={arsPerUsd}
+        kpisInUsd={arsPerUsd !== null}
+      />
 
       <CommunityKpiBlock kpi={kpi} />
 

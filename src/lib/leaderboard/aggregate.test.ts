@@ -85,6 +85,7 @@ function payment(saleId: string, amount: number): PaymentRow {
     notes: null,
     installment_id: null,
     payment_method_id: null,
+    original_currency: null,
     created_at: TS,
     updated_at: TS,
   };

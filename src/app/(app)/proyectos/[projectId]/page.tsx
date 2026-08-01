@@ -13,8 +13,14 @@ import {
 } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import { listAggregatesForProject } from "@/lib/launch-daily/list";
-import { getKanbanSalesAggregatesForProject } from "@/lib/launch-sales/list";
+import {
+  getKanbanSalesAggregatesForProject,
+  getProjectRevenueUsdMap,
+} from "@/lib/launch-sales/list";
 import { listLaunchesForProject } from "@/lib/launches/list";
+import { fmtUsd } from "@/lib/money";
+import { listBanks } from "@/lib/banks/list";
+import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { aggregateProjectKPIs } from "@/lib/projects/aggregates";
 import { createClient } from "@/lib/supabase/server";
 import { userCanEditProject } from "@/lib/supabase/auth";
@@ -39,6 +45,8 @@ export default async function OverviewPage({
     canEdit,
     adsAggregates,
     kanbanSalesAggregates,
+    paymentMethods,
+    banks,
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -49,11 +57,40 @@ export default async function OverviewPage({
     userCanEditProject(projectId),
     listAggregatesForProject(projectId),
     getKanbanSalesAggregatesForProject(projectId),
+    listPaymentMethods(projectId),
+    listBanks(),
   ]);
 
   const project = projectRaw as { name: string; business_name: string | null } | null;
   const name = project?.name ?? "Proyecto";
-  const agg = aggregateProjectKPIs(launches, adsAggregates, kanbanSalesAggregates);
+
+  const ratePerLaunch = new Map(
+    launches.map((l) => {
+      const rate = (l as unknown as { ars_per_usd?: number | null }).ars_per_usd ?? null;
+      return [l.id, rate && rate > 0 ? rate : null] as const;
+    }),
+  );
+  const revenueUsdMap = await getProjectRevenueUsdMap(
+    projectId,
+    ratePerLaunch,
+    paymentMethods as unknown as Array<{
+      id: string;
+      bank_id: string | null;
+      currency: "ARS" | "USD" | null;
+    }>,
+    banks as unknown as Array<{ id: string; currency: "ARS" | "USD" }>,
+  );
+
+  const agg = aggregateProjectKPIs(
+    launches,
+    adsAggregates,
+    kanbanSalesAggregates,
+    revenueUsdMap,
+  );
+  // Si al menos un launch tiene tasa configurada, los agregados están en USD.
+  const aggInUsd = revenueUsdMap.size > 0;
+  const fAgg = aggInUsd ? fmtUsd : fmtMoney;
+  const fAggDec = aggInUsd ? fmtUsd : fmtMoneyDecimals;
   const createAction = createLaunch.bind(null, projectId);
   const copyableLaunches = launches.map((l) => ({ id: l.id, name: l.name }));
 
@@ -114,11 +151,11 @@ export default async function OverviewPage({
 
       {/* Aggregate KPIs */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <AggCard label="Revenue total" value={fmtMoney(agg.totalRevenue)} />
-        <AggCard label="Inversión total" value={fmtMoney(agg.totalInvestment)} />
+        <AggCard label="Revenue total" value={fAgg(agg.totalRevenue)} />
+        <AggCard label="Inversión total" value={fAgg(agg.totalInvestment)} />
         <AggCard
           label="Profit"
-          value={fmtMoney(agg.totalProfit)}
+          value={fAgg(agg.totalProfit)}
           valueClassName={profitColor}
         />
         <AggCard
@@ -128,7 +165,7 @@ export default async function OverviewPage({
         />
         <AggCard
           label="CAC agregado"
-          value={fmtMoneyDecimals(agg.aggregateCAC)}
+          value={fAggDec(agg.aggregateCAC)}
           hint={`${fmtNumber(agg.totalVentas)} ventas totales`}
         />
         <AggCard
@@ -168,10 +205,28 @@ export default async function OverviewPage({
 
         <ul className="space-y-2">
           {recent.map((l) => {
+            const launchRow = l as unknown as {
+              ars_per_usd?: number | null;
+              ads_currency?: string;
+            };
+            const arsPerUsd = launchRow.ars_per_usd ?? null;
+            const revenueRate = arsPerUsd && arsPerUsd > 0 ? arsPerUsd : null;
+            const usdRevenue = revenueUsdMap.get(l.id);
+
             const lk = calculateLaunchKPIs(l, {
               adsAggregate: adsAggregates.get(l.id),
               kanbanSalesAggregate: kanbanSalesAggregates.get(l.id),
+              adsRatePerUsd:
+                launchRow.ads_currency === "ARS" && revenueRate
+                  ? revenueRate
+                  : null,
+              kanbanPledgedUsd: usdRevenue?.pledgedUsd ?? null,
+              kanbanCollectedUsd: usdRevenue?.collectedUsd ?? null,
+              revenueRatePerUsd: revenueRate,
             });
+
+            const fMoney = revenueRate ? fmtUsd : fmtMoney;
+
             return (
               <li key={l.id}>
                 <Link
@@ -188,7 +243,7 @@ export default async function OverviewPage({
                   </div>
                   <div className="hidden text-right sm:block">
                     <div className="text-xs text-fg-subtle">Revenue est.</div>
-                    <div className="text-sm font-bold text-fg">{fmtMoney(lk.revenueEstimated)}</div>
+                    <div className="text-sm font-bold text-fg">{fMoney(lk.revenueEstimated)}</div>
                   </div>
                 </Link>
               </li>

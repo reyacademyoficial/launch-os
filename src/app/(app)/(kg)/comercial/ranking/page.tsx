@@ -10,7 +10,8 @@ import {
   listPaymentModalities,
 } from "@/lib/commissions/list";
 import { fCount } from "@/lib/finance/format";
-import { fmtMoney, fmtNumber } from "@/lib/format";
+import { fmtNumber } from "@/lib/format";
+import { fmtUsd } from "@/lib/money";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { aggregateLeaderboardFromStats } from "@/lib/leaderboard/aggregate";
 import { aggregateProductBreakdownFromStats } from "@/lib/leaderboard/product-breakdown";
@@ -208,10 +209,10 @@ export default async function RankingPage({
         stats={[
           { l: "Miembros", v: fCount(rows.length) },
           { l: "Cerrados", v: fCount(totals.closed) },
-          { l: "Comisión total", v: fmtMoney(totals.commission) },
+          { l: "Comisión total", v: fmtUsd(totals.commission) },
           {
             l: totals.pending < 0 ? "A favor del equipo" : "Pendiente",
-            v: fmtMoney(Math.abs(totals.pending)),
+            v: fmtUsd(Math.abs(totals.pending)),
             c: totals.pending > 0 ? "#FFB800" : undefined,
           },
         ]}
@@ -235,16 +236,16 @@ export default async function RankingPage({
       >
         <StatCard label="Leads trabajados" value={fmtNumber(totals.leads)} />
         <StatCard label="Cerrados" value={fmtNumber(totals.closed)} />
-        <StatCard label="Revenue cobrado" value={fmtMoney(totals.revenue)} />
+        <StatCard label="Revenue cobrado" value={fmtUsd(totals.revenue)} />
         <StatCard
           label="Comisión total"
-          value={fmtMoney(totals.commission)}
+          value={fmtUsd(totals.commission)}
           accent
         />
-        <StatCard label="Pagado al equipo" value={fmtMoney(totals.paid)} />
+        <StatCard label="Pagado al equipo" value={fmtUsd(totals.paid)} />
         <StatCard
           label={totals.pending < 0 ? "A favor del equipo" : "Pendiente"}
-          value={fmtMoney(Math.abs(totals.pending))}
+          value={fmtUsd(Math.abs(totals.pending))}
           tone={totals.pending > 0 ? "warning" : "success"}
         />
       </div>

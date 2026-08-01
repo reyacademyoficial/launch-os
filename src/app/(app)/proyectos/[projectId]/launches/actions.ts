@@ -79,6 +79,11 @@ interface LaunchWritePayload {
    * dashboard USD. NULL = launch operado en USD nativo, no se convierte.
    */
   ars_per_usd: number | null;
+  /**
+   * Moneda de inversión de ads (Meta/Google/TikTok). 'USD' para cuentas que
+   * reportan en dólares (mayoría); 'ARS' para cuentas argentinas en pesos.
+   */
+  ads_currency: "ARS" | "USD";
 }
 
 // Defaults espejados con DEFAULT_DURATIONS / migraciones del calendario.
@@ -160,6 +165,7 @@ function parseLaunchFromForm(
           ? (str(formData, "recycle_target_launch_id") || null)
           : null,
       ars_per_usd: parseFxRate(str(formData, "ars_per_usd")),
+      ads_currency: str(formData, "ads_currency") === "ARS" ? "ARS" : "USD",
     },
   };
 }

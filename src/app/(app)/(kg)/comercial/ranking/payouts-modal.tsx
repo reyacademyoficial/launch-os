@@ -4,7 +4,8 @@ import { useState, useTransition } from "react";
 
 import { Drawer } from "@/components/kg/drawer";
 import { EmptyState } from "@/components/kg/empty-state";
-import { fmtDate, fmtMoney } from "@/lib/format";
+import { fmtDate } from "@/lib/format";
+import { fmtUsd } from "@/lib/money";
 import type { LeaderboardRow } from "@/lib/leaderboard/aggregate";
 import type { TeamMemberPayoutRow } from "@/lib/payouts/types";
 
@@ -193,11 +194,11 @@ function BalanceCards({ row }: { readonly row: LeaderboardRow }) {
         gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
       }}
     >
-      <BalanceCard label="Comisión" value={fmtMoney(row.commissionAccrued)} />
-      <BalanceCard label="Pagado" value={fmtMoney(row.paidOut)} />
+      <BalanceCard label="Comisión" value={fmtUsd(row.commissionAccrued)} />
+      <BalanceCard label="Pagado" value={fmtUsd(row.paidOut)} />
       <BalanceCard
         label={negativeBalance ? "A favor del miembro" : "Pendiente"}
-        value={fmtMoney(Math.abs(row.pending))}
+        value={fmtUsd(Math.abs(row.pending))}
         tone={row.pending > 0 ? "warning" : "success"}
       />
     </div>
@@ -428,7 +429,7 @@ function PayoutItem({
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          {fmtMoney(payout.amount)}
+          {fmtUsd(payout.amount)}
         </div>
         <div
           className="kg-t7"
@@ -450,7 +451,7 @@ function PayoutItem({
           type="button"
           disabled={isPending}
           onClick={() => {
-            if (!confirm(`¿Borrar pago de ${fmtMoney(payout.amount)}?`)) return;
+            if (!confirm(`¿Borrar pago de ${fmtUsd(payout.amount)}?`)) return;
             startTransition(async () => {
               await deletePayoutAction(payout.id);
             });

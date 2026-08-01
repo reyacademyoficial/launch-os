@@ -3,15 +3,23 @@ import { redirect } from "next/navigation";
 
 import { RecalculateBulkModal } from "@/components/dashboard/commissions/recalculate-bulk-modal";
 import { CobrosView } from "@/components/dashboard/sales/cobros-view";
+import { listBanks } from "@/lib/banks/list";
 import {
   listCommissionRules,
   listPaymentModalities,
 } from "@/lib/commissions/list";
-import { fmtMoney, fmtNumber, fmtPercent } from "@/lib/format";
+import { fmtNumber, fmtPercent } from "@/lib/format";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { listProjectSalesData } from "@/lib/launch-sales/list";
+import {
+  buildFxLookup,
+  buildSalesFxContext,
+  fmtUsd,
+  loadProjectFxRates,
+} from "@/lib/money";
 import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { listProductsForProject } from "@/lib/products/list";
+import { createClient } from "@/lib/supabase/server";
 import {
   requireSessionProfile,
   userCanEditLaunchesIn,
@@ -53,6 +61,7 @@ export default async function ProjectCobrosPage({
   const profile = await requireSessionProfile();
   if (profile.role === "cliente") redirect(`/proyectos/${projectId}`);
 
+  const supabase = await createClient();
   const [
     salesData,
     modalities,
@@ -61,6 +70,8 @@ export default async function ProjectCobrosPage({
     paymentMethods,
     teamMembers,
     launches,
+    banks,
+    fxMap,
     canEdit,
   ] = await Promise.all([
     listProjectSalesData(projectId),
@@ -70,6 +81,8 @@ export default async function ProjectCobrosPage({
     listPaymentMethods(projectId),
     listTeamMembers(projectId),
     listLaunchesForProject(projectId),
+    listBanks(),
+    loadProjectFxRates(supabase, projectId),
     userCanEditLaunchesIn(projectId),
   ]);
 
@@ -94,14 +107,47 @@ export default async function ProjectCobrosPage({
     closedSaleLeadIds.has(l.id),
   );
 
-  // Agregado project-wide manual — `aggregateKanbanSales` es per-launch.
-  let pledgedRevenue = 0;
-  let collectedRevenue = 0;
-  for (const s of closedSales) {
-    pledgedRevenue += Number(s.total_amount) || 0;
+  // ─── Agregado project-wide en USD ─────────────────────────────────────
+  //
+  // Los payments/sales conviven en ARS (banco ARS) y USD (banco USD, post
+  // backfill). Sumar `numeric` sueltos sumaría dólares y pesos como si
+  // fueran la misma unidad. Convertimos cada fila a USD usando el contexto
+  // FX compartido. Reglas y precedencia viven en `buildSalesFxContext`.
+  const fxCtx = buildSalesFxContext({
+    banks,
+    paymentMethods,
+    leads: salesData.leads,
+    launches: launches as unknown as ReadonlyArray<{
+      id: string;
+      ars_per_usd?: number | null;
+    }>,
+    sales: closedSales,
+    fxMap,
+  });
+  const fxLookup = buildFxLookup(fxCtx, closedSales, closedPayments);
+
+  const banksById = new Map(banks.map((b) => [b.id, b]));
+  const methodCurrencies: Record<string, "ARS" | "USD"> = {};
+  for (const m of paymentMethods) {
+    const bank = m.bank_id ? banksById.get(m.bank_id) : null;
+    methodCurrencies[m.id] = bank?.currency ?? m.currency ?? "ARS";
   }
+
+  // Suma manual: el helper `paymentToUsd` / `saleToUsd` devuelve null si no
+  // se puede convertir (falta tasa). Contamos esos casos aparte para avisar
+  // al operador.
+  let collectedRevenue = 0;
+  let pledgedRevenue = 0;
+  let missingCount = 0;
   for (const p of closedPayments) {
-    collectedRevenue += Number(p.amount) || 0;
+    const v = fxCtx.paymentToUsd(p);
+    if (v === null) missingCount++;
+    else collectedRevenue += v;
+  }
+  for (const s of closedSales) {
+    const v = fxCtx.saleToUsd(s);
+    if (v === null) missingCount++;
+    else pledgedRevenue += v;
   }
   const salesCount = closedSales.length;
   const paymentsCount = closedPayments.length;
@@ -159,10 +205,10 @@ export default async function ProjectCobrosPage({
           )}
         </header>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          <StatCard label="Pactado" value={fmtMoney(pledgedRevenue)} />
+          <StatCard label="Pactado" value={fmtUsd(pledgedRevenue)} />
           <StatCard
             label="Cobrado"
-            value={fmtMoney(collectedRevenue)}
+            value={fmtUsd(collectedRevenue)}
             hint={
               pledgedRevenue > 0
                 ? `${fmtPercent(collectionPct)} del pactado`
@@ -173,11 +219,20 @@ export default async function ProjectCobrosPage({
           <StatCard label="Cobros cargados" value={fmtNumber(paymentsCount)} />
           <StatCard
             label="Pendiente"
-            value={fmtMoney(
+            value={fmtUsd(
               Math.max(pledgedRevenue - collectedRevenue, 0),
             )}
           />
         </div>
+        {missingCount > 0 && (
+          <p className="mt-2 text-xs text-warning">
+            ⚠ {missingCount}{" "}
+            {missingCount === 1 ? "cobro" : "cobros"} en ARS sin tasa (ni del
+            launch ni mensual). Los totales de arriba no los incluyen —
+            cargá la tasa faltante en Financiero · Tasas FX y volvé a esta
+            página.
+          </p>
+        )}
       </section>
 
       <CobrosView
@@ -192,6 +247,8 @@ export default async function ProjectCobrosPage({
         paymentMethods={paymentMethods}
         teamMembers={teamForModal}
         canEdit={canEdit}
+        fxLookup={fxLookup}
+        methodCurrencies={methodCurrencies}
         createSaleAction={createSaleAction}
         addPaymentAction={addPaymentAction}
         deletePaymentAction={deletePaymentAction}

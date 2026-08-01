@@ -1,6 +1,7 @@
 import { EmptyState } from "@/components/kg/empty-state";
 import type { ProductBreakdownRow } from "@/lib/leaderboard/product-breakdown";
-import { fmtMoney, fmtNumber } from "@/lib/format";
+import { fmtNumber } from "@/lib/format";
+import { fmtUsd } from "@/lib/money";
 
 /**
  * Desglose por (vendedor, producto). Filas de subtotal por vendedor cuando
@@ -120,13 +121,13 @@ export function ProductBreakdownTable({
               {fmtNumber(grandSales)}
             </TD>
             <TD align="right" numeric bold>
-              {fmtMoney(grandPledged)}
+              {fmtUsd(grandPledged)}
             </TD>
             <TD align="right" numeric bold>
-              {fmtMoney(grandCollected)}
+              {fmtUsd(grandCollected)}
             </TD>
             <TD align="right" numeric bold accent>
-              {fmtMoney(grandCommission)}
+              {fmtUsd(grandCommission)}
             </TD>
           </tr>
         </tfoot>
@@ -168,13 +169,13 @@ function GroupRows({
             {fmtNumber(r.salesCount)}
           </TD>
           <TD align="right" numeric>
-            {fmtMoney(r.pledged)}
+            {fmtUsd(r.pledged)}
           </TD>
           <TD align="right" numeric>
-            {fmtMoney(r.collected)}
+            {fmtUsd(r.collected)}
           </TD>
           <TD align="right" numeric accent>
-            {fmtMoney(r.commissionAccrued)}
+            {fmtUsd(r.commissionAccrued)}
           </TD>
         </tr>
       ))}
@@ -196,13 +197,13 @@ function GroupRows({
             {fmtNumber(group.sales)}
           </TD>
           <TD align="right" numeric bold small muted>
-            {fmtMoney(group.pledged)}
+            {fmtUsd(group.pledged)}
           </TD>
           <TD align="right" numeric bold small muted>
-            {fmtMoney(group.collected)}
+            {fmtUsd(group.collected)}
           </TD>
           <TD align="right" numeric bold small muted>
-            {fmtMoney(group.commission)}
+            {fmtUsd(group.commission)}
           </TD>
         </tr>
       )}

@@ -2,14 +2,17 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
 import { ProjectSalesView } from "@/components/dashboard/sales/project-sales-view";
+import { listBanks } from "@/lib/banks/list";
 import {
   listCommissionRules,
   listPaymentModalities,
 } from "@/lib/commissions/list";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { listProjectSalesData } from "@/lib/launch-sales/list";
+import { buildFxLookup, buildSalesFxContext, loadProjectFxRates } from "@/lib/money";
 import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { listProductsForProject } from "@/lib/products/list";
+import { createClient } from "@/lib/supabase/server";
 import {
   requireSessionProfile,
   userCanEditLaunchesIn,
@@ -53,6 +56,7 @@ export default async function ProjectSalesPage({
   const profile = await requireSessionProfile();
   if (profile.role === "cliente") redirect(`/proyectos/${projectId}`);
 
+  const supabase = await createClient();
   const [
     salesData,
     modalities,
@@ -61,6 +65,8 @@ export default async function ProjectSalesPage({
     paymentMethods,
     teamMembers,
     launches,
+    banks,
+    fxMap,
     canEdit,
   ] = await Promise.all([
     listProjectSalesData(projectId),
@@ -70,8 +76,23 @@ export default async function ProjectSalesPage({
     listPaymentMethods(projectId),
     listTeamMembers(projectId),
     listLaunchesForProject(projectId),
+    listBanks(),
+    loadProjectFxRates(supabase, projectId),
     userCanEditLaunchesIn(projectId),
   ]);
+
+  const fxCtx = buildSalesFxContext({
+    banks,
+    paymentMethods,
+    leads: salesData.leads,
+    launches: launches as unknown as ReadonlyArray<{
+      id: string;
+      ars_per_usd?: number | null;
+    }>,
+    sales: salesData.sales,
+    fxMap,
+  });
+  const fxLookup = buildFxLookup(fxCtx, salesData.sales, salesData.payments);
 
   const teamForModal = teamMembers.map((m) => ({
     id: m.id,
@@ -129,6 +150,7 @@ export default async function ProjectSalesPage({
         updatePaymentInstallmentAction={updatePaymentInstallmentAction}
         updatePaymentMethodAction={updatePaymentMethodAction}
         assignLeadOwnerAction={assignLeadOwnerAction}
+        fxLookup={fxLookup}
       />
     </section>
   );

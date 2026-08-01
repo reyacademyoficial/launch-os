@@ -330,6 +330,23 @@ export function LaunchForm({
             los datos crudos en DB no se tocan.
           </p>
         </Field>
+        <Field className="mt-3 max-w-md">
+          <Label htmlFor="ads_currency">Moneda de campañas publicitarias</Label>
+          <Select
+            id="ads_currency"
+            name="ads_currency"
+            defaultValue={
+              (initial as unknown as { ads_currency?: string })?.ads_currency ?? "USD"
+            }
+          >
+            <option value="USD">USD — la cuenta de ads reporta en dólares</option>
+            <option value="ARS">ARS — la cuenta de ads reporta en pesos</option>
+          </Select>
+          <p className="mt-1 text-xs text-fg-subtle">
+            Si elegís ARS y cargaste la tasa ARS/USD, las inversiones de Meta,
+            Google y TikTok se convierten automáticamente a USD en los KPIs.
+          </p>
+        </Field>
       </Section>
 
       <ChannelSection

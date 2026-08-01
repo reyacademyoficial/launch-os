@@ -142,3 +142,23 @@ export async function loadProjectFxRates(
   const rows = (res.data ?? []) as ProjectFxRateRow[];
   return buildFxRateMap(rows);
 }
+
+/**
+ * Devuelve la tasa ARS/USD más reciente disponible a nivel org (sin filtrar
+ * por proyecto). Útil para vistas org-scope (bancos) donde no hay un único
+ * proyecto de referencia. Devuelve null si no hay ninguna tasa cargada.
+ */
+export async function loadLatestOrgFxRate(
+  supabase: LooseClient,
+): Promise<{ rate: number; month: string } | null> {
+  const res = await supabase
+    .from("project_fx_rates")
+    .select("month, ars_per_usd")
+    .order("month", { ascending: false })
+    .limit(1);
+  const row = ((res.data ?? []) as ProjectFxRateRow[])[0];
+  if (!row || !Number.isFinite(row.ars_per_usd) || row.ars_per_usd <= 0) {
+    return null;
+  }
+  return { rate: row.ars_per_usd, month: monthKey(row.month) };
+}

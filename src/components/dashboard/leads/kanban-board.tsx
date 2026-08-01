@@ -18,6 +18,7 @@ import type {
   SaleRow,
 } from "@/lib/commissions/types";
 import { fmtMoney } from "@/lib/format";
+import { fmtNative, fmtUsd, type FxLookup } from "@/lib/money";
 import { LEAD_STATUSES, LEAD_STATUS_LABELS, type LeadRow, type LeadStatus } from "@/lib/leads/types";
 import type { PaymentMethodRow } from "@/lib/payment-methods/types";
 import type { ProductRow } from "@/lib/products/types";
@@ -113,6 +114,7 @@ export function KanbanBoard({
   updatePaymentInstallmentAction,
   updatePaymentMethodAction,
   assignLeadOwnerAction,
+  fxLookup,
 }: {
   readonly leads: ReadonlyArray<LeadRow>;
   readonly teamMembers: ReadonlyArray<
@@ -145,6 +147,12 @@ export function KanbanBoard({
   readonly updatePaymentInstallmentAction: UpdatePaymentInstallmentAction;
   readonly updatePaymentMethodAction: UpdatePaymentMethodAction;
   readonly assignLeadOwnerAction: AssignLeadOwnerAction;
+  /**
+   * Lookup FX opcional. Con fxLookup, los "Cobrado" y "Comisión" por card
+   * salen en moneda nativa de cada sale; sin fxLookup, fallback a fmtMoney
+   * legacy.
+   */
+  readonly fxLookup?: FxLookup;
 }) {
   const [, startTransition] = useTransition();
   const [dragOverCol, setDragOverCol] = useState<LeadStatus | null>(null);
@@ -317,6 +325,22 @@ export function KanbanBoard({
                   // Fase 8: cada lead puede tener N ventas. Sumamos cobrado
                   // y comisión de todas para el preview de la card.
                   const leadSales = salesByLeadId.get(lead.id) ?? [];
+                  // Con fxLookup: si todos los sales del lead son la misma
+                  // moneda nativa, mostramos el total en esa moneda; si son
+                  // mixed, convertimos a USD para no mezclar. Sin fxLookup:
+                  // legacy suma cruda.
+                  let uniformCurrency: "ARS" | "USD" | null = null;
+                  if (fxLookup) {
+                    for (const s of leadSales) {
+                      const c = fxLookup.bySaleId[s.id]?.currency ?? "USD";
+                      if (uniformCurrency === null) uniformCurrency = c;
+                      else if (uniformCurrency !== c) {
+                        uniformCurrency = null;
+                        break;
+                      }
+                    }
+                  }
+                  const displayInUsd = fxLookup != null && uniformCurrency == null;
                   let totalCollected = 0;
                   let totalCommission = 0;
                   for (const s of leadSales) {
@@ -333,10 +357,26 @@ export function KanbanBoard({
                       rule,
                       rankBySaleId.get(s.id) ?? 0,
                     );
-                    totalCollected += b.collected;
-                    totalCommission += b.commission;
+                    if (displayInUsd && fxLookup) {
+                      const saleUsd = fxLookup.bySaleId[s.id]?.totalUsd ?? null;
+                      const saleTotal = Number(s.total_amount) || 0;
+                      const scale =
+                        saleUsd !== null && saleTotal > 0
+                          ? saleUsd / saleTotal
+                          : 1;
+                      totalCollected += b.collected * scale;
+                      totalCommission += b.commission * scale;
+                    } else {
+                      totalCollected += b.collected;
+                      totalCommission += b.commission;
+                    }
                   }
                   const hasSales = leadSales.length > 0;
+                  const fmtCardMoney = fxLookup
+                    ? displayInUsd
+                      ? (n: number) => fmtUsd(n)
+                      : (n: number) => fmtNative(n, uniformCurrency ?? "USD")
+                    : (n: number) => fmtMoney(n);
 
                   return (
                     <div
@@ -369,7 +409,7 @@ export function KanbanBoard({
                       {hasSales && (
                         <div className="mt-2 flex items-center justify-between rounded-md bg-surface/60 px-2 py-1 text-xs">
                           <span className="text-fg-subtle">
-                            Cobrado {fmtMoney(totalCollected)}
+                            Cobrado {fmtCardMoney(totalCollected)}
                             {leadSales.length > 1 && (
                               <span className="ml-1 text-fg-muted">
                                 · {leadSales.length} ventas
@@ -377,7 +417,7 @@ export function KanbanBoard({
                             )}
                           </span>
                           <span className="font-medium text-accent">
-                            +{fmtMoney(totalCommission)}
+                            +{fmtCardMoney(totalCommission)}
                           </span>
                         </div>
                       )}
@@ -427,6 +467,7 @@ export function KanbanBoard({
                               assignLeadOwnerAction={
                                 canEdit ? assignLeadOwnerAction : undefined
                               }
+                              fxLookup={fxLookup}
                             />
                             <LeadRowActions
                               lead={lead}

@@ -16,6 +16,7 @@ import type {
   SaleRow,
 } from "@/lib/commissions/types";
 import { fmtMoney } from "@/lib/format";
+import { fmtNative, fmtUsd, type FxLookup } from "@/lib/money";
 import type { LeadRow } from "@/lib/leads/types";
 import type { PaymentMethodRow } from "@/lib/payment-methods/types";
 import type { ProductRow } from "@/lib/products/types";
@@ -130,6 +131,7 @@ export function ProjectSalesView({
   updatePaymentInstallmentAction,
   updatePaymentMethodAction,
   assignLeadOwnerAction,
+  fxLookup,
 }: {
   readonly sales: ReadonlyArray<SaleRow>;
   readonly payments: ReadonlyArray<PaymentRow>;
@@ -144,6 +146,12 @@ export function ProjectSalesView({
     Pick<TeamMemberRow, "id" | "name" | "active" | "role">
   >;
   readonly canEdit: boolean;
+  /**
+   * Lookup FX opcional. Cuando se pasa, cada fila muestra su moneda
+   * nativa (AR$/US$) y el footer suma en USD. Sin fxLookup, fallback al
+   * comportamiento antiguo (fmtMoney sin distinción de moneda).
+   */
+  readonly fxLookup?: FxLookup;
   readonly createSaleAction: CreateSaleAction;
   readonly createSaleWithLeadAction: CreateSaleWithLeadAction;
   readonly addPaymentAction: AddPaymentAction;
@@ -334,13 +342,32 @@ export function ProjectSalesView({
     filters.collection !== "all";
 
   // Totales del subset visible.
+  // Con fxLookup: totales en USD (convierte cada sale/pay). Sin fxLookup: suma
+  // cruda que asume moneda única.
   let totalPactado = 0;
   let totalCobrado = 0;
   let totalComision = 0;
+  const fmtRow = fxLookup
+    ? (amount: number, saleId: string): string =>
+        fmtNative(amount, fxLookup.bySaleId[saleId]?.currency ?? "USD")
+    : (amount: number, _saleId: string): string => fmtMoney(amount);
+  const fmtTotal = fxLookup ? fmtUsd : fmtMoney;
   for (const s of filteredSales) {
-    totalPactado += Number(s.total_amount) || 0;
-    totalCobrado += collectedBySale.get(s.id) ?? 0;
-    totalComision += commissionBySale.get(s.id) ?? 0;
+    if (fxLookup) {
+      const usdSale = fxLookup.bySaleId[s.id]?.totalUsd ?? null;
+      if (usdSale !== null) totalPactado += usdSale;
+      // Cobrado / comisión: escalados a USD por la misma tasa del sale.
+      const scale =
+        Number(s.total_amount) > 0 && usdSale !== null
+          ? usdSale / Number(s.total_amount)
+          : 1;
+      totalCobrado += (collectedBySale.get(s.id) ?? 0) * scale;
+      totalComision += (commissionBySale.get(s.id) ?? 0) * scale;
+    } else {
+      totalPactado += Number(s.total_amount) || 0;
+      totalCobrado += collectedBySale.get(s.id) ?? 0;
+      totalComision += commissionBySale.get(s.id) ?? 0;
+    }
   }
 
   return (
@@ -480,19 +507,20 @@ export function ProjectSalesView({
                         assignLeadOwnerAction={
                           canEdit ? assignLeadOwnerAction : undefined
                         }
+                        fxLookup={fxLookup}
                       />
                     </td>
                     <td className="px-3 py-3 text-fg-muted">
                       {product?.name ?? "—"}
                     </td>
                     <td className="px-3 py-3 text-right tabular-nums text-fg">
-                      {fmtMoney(s.total_amount)}
+                      {fmtRow(Number(s.total_amount), s.id)}
                     </td>
                     <td className="px-3 py-3 text-right tabular-nums text-fg">
-                      {fmtMoney(collected)}
+                      {fmtRow(collected, s.id)}
                     </td>
                     <td className="px-3 py-3 text-right tabular-nums text-accent">
-                      {fmtMoney(commission)}
+                      {fmtRow(commission, s.id)}
                     </td>
                     <td
                       className="px-3 py-3 text-fg-muted"
@@ -551,6 +579,7 @@ export function ProjectSalesView({
                             assignLeadOwnerAction={
                               canEdit ? assignLeadOwnerAction : undefined
                             }
+                            fxLookup={fxLookup}
                           />
                           <DeleteSaleButton
                             saleId={s.id}
@@ -574,13 +603,13 @@ export function ProjectSalesView({
                     : `Total · ${filteredSales.length} venta${filteredSales.length === 1 ? "" : "s"}`}
                 </td>
                 <td className="px-3 py-3 text-right font-semibold tabular-nums text-fg">
-                  {fmtMoney(totalPactado)}
+                  {fmtTotal(totalPactado)}
                 </td>
                 <td className="px-3 py-3 text-right font-semibold tabular-nums text-fg">
-                  {fmtMoney(totalCobrado)}
+                  {fmtTotal(totalCobrado)}
                 </td>
                 <td className="px-3 py-3 text-right font-semibold tabular-nums text-accent">
-                  {fmtMoney(totalComision)}
+                  {fmtTotal(totalComision)}
                 </td>
                 <td className="px-3 py-3" colSpan={3} />
                 {canEdit && <td className="px-3 py-3" />}

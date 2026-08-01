@@ -50,6 +50,10 @@ export function aggregateProjectKPIs(
   launches: readonly LaunchRow[],
   aggregatesByLaunch?: ReadonlyMap<string, DailyAggregate>,
   kanbanSalesByLaunch?: ReadonlyMap<string, KanbanSalesAggregate>,
+  revenueUsdByLaunch?: ReadonlyMap<
+    string,
+    { pledgedUsd: number; collectedUsd: number }
+  >,
 ): ProjectAggregates {
   let revenueEstimated = 0;
   let revenueCollected = 0;
@@ -62,25 +66,49 @@ export function aggregateProjectKPIs(
   let finalized = 0;
 
   for (const l of launches) {
-    // Phase 9: modelo aditivo kanban + manual.
-    const kanban = kanbanSalesByLaunch?.get(l.id);
-    revenueEstimated +=
-      (kanban?.pledgedRevenue ?? 0) + (Number(l.revenue_estimated_manual) || 0);
-    revenueCollected +=
-      (kanban?.collectedRevenue ?? 0) + (Number(l.revenue_collected_manual) || 0);
-    ventas += (kanban?.salesCount ?? 0) + (l.ventas_total ?? 0);
+    const launchRow = l as unknown as {
+      ars_per_usd?: number | null;
+      ads_currency?: string;
+    };
+    const arsPerUsd = launchRow.ars_per_usd ?? null;
+    const revenueRate = arsPerUsd && arsPerUsd > 0 ? arsPerUsd : null;
+    const adsRate =
+      launchRow.ads_currency === "ARS" && revenueRate ? revenueRate : null;
+
+    // Revenue: si hay USD pre-calculado usa eso; si no, raw legacy.
+    const usdRevenue = revenueUsdByLaunch?.get(l.id);
+    if (usdRevenue && revenueRate) {
+      const manualPledged =
+        (Number(l.revenue_estimated_manual) || 0) / revenueRate;
+      const manualCollected =
+        (Number(l.revenue_collected_manual) || 0) / revenueRate;
+      revenueEstimated += usdRevenue.pledgedUsd + manualPledged;
+      revenueCollected += usdRevenue.collectedUsd + manualCollected;
+    } else {
+      const kanban = kanbanSalesByLaunch?.get(l.id);
+      revenueEstimated +=
+        (kanban?.pledgedRevenue ?? 0) + (Number(l.revenue_estimated_manual) || 0);
+      revenueCollected +=
+        (kanban?.collectedRevenue ?? 0) + (Number(l.revenue_collected_manual) || 0);
+    }
+
+    ventas +=
+      (kanbanSalesByLaunch?.get(l.id)?.salesCount ?? 0) + (l.ventas_total ?? 0);
 
     const adsAgg = aggregatesByLaunch?.get(l.id);
     const useAggregate = (adsAgg?.daysCovered ?? 0) > 0;
 
     if (useAggregate) {
-      investment += adsAgg!.metaSpend + adsAgg!.googleSpend + adsAgg!.tiktokSpend;
+      const rawInv =
+        adsAgg!.metaSpend + adsAgg!.googleSpend + adsAgg!.tiktokSpend;
+      investment += adsRate ? rawInv / adsRate : rawInv;
       leads += adsAgg!.metaLeads + adsAgg!.googleLeads + adsAgg!.tiktokLeads;
     } else {
-      investment +=
+      const rawInv =
         (Number(l.meta_investment) || 0) +
         (Number(l.google_investment) || 0) +
         (Number(l.tiktok_investment) || 0);
+      investment += adsRate ? rawInv / adsRate : rawInv;
       leads +=
         (l.meta_leads ?? 0) + (l.google_leads ?? 0) + (l.tiktok_leads ?? 0);
     }
