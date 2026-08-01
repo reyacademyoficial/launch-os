@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 
-import { fmtMoney, fmtNumber, fmtPercent } from "@/lib/format";
+import { fmtNumber, fmtPercent } from "@/lib/format";
+import { fmtUsd } from "@/lib/money";
 import type { LeaderboardRow } from "@/lib/leaderboard/aggregate";
 import type { TeamMemberPayoutRow } from "@/lib/payouts/types";
 
@@ -225,12 +226,12 @@ export function LeaderboardTable({
                 <NumericTD>{fmtNumber(row.leadsWorked)}</NumericTD>
                 <NumericTD strong>{fmtNumber(row.closed)}</NumericTD>
                 <NumericTD>{fmtPercent(row.conversionRate)}</NumericTD>
-                <NumericTD strong>{fmtMoney(row.revenueCollected)}</NumericTD>
+                <NumericTD strong>{fmtUsd(row.revenueCollected)}</NumericTD>
                 <NumericTD accent bold>
-                  {fmtMoney(row.commissionAccrued)}
+                  {fmtUsd(row.commissionAccrued)}
                 </NumericTD>
                 <NumericTD muted>
-                  {isUnassigned ? "—" : fmtMoney(row.paidOut)}
+                  {isUnassigned ? "—" : fmtUsd(row.paidOut)}
                 </NumericTD>
                 <NumericTD
                   bold
@@ -244,7 +245,7 @@ export function LeaderboardTable({
                           : "positive"
                   }
                 >
-                  {isUnassigned ? "—" : fmtMoney(row.pending)}
+                  {isUnassigned ? "—" : fmtUsd(row.pending)}
                 </NumericTD>
                 <td style={{ ...tdStyle, textAlign: "right" }}>
                   {row.teamMember ? (

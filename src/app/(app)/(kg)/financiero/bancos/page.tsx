@@ -7,7 +7,7 @@ import { Panel } from "@/components/kg/panel";
 import { computeBankBalances } from "@/lib/banks/balance";
 import { listBanks, listBankMovements } from "@/lib/banks/list";
 import { fCount } from "@/lib/finance/format";
-import { fmtArs, fmtUsd } from "@/lib/money";
+import { fmtArs, fmtUsd, loadLatestOrgFxRate } from "@/lib/money";
 import { listAllPaymentMethods } from "@/lib/payment-methods/list";
 import { createClient } from "@/lib/supabase/server";
 
@@ -48,12 +48,14 @@ export default async function BancosPage({
   // universo — no hay concepto de "saldo del último mes". Cuando `payments`
   // supere ~10k filas conviene mover al backend con una view materializada;
   // hoy hay pocas centenas.
-  const [banks, paymentMethods, movements, paymentsRes] = await Promise.all([
-    listBanks(),
-    listAllPaymentMethods(),
-    listBankMovements(),
-    supabase.from("payments").select("amount, payment_method_id"),
-  ]);
+  const [banks, paymentMethods, movements, paymentsRes, latestFx] =
+    await Promise.all([
+      listBanks(),
+      listAllPaymentMethods(),
+      listBankMovements(),
+      supabase.from("payments").select("amount, payment_method_id"),
+      loadLatestOrgFxRate(supabase),
+    ]);
   const payments = (paymentsRes.data ?? []) as unknown as PaymentRow[];
 
   const filteredBanks =
@@ -72,6 +74,13 @@ export default async function BancosPage({
 
   const rows: BankRowData[] = filteredBanks.map((b) => {
     const bal = balances.get(b.id);
+    const total = bal?.total ?? Number(b.opening_balance);
+    const totalUsd =
+      b.currency === "USD"
+        ? total
+        : latestFx
+          ? total / latestFx.rate
+          : null;
     return {
       id: b.id,
       name: b.name,
@@ -80,7 +89,8 @@ export default async function BancosPage({
       fromPayments: bal?.fromPayments ?? 0,
       movementsIn: bal?.movementsIn ?? 0,
       movementsOut: bal?.movementsOut ?? 0,
-      total: bal?.total ?? Number(b.opening_balance),
+      total,
+      totalUsd,
       active: b.active,
     };
   });
@@ -96,6 +106,10 @@ export default async function BancosPage({
   const totalActivoUSD = activeRows
     .filter((r) => r.currency === "USD")
     .reduce((acc, r) => acc + r.total, 0);
+  // Total consolidado en USD: bancos USD + ARS convertidos con la última tasa.
+  const totalConsolidadoUsd = latestFx
+    ? totalActivoUSD + totalActivoARS / latestFx.rate
+    : null;
 
   function buildHref(state: ActiveParam): string {
     if (state === "activos") return "/financiero/bancos";
@@ -111,6 +125,14 @@ export default async function BancosPage({
           { l: "En la vista", v: fCount(totalCount) },
           { l: "Saldo ARS (activos)", v: fmtArs(totalActivoARS) },
           { l: "Saldo USD (activos)", v: fmtUsd(totalActivoUSD) },
+          ...(totalConsolidadoUsd !== null
+            ? [
+                {
+                  l: `Total USD (tasa ${latestFx!.month})`,
+                  v: fmtUsd(totalConsolidadoUsd),
+                },
+              ]
+            : []),
         ]}
       />
 

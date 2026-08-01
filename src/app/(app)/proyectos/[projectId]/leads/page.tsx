@@ -259,6 +259,10 @@ export default async function LeadsPage({
           updatePaymentInstallmentAction={updatePaymentInstallmentAction}
           updatePaymentMethodAction={updatePaymentMethodAction}
           assignLeadOwnerAction={assignLeadOwnerAction}
+          banks={banks}
+          fullLaunches={launches as unknown as ReadonlyArray<{ id: string; ars_per_usd?: number | null }>}
+          projectSales={sales}
+          fxMap={fxMap}
         />
       ) : (
         <TablaTab
@@ -424,6 +428,10 @@ async function KanbanTab({
   updatePaymentInstallmentAction,
   updatePaymentMethodAction,
   assignLeadOwnerAction,
+  banks,
+  fullLaunches,
+  projectSales,
+  fxMap,
 }: {
   readonly projectId: string;
   readonly teamForForm: ReadonlyArray<{
@@ -471,8 +479,21 @@ async function KanbanTab({
   readonly updatePaymentMethodAction: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly assignLeadOwnerAction: any;
+  readonly banks: ReadonlyArray<{ id: string; currency: "ARS" | "USD" }>;
+  readonly fullLaunches: ReadonlyArray<{ id: string; ars_per_usd?: number | null }>;
+  readonly projectSales: ReadonlyArray<SaleRow>;
+  readonly fxMap: Map<string, number>;
 }) {
   const leads = await listKanbanLeads(projectId);
+
+  const fxCtx = buildSalesFxContext({
+    banks,
+    paymentMethods,
+    leads,
+    launches: fullLaunches,
+    sales: projectSales,
+    fxMap,
+  });
 
   if (leads.length === 0) {
     return (
@@ -515,6 +536,7 @@ async function KanbanTab({
       updatePaymentInstallmentAction={updatePaymentInstallmentAction}
       updatePaymentMethodAction={updatePaymentMethodAction}
       assignLeadOwnerAction={assignLeadOwnerAction}
+      fxCtx={fxCtx}
     />
   );
 }
