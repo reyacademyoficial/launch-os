@@ -39,6 +39,7 @@ function KpiCard({
 export function KpiGrid({
   kpi,
   launchArsPerUsd,
+  kpisInUsd,
 }: {
   readonly kpi: LaunchKPIs;
   /**
@@ -48,17 +49,27 @@ export function KpiGrid({
    * conversión no aplica.
    */
   readonly launchArsPerUsd?: number | null;
+  /**
+   * Cuando true, los valores en `kpi` ya están en USD (pre-convertidos en
+   * el server). Se muestra directo con fmtUsd sin dividir por rate.
+   * Cuando false/undefined: comportamiento legacy (kpi-grid divide por rate).
+   */
+  readonly kpisInUsd?: boolean;
 }) {
   // Helpers: si hay tasa del launch, dividimos y usamos fmtUsd (prefijo US$).
   // Sin tasa: legacy `fmtMoney` sin distinción.
   const rate =
     launchArsPerUsd && launchArsPerUsd > 0 ? launchArsPerUsd : null;
-  const fMoney = rate
-    ? (n: number) => fmtUsd(n / rate)
-    : (n: number) => fmtMoney(n);
-  const fMoneyDec = rate
-    ? (n: number) => fmtUsdDecimals(n / rate)
-    : (n: number) => fmtMoneyDecimals(n);
+  const fMoney = kpisInUsd
+    ? fmtUsd
+    : rate
+      ? (n: number) => fmtUsd(n / rate)
+      : (n: number) => fmtMoney(n);
+  const fMoneyDec = kpisInUsd
+    ? fmtUsdDecimals
+    : rate
+      ? (n: number) => fmtUsdDecimals(n / rate)
+      : (n: number) => fmtMoneyDecimals(n);
 
   const profitEstEmphasis =
     kpi.profitEstimated > 0
@@ -107,9 +118,11 @@ export function KpiGrid({
         label="Inversión total"
         value={fMoney(kpi.totalInvestment)}
         hint={
-          rate
-            ? "Meta + Google + TikTok · convertido a USD con la tasa del launch"
-            : "Meta + Google + TikTok"
+          kpisInUsd
+            ? "Meta + Google + TikTok · en USD"
+            : rate
+              ? "Meta + Google + TikTok · convertido a USD con la tasa del launch"
+              : "Meta + Google + TikTok"
         }
       />
       <KpiCard

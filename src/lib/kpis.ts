@@ -86,6 +86,25 @@ export interface LaunchKPIOptions {
    * fallback para comunidad.
    */
   communityAggregate?: CommunityAggregate;
+  /**
+   * Tasa ARS→USD para invertir los valores de ads (meta/google/tiktok).
+   * null = las inversiones ya están en USD, no se dividen.
+   * Se deriva de: ads_currency === 'ARS' ? launch.ars_per_usd : null
+   */
+  adsRatePerUsd?: number | null;
+  /**
+   * Revenue del kanban pre-convertido a USD (via paymentToUsd / saleToUsd).
+   * Cuando se provee, se usa en lugar del raw kanbanPledged/Collected.
+   * null = usar la suma raw del aggregate (comportamiento legacy).
+   */
+  kanbanPledgedUsd?: number | null;
+  kanbanCollectedUsd?: number | null;
+  /**
+   * Tasa para convertir los campos manuales de revenue
+   * (revenue_estimated_manual, revenue_collected_manual) de ARS a USD.
+   * null = ya están en USD.
+   */
+  revenueRatePerUsd?: number | null;
 }
 
 export interface LaunchKPIs {
@@ -232,18 +251,31 @@ export function calculateLaunchKPIs(
   const contactosAPI = safeInt(l.contactos_api);
   const whatsappRevenue = safeNumber(l.ingresos_whatsapp);
 
+  // Conversión ARS→USD de inversiones publicitarias.
+  const adsRate = opts.adsRatePerUsd ?? null;
+  const metaInvUsd = adsRate ? metaInv / adsRate : metaInv;
+  const googleInvUsd = adsRate ? googleInv / adsRate : googleInv;
+  const tiktokInvUsd = adsRate ? tiktokInv / adsRate : tiktokInv;
+
   // Revenue: modelo aditivo kanban + manual (Phase 9, decisión 3.b).
   // Si no hay kanbanSalesAggregate, kanbanPledged/Collected/Count = 0 → solo
   // pesa el manual. Mismo patrón para `ventas`.
   const kanban = opts.kanbanSalesAggregate;
-  const kanbanPledged = kanban?.pledgedRevenue ?? 0;
-  const kanbanCollected = kanban?.collectedRevenue ?? 0;
+  const kanbanPledged =
+    opts.kanbanPledgedUsd ?? kanban?.pledgedRevenue ?? 0;
+  const kanbanCollected =
+    opts.kanbanCollectedUsd ?? kanban?.collectedRevenue ?? 0;
   const kanbanSalesCount = kanban?.salesCount ?? 0;
 
-  const revenueEstimated =
-    kanbanPledged + safeNumber(l.revenue_estimated_manual);
-  const revenueCollected =
-    kanbanCollected + safeNumber(l.revenue_collected_manual);
+  const revRate = opts.revenueRatePerUsd ?? null;
+  const manualPledged = revRate
+    ? safeNumber(l.revenue_estimated_manual) / revRate
+    : safeNumber(l.revenue_estimated_manual);
+  const manualCollected = revRate
+    ? safeNumber(l.revenue_collected_manual) / revRate
+    : safeNumber(l.revenue_collected_manual);
+  const revenueEstimated = kanbanPledged + manualPledged;
+  const revenueCollected = kanbanCollected + manualCollected;
   const ventas = kanbanSalesCount + safeInt(l.ventas_total);
 
   const registrados = safeInt(l.registrados);
@@ -251,7 +283,7 @@ export function calculateLaunchKPIs(
   const hastaPitch = safeInt(l.hasta_pitch);
 
   const totalLeads = metaLeads + googleLeads + tiktokLeads;
-  const totalInvestment = metaInv + googleInv + tiktokInv;
+  const totalInvestment = metaInvUsd + googleInvUsd + tiktokInvUsd;
 
   // Comunidad (SendFlow). Si no hay sync escrito, queda en 0 y los rates
   // en null (UI muestra "—"). Misma regla simétrica que ads/ventas pero sin
@@ -275,11 +307,11 @@ export function calculateLaunchKPIs(
   const profitReal = revenueCollected - totalInvestment;
 
   return {
-    metaInv,
+    metaInv: metaInvUsd,
     metaLeads,
-    googleInv,
+    googleInv: googleInvUsd,
     googleLeads,
-    tiktokInv,
+    tiktokInv: tiktokInvUsd,
     tiktokLeads,
     contactosAPI,
     whatsappRevenue,
@@ -292,9 +324,9 @@ export function calculateLaunchKPIs(
     ventas,
     totalLeads,
     totalInvestment,
-    cplMeta: safeDiv(metaInv, metaLeads),
-    cplGoogle: safeDiv(googleInv, googleLeads),
-    cplTiktok: safeDiv(tiktokInv, tiktokLeads),
+    cplMeta: safeDiv(metaInvUsd, metaLeads),
+    cplGoogle: safeDiv(googleInvUsd, googleLeads),
+    cplTiktok: safeDiv(tiktokInvUsd, tiktokLeads),
     whatsappRevenueShare: safePercent(whatsappRevenue, revenueEstimated),
     roas: roasEstimated,
     roasEstimated,

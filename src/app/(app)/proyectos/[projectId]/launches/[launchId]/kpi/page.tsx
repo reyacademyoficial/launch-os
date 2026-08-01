@@ -17,11 +17,14 @@ import { listCommunityMetricsForLaunch } from "@/lib/launch-community/list";
 import { aggregateMergedDaily } from "@/lib/launch-daily/aggregate";
 import { listAdsForLaunch, listDailyForLaunch } from "@/lib/launch-daily/list";
 import { mergeDailyData } from "@/lib/launch-daily/merge";
-import { getKanbanSalesAggregateForLaunch } from "@/lib/launch-sales/list";
+import { aggregateKanbanSales } from "@/lib/launch-sales/aggregate";
+import { listLaunchSalesData } from "@/lib/launch-sales/list";
 import { getLaunch } from "@/lib/launches/get";
 import { listMessagesDailyForLaunch } from "@/lib/launch-messages/list";
 import { listRecentRuns } from "@/lib/integrations/runs";
 import { userCanEditLaunchesIn } from "@/lib/supabase/auth";
+import { createClient } from "@/lib/supabase/server";
+import { loadProjectFxRates } from "@/lib/money";
 
 import { createDailyEntry } from "../daily-actions";
 
@@ -39,26 +42,29 @@ export default async function LaunchKpiPage({
 }) {
   const { projectId, launchId } = await params;
 
+  const supabase = await createClient();
   const [
     launch,
     canEditLaunchValue,
     daily,
     ads,
-    kanbanSalesAggregate,
+    launchSalesData,
     community,
     sendflowDaily,
     messagesDaily,
     recentRuns,
+    fxMap,
   ] = await Promise.all([
     getLaunch(launchId),
     userCanEditLaunchesIn(projectId),
     listDailyForLaunch(launchId),
     listAdsForLaunch(launchId),
-    getKanbanSalesAggregateForLaunch(projectId, launchId),
+    listLaunchSalesData(projectId, launchId),
     listCommunityMetricsForLaunch(launchId),
     listSendflowDailyForLaunch(launchId),
     listMessagesDailyForLaunch(launchId),
     listRecentRuns(launchId, 20),
+    loadProjectFxRates(supabase, projectId),
   ]);
 
   if (!launch || launch.project_id !== projectId) notFound();
@@ -66,10 +72,72 @@ export default async function LaunchKpiPage({
   const mergedDaily = mergeDailyData(daily, ads);
   const adsAggregate = aggregateMergedDaily(mergedDaily);
   const communityAggregate = aggregateCommunityMetrics(community);
+
+  // Aggregate tradicional para counts (salesCount, paymentsCount, hasData)
+  const kanbanSalesAggregate = aggregateKanbanSales(
+    launchSalesData.sales as never,
+    launchSalesData.payments as never,
+    launchSalesData.leads as never,
+    launchId,
+  );
+
+  // Revenue convertido por moneda: filtramos ventas/cobros a "cerrado"
+  // con atribución a este launch (sale.launch_id = launchId)
+  const launchRow = launch as unknown as {
+    ars_per_usd?: number | null;
+    ads_currency?: string;
+  };
+  const arsPerUsd = launchRow.ars_per_usd ?? null;
+  const revenueRate = arsPerUsd && arsPerUsd > 0 ? arsPerUsd : null;
+
+  const leadById = new Map(launchSalesData.leads.map((l) => [l.id, l]));
+  const cerradoSales = launchSalesData.sales.filter((s) => {
+    if ((s as unknown as { launch_id?: string | null }).launch_id !== launchId)
+      return false;
+    const lead = leadById.get(s.lead_id);
+    return (lead as unknown as { status?: string })?.status === "cerrado";
+  });
+  const cerradoSaleIds = new Set(cerradoSales.map((s) => s.id));
+  const cerradoPayments = launchSalesData.payments.filter((p) =>
+    cerradoSaleIds.has(p.sale_id),
+  );
+
+  let kanbanPledgedUsd = 0;
+  for (const s of cerradoSales) {
+    kanbanPledgedUsd += revenueRate
+      ? Number(s.total_amount) / revenueRate
+      : Number(s.total_amount);
+  }
+
+  let kanbanCollectedUsd = 0;
+  for (const p of cerradoPayments) {
+    const pCurrency = (p as unknown as { original_currency?: string | null })
+      .original_currency;
+    if (pCurrency === "USD") {
+      kanbanCollectedUsd += Number(p.amount);
+    } else {
+      // ARS o null (legacy, se trata como ARS si hay tasa)
+      kanbanCollectedUsd += revenueRate
+        ? Number(p.amount) / revenueRate
+        : Number(p.amount);
+    }
+  }
+
+  // Tasa para ads (Meta/Google/TikTok)
+  const adsRatePerUsd =
+    launchRow.ads_currency === "ARS" && revenueRate ? revenueRate : null;
+
+  // fxMap cargado para uso futuro (extensión a tasas mensuales por cobro)
+  void fxMap;
+
   const kpi = calculateLaunchKPIs(launch, {
     adsAggregate,
     kanbanSalesAggregate,
     communityAggregate,
+    adsRatePerUsd,
+    kanbanPledgedUsd,
+    kanbanCollectedUsd,
+    revenueRatePerUsd: revenueRate,
   });
   const isClosed = launch.closed_at !== null;
   const addDailyAction = createDailyEntry.bind(null, projectId, launchId);
@@ -88,10 +156,8 @@ export default async function LaunchKpiPage({
     <div className="space-y-10">
       <KpiGrid
         kpi={kpi}
-        launchArsPerUsd={
-          (launch as unknown as { ars_per_usd?: number | null }).ars_per_usd ??
-          null
-        }
+        launchArsPerUsd={arsPerUsd}
+        kpisInUsd={true}
       />
 
       <CommunityKpiBlock kpi={kpi} />
