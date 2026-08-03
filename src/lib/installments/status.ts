@@ -1,4 +1,4 @@
-import type { InstallmentRow, PaymentRow } from "@/lib/commissions/types";
+import type { InstallmentRow } from "@/lib/commissions/types";
 
 export type InstallmentState = "paid" | "partial" | "overdue" | "pending";
 
@@ -45,7 +45,7 @@ export interface InstallmentStatus {
  */
 export function computeInstallmentStatuses(
   installments: ReadonlyArray<InstallmentRow>,
-  payments: ReadonlyArray<PaymentRow>,
+  payments: ReadonlyArray<{ amount: number }>,
   graceDays: number,
   today: string,
 ): InstallmentStatus[] {
