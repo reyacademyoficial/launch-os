@@ -84,21 +84,37 @@ export function aggregateProjectKPIs(
     const adsRate =
       launchRow.ads_currency === "ARS" && revenueRate ? revenueRate : null;
 
-    // Revenue: si hay USD pre-calculado usa eso; si no, raw legacy.
+    // Revenue: si hay USD pre-calculado (via saleToUsd/paymentToUsd que ya
+    // aplican fallback launch→monthly internamente) SIEMPRE usamos eso, aun
+    // cuando `revenueRate` sea null. La rama raw legacy sólo aplica cuando
+    // NO hay data USD del kanban (launch sin ventas cerradas). Si mezclabas
+    // launches con y sin tasa, la rama else sumaba pesos crudos junto con USD
+    // del resto — bug reportado: overview 817k con 700k ARS + 117k USD.
+    //
+    // Para el revenue manual: si `revenueRate` existe se convierte; si no,
+    // se omite del total en USD (mejor que sumar pesos crudos disfrazados).
+    // El operador debería cargar tasa mensual del proyecto para cubrirlo.
     const usdRevenue = revenueUsdByLaunch?.get(l.id);
-    if (usdRevenue && revenueRate) {
-      const manualPledged =
-        (Number(l.revenue_estimated_manual) || 0) / revenueRate;
-      const manualCollected =
-        (Number(l.revenue_collected_manual) || 0) / revenueRate;
+    const manualPledgedRaw = Number(l.revenue_estimated_manual) || 0;
+    const manualCollectedRaw = Number(l.revenue_collected_manual) || 0;
+    if (usdRevenue) {
+      const manualPledged = revenueRate ? manualPledgedRaw / revenueRate : 0;
+      const manualCollected = revenueRate ? manualCollectedRaw / revenueRate : 0;
       revenueEstimated += usdRevenue.pledgedUsd + manualPledged;
       revenueCollected += usdRevenue.collectedUsd + manualCollected;
     } else {
       const kanban = kanbanSalesByLaunch?.get(l.id);
-      revenueEstimated +=
-        (kanban?.pledgedRevenue ?? 0) + (Number(l.revenue_estimated_manual) || 0);
-      revenueCollected +=
-        (kanban?.collectedRevenue ?? 0) + (Number(l.revenue_collected_manual) || 0);
+      const kanbanPledged = kanban?.pledgedRevenue ?? 0;
+      const kanbanCollected = kanban?.collectedRevenue ?? 0;
+      if (revenueRate) {
+        revenueEstimated +=
+          kanbanPledged / revenueRate + manualPledgedRaw / revenueRate;
+        revenueCollected +=
+          kanbanCollected / revenueRate + manualCollectedRaw / revenueRate;
+      } else {
+        revenueEstimated += kanbanPledged + manualPledgedRaw;
+        revenueCollected += kanbanCollected + manualCollectedRaw;
+      }
     }
 
     ventas +=

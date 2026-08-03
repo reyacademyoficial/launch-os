@@ -169,7 +169,18 @@ export default async function LaunchesPage({
                 revenueRatePerUsd: revenueRate,
               });
 
-              const fMoney = revenueRate ? fmtUsd : fmtMoney;
+              // Mostrar en USD si CUALQUIER camino de conversión funcionó:
+              // - hay tasa efectiva del launch (propia o monthly), o
+              // - el kanban devolvió montos USD válidos (via saleToUsd /
+              //   paymentToUsd, que ya aplican fallback interno launch→monthly
+              //   y respetan sale.currency='USD' nativo sin necesitar tasa).
+              // Antes: `revenueRate ? fmtUsd : fmtMoney` — una venta USD nativa
+              // en un launch sin tasa se mostraba como pesos crudos ("500")
+              // aunque el kpi.revenueEstimated ya viniera en USD.
+              const hasUsdRevenue =
+                (usdRevenue?.pledgedUsd ?? 0) > 0 ||
+                (usdRevenue?.collectedUsd ?? 0) > 0;
+              const fMoney = revenueRate || hasUsdRevenue ? fmtUsd : fmtMoney;
               const profitColor =
                 kpi.profitEstimated > 0
                   ? "text-success"
