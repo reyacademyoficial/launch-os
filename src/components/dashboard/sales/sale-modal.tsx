@@ -20,7 +20,7 @@ import type {
   SaleRow,
 } from "@/lib/commissions/types";
 import { fmtDate, fmtMoney, fmtPercent } from "@/lib/format";
-import { fmtNative, type FxLookup } from "@/lib/money";
+import { fmtNative, fmtUsd, type Currency, type FxLookup } from "@/lib/money";
 
 /**
  * Helpers de formato que respetan la moneda nativa del sale/payment cuando
@@ -43,6 +43,61 @@ function fmtPaymentMoney(
     Number(payment.amount),
     fxLookup.byPaymentId[payment.id]?.currency ?? "USD",
   );
+}
+
+/**
+ * Cobrado real de la venta respetando moneda. Si todos los payments comparten
+ * la moneda del sale, suma nativa. Si hay mismatch, cambia a USD (evita sumar
+ * pesos + dólares como si fueran la misma unidad — el bug clásico de FX).
+ */
+interface CollectedDisplay {
+  amount: number;
+  currency: Currency;
+  mixed: boolean;
+}
+function collectedForSale(
+  fxLookup: FxLookup | undefined,
+  sale: { id: string },
+  payments: ReadonlyArray<PaymentRow>,
+): CollectedDisplay {
+  const saleCurrency: Currency =
+    fxLookup?.bySaleId[sale.id]?.currency ?? "ARS";
+  if (payments.length === 0) {
+    return { amount: 0, currency: saleCurrency, mixed: false };
+  }
+  if (!fxLookup) {
+    let sum = 0;
+    for (const p of payments) sum += Number(p.amount) || 0;
+    return { amount: sum, currency: saleCurrency, mixed: false };
+  }
+  let native = 0;
+  let allSame = true;
+  for (const p of payments) {
+    const c = fxLookup.byPaymentId[p.id]?.currency ?? saleCurrency;
+    if (c !== saleCurrency) {
+      allSame = false;
+      break;
+    }
+    native += Number(p.amount) || 0;
+  }
+  if (allSame) {
+    return { amount: native, currency: saleCurrency, mixed: false };
+  }
+  let usd = 0;
+  for (const p of payments) {
+    const v = fxLookup.byPaymentId[p.id]?.amountUsd ?? 0;
+    usd += v;
+  }
+  return { amount: usd, currency: "USD", mixed: true };
+}
+function fmtCollected(
+  display: CollectedDisplay,
+  fxLookup: FxLookup | undefined,
+): string {
+  if (!fxLookup) return fmtMoney(display.amount);
+  return display.currency === "USD" && display.mixed
+    ? fmtUsd(display.amount)
+    : fmtNative(display.amount, display.currency);
 }
 import {
   classifyClient,
@@ -537,7 +592,7 @@ function NewSaleForm({
         </Select>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-[2fr_1fr_1fr]">
         <div>
           <Label htmlFor="sale-total">Monto pactado *</Label>
           <Input
@@ -550,6 +605,13 @@ function NewSaleForm({
             placeholder="Ej: 1000"
             onChange={(e) => setTotalAmount(parseFloat(e.target.value) || 0)}
           />
+        </div>
+        <div>
+          <Label htmlFor="sale-currency">Moneda</Label>
+          <Select id="sale-currency" name="currency" defaultValue="ARS">
+            <option value="ARS">Pesos (ARS)</option>
+            <option value="USD">Dólares (USD)</option>
+          </Select>
         </div>
         <div>
           <Label htmlFor="sale-closed-at">Fecha de cierre</Label>
@@ -671,7 +733,17 @@ function SalePanel({
   const classification = useMemo(() => classifyClient(statuses), [statuses]);
 
   const total = Number(sale.total_amount) || 0;
-  const collectedPct = total > 0 ? (breakdown.collected / total) * 100 : 0;
+  const collectedDisplay = collectedForSale(fxLookup, sale, payments);
+  // % cobrado: si la moneda coincide, ratio directo; si hay mismatch, usamos
+  // el equivalente USD del pactado para no cruzar unidades.
+  const pledgedUsdForPct = fxLookup?.bySaleId[sale.id]?.totalUsd ?? null;
+  const collectedPct = collectedDisplay.mixed
+    ? pledgedUsdForPct && pledgedUsdForPct > 0
+      ? (collectedDisplay.amount / pledgedUsdForPct) * 100
+      : 0
+    : total > 0
+      ? (collectedDisplay.amount / total) * 100
+      : 0;
 
   const orphanPayments = payments.filter((p) => !p.installment_id);
   const missingMethod = payments.filter((p) => !p.payment_method_id).length;
@@ -728,8 +800,12 @@ function SalePanel({
           <Card label="Pactado" value={fmtSaleMoney(fxLookup, sale, Number(sale.total_amount))} />
           <Card
             label="Cobrado"
-            value={fmtSaleMoney(fxLookup, sale, breakdown.collected)}
-            hint={`${payments.length} cobro${payments.length === 1 ? "" : "s"}`}
+            value={fmtCollected(collectedDisplay, fxLookup)}
+            hint={
+              collectedDisplay.mixed
+                ? `${payments.length} cobro${payments.length === 1 ? "" : "s"} · convertido a USD (moneda distinta al pactado)`
+                : `${payments.length} cobro${payments.length === 1 ? "" : "s"}`
+            }
           />
           <Card
             label="Comisión actual"
@@ -773,6 +849,7 @@ function SalePanel({
         paymentMethods={paymentMethods}
         addPaymentAction={addPaymentAction}
         methodCurrencies={methodCurrencies}
+        saleCurrency={fxLookup?.bySaleId[sale.id]?.currency ?? "ARS"}
       />
 
       {/* Lista de cobros */}
@@ -827,8 +904,8 @@ function SalePanel({
             onClick={() => {
               const msg =
                 payments.length > 0
-                  ? `¿Borrar la venta de ${fmtMoney(sale.total_amount)} y sus ${payments.length} cobros?`
-                  : `¿Borrar la venta de ${fmtMoney(sale.total_amount)}?`;
+                  ? `¿Borrar la venta de ${fmtSaleMoney(fxLookup, sale, Number(sale.total_amount))} y sus ${payments.length} cobros?`
+                  : `¿Borrar la venta de ${fmtSaleMoney(fxLookup, sale, Number(sale.total_amount))}?`;
               if (!confirm(msg)) return;
               startDeleteTransition(async () => {
                 await deleteSaleAction();
@@ -1185,6 +1262,7 @@ function PaymentForm({
   addPaymentAction,
   onSuccess,
   methodCurrencies,
+  saleCurrency,
 }: {
   readonly installments: ReadonlyArray<InstallmentRow>;
   readonly statuses: ReadonlyArray<InstallmentStatus>;
@@ -1193,6 +1271,8 @@ function PaymentForm({
   /** Callback tras cargar cobro OK. Usado por el variant `add-payment` para cerrar el modal — en el flujo full se omite para permitir cargar varios cobros seguidos. */
   readonly onSuccess?: () => void;
   readonly methodCurrencies: Record<string, "ARS" | "USD">;
+  /** Moneda de la venta — se usa para formatear el saldo de cada cuota con AR$/US$ en el dropdown. */
+  readonly saleCurrency: Currency;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -1219,7 +1299,9 @@ function PaymentForm({
   const [userInstallmentId, setUserInstallmentId] = useState<string | null>(null);
   const [userAmount, setUserAmount] = useState<string | null>(null);
   const [selectedMethodId, setSelectedMethodId] = useState<string>("");
-  const [selectedCurrency, setSelectedCurrency] = useState<"ARS" | "USD">("ARS");
+  const [selectedCurrency, setSelectedCurrency] = useState<"ARS" | "USD">(
+    saleCurrency,
+  );
   const installmentId = userInstallmentId ?? suggested?.installmentId ?? "";
   const amount =
     userAmount ?? (suggested ? String(suggested.amount) : "");
@@ -1236,7 +1318,7 @@ function PaymentForm({
       setUserInstallmentId(null);
       setUserAmount(null);
       setSelectedMethodId("");
-      setSelectedCurrency("ARS");
+      setSelectedCurrency(saleCurrency);
       onSuccess?.();
     });
   }
@@ -1295,7 +1377,7 @@ function PaymentForm({
                     : "";
               return (
                 <option key={st.installment.id} value={st.installment.id}>
-                  Cuota {st.installment.number} · {fmtDate(st.installment.due_date)} · saldo {fmtMoney(st.remaining)}
+                  Cuota {st.installment.number} · {fmtDate(st.installment.due_date)} · saldo {fmtNative(st.remaining, saleCurrency)}
                   {marker}
                 </option>
               );
@@ -1465,7 +1547,12 @@ function PaymentRowItem({
         type="button"
         disabled={isPending}
         onClick={() => {
-          if (!confirm(`¿Borrar cobro de ${fmtMoney(payment.amount)}?`)) return;
+          if (
+            !confirm(
+              `¿Borrar cobro de ${fmtPaymentMoney(fxLookup, payment)}?`,
+            )
+          )
+            return;
           startTransition(async () => {
             await deletePaymentAction(payment.id);
           });
@@ -1657,7 +1744,7 @@ function EditSaleForm({
         </Select>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-[2fr_1fr_1fr]">
         <div>
           <Label htmlFor="edit-total">Monto pactado *</Label>
           <Input
@@ -1670,6 +1757,17 @@ function EditSaleForm({
             value={String(totalAmount)}
             onChange={(e) => setTotalAmount(parseFloat(e.target.value) || 0)}
           />
+        </div>
+        <div>
+          <Label htmlFor="edit-currency">Moneda</Label>
+          <Select
+            id="edit-currency"
+            name="currency"
+            defaultValue={sale.currency ?? "ARS"}
+          >
+            <option value="ARS">Pesos (ARS)</option>
+            <option value="USD">Dólares (USD)</option>
+          </Select>
         </div>
         <div>
           <Label htmlFor="edit-closed-at">Fecha de cierre</Label>
@@ -1760,7 +1858,14 @@ function AddPaymentOnly({
       computeInstallmentStatuses(installments, payments, sale.grace_days, today),
     [installments, payments, sale.grace_days, today],
   );
-  const collected = payments.reduce((acc, p) => acc + Number(p.amount), 0);
+  const collectedDisplay = collectedForSale(fxLookup, sale, payments);
+  // Saldo: solo tiene sentido nativo si NO hay mismatch (misma moneda que
+  // el pactado). Con mismatch mostramos "—" y confiamos en que el operador
+  // mire la ficha completa; sumar pactado-cobrado en unidades distintas es
+  // exactamente el bug que estamos previniendo.
+  const balance = collectedDisplay.mixed
+    ? null
+    : Math.max(Number(sale.total_amount) - collectedDisplay.amount, 0);
 
   return (
     <div className="space-y-4">
@@ -1772,16 +1877,20 @@ function AddPaymentOnly({
         {" · "}
         Cobrado{" "}
         <b className="tabular-nums text-fg">
-          {fmtSaleMoney(fxLookup, sale, collected)}
+          {fmtCollected(collectedDisplay, fxLookup)}
         </b>
+        {collectedDisplay.mixed && (
+          <span
+            className="ml-1 rounded bg-warning/15 px-1 py-0.5 text-[10px] font-medium text-warning"
+            title="Cobros en moneda distinta al pactado. Total mostrado convertido a USD."
+          >
+            moneda distinta
+          </span>
+        )}
         {" · "}
         Saldo{" "}
         <b className="tabular-nums text-fg">
-          {fmtSaleMoney(
-            fxLookup,
-            sale,
-            Math.max(Number(sale.total_amount) - collected, 0),
-          )}
+          {balance === null ? "—" : fmtSaleMoney(fxLookup, sale, balance)}
         </b>
       </div>
       <PaymentForm
@@ -1791,6 +1900,7 @@ function AddPaymentOnly({
         addPaymentAction={addPaymentAction}
         onSuccess={onSuccess}
         methodCurrencies={methodCurrencies}
+        saleCurrency={fxLookup?.bySaleId[sale.id]?.currency ?? "ARS"}
       />
     </div>
   );

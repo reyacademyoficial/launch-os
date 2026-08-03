@@ -33,6 +33,7 @@ export {
   buildFxRateMap,
   resolveMonthlyRateFromMap,
   getLaunchRate,
+  resolveLaunchFallbackRate,
   effectiveCurrency,
   loadProjectFxRates,
   loadLatestOrgFxRate,

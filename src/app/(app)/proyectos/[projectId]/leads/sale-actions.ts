@@ -93,6 +93,10 @@ export async function createSale(
     return { error: "Monto pactado inválido." };
   }
 
+  // Default ARS si el form no manda el campo (matchea el DEFAULT del schema).
+  const currencyRaw = str(formData, "currency");
+  const currency = currencyRaw === "USD" ? "USD" : "ARS";
+
   const closedAtRaw = str(formData, "closed_at");
   const closed_at = closedAtRaw === "" ? new Date().toISOString() : closedAtRaw;
 
@@ -154,6 +158,7 @@ export async function createSale(
     payment_modality_id,
     product_id,
     total_amount,
+    currency,
     closed_at,
     installment_count: installmentInput.count,
     installment_frequency: installmentInput.frequency,
@@ -237,6 +242,9 @@ export async function createSaleWithLead(
     return { error: "Monto pactado inválido." };
   }
 
+  const currencyRaw = str(formData, "currency");
+  const currency = currencyRaw === "USD" ? "USD" : "ARS";
+
   const closedAtRaw = str(formData, "closed_at");
   const closed_at = closedAtRaw === "" ? new Date().toISOString() : closedAtRaw;
 
@@ -293,6 +301,7 @@ export async function createSaleWithLead(
     payment_modality_id,
     product_id,
     total_amount,
+    currency,
     closed_at,
     installment_count: installmentInput.count,
     installment_frequency: installmentInput.frequency,
@@ -362,6 +371,8 @@ export async function updateSale(
   if (!Number.isFinite(total_amount) || total_amount < 0) {
     return { error: "Monto pactado inválido." };
   }
+  const currencyRaw = str(formData, "currency");
+  const currency = currencyRaw === "USD" ? "USD" : "ARS";
   const closedAtRaw = str(formData, "closed_at");
   const regenerate = formData.get("regenerate") !== null;
 
@@ -432,6 +443,7 @@ export async function updateSale(
     payment_modality_id,
     product_id,
     total_amount,
+    currency,
     team_member_id,
     installment_count: installmentInput.count,
     installment_frequency: installmentInput.frequency,

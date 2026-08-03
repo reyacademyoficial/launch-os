@@ -54,6 +54,12 @@ export function aggregateProjectKPIs(
     string,
     { pledgedUsd: number; collectedUsd: number }
   >,
+  /**
+   * Tasa efectiva por launch (propia o fallback a mensual). Se usa para
+   * convertir revenue manual y ads cuando `ads_currency='ARS'`. Si el caller
+   * no la pasa, cae a `launch.ars_per_usd` — comportamiento legacy.
+   */
+  effectiveRateByLaunch?: ReadonlyMap<string, number | null>,
 ): ProjectAggregates {
   let revenueEstimated = 0;
   let revenueCollected = 0;
@@ -70,8 +76,11 @@ export function aggregateProjectKPIs(
       ars_per_usd?: number | null;
       ads_currency?: string;
     };
-    const arsPerUsd = launchRow.ars_per_usd ?? null;
-    const revenueRate = arsPerUsd && arsPerUsd > 0 ? arsPerUsd : null;
+    const legacyRate =
+      launchRow.ars_per_usd && launchRow.ars_per_usd > 0
+        ? launchRow.ars_per_usd
+        : null;
+    const revenueRate = effectiveRateByLaunch?.get(l.id) ?? legacyRate;
     const adsRate =
       launchRow.ads_currency === "ARS" && revenueRate ? revenueRate : null;
 

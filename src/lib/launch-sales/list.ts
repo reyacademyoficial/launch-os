@@ -3,6 +3,7 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import type { InstallmentRow, PaymentRow, SaleRow } from "@/lib/commissions/types";
 import type { LeadRow } from "@/lib/leads/types";
+import { buildSalesFxContext } from "@/lib/money";
 
 import {
   aggregateKanbanSales,
@@ -227,16 +228,28 @@ export async function getKanbanSalesAggregatesForProject(
 
 /**
  * Computa revenue estimado y cobrado en USD para cada launch del proyecto
- * que tenga ars_per_usd configurado. Usa la misma lógica de detección de
- * moneda del banco/método que kpi/page.tsx: original_currency > banco del
- * método > moneda del método > ARS por defecto.
+ * que tenga al menos una venta en `cerrado`.
  *
- * Returns Map<launchId, { pledgedUsd, collectedUsd }>.
- * Solo incluye launches con tasa > 0 en ratePerLaunch.
+ * Convención de tasa (delegada a `buildSalesFxContext`):
+ *   - Sale: launch.ars_per_usd (sin fallback — el sale no tiene fecha propia).
+ *   - Payment: launch.ars_per_usd → tasa mensual del mes de `paid_at`.
+ *
+ * Cobros/ventas cuya conversión resulte `null` (moneda ARS y ninguna tasa
+ * disponible) se omiten silenciosamente del total — el caller debe advertir
+ * al usuario si faltan tasas. Ese casilla la resuelve la vista de Tasas FX.
+ *
+ * Returns Map<launchId, { pledgedUsd, collectedUsd }>. Incluye TODOS los
+ * launches con ventas cerradas, aunque no tengan `ars_per_usd` propio.
  */
 export async function getProjectRevenueUsdMap(
   projectId: string,
-  ratePerLaunch: ReadonlyMap<string, number | null>,
+  launches: ReadonlyArray<{
+    id: string;
+    ars_per_usd?: number | null;
+    date_start?: string | null;
+    date_end?: string | null;
+  }>,
+  fxMap: Map<string, number>,
   paymentMethods: ReadonlyArray<{
     id: string;
     bank_id: string | null;
@@ -248,13 +261,14 @@ export async function getProjectRevenueUsdMap(
 
   const salesRes = await supabase
     .from("sales")
-    .select("id, lead_id, launch_id, total_amount")
+    .select("id, lead_id, launch_id, total_amount, currency")
     .eq("project_id", projectId);
   const sales = (salesRes.data ?? []) as Array<{
     id: string;
     lead_id: string;
     launch_id: string | null;
     total_amount: number;
+    currency?: "ARS" | "USD" | null;
   }>;
 
   if (sales.length === 0) return new Map();
@@ -263,79 +277,73 @@ export async function getProjectRevenueUsdMap(
   const saleIds = sales.map((s) => s.id);
 
   const [leadsRes, paymentsRes] = await Promise.all([
-    supabase.from("leads").select("id, status").in("id", leadIds),
+    supabase
+      .from("leads")
+      .select("id, status, launch_id")
+      .in("id", leadIds),
     supabase
       .from("payments")
-      .select("sale_id, amount, original_currency, payment_method_id")
+      .select("id, sale_id, amount, paid_at, original_currency, payment_method_id")
       .in("sale_id", saleIds),
   ]);
 
-  const leadById = new Map(
-    ((leadsRes.data ?? []) as Array<{ id: string; status: string }>).map(
-      (l) => [l.id, l],
-    ),
-  );
-
-  const paymentsBySale = new Map<
-    string,
-    Array<{
-      amount: number;
-      original_currency: string | null;
-      payment_method_id: string | null;
-    }>
-  >();
-  for (const p of (paymentsRes.data ?? []) as Array<{
+  const leads = (leadsRes.data ?? []) as Array<{
+    id: string;
+    status: string;
+    launch_id: string | null;
+  }>;
+  const leadById = new Map(leads.map((l) => [l.id, l]));
+  const payments = (paymentsRes.data ?? []) as Array<{
+    id: string;
     sale_id: string;
     amount: number;
-    original_currency: string | null;
+    paid_at: string;
+    original_currency: "ARS" | "USD" | null;
     payment_method_id: string | null;
-  }>) {
+  }>;
+
+  // Construimos el contexto FX del proyecto entero. Los launches se pasan tal
+  // cual (solo necesita `id` y `ars_per_usd`); leads/sales aportan la ruta
+  // sale → lead → launch para resolver la tasa del pago.
+  const fxCtx = buildSalesFxContext({
+    banks,
+    paymentMethods,
+    leads: leads.map((l) => ({ id: l.id, launch_id: l.launch_id })),
+    launches,
+    sales,
+    fxMap,
+  });
+
+  const paymentsBySale = new Map<string, typeof payments>();
+  for (const p of payments) {
     const arr = paymentsBySale.get(p.sale_id) ?? [];
     arr.push(p);
     paymentsBySale.set(p.sale_id, arr);
   }
 
-  const banksById = new Map(banks.map((b) => [b.id, b]));
-  const methodCurrency = new Map(
-    paymentMethods.map((m) => {
-      const bankCur = m.bank_id ? banksById.get(m.bank_id)?.currency : null;
-      return [m.id, bankCur ?? m.currency ?? "ARS"] as const;
-    }),
-  );
-
   const result = new Map<string, { pledgedUsd: number; collectedUsd: number }>();
 
-  for (const [launchId, rate] of ratePerLaunch) {
-    if (!rate || rate <= 0) continue;
-
+  for (const l of launches) {
     const cerradoSales = sales.filter(
       (s) =>
-        s.launch_id === launchId &&
+        s.launch_id === l.id &&
         leadById.get(s.lead_id)?.status === "cerrado",
     );
+    if (cerradoSales.length === 0) continue;
 
     let pledgedUsd = 0;
     let collectedUsd = 0;
 
     for (const s of cerradoSales) {
-      pledgedUsd += Number(s.total_amount) / rate;
+      const saleUsd = fxCtx.saleToUsd(s);
+      if (saleUsd !== null) pledgedUsd += saleUsd;
       for (const p of paymentsBySale.get(s.id) ?? []) {
-        const pCurrency: "ARS" | "USD" =
-          p.original_currency === "USD"
-            ? "USD"
-            : p.original_currency === "ARS"
-              ? "ARS"
-              : p.payment_method_id
-                ? (methodCurrency.get(p.payment_method_id) ?? "ARS")
-                : "ARS";
-        collectedUsd +=
-          pCurrency === "USD"
-            ? Number(p.amount)
-            : Number(p.amount) / rate;
+        const payUsd = fxCtx.paymentToUsd(p);
+        if (payUsd !== null) collectedUsd += payUsd;
       }
     }
 
-    result.set(launchId, { pledgedUsd, collectedUsd });
+    result.set(l.id, { pledgedUsd, collectedUsd });
   }
 
   return result;

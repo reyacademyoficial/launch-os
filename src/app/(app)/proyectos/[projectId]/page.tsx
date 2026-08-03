@@ -18,7 +18,11 @@ import {
   getProjectRevenueUsdMap,
 } from "@/lib/launch-sales/list";
 import { listLaunchesForProject } from "@/lib/launches/list";
-import { fmtUsd } from "@/lib/money";
+import {
+  fmtUsd,
+  loadProjectFxRates,
+  resolveLaunchFallbackRate,
+} from "@/lib/money";
 import { listBanks } from "@/lib/banks/list";
 import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { aggregateProjectKPIs } from "@/lib/projects/aggregates";
@@ -47,6 +51,7 @@ export default async function OverviewPage({
     kanbanSalesAggregates,
     paymentMethods,
     banks,
+    fxMap,
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -59,20 +64,47 @@ export default async function OverviewPage({
     getKanbanSalesAggregatesForProject(projectId),
     listPaymentMethods(projectId),
     listBanks(),
+    loadProjectFxRates(supabase, projectId),
   ]);
 
   const project = projectRaw as { name: string; business_name: string | null } | null;
   const name = project?.name ?? "Proyecto";
 
-  const ratePerLaunch = new Map(
-    launches.map((l) => {
-      const rate = (l as unknown as { ars_per_usd?: number | null }).ars_per_usd ?? null;
-      return [l.id, rate && rate > 0 ? rate : null] as const;
-    }),
+  // Tasa efectiva por launch: propia o mensual del mes anchor.
+  const effectiveRateByLaunch = new Map(
+    launches.map(
+      (l) =>
+        [
+          l.id,
+          resolveLaunchFallbackRate(
+            l as unknown as {
+              ars_per_usd?: number | null;
+              date_start?: string | null;
+              date_end?: string | null;
+            },
+            fxMap,
+          ),
+        ] as const,
+    ),
   );
+
+  const launchesForFx = launches.map((l) => {
+    const row = l as unknown as {
+      ars_per_usd?: number | null;
+      date_start?: string | null;
+      date_end?: string | null;
+    };
+    return {
+      id: l.id,
+      ars_per_usd: row.ars_per_usd ?? null,
+      date_start: row.date_start ?? null,
+      date_end: row.date_end ?? null,
+    };
+  });
   const revenueUsdMap = await getProjectRevenueUsdMap(
     projectId,
-    ratePerLaunch,
+    launchesForFx,
+    fxMap,
     paymentMethods as unknown as Array<{
       id: string;
       bank_id: string | null;
@@ -86,9 +118,14 @@ export default async function OverviewPage({
     adsAggregates,
     kanbanSalesAggregates,
     revenueUsdMap,
+    effectiveRateByLaunch,
   );
-  // Si al menos un launch tiene tasa configurada, los agregados están en USD.
-  const aggInUsd = revenueUsdMap.size > 0;
+  // Los KPIs se muestran en USD cuando hay al menos un launch con tasa
+  // efectiva (propia o mensual). Si ningún launch tiene tasa, todo queda en
+  // moneda cruda (probablemente ARS).
+  const aggInUsd = Array.from(effectiveRateByLaunch.values()).some(
+    (r) => r !== null,
+  );
   const fAgg = aggInUsd ? fmtUsd : fmtMoney;
   const fAggDec = aggInUsd ? fmtUsd : fmtMoneyDecimals;
   const createAction = createLaunch.bind(null, projectId);
@@ -206,11 +243,9 @@ export default async function OverviewPage({
         <ul className="space-y-2">
           {recent.map((l) => {
             const launchRow = l as unknown as {
-              ars_per_usd?: number | null;
               ads_currency?: string;
             };
-            const arsPerUsd = launchRow.ars_per_usd ?? null;
-            const revenueRate = arsPerUsd && arsPerUsd > 0 ? arsPerUsd : null;
+            const revenueRate = effectiveRateByLaunch.get(l.id) ?? null;
             const usdRevenue = revenueUsdMap.get(l.id);
 
             const lk = calculateLaunchKPIs(l, {

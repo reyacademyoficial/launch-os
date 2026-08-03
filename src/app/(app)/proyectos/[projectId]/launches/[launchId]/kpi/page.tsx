@@ -24,7 +24,11 @@ import { listMessagesDailyForLaunch } from "@/lib/launch-messages/list";
 import { listRecentRuns } from "@/lib/integrations/runs";
 import { userCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { loadProjectFxRates } from "@/lib/money";
+import {
+  buildSalesFxContext,
+  loadProjectFxRates,
+  resolveLaunchFallbackRate,
+} from "@/lib/money";
 import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { listBanks } from "@/lib/banks/list";
 
@@ -92,9 +96,16 @@ export default async function LaunchKpiPage({
   const launchRow = launch as unknown as {
     ars_per_usd?: number | null;
     ads_currency?: string;
+    date_start?: string | null;
+    date_end?: string | null;
   };
+
+  // Tasa efectiva del launch: propia (`ars_per_usd`) o mensual (mes anchor
+  // del launch en `project_fx_rates`). Usada para valores agregados sin
+  // fecha propia — revenue manual e inversión de ads cuando ads_currency=ARS.
+  // Los pagos individuales usan `SalesFxContext` (tasa mensual por `paid_at`).
+  const revenueRate = resolveLaunchFallbackRate(launchRow, fxMap);
   const arsPerUsd = launchRow.ars_per_usd ?? null;
-  const revenueRate = arsPerUsd && arsPerUsd > 0 ? arsPerUsd : null;
 
   const leadById = new Map(launchSalesData.leads.map((l) => [l.id, l]));
   const cerradoSales = launchSalesData.sales.filter((s) => {
@@ -108,63 +119,62 @@ export default async function LaunchKpiPage({
     cerradoSaleIds.has(p.sale_id),
   );
 
-  // Mapa de moneda efectiva por método de pago:
-  // banco del método → moneda del banco → moneda del método → 'ARS'.
-  // Replica la lógica de paymentCurrency() en sales-context.tsx.
-  const banksById = new Map(
-    (banks as unknown as Array<{ id: string; currency: "ARS" | "USD" }>).map(
-      (b) => [b.id, b],
-    ),
-  );
-  const methodEffCurrency = new Map(
-    (paymentMethods as unknown as Array<{
+  // Contexto FX del launch: convierte sale.total_amount con la tasa del
+  // launch; payments con launch → mensual del mes de paid_at. Cobros/ventas
+  // sin tasa disponible se omiten del total (retornan null) en lugar de
+  // sumar en moneda mixta.
+  const fxCtx = buildSalesFxContext({
+    banks: banks as unknown as Array<{ id: string; currency: "ARS" | "USD" }>,
+    paymentMethods: paymentMethods as unknown as Array<{
       id: string;
       bank_id: string | null;
       currency: "ARS" | "USD" | null;
-    }>).map((m) => {
-      const bankCurrency = m.bank_id ? banksById.get(m.bank_id)?.currency : null;
-      return [m.id, bankCurrency ?? m.currency ?? "ARS"] as const;
-    }),
-  );
+    }>,
+    leads: launchSalesData.leads.map((l) => ({
+      id: l.id,
+      launch_id: (l as unknown as { launch_id?: string | null }).launch_id ?? null,
+    })),
+    launches: [
+      {
+        id: launch.id,
+        ars_per_usd: arsPerUsd,
+        date_start: launchRow.date_start ?? null,
+        date_end: launchRow.date_end ?? null,
+      },
+    ],
+    sales: launchSalesData.sales,
+    fxMap,
+  });
 
-  // null = sin ventas cerradas → calculateLaunchKPIs usará el fallback del
-  // aggregate. Con cerradoSales no vacío siempre resulta un número ≥ 0.
-  let kanbanPledgedUsd: number | null = null;
+  // Cuando hay al menos una venta cerrada, inicializamos en 0 en vez de
+  // null: si ningún cobro convierte (rate faltante), preferimos mostrar 0
+  // + warning a que kpis.ts caiga al fallback raw del aggregate y muestre
+  // el número en pesos mezclado con ads en dólares. `null` solo cuando NO
+  // hay ventas cerradas — ahí el aggregate manda igual (todo 0).
+  let kanbanPledgedUsd: number | null = cerradoSales.length > 0 ? 0 : null;
+  let missingSaleRate = 0;
   for (const s of cerradoSales) {
-    const v = revenueRate
-      ? Number(s.total_amount) / revenueRate
-      : Number(s.total_amount);
-    kanbanPledgedUsd = (kanbanPledgedUsd ?? 0) + v;
+    const v = fxCtx.saleToUsd(s);
+    if (v !== null) kanbanPledgedUsd = (kanbanPledgedUsd ?? 0) + v;
+    else missingSaleRate++;
   }
-
-  let kanbanCollectedUsd: number | null = null;
+  let kanbanCollectedUsd: number | null = cerradoPayments.length > 0 ? 0 : null;
+  let missingPaymentRate = 0;
   for (const p of cerradoPayments) {
-    const pRaw = p as unknown as {
-      original_currency?: string | null;
-      payment_method_id?: string | null;
-    };
-    const pCurrency: "ARS" | "USD" =
-      pRaw.original_currency === "USD"
-        ? "USD"
-        : pRaw.original_currency === "ARS"
-          ? "ARS"
-          : (pRaw.payment_method_id
-              ? (methodEffCurrency.get(pRaw.payment_method_id) ?? "ARS")
-              : "ARS");
-    const v = pCurrency === "USD"
-      ? Number(p.amount)
-      : revenueRate
-        ? Number(p.amount) / revenueRate
-        : Number(p.amount);
-    kanbanCollectedUsd = (kanbanCollectedUsd ?? 0) + v;
+    const v = fxCtx.paymentToUsd(p);
+    if (v !== null) kanbanCollectedUsd = (kanbanCollectedUsd ?? 0) + v;
+    else missingPaymentRate++;
   }
+  const missingFxNote =
+    missingSaleRate + missingPaymentRate > 0
+      ? `Faltan tasas FX para ${missingSaleRate} venta${missingSaleRate === 1 ? "" : "s"} y ${missingPaymentRate} cobro${missingPaymentRate === 1 ? "" : "s"}. Cargá la tasa mensual en Financiero → Tasas.`
+      : null;
 
-  // Tasa para ads (Meta/Google/TikTok)
+  // Tasa para ads (Meta/Google/TikTok): solo si el launch declaró que la
+  // cuenta reporta en ARS. Si declara USD, no se convierte — Meta ya la trae
+  // en dólares.
   const adsRatePerUsd =
     launchRow.ads_currency === "ARS" && revenueRate ? revenueRate : null;
-
-  // fxMap cargado para uso futuro (extensión a tasas mensuales por cobro)
-  void fxMap;
 
   const kpi = calculateLaunchKPIs(launch, {
     adsAggregate,
@@ -193,8 +203,14 @@ export default async function LaunchKpiPage({
       <KpiGrid
         kpi={kpi}
         launchArsPerUsd={arsPerUsd}
-        kpisInUsd={arsPerUsd !== null}
+        kpisInUsd={revenueRate !== null}
       />
+
+      {missingFxNote && (
+        <div className="rounded-md border border-warning/40 bg-warning/10 px-4 py-2 text-sm text-warning">
+          {missingFxNote}
+        </div>
+      )}
 
       <CommunityKpiBlock kpi={kpi} />
 

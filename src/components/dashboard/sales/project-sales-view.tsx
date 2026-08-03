@@ -16,7 +16,7 @@ import type {
   SaleRow,
 } from "@/lib/commissions/types";
 import { fmtMoney } from "@/lib/format";
-import { fmtNative, fmtUsd, type FxLookup } from "@/lib/money";
+import { fmtNative, fmtUsd, type Currency, type FxLookup } from "@/lib/money";
 import type { LeadRow } from "@/lib/leads/types";
 import type { PaymentMethodRow } from "@/lib/payment-methods/types";
 import type { ProductRow } from "@/lib/products/types";
@@ -95,6 +95,49 @@ const EMPTY_FILTERS: FilterState = {
 const UNASSIGNED_LAUNCH = "__unassigned__";
 const UNASSIGNED_CLOSER = "__unassigned__";
 const NO_METHOD = "__none__";
+
+/**
+ * Cobrado por venta respetando moneda. Si todos los payments comparten la
+ * moneda del sale → suma nativa. Si hay mismatch → USD (evita el bug de
+ * sumar pesos + dólares como si fueran la misma unidad).
+ */
+interface CollectedDisplay {
+  amount: number;
+  currency: Currency;
+  mixed: boolean;
+}
+function collectedForSale(
+  saleCurrency: Currency,
+  payments: ReadonlyArray<PaymentRow>,
+  fxLookup: FxLookup | undefined,
+): CollectedDisplay {
+  if (payments.length === 0) {
+    return { amount: 0, currency: saleCurrency, mixed: false };
+  }
+  if (!fxLookup) {
+    let sum = 0;
+    for (const p of payments) sum += Number(p.amount) || 0;
+    return { amount: sum, currency: saleCurrency, mixed: false };
+  }
+  let native = 0;
+  let allSame = true;
+  for (const p of payments) {
+    const c = fxLookup.byPaymentId[p.id]?.currency ?? saleCurrency;
+    if (c !== saleCurrency) {
+      allSame = false;
+      break;
+    }
+    native += Number(p.amount) || 0;
+  }
+  if (allSame) {
+    return { amount: native, currency: saleCurrency, mixed: false };
+  }
+  let usd = 0;
+  for (const p of payments) {
+    usd += fxLookup.byPaymentId[p.id]?.amountUsd ?? 0;
+  }
+  return { amount: usd, currency: "USD", mixed: true };
+}
 
 /**
  * Vista project-wide de ventas (Fase 12). Es intencionalmente más "plana" que
@@ -356,12 +399,21 @@ export function ProjectSalesView({
     if (fxLookup) {
       const usdSale = fxLookup.bySaleId[s.id]?.totalUsd ?? null;
       if (usdSale !== null) totalPactado += usdSale;
-      // Cobrado / comisión: escalados a USD por la misma tasa del sale.
+      // Cobrado en USD: sumamos cada payment convertido individualmente en
+      // vez de escalar el total nativo por la tasa del sale — el escalado
+      // rompe cuando los payments están en distinta moneda que el sale.
+      for (const p of paymentsBySaleId.get(s.id) ?? []) {
+        const usdPay = fxLookup.byPaymentId[p.id]?.amountUsd ?? null;
+        if (usdPay !== null) totalCobrado += usdPay;
+      }
+      // Comisión: sigue derivada de la moneda del sale (computeCommission usa
+      // sale.total_amount y payments.amount juntos, y la snapshot no distingue
+      // FX). Con mismatch de payments la comisión será aproximada — mientras
+      // no reescribamos el calc, escalamos por la tasa del sale.
       const scale =
         Number(s.total_amount) > 0 && usdSale !== null
           ? usdSale / Number(s.total_amount)
           : 1;
-      totalCobrado += (collectedBySale.get(s.id) ?? 0) * scale;
       totalComision += (commissionBySale.get(s.id) ?? 0) * scale;
     } else {
       totalPactado += Number(s.total_amount) || 0;
@@ -438,7 +490,6 @@ export function ProjectSalesView({
                 const launch = s.launch_id
                   ? launchById.get(s.launch_id)
                   : null;
-                const collected = collectedBySale.get(s.id) ?? 0;
                 const commission = commissionBySale.get(s.id) ?? 0;
                 const methodSet = methodIdsBySale.get(s.id);
                 const methodDisplay = renderMethodCell(
@@ -447,6 +498,13 @@ export function ProjectSalesView({
                 );
                 const salePayments = paymentsBySaleId.get(s.id) ?? [];
                 const saleInstallments = installmentsBySaleId.get(s.id) ?? [];
+                const saleCurrency: Currency =
+                  fxLookup?.bySaleId[s.id]?.currency ?? "ARS";
+                const collectedDisplay = collectedForSale(
+                  saleCurrency,
+                  salePayments,
+                  fxLookup,
+                );
 
                 const leadForModal: Pick<
                   LeadRow,
@@ -517,7 +575,21 @@ export function ProjectSalesView({
                       {fmtRow(Number(s.total_amount), s.id)}
                     </td>
                     <td className="px-3 py-3 text-right tabular-nums text-fg">
-                      {fmtRow(collected, s.id)}
+                      <div className="flex items-center justify-end gap-1">
+                        <span>
+                          {fxLookup
+                            ? fmtNative(collectedDisplay.amount, collectedDisplay.currency)
+                            : fmtMoney(collectedDisplay.amount)}
+                        </span>
+                        {collectedDisplay.mixed && (
+                          <span
+                            className="rounded bg-warning/15 px-1 py-0.5 text-[10px] font-medium text-warning"
+                            title="Los cobros de esta venta están en moneda distinta al pactado. Total mostrado convertido a USD."
+                          >
+                            moneda distinta
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-3 text-right tabular-nums text-accent">
                       {fmtRow(commission, s.id)}
@@ -585,7 +657,10 @@ export function ProjectSalesView({
                             saleId={s.id}
                             leadName={lead?.name ?? "alumno"}
                             paymentCount={salePayments.length}
-                            totalAmount={Number(s.total_amount) || 0}
+                            totalAmountLabel={fmtRow(
+                              Number(s.total_amount) || 0,
+                              s.id,
+                            )}
                             deleteSaleAction={deleteSaleAction}
                           />
                         </div>
@@ -814,13 +889,14 @@ function DeleteSaleButton({
   saleId,
   leadName,
   paymentCount,
-  totalAmount,
+  totalAmountLabel,
   deleteSaleAction,
 }: {
   readonly saleId: string;
   readonly leadName: string;
   readonly paymentCount: number;
-  readonly totalAmount: number;
+  /** Monto ya formateado con su moneda nativa (AR$/US$). */
+  readonly totalAmountLabel: string;
   readonly deleteSaleAction: DeleteSaleAction;
 }) {
   const [pending, startTransition] = useTransition();
@@ -832,8 +908,8 @@ function DeleteSaleButton({
       onClick={() => {
         const msg =
           paymentCount > 0
-            ? `¿Borrar la venta de ${leadName} (${fmtMoney(totalAmount)}) y sus ${paymentCount} cobro${paymentCount === 1 ? "" : "s"}?`
-            : `¿Borrar la venta de ${leadName} (${fmtMoney(totalAmount)})?`;
+            ? `¿Borrar la venta de ${leadName} (${totalAmountLabel}) y sus ${paymentCount} cobro${paymentCount === 1 ? "" : "s"}?`
+            : `¿Borrar la venta de ${leadName} (${totalAmountLabel})?`;
         if (!confirm(msg)) return;
         startTransition(async () => {
           await deleteSaleAction(saleId);

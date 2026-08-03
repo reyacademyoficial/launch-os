@@ -119,6 +119,12 @@ export interface SaleRow {
   payment_modality_id: string;
   product_id: string;
   total_amount: number;
+  /**
+   * Moneda operativa de la venta (migración 0106). Default 'ARS'. Antes se
+   * derivaba de si el launch tenía tasa cargada — heurística que rompía el
+   * saldo cuando una venta se pactaba en USD dentro de un launch ARS.
+   */
+  currency: "ARS" | "USD";
   closed_at: string;
   /** Fase 11 — plan de cuotas. Default 1 cuota (backfill). */
   installment_count: number;
