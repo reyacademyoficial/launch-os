@@ -2,9 +2,12 @@ import type { InstallmentRow, PaymentRow } from "@/lib/commissions/types";
 
 export type InstallmentState = "paid" | "partial" | "overdue" | "pending";
 
+/** Umbral de cobertura mínima para considerar paga una cuota (50%). */
+export const PAID_COVERAGE_THRESHOLD = 0.5;
+
 export interface InstallmentStatus {
   installment: InstallmentRow;
-  /** Suma de payments linkeados a esta cuota. */
+  /** Monto absorbido por esta cuota desde el acumulado de la venta. */
   paid: number;
   /** Saldo restante = max(amount - paid, 0). */
   remaining: number;
@@ -14,16 +17,31 @@ export interface InstallmentStatus {
 }
 
 /**
- * Estado de cada cuota respecto a `today`, incluyendo los payments que
- * tiene linkeados. `today` como YYYY-MM-DD (fecha en zona AR del server).
+ * Estado de cada cuota respecto a `today`. Modelo "acumulado de venta":
+ * el saldo importa a nivel venta, no cuota por cuota. Sumamos TODOS los
+ * payments (con o sin `installment_id`) y los distribuimos en orden por
+ * `number` sobre las cuotas — al día si el total cubre lo esperado hasta
+ * esa cuota (aunque los cobros nominales por cuota no cuadren uno a uno).
  *
- * Reglas:
- *   - paid: paid >= amount.
- *   - partial: 0 < paid < amount y todavía no vencida.
- *   - overdue: no paga, pasó (due_date + grace_days) < today.
- *   - pending: no paga y todavía no vencida.
+ * Caso motivador: cuotas 300/300/300/300/300/300 (total 1800). El cliente
+ * paga 300, 250, 350, 150, 450 = 1500. Con el modelo anterior las cuotas
+ * 2-6 quedaban impagas por importe; con este, 1-5 quedan pagas porque el
+ * acumulado (1500) cubre 5 cuotas y sólo la 6 queda pendiente.
+ *
+ * Reglas por cuota (ordenadas por `number`):
+ *   - covered = clip(totalPagado - esperadoAntes, 0, amount).
+ *   - paid: covered ≥ amount * 0.5. Media cuota ya vale como paga porque
+ *     operativamente "al día" es lo que importa; el saldo residual queda
+ *     visible en `remaining` para el operador que quiera cerrar el redondeo.
+ *   - partial: covered > 0 y todavía no vencida.
+ *   - overdue: covered < 0.5 * amount y (due_date + grace_days) < today.
+ *   - pending: covered < 0.5 * amount y todavía no vencida.
  *
  * `graceDays` viene del sale (default 5 según migración 0043).
+ *
+ * FX: se asume que sale, cuotas y payments comparten moneda. La UI marca
+ * "moneda distinta" cuando hay mismatch y ese caso queda fuera de este
+ * cálculo (el operador ve el warning y ajusta).
  */
 export function computeInstallmentStatuses(
   installments: ReadonlyArray<InstallmentRow>,
@@ -31,25 +49,22 @@ export function computeInstallmentStatuses(
   graceDays: number,
   today: string,
 ): InstallmentStatus[] {
-  const paidByInst = new Map<string, number>();
-  for (const p of payments) {
-    if (!p.installment_id) continue;
-    paidByInst.set(
-      p.installment_id,
-      (paidByInst.get(p.installment_id) ?? 0) + Number(p.amount),
-    );
-  }
+  let totalPaid = 0;
+  for (const p of payments) totalPaid += Number(p.amount) || 0;
 
+  let expectedBefore = 0;
   return installments.map((inst) => {
     const amount = Number(inst.amount);
-    const paid = paidByInst.get(inst.id) ?? 0;
-    const remaining = Math.max(amount - paid, 0);
+    const covered = Math.max(0, Math.min(totalPaid - expectedBefore, amount));
+    expectedBefore += amount;
+
+    const remaining = Math.max(amount - covered, 0);
     const daysOverdue = daysBetween(today, inst.due_date) - graceDays;
 
     let state: InstallmentState;
-    if (paid >= amount && amount > 0) {
+    if (amount > 0 && covered >= amount * PAID_COVERAGE_THRESHOLD) {
       state = "paid";
-    } else if (paid > 0 && daysOverdue <= 0) {
+    } else if (covered > 0 && daysOverdue <= 0) {
       state = "partial";
     } else if (daysOverdue > 0) {
       state = "overdue";
@@ -57,7 +72,7 @@ export function computeInstallmentStatuses(
       state = "pending";
     }
 
-    return { installment: inst, paid, remaining, daysOverdue, state };
+    return { installment: inst, paid: covered, remaining, daysOverdue, state };
   });
 }
 
@@ -110,13 +125,17 @@ export function summarizeSaleOverdue(
       overdueAmount += s.remaining;
       overdueCount += 1;
     }
-    if (s.remaining > 0) {
+    // "Próxima" = primera cuota que aún no cuenta como paga. Ignoramos el
+    // saldo residual de cuotas ya marcadas paid (por el umbral del 50%) —
+    // sino "próx vencimiento" mostraría la primera cuota con centavos
+    // sueltos y no la primera realmente pendiente.
+    if (s.state !== "paid") {
       if (!nextDueDate || s.installment.due_date < nextDueDate) {
         nextDueDate = s.installment.due_date;
       }
-    }
-    if (s.daysOverdue > maxDaysOverdue && s.remaining > 0) {
-      maxDaysOverdue = s.daysOverdue;
+      if (s.daysOverdue > maxDaysOverdue) {
+        maxDaysOverdue = s.daysOverdue;
+      }
     }
   }
 
