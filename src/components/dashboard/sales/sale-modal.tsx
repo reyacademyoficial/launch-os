@@ -1295,14 +1295,13 @@ function PaymentForm({
 
   const activeMethods = paymentMethods.filter((m) => m.active);
 
-  // Sugerimos la próxima cuota con saldo > 0. computeInstallmentStatuses
-  // preserva el orden por `number`, que también es el orden de due_date.
-  // Dejamos que React Compiler decida si vale la pena memoizar — el loop
-  // es corto (max ~24 cuotas) y depende del array `statuses` que ya viene
-  // memoizado del caller.
+  // Sugerimos la próxima cuota que aún no cuenta como paga. El modelo del
+  // 50% deja cuotas paid con posible saldo residual — no queremos sugerir
+  // "pagar 12 pesos" de una cuota ya considerada al día. Preserva orden
+  // por `number` (== due_date).
   let suggested: { installmentId: string; amount: number } | null = null;
   for (const st of statuses) {
-    if (st.remaining > 0) {
+    if (st.state !== "paid") {
       suggested = { installmentId: st.installment.id, amount: st.remaining };
       break;
     }
