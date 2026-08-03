@@ -11,7 +11,7 @@ import {
 } from "@/lib/commissions/list";
 import { fCount } from "@/lib/finance/format";
 import { fmtNumber } from "@/lib/format";
-import { fmtUsd } from "@/lib/money";
+import { fmtNative, fmtUsd } from "@/lib/money";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { aggregateLeaderboardFromStats } from "@/lib/leaderboard/aggregate";
 import { aggregateProductBreakdownFromStats } from "@/lib/leaderboard/product-breakdown";
@@ -191,12 +191,29 @@ export default async function RankingPage({
       leads: acc.leads + r.leadsWorked,
       closed: acc.closed + r.closed,
       revenue: acc.revenue + r.revenueCollected,
-      commission: acc.commission + r.commissionAccrued,
+      commissionArs: acc.commissionArs + r.commissionAccruedArs,
+      commissionUsd: acc.commissionUsd + r.commissionAccruedUsd,
       paid: acc.paid + r.paidOut,
       pending: acc.pending + r.pending,
     }),
-    { leads: 0, closed: 0, revenue: 0, commission: 0, paid: 0, pending: 0 },
+    {
+      leads: 0,
+      closed: 0,
+      revenue: 0,
+      commissionArs: 0,
+      commissionUsd: 0,
+      paid: 0,
+      pending: 0,
+    },
   );
+  // Comisión total dual: si sólo hay una moneda, sólo esa; si hay ambas,
+  // "AR$ X · US$ Y" (sin conversión — decisión de producto).
+  const commissionTotalLabel =
+    totals.commissionArs > 0 && totals.commissionUsd > 0
+      ? `${fmtNative(totals.commissionArs, "ARS")} · ${fmtNative(totals.commissionUsd, "USD")}`
+      : totals.commissionUsd > 0
+        ? fmtNative(totals.commissionUsd, "USD")
+        : fmtNative(totals.commissionArs, "ARS");
 
   const createPayoutAction = createPayout.bind(null, projectId);
   const deletePayoutAction = deletePayout.bind(null, projectId);
@@ -209,7 +226,7 @@ export default async function RankingPage({
         stats={[
           { l: "Miembros", v: fCount(rows.length) },
           { l: "Cerrados", v: fCount(totals.closed) },
-          { l: "Comisión total", v: fmtUsd(totals.commission) },
+          { l: "Comisión total", v: commissionTotalLabel },
           {
             l: totals.pending < 0 ? "A favor del equipo" : "Pendiente",
             v: fmtUsd(Math.abs(totals.pending)),
@@ -239,7 +256,7 @@ export default async function RankingPage({
         <StatCard label="Revenue cobrado" value={fmtUsd(totals.revenue)} />
         <StatCard
           label="Comisión total"
-          value={fmtUsd(totals.commission)}
+          value={commissionTotalLabel}
           accent
         />
         <StatCard label="Pagado al equipo" value={fmtUsd(totals.paid)} />

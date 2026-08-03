@@ -113,6 +113,12 @@ interface TierInput {
   max_count: number | null;
   type: CommissionTierType;
   value: number;
+  /**
+   * Moneda del valor cuando `type='fixed'`. Ignorada en `percent` (el %
+   * hereda la moneda de la venta al calcular). Persistimos igual — la
+   * migración 0107 defaultea 'ARS' si el caller no lo pasa.
+   */
+  currency: "ARS" | "USD";
 }
 
 /**
@@ -161,6 +167,7 @@ function parseTiers(formData: FormData): TierInput[] | string {
     const maxRaw = str(formData, `tiers[${i}][max_count]`);
     const typeRaw = str(formData, `tiers[${i}][type]`);
     const valueRaw = str(formData, `tiers[${i}][value]`);
+    const currencyRaw = str(formData, `tiers[${i}][currency]`);
 
     const min_count = parseInt(minRaw, 10);
     if (!Number.isFinite(min_count) || min_count < 0) {
@@ -177,7 +184,11 @@ function parseTiers(formData: FormData): TierInput[] | string {
     if (!Number.isFinite(value) || value < 0) {
       return `Tramo ${i + 1}: valor inválido.`;
     }
-    tiers.push({ min_count, max_count, type: typeRaw, value });
+    // currency: default 'ARS' si el form no lo mandó (el drawer sólo lo
+    // renderiza cuando type='fixed'; percent no tiene columna de moneda).
+    const currency: "ARS" | "USD" =
+      currencyRaw === "USD" ? "USD" : "ARS";
+    tiers.push({ min_count, max_count, type: typeRaw, value, currency });
     i++;
   }
   return tiers;

@@ -3,9 +3,22 @@
 import { useMemo, useState } from "react";
 
 import { fmtNumber, fmtPercent } from "@/lib/format";
-import { fmtUsd } from "@/lib/money";
+import { fmtNative, fmtUsd } from "@/lib/money";
 import type { LeaderboardRow } from "@/lib/leaderboard/aggregate";
 import type { TeamMemberPayoutRow } from "@/lib/payouts/types";
+
+/**
+ * Comisiones acumuladas por moneda (0107). Muestra ambas cuando conviven,
+ * una sola cuando el miembro sólo tiene una. El usuario pidió no convertir
+ * — cada tier `fixed` respeta su moneda tal como se cargó.
+ */
+function fmtCommissionsDual(ars: number, usd: number): string {
+  if (ars > 0 && usd > 0) {
+    return `${fmtNative(ars, "ARS")} · ${fmtNative(usd, "USD")}`;
+  }
+  if (usd > 0) return fmtNative(usd, "USD");
+  return fmtNative(ars, "ARS");
+}
 
 import type { PayoutActionState } from "./actions";
 import { PayoutsModal } from "./payouts-modal";
@@ -228,7 +241,10 @@ export function LeaderboardTable({
                 <NumericTD>{fmtPercent(row.conversionRate)}</NumericTD>
                 <NumericTD strong>{fmtUsd(row.revenueCollected)}</NumericTD>
                 <NumericTD accent bold>
-                  {fmtUsd(row.commissionAccrued)}
+                  {fmtCommissionsDual(
+                    row.commissionAccruedArs,
+                    row.commissionAccruedUsd,
+                  )}
                 </NumericTD>
                 <NumericTD muted>
                   {isUnassigned ? "—" : fmtUsd(row.paidOut)}
@@ -323,6 +339,12 @@ function NumericTD({
 
 function readValue(row: LeaderboardRow, key: SortKey): number | string {
   if (key === "name") return row.teamMember?.name.toLowerCase() ?? "";
+  // Sort de "Comisión": suma ambas monedas como proxy — imperfecto cuando
+  // convive ARS+USD (mezcla unidades) pero razonable para ordenar el top.
+  // Mientras la operación siga siendo ARS mayoritaria no se nota.
+  if (key === "commissionAccrued") {
+    return row.commissionAccruedArs + row.commissionAccruedUsd;
+  }
   return row[key];
 }
 

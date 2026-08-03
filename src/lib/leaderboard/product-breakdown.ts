@@ -32,7 +32,13 @@ export interface ProductBreakdownRow {
   salesCount: number;
   pledged: number;
   collected: number;
-  commissionAccrued: number;
+  /**
+   * Comisiones acumuladas — separadas por moneda (0107). El display muestra
+   * ambas cuando conviven; totales cruzados NO se suman porque respetamos
+   * la moneda del tier tal cual (decisión del usuario, sin conversión FX).
+   */
+  commissionAccruedArs: number;
+  commissionAccruedUsd: number;
 }
 
 /**
@@ -69,7 +75,8 @@ export function aggregateProductBreakdownFromStats(input: {
     salesCount: number;
     pledged: number;
     collected: number;
-    commission: number;
+    commissionArs: number;
+    commissionUsd: number;
   }
   const buckets = new Map<string, Acc>();
 
@@ -83,7 +90,8 @@ export function aggregateProductBreakdownFromStats(input: {
         salesCount: 0,
         pledged: 0,
         collected: 0,
-        commission: 0,
+        commissionArs: 0,
+        commissionUsd: 0,
       };
       buckets.set(key, acc);
     }
@@ -103,6 +111,7 @@ export function aggregateProductBreakdownFromStats(input: {
       {
         total_amount: s.total_amount,
         commission_rule_snapshot: s.commission_rule_snapshot,
+        currency: s.currency,
       },
       { collected: s.collected, paymentCount: s.payment_count },
       rule,
@@ -112,7 +121,11 @@ export function aggregateProductBreakdownFromStats(input: {
     acc.salesCount += 1;
     acc.pledged += s.total_amount;
     acc.collected += breakdown.collected;
-    acc.commission += breakdown.commission;
+    if (breakdown.commissionCurrency === "USD") {
+      acc.commissionUsd += breakdown.commission;
+    } else {
+      acc.commissionArs += breakdown.commission;
+    }
   }
 
   const rows: ProductBreakdownRow[] = [];
@@ -126,7 +139,8 @@ export function aggregateProductBreakdownFromStats(input: {
       salesCount: acc.salesCount,
       pledged: acc.pledged,
       collected: acc.collected,
-      commissionAccrued: acc.commission,
+      commissionAccruedArs: acc.commissionArs,
+      commissionAccruedUsd: acc.commissionUsd,
     });
   }
 
@@ -193,6 +207,7 @@ export function aggregateProductBreakdown(input: {
       product_id: s.product_id,
       payment_modality_id: s.payment_modality_id,
       total_amount: Number(s.total_amount) || 0,
+      currency: s.currency === "USD" ? "USD" : "ARS",
       closed_at: s.closed_at,
       commission_rule_snapshot: s.commission_rule_snapshot,
       sale_rank: rankBySaleId.get(s.id) ?? 0,

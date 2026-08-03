@@ -100,6 +100,7 @@ function tier(overrides: Partial<CommissionRuleTierRow> = {}): CommissionRuleTie
     max_count: null,
     type: "percent",
     value: 10,
+    currency: "ARS",
     created_at: TS,
     updated_at: TS,
     ...overrides,
@@ -164,7 +165,7 @@ describe("aggregateLeaderboard — sin filtros", () => {
     expect(rows[0]!.closed).toBe(1);
     expect(rows[0]!.conversionRate).toBeCloseTo((1 / 3) * 100);
     expect(rows[0]!.revenueCollected).toBe(500);
-    expect(rows[0]!.commissionAccrued).toBe(50);
+    expect(rows[0]!.commissionAccruedArs).toBe(50);
   });
 
   it("miembro sin leads ni sales devuelve fila con ceros", () => {
@@ -180,7 +181,7 @@ describe("aggregateLeaderboard — sin filtros", () => {
     expect(rows[0]!.closed).toBe(0);
     expect(rows[0]!.conversionRate).toBe(0);
     expect(rows[0]!.revenueCollected).toBe(0);
-    expect(rows[0]!.commissionAccrued).toBe(0);
+    expect(rows[0]!.commissionAccruedArs).toBe(0);
   });
 
   it("sale con team_member_id distinto del lead se imputa al dueño del lead", () => {
@@ -202,7 +203,7 @@ describe("aggregateLeaderboard — sin filtros", () => {
     expect(rows[0]!.teamMember?.id).toBe("tm-1");
     expect(rows[0]!.closed).toBe(1);
     expect(rows[0]!.revenueCollected).toBe(100);
-    expect(rows[0]!.commissionAccrued).toBe(10);
+    expect(rows[0]!.commissionAccruedArs).toBe(10);
   });
 
   it("aparece fila 'Sin asignar' cuando hay leads o sales sin dueño", () => {
@@ -272,7 +273,7 @@ describe("aggregateLeaderboard — filtro launch", () => {
     expect(rows[0]!.leadsWorked).toBe(1);
     expect(rows[0]!.closed).toBe(1);
     expect(rows[0]!.revenueCollected).toBe(1000);
-    expect(rows[0]!.commissionAccrued).toBe(100);
+    expect(rows[0]!.commissionAccruedArs).toBe(100);
   });
 
   it("leads sin launch quedan afuera cuando hay filtro de launch", () => {
@@ -332,7 +333,7 @@ describe("aggregateLeaderboard — filtro fechas", () => {
     expect(rows[0]!.closed).toBe(2);
     // El revenue del período: solo s-jul cae adentro.
     expect(rows[0]!.revenueCollected).toBe(2000);
-    expect(rows[0]!.commissionAccrued).toBe(200);
+    expect(rows[0]!.commissionAccruedArs).toBe(200);
   });
 
   it("sin filtro de fecha → todas las épocas suman", () => {
@@ -389,7 +390,7 @@ describe("aggregateLeaderboard — sin regla aplicable", () => {
       filters: {},
     });
     expect(rows[0]!.revenueCollected).toBe(1000);
-    expect(rows[0]!.commissionAccrued).toBe(0);
+    expect(rows[0]!.commissionAccruedArs).toBe(0);
   });
 });
 
@@ -433,7 +434,7 @@ describe("aggregateLeaderboard — payouts", () => {
       ],
       filters: {},
     });
-    expect(rows[0]!.commissionAccrued).toBe(100);
+    expect(rows[0]!.commissionAccruedArs).toBe(100);
     expect(rows[0]!.paidOut).toBe(50);
     expect(rows[0]!.pending).toBe(50);
   });
@@ -458,7 +459,7 @@ describe("aggregateLeaderboard — payouts", () => {
       ],
       filters: { launchId: "launch-A" },
     });
-    expect(rows[0]!.commissionAccrued).toBe(100);
+    expect(rows[0]!.commissionAccruedArs).toBe(100);
     expect(rows[0]!.paidOut).toBe(70);
     expect(rows[0]!.pending).toBe(30);
   });
@@ -480,7 +481,7 @@ describe("aggregateLeaderboard — payouts", () => {
       payouts: [payout("tm-1", "launch-A", 200)],
       filters: {},
     });
-    expect(rows[0]!.commissionAccrued).toBe(50);
+    expect(rows[0]!.commissionAccruedArs).toBe(50);
     expect(rows[0]!.paidOut).toBe(200);
     expect(rows[0]!.pending).toBe(-150);
   });
@@ -532,7 +533,7 @@ describe("aggregateLeaderboard — launch override", () => {
       rules: [ruleDefault, ruleOverride],
       filters: {},
     });
-    expect(rows[0]!.commissionAccrued).toBe(250);
+    expect(rows[0]!.commissionAccruedArs).toBe(250);
   });
 });
 
@@ -600,7 +601,7 @@ describe("aggregateLeaderboard — tiers marginales por launch", () => {
     // 2da venta: 10% × 1000 = 100
     // 3ra venta: 20% × 1000 = 200
     // total = 400
-    expect(rows[0]!.commissionAccrued).toBe(400);
+    expect(rows[0]!.commissionAccruedArs).toBe(400);
   });
 
   it("el rank usa el histórico aun cuando dateFrom esconde ventas previas", () => {
@@ -662,7 +663,7 @@ describe("aggregateLeaderboard — tiers marginales por launch", () => {
       filters: { dateFrom: "2026-07-01", dateTo: "2026-07-31" },
     });
     // Solo s-jul entra al resumen, pero su rank es 2 → tier alto (20%).
-    expect(rows[0]!.commissionAccrued).toBe(200);
+    expect(rows[0]!.commissionAccruedArs).toBe(200);
   });
 });
 
@@ -699,7 +700,7 @@ describe("aggregateLeaderboard — threshold_full", () => {
       rules: [rule],
       filters: {},
     });
-    expect(rowsBefore[0]!.commissionAccrued).toBe(0);
+    expect(rowsBefore[0]!.commissionAccruedArs).toBe(0);
 
     // 3 cobros — cruza el umbral, libera 4% × 1800 = 72.
     const rowsAfter = aggregateLeaderboard({
@@ -710,6 +711,6 @@ describe("aggregateLeaderboard — threshold_full", () => {
       rules: [rule],
       filters: {},
     });
-    expect(rowsAfter[0]!.commissionAccrued).toBe(72);
+    expect(rowsAfter[0]!.commissionAccruedArs).toBe(72);
   });
 });

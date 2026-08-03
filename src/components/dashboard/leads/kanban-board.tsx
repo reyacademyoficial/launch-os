@@ -347,7 +347,10 @@ export function KanbanBoard({
                   }
                   const displayInUsd = fxLookup != null && uniformCurrency == null;
                   let totalCollected = 0;
-                  let totalCommission = 0;
+                  // Comisiones acumuladas por moneda — el tier fixed lleva
+                  // moneda propia (0107) y el usuario pidió no convertir.
+                  let commissionArs = 0;
+                  let commissionUsd = 0;
                   for (const s of leadSales) {
                     const pays = paymentsBySaleId.get(s.id) ?? [];
                     const rule = findApplicableRule(
@@ -378,11 +381,11 @@ export function KanbanBoard({
                           ? saleUsd / saleTotal
                           : 1;
                       totalCollected += b.collected * scale;
-                      totalCommission += b.commission * scale;
                     } else {
                       totalCollected += b.collected;
-                      totalCommission += b.commission;
                     }
+                    if (b.commissionCurrency === "USD") commissionUsd += b.commission;
+                    else commissionArs += b.commission;
                   }
                   const hasSales = leadSales.length > 0;
                   const fmtCardMoney = fxLookup
@@ -430,7 +433,11 @@ export function KanbanBoard({
                             )}
                           </span>
                           <span className="font-medium text-accent">
-                            +{fmtCardMoney(totalCommission)}
+                            {commissionArs > 0 && commissionUsd > 0
+                              ? `+${fmtNative(commissionArs, "ARS")} · +${fmtNative(commissionUsd, "USD")}`
+                              : commissionUsd > 0
+                                ? `+${fmtNative(commissionUsd, "USD")}`
+                                : `+${fmtNative(commissionArs, "ARS")}`}
                           </span>
                         </div>
                       )}

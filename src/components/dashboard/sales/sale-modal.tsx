@@ -824,7 +824,7 @@ function SalePanel({
           />
           <Card
             label="Comisión actual"
-            value={fmtSaleMoney(fxLookup, sale, breakdown.commission)}
+            value={fmtNative(breakdown.commission, breakdown.commissionCurrency)}
             hint={breakdown.formula}
             accent
           />

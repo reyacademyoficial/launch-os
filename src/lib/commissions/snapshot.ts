@@ -19,6 +19,7 @@ export function ruleToSnapshot(rule: CommissionRuleRow): CommissionRuleSnapshot 
         max_count: t.max_count,
         type: t.type,
         value: t.value,
+        currency: t.currency,
       })),
   };
 }

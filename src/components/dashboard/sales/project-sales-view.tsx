@@ -315,7 +315,7 @@ export function ProjectSalesView({
   );
 
   const commissionBySale = useMemo(() => {
-    const out = new Map<string, number>();
+    const out = new Map<string, { amount: number; currency: "ARS" | "USD" }>();
     for (const s of sales) {
       const salePays = paymentsBySaleId.get(s.id) ?? [];
       const rule = findApplicableRule(
@@ -337,7 +337,10 @@ export function ProjectSalesView({
         rule,
         rankBySaleId.get(s.id) ?? 0,
       );
-      out.set(s.id, breakdown.commission);
+      out.set(s.id, {
+        amount: breakdown.commission,
+        currency: breakdown.commissionCurrency,
+      });
     }
     return out;
   }, [sales, paymentsBySaleId, rules, rankBySaleId, fxLookup]);
@@ -422,7 +425,11 @@ export function ProjectSalesView({
   // cruda que asume moneda única.
   let totalPactado = 0;
   let totalCobrado = 0;
-  let totalComision = 0;
+  // Comisión: se acumula por moneda porque cada tier fixed tiene la suya
+  // propia (migración 0107). El usuario pidió NO convertir — mostramos dos
+  // totales cuando hay mezcla, uno único cuando todo comparte moneda.
+  let totalComisionArs = 0;
+  let totalComisionUsd = 0;
   const fmtRow = fxLookup
     ? (amount: number, saleId: string): string =>
         fmtNative(amount, fxLookup.bySaleId[saleId]?.currency ?? "USD")
@@ -439,19 +446,14 @@ export function ProjectSalesView({
         const usdPay = fxLookup.byPaymentId[p.id]?.amountUsd ?? null;
         if (usdPay !== null) totalCobrado += usdPay;
       }
-      // Comisión: sigue derivada de la moneda del sale (computeCommission usa
-      // sale.total_amount y payments.amount juntos, y la snapshot no distingue
-      // FX). Con mismatch de payments la comisión será aproximada — mientras
-      // no reescribamos el calc, escalamos por la tasa del sale.
-      const scale =
-        Number(s.total_amount) > 0 && usdSale !== null
-          ? usdSale / Number(s.total_amount)
-          : 1;
-      totalComision += (commissionBySale.get(s.id) ?? 0) * scale;
     } else {
       totalPactado += Number(s.total_amount) || 0;
       totalCobrado += collectedBySale.get(s.id) ?? 0;
-      totalComision += commissionBySale.get(s.id) ?? 0;
+    }
+    const c = commissionBySale.get(s.id);
+    if (c) {
+      if (c.currency === "USD") totalComisionUsd += c.amount;
+      else totalComisionArs += c.amount;
     }
   }
 
@@ -523,7 +525,10 @@ export function ProjectSalesView({
                 const launch = s.launch_id
                   ? launchById.get(s.launch_id)
                   : null;
-                const commission = commissionBySale.get(s.id) ?? 0;
+                const commission = commissionBySale.get(s.id) ?? {
+                  amount: 0,
+                  currency: "ARS" as const,
+                };
                 const methodSet = methodIdsBySale.get(s.id);
                 const methodDisplay = renderMethodCell(
                   methodSet,
@@ -625,7 +630,7 @@ export function ProjectSalesView({
                       </div>
                     </td>
                     <td className="px-3 py-3 text-right tabular-nums text-accent">
-                      {fmtRow(commission, s.id)}
+                      {fmtNative(commission.amount, commission.currency)}
                     </td>
                     <td
                       className="px-3 py-3 text-fg-muted"
@@ -717,7 +722,16 @@ export function ProjectSalesView({
                   {fmtTotal(totalCobrado)}
                 </td>
                 <td className="px-3 py-3 text-right font-semibold tabular-nums text-accent">
-                  {fmtTotal(totalComision)}
+                  {totalComisionArs > 0 && totalComisionUsd > 0 ? (
+                    <div className="flex flex-col items-end leading-tight">
+                      <span>{fmtNative(totalComisionArs, "ARS")}</span>
+                      <span>{fmtNative(totalComisionUsd, "USD")}</span>
+                    </div>
+                  ) : totalComisionUsd > 0 ? (
+                    fmtNative(totalComisionUsd, "USD")
+                  ) : (
+                    fmtNative(totalComisionArs, "ARS")
+                  )}
                 </td>
                 <td className="px-3 py-3" colSpan={3} />
                 {canEdit && <td className="px-3 py-3" />}

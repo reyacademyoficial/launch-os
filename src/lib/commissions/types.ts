@@ -43,6 +43,13 @@ export interface CommissionRuleTierRow {
   max_count: number | null;
   type: CommissionTierType;
   value: number;
+  /**
+   * Moneda del `value` cuando `type='fixed'` (migración 0107). Para
+   * `type='percent'` es adimensional — el ratio se aplica sobre el
+   * cobrado/pactado y hereda la moneda de la venta. Guardamos igual
+   * (default 'ARS') para no bifurcar el schema.
+   */
+  currency: "ARS" | "USD";
   created_at: string;
   updated_at: string;
 }
@@ -93,6 +100,12 @@ export interface CommissionRuleSnapshot {
     max_count: number | null;
     type: CommissionTierType;
     value: number;
+    /**
+     * Moneda del monto fijo. Opcional en el snapshot para retro-compat con
+     * ventas cerradas antes de la migración 0107 — el consumidor defaultea
+     * a 'ARS' cuando falta (todos los históricos pre-0107 eran pesos).
+     */
+    currency?: "ARS" | "USD";
   }>;
 }
 

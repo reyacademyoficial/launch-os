@@ -1,7 +1,20 @@
 import { EmptyState } from "@/components/kg/empty-state";
 import type { ProductBreakdownRow } from "@/lib/leaderboard/product-breakdown";
 import { fmtNumber } from "@/lib/format";
-import { fmtUsd } from "@/lib/money";
+import { fmtNative, fmtUsd } from "@/lib/money";
+
+/**
+ * Comisiones acumuladas por moneda. Muestra ambas cuando conviven; una sola
+ * cuando el bucket es homogéneo. Diseño avalado por el usuario: no hay
+ * conversión FX, cada tramo `fixed` respeta su moneda tal como se cargó.
+ */
+function fmtCommissionsDual(ars: number, usd: number): string {
+  if (ars > 0 && usd > 0) {
+    return `${fmtNative(ars, "ARS")} · ${fmtNative(usd, "USD")}`;
+  }
+  if (usd > 0) return fmtNative(usd, "USD");
+  return fmtNative(ars, "ARS");
+}
 
 /**
  * Desglose por (vendedor, producto). Filas de subtotal por vendedor cuando
@@ -29,12 +42,14 @@ export function ProductBreakdownTable({
   let grandSales = 0;
   let grandPledged = 0;
   let grandCollected = 0;
-  let grandCommission = 0;
+  let grandCommissionArs = 0;
+  let grandCommissionUsd = 0;
   for (const r of rows) {
     grandSales += r.salesCount;
     grandPledged += r.pledged;
     grandCollected += r.collected;
-    grandCommission += r.commissionAccrued;
+    grandCommissionArs += r.commissionAccruedArs;
+    grandCommissionUsd += r.commissionAccruedUsd;
   }
 
   const memberKey = (r: ProductBreakdownRow): string =>
@@ -48,7 +63,8 @@ export function ProductBreakdownTable({
     sales: number;
     pledged: number;
     collected: number;
-    commission: number;
+    commissionArs: number;
+    commissionUsd: number;
   }
   const groups: Group[] = [];
   let current: Group | null = null;
@@ -64,14 +80,16 @@ export function ProductBreakdownTable({
         sales: 0,
         pledged: 0,
         collected: 0,
-        commission: 0,
+        commissionArs: 0,
+        commissionUsd: 0,
       };
     }
     current.endIdx = i;
     current.sales += r.salesCount;
     current.pledged += r.pledged;
     current.collected += r.collected;
-    current.commission += r.commissionAccrued;
+    current.commissionArs += r.commissionAccruedArs;
+    current.commissionUsd += r.commissionAccruedUsd;
   });
   if (current) groups.push(current);
 
@@ -127,7 +145,7 @@ export function ProductBreakdownTable({
               {fmtUsd(grandCollected)}
             </TD>
             <TD align="right" numeric bold accent>
-              {fmtUsd(grandCommission)}
+              {fmtCommissionsDual(grandCommissionArs, grandCommissionUsd)}
             </TD>
           </tr>
         </tfoot>
@@ -149,7 +167,8 @@ function GroupRows({
     sales: number;
     pledged: number;
     collected: number;
-    commission: number;
+    commissionArs: number;
+    commissionUsd: number;
   };
   readonly rows: ReadonlyArray<ProductBreakdownRow>;
   readonly showSubtotal: boolean;
@@ -175,7 +194,7 @@ function GroupRows({
             {fmtUsd(r.collected)}
           </TD>
           <TD align="right" numeric accent>
-            {fmtUsd(r.commissionAccrued)}
+            {fmtCommissionsDual(r.commissionAccruedArs, r.commissionAccruedUsd)}
           </TD>
         </tr>
       ))}
@@ -203,7 +222,7 @@ function GroupRows({
             {fmtUsd(group.collected)}
           </TD>
           <TD align="right" numeric bold small muted>
-            {fmtUsd(group.commission)}
+            {fmtCommissionsDual(group.commissionArs, group.commissionUsd)}
           </TD>
         </tr>
       )}

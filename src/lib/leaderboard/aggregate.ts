@@ -42,13 +42,22 @@ export interface LeaderboardRow {
   conversionRate: number;
   /** Suma de cobros (sum payments.amount) de las ventas que entraron. */
   revenueCollected: number;
-  /** Suma de comisión derivada por venta — derivada en cada lectura. */
-  commissionAccrued: number;
-  /** Suma de payouts al miembro (respetando filtros launch + período). */
+  /**
+   * Comisiones acumuladas separadas por moneda (0107). Cada tier `fixed`
+   * respeta su moneda tal cual — no convertimos. El UI muestra ambas cuando
+   * conviven; hoy la operación va en ARS y USD queda en 0 en la práctica.
+   */
+  commissionAccruedArs: number;
+  commissionAccruedUsd: number;
+  /**
+   * Suma de payouts al miembro — hoy operan en ARS (los liquidamos siempre
+   * en pesos). No trackeamos moneda del payout en esta iteración. Cuando el
+   * equipo empiece a pagar en USD, agregar `paidOutUsd` + `pendingUsd`.
+   */
   paidOut: number;
   /**
-   * Saldo a favor del miembro: commissionAccrued - paidOut. Puede ser negativo
-   * (se le pagó más de lo devengado) — no clampeamos para que el admin lo vea.
+   * Saldo a favor del miembro EN ARS: commissionAccruedArs - paidOut. Puede
+   * ser negativo (se le pagó más de lo devengado) — no clampeamos.
    */
   pending: number;
 }
@@ -100,6 +109,13 @@ export interface LeaderboardSaleStats {
   product_id: string;
   payment_modality_id: string;
   total_amount: number;
+  /**
+   * Moneda operativa de la venta (`sales.currency`, migración 0106). Se usa
+   * para que `computeCommissionFromAgg` derive la moneda de la comisión en
+   * tiers `percent`. Default 'ARS' si el wrapper no la trajo (RPC pre-0108
+   * o venta legacy).
+   */
+  currency: "ARS" | "USD";
   closed_at: string;
   commission_rule_snapshot: CommissionRuleSnapshot | null;
   /** Rank 0-based dentro de (team_member_id, launch_id) — ya calculado en SQL. */
@@ -161,7 +177,8 @@ export function aggregateLeaderboardFromStats(input: {
     const memberSales = saleStatsByOwner.get(memberId) ?? [];
 
     let revenueCollected = 0;
-    let commissionAccrued = 0;
+    let commissionAccruedArs = 0;
+    let commissionAccruedUsd = 0;
     for (const sale of memberSales) {
       // Cascada Fase 7 — sólo se usa como fallback si la venta no tiene
       // snapshot congelado (el 99% lo tiene).
@@ -180,13 +197,21 @@ export function aggregateLeaderboardFromStats(input: {
       // requiere reescribir el RPC para sumar `original_amount * fx_rate`
       // (o `amount_usd` pre-normalizado) — fuera de scope de este bug fix.
       const breakdown = computeCommissionFromAgg(
-        { total_amount: sale.total_amount, commission_rule_snapshot: sale.commission_rule_snapshot },
+        {
+          total_amount: sale.total_amount,
+          commission_rule_snapshot: sale.commission_rule_snapshot,
+          currency: sale.currency,
+        },
         { collected: sale.collected, paymentCount: sale.payment_count },
         rule,
         sale.sale_rank,
       );
       revenueCollected += breakdown.collected;
-      commissionAccrued += breakdown.commission;
+      if (breakdown.commissionCurrency === "USD") {
+        commissionAccruedUsd += breakdown.commission;
+      } else {
+        commissionAccruedArs += breakdown.commission;
+      }
     }
 
     const paidOut = memberId
@@ -206,9 +231,14 @@ export function aggregateLeaderboardFromStats(input: {
       closed,
       conversionRate,
       revenueCollected,
-      commissionAccrued,
+      commissionAccruedArs,
+      commissionAccruedUsd,
       paidOut,
-      pending: commissionAccrued - paidOut,
+      // Pendiente vs. payouts se calcula sobre la base ARS (hoy los payouts
+      // operan siempre en pesos). Si aparecen comisiones USD sin USD-payouts
+      // ese saldo no se refleja acá — el UI lo muestra aparte para que el
+      // admin sepa que hay algo por liquidar.
+      pending: commissionAccruedArs - paidOut,
     };
   }
 
@@ -303,6 +333,7 @@ export function aggregateLeaderboard(input: {
       product_id: s.product_id,
       payment_modality_id: s.payment_modality_id,
       total_amount: Number(s.total_amount) || 0,
+      currency: s.currency === "USD" ? "USD" : "ARS",
       closed_at: s.closed_at,
       commission_rule_snapshot: s.commission_rule_snapshot,
       sale_rank: rankBySaleId.get(s.id) ?? 0,
