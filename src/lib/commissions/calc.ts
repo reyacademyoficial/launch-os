@@ -6,6 +6,9 @@ import type {
   SaleRow,
 } from "./types";
 
+/** Moneda del importe de comisión devuelto por `computeCommission`. */
+export type CommissionCurrency = "ARS" | "USD";
+
 /**
  * Postgres `numeric` viaja como STRING por PostgREST (evita perder precisión
  * en JS). Nuestros types dicen `number`, pero en runtime llega string. Sin
@@ -81,6 +84,9 @@ function ruleFromSnapshot(snapshot: CommissionRuleSnapshot): CommissionRuleRow {
     max_count: t.max_count,
     type: t.type,
     value: t.value,
+    // Retro-compat: snapshots pre-0107 no llevan currency — el usuario
+    // confirmó que todo lo cerrado hasta hoy fue en ARS.
+    currency: t.currency ?? "ARS",
     created_at: "",
     updated_at: "",
   }));
@@ -129,8 +135,16 @@ export interface CommissionBreakdown {
   tier: CommissionRuleTierRow | null;
   /** ¿Cruzó el threshold? true si accrual_mode='proportional'. */
   released: boolean;
-  /** Comisión actual en la moneda del negocio. 0 si no hay regla, tier o release. */
+  /** Comisión actual en la moneda de `commissionCurrency`. 0 si no hay regla, tier o release. */
   commission: number;
+  /**
+   * Moneda de `commission`. Para tiers `fixed` es la moneda del tier tal
+   * cual (sin conversión FX — decisión de producto: se respeta lo cargado).
+   * Para tiers `percent` hereda la moneda de la venta (el % se aplica sobre
+   * `collected`/`pledged` que ya vienen en la moneda del sale). Default
+   * 'ARS' cuando no se puede derivar (sin tier, sin regla).
+   */
+  commissionCurrency: CommissionCurrency;
   /** Para mostrar en UI. */
   formula: string;
 }
@@ -172,7 +186,7 @@ export interface CommissionBreakdown {
  *     · threshold_proportional → value × (collected/pledged), capeado.
  */
 export function computeCommission(
-  sale: Pick<SaleRow, "total_amount" | "commission_rule_snapshot">,
+  sale: Pick<SaleRow, "total_amount" | "commission_rule_snapshot" | "currency">,
   payments: ReadonlyArray<Pick<PaymentRow, "amount">>,
   rule: CommissionRuleRow | null,
   saleRank: number,
@@ -202,7 +216,7 @@ export function computeCommission(
  * agregados fuera de scope de este helper).
  */
 export function computeCommissionFromAgg(
-  sale: Pick<SaleRow, "total_amount" | "commission_rule_snapshot">,
+  sale: Pick<SaleRow, "total_amount" | "commission_rule_snapshot" | "currency">,
   agg: { collected: number; paymentCount: number },
   rule: CommissionRuleRow | null,
   saleRank: number,
@@ -210,6 +224,11 @@ export function computeCommissionFromAgg(
   const collected = toNum(agg.collected);
   const pledged = toNum(sale.total_amount);
   const paymentCount = agg.paymentCount;
+  // Moneda "heredable" para tiers `percent`: la del sale. Default 'ARS'
+  // cuando el sale llega sin currency (registros pre-0106 o llamadas
+  // legacy que aún no propagan el campo).
+  const saleCurrency: CommissionCurrency =
+    sale.currency === "USD" ? "USD" : "ARS";
 
   // Preferimos el snapshot: es la regla congelada al cierre y es la que
   // define el histórico. Solo caemos a `rule` (findApplicableRule vigente)
@@ -228,6 +247,7 @@ export function computeCommissionFromAgg(
       tier: null,
       released: false,
       commission: 0,
+      commissionCurrency: saleCurrency,
       formula: "Configurar regla",
     };
   }
@@ -242,9 +262,16 @@ export function computeCommissionFromAgg(
       tier: null,
       released: false,
       commission: 0,
+      commissionCurrency: saleCurrency,
       formula: `Sin tier para venta #${saleRank + 1}`,
     };
   }
+
+  // Regla de moneda de la comisión:
+  //   - fixed → moneda del tier (respeta lo cargado, sin FX)
+  //   - percent → moneda del sale (el % se aplica sobre cobrado/pactado)
+  const commissionCurrency: CommissionCurrency =
+    tier.type === "fixed" ? tier.currency : saleCurrency;
 
   const released = isReleased(effectiveRule, collected, pledged, paymentCount);
   if (!released) {
@@ -256,6 +283,7 @@ export function computeCommissionFromAgg(
       tier,
       released: false,
       commission: 0,
+      commissionCurrency,
       formula: thresholdLabel(effectiveRule, false),
     };
   }
@@ -274,6 +302,7 @@ export function computeCommissionFromAgg(
     tier,
     released: true,
     commission: round2(commission),
+    commissionCurrency,
     formula: tierLabel(tier, effectiveRule),
   };
 }

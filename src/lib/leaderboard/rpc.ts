@@ -31,6 +31,12 @@ interface RpcSaleStatsRow {
   product_id: string;
   payment_modality_id: string;
   total_amount: number | string;
+  /**
+   * Presente desde la migración 0108. Antes de correrla la RPC no la
+   * devuelve — el wrapper defaultea 'ARS' abajo (todo lo cerrado histórico
+   * fue en pesos, confirmado por el usuario).
+   */
+  currency?: string | null;
   closed_at: string;
   commission_rule_snapshot: CommissionRuleSnapshot | null;
   sale_rank: number;
@@ -87,6 +93,7 @@ export async function fetchLeaderboardSaleStats(
     product_id: r.product_id,
     payment_modality_id: r.payment_modality_id,
     total_amount: toNum(r.total_amount),
+    currency: r.currency === "USD" ? "USD" : "ARS",
     closed_at: r.closed_at,
     commission_rule_snapshot: r.commission_rule_snapshot,
     sale_rank: r.sale_rank,

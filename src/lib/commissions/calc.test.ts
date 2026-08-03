@@ -21,6 +21,7 @@ function tier(overrides: Partial<CommissionRuleTierRow> = {}): CommissionRuleTie
     max_count: null,
     type: "percent",
     value: 10,
+    currency: "ARS",
     created_at: TS,
     updated_at: TS,
     ...overrides,
@@ -148,6 +149,77 @@ describe("computeCommission — proportional / fixed", () => {
       0,
     );
     expect(result.commission).toBe(0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+//   commissionCurrency (migración 0107) — la moneda del tier fixed manda,
+//   la del sale sólo aplica a percent. Bug reportado: sin currency en el
+//   tier, un tier "500 ARS" aparecía como "US$ 500" en ventas USD.
+// ────────────────────────────────────────────────────────────────────────────
+describe("computeCommission — commissionCurrency", () => {
+  it("percent hereda la moneda de la venta (USD)", () => {
+    const r = rule({
+      tiers: [tier({ type: "percent", value: 10, currency: "ARS" })],
+    });
+    const result = computeCommission(
+      sale({ total_amount: 1000, currency: "USD" }),
+      [payment(1000)],
+      r,
+      0,
+    );
+    expect(result.commission).toBe(100);
+    expect(result.commissionCurrency).toBe("USD");
+  });
+
+  it("fixed ARS + venta USD → moneda del tier (ARS), sin conversión", () => {
+    const r = rule({
+      tiers: [tier({ type: "fixed", value: 500, currency: "ARS" })],
+    });
+    const result = computeCommission(
+      sale({ total_amount: 1000, currency: "USD" }),
+      [payment(1000)],
+      r,
+      0,
+    );
+    expect(result.commission).toBe(500);
+    expect(result.commissionCurrency).toBe("ARS");
+  });
+
+  it("fixed USD + venta ARS → moneda del tier (USD)", () => {
+    const r = rule({
+      tiers: [tier({ type: "fixed", value: 50, currency: "USD" })],
+    });
+    const result = computeCommission(
+      sale({ total_amount: 1000, currency: "ARS" }),
+      [payment(1000)],
+      r,
+      0,
+    );
+    expect(result.commission).toBe(50);
+    expect(result.commissionCurrency).toBe("USD");
+  });
+
+  it("snapshot pre-0107 sin currency defaultea a ARS", () => {
+    const result = computeCommission(
+      sale({
+        total_amount: 1000,
+        currency: "USD",
+        commission_rule_snapshot: {
+          accrual_mode: "proportional",
+          threshold_type: null,
+          threshold_value: null,
+          tiers: [
+            { min_count: 0, max_count: null, type: "fixed", value: 500 },
+          ],
+        },
+      }),
+      [payment(1000)],
+      null,
+      0,
+    );
+    expect(result.commission).toBe(500);
+    expect(result.commissionCurrency).toBe("ARS");
   });
 });
 

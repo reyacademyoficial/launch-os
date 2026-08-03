@@ -239,10 +239,17 @@ interface GroupedRow {
     collected: number;
     pledged: number;
     commission: number;
+    commissionCurrency: "ARS" | "USD";
   }>;
   collectedTotal: number;
   pledgedTotal: number;
-  commissionTotal: number;
+  /**
+   * Comisiones acumuladas por moneda (0107). Un tier fixed lleva la suya
+   * propia y no se convierte — cuando el grupo tiene ambas monedas el PDF
+   * muestra los dos totales, cuando tiene una sola muestra sólo esa.
+   */
+  commissionTotalArs: number;
+  commissionTotalUsd: number;
 }
 
 // ─── Document ──────────────────────────────────────────────────────────────
@@ -254,8 +261,13 @@ export function CommissionsLaunchDocument({
 }) {
   const today = new Date().toISOString().slice(0, 10);
   const grouped = groupByMember(data);
-  const { totalCollected, totalPledged, totalCommission, totalSales } =
-    computeGrandTotals(grouped);
+  const {
+    totalCollected,
+    totalPledged,
+    totalCommissionArs,
+    totalCommissionUsd,
+    totalSales,
+  } = computeGrandTotals(grouped);
 
   return (
     <Document title={`Comisiones cerradas — ${data.launchName}`}>
@@ -289,7 +301,7 @@ export function CommissionsLaunchDocument({
           <View style={styles.totalCell}>
             <Text style={styles.totalLabel}>Comisiones</Text>
             <Text style={[styles.totalValue, { color: COLORS.brand }]}>
-              {money(totalCommission)}
+              {commissionsDual(totalCommissionArs, totalCommissionUsd)}
             </Text>
           </View>
         </View>
@@ -304,7 +316,9 @@ export function CommissionsLaunchDocument({
 
         <View style={styles.grandTotalBox}>
           <Text style={styles.grandTotalLabel}>Total comisiones a pagar</Text>
-          <Text style={styles.grandTotalValue}>{money(totalCommission)}</Text>
+          <Text style={styles.grandTotalValue}>
+            {commissionsDual(totalCommissionArs, totalCommissionUsd)}
+          </Text>
         </View>
 
         <Text style={styles.footer} fixed>
@@ -350,7 +364,7 @@ function GroupBlock({ group }: { group: GroupedRow }) {
           <Text style={styles.cNum}>{money(row.pledged)}</Text>
           <Text style={styles.cNum}>{money(row.collected)}</Text>
           <Text style={[styles.cNum, { color: COLORS.brand }]}>
-            {money(row.commission)}
+            {moneyC(row.commission, row.commissionCurrency)}
           </Text>
         </View>
       ))}
@@ -360,7 +374,7 @@ function GroupBlock({ group }: { group: GroupedRow }) {
         <Text style={styles.groupTotalNum}>{money(group.pledgedTotal)}</Text>
         <Text style={styles.groupTotalNum}>{money(group.collectedTotal)}</Text>
         <Text style={[styles.groupTotalNum, { color: COLORS.brand }]}>
-          {money(group.commissionTotal)}
+          {commissionsDual(group.commissionTotalArs, group.commissionTotalUsd)}
         </Text>
       </View>
     </View>
@@ -416,7 +430,8 @@ function groupByMember(data: CommissionsLaunchInput): GroupedRow[] {
         sales: [],
         collectedTotal: 0,
         pledgedTotal: 0,
-        commissionTotal: 0,
+        commissionTotalArs: 0,
+        commissionTotalUsd: 0,
       };
       groups.set(memberKey, group);
     }
@@ -430,10 +445,15 @@ function groupByMember(data: CommissionsLaunchInput): GroupedRow[] {
       collected: computed.collected,
       pledged: computed.pledged,
       commission: computed.commission,
+      commissionCurrency: computed.commissionCurrency,
     });
     group.collectedTotal += computed.collected;
     group.pledgedTotal += computed.pledged;
-    group.commissionTotal += computed.commission;
+    if (computed.commissionCurrency === "USD") {
+      group.commissionTotalUsd += computed.commission;
+    } else {
+      group.commissionTotalArs += computed.commission;
+    }
   }
 
   // Orden estable: primero los miembros nombrados (alfabético), después
@@ -477,15 +497,23 @@ function computeSaleRanks(
 function computeGrandTotals(groups: ReadonlyArray<GroupedRow>) {
   let totalCollected = 0;
   let totalPledged = 0;
-  let totalCommission = 0;
+  let totalCommissionArs = 0;
+  let totalCommissionUsd = 0;
   let totalSales = 0;
   for (const g of groups) {
     totalCollected += g.collectedTotal;
     totalPledged += g.pledgedTotal;
-    totalCommission += g.commissionTotal;
+    totalCommissionArs += g.commissionTotalArs;
+    totalCommissionUsd += g.commissionTotalUsd;
     totalSales += g.sales.length;
   }
-  return { totalCollected, totalPledged, totalCommission, totalSales };
+  return {
+    totalCollected,
+    totalPledged,
+    totalCommissionArs,
+    totalCommissionUsd,
+    totalSales,
+  };
 }
 
 // ─── Renderer público ──────────────────────────────────────────────────────
@@ -514,6 +542,27 @@ function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
 
 function money(n: number): string {
   return "$" + Math.round(n).toLocaleString("en-US");
+}
+
+/**
+ * Comisión con símbolo de moneda explícito. Cuando el tier es `fixed` la
+ * moneda es intrínseca al tramo (0107) y no depende de la venta — hay que
+ * distinguir AR$ de US$ para que el pagador no confunda importes.
+ */
+function moneyC(n: number, currency: "ARS" | "USD"): string {
+  const prefix = currency === "USD" ? "US$ " : "AR$ ";
+  return prefix + Math.round(n).toLocaleString("en-US");
+}
+
+/**
+ * Total de comisiones para render — cuando el bucket tiene ambas monedas
+ * las muestra separadas por " · " (ej. "AR$ 500.000 · US$ 200"); cuando
+ * tiene una sola, sólo esa.
+ */
+function commissionsDual(ars: number, usd: number): string {
+  if (ars > 0 && usd > 0) return `${moneyC(ars, "ARS")} · ${moneyC(usd, "USD")}`;
+  if (usd > 0) return moneyC(usd, "USD");
+  return moneyC(ars, "ARS");
 }
 
 function roleLabelEs(role: string): string {

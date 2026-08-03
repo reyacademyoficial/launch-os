@@ -5,7 +5,15 @@ import { useState, useTransition } from "react";
 import { Drawer } from "@/components/kg/drawer";
 import { EmptyState } from "@/components/kg/empty-state";
 import { fmtDate } from "@/lib/format";
-import { fmtUsd } from "@/lib/money";
+import { fmtNative, fmtUsd } from "@/lib/money";
+
+function fmtCommissionsDual(ars: number, usd: number): string {
+  if (ars > 0 && usd > 0) {
+    return `${fmtNative(ars, "ARS")} · ${fmtNative(usd, "USD")}`;
+  }
+  if (usd > 0) return fmtNative(usd, "USD");
+  return fmtNative(ars, "ARS");
+}
 import type { LeaderboardRow } from "@/lib/leaderboard/aggregate";
 import type { TeamMemberPayoutRow } from "@/lib/payouts/types";
 
@@ -194,7 +202,13 @@ function BalanceCards({ row }: { readonly row: LeaderboardRow }) {
         gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
       }}
     >
-      <BalanceCard label="Comisión" value={fmtUsd(row.commissionAccrued)} />
+      <BalanceCard
+        label="Comisión"
+        value={fmtCommissionsDual(
+          row.commissionAccruedArs,
+          row.commissionAccruedUsd,
+        )}
+      />
       <BalanceCard label="Pagado" value={fmtUsd(row.paidOut)} />
       <BalanceCard
         label={negativeBalance ? "A favor del miembro" : "Pendiente"}

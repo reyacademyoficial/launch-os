@@ -282,6 +282,7 @@ export function ComisionesView({
               max_count: t.max_count,
               type: t.type,
               value: t.value,
+              currency: t.currency,
             })),
           }}
         />
@@ -438,7 +439,9 @@ function RuleRow({
               key={t.id}
               style={{ color: "var(--kg-text-1)", fontWeight: 700 }}
             >
-              {t.type === "percent" ? `${t.value}%` : `$${t.value}`}
+              {t.type === "percent"
+                ? `${t.value}%`
+                : `${t.currency === "USD" ? "US$" : "AR$"} ${t.value}`}
             </div>
           ))}
         </div>

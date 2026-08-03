@@ -32,6 +32,12 @@ interface TierDraft {
   max_count: number | null;
   type: CommissionTierType;
   value: number;
+  /**
+   * Moneda del `value` cuando `type='fixed'`. Ignorada al render en
+   * `percent` (el % hereda la moneda de la venta) pero mantenemos el
+   * campo para no perderlo cuando el usuario alterna entre tipos.
+   */
+  currency: "ARS" | "USD";
 }
 
 const DEFAULT_TIER: TierDraft = {
@@ -39,6 +45,7 @@ const DEFAULT_TIER: TierDraft = {
   max_count: null,
   type: "percent",
   value: 10,
+  currency: "ARS",
 };
 
 export interface RuleInitial {
@@ -53,6 +60,7 @@ export interface RuleInitial {
     max_count: number | null;
     type: CommissionTierType;
     value: number;
+    currency: "ARS" | "USD";
   }>;
 }
 
@@ -135,7 +143,13 @@ function FormBody({
       const nextMin = closedLastMax + 1;
       return [
         ...updated,
-        { min_count: nextMin, max_count: null, type: last.type, value: last.value },
+        {
+          min_count: nextMin,
+          max_count: null,
+          type: last.type,
+          value: last.value,
+          currency: last.currency,
+        },
       ];
     });
   }
@@ -478,6 +492,11 @@ function FormBody({
                   name={`tiers[${i}][value]`}
                   value={t.value}
                 />
+                <input
+                  type="hidden"
+                  name={`tiers[${i}][currency]`}
+                  value={t.currency}
+                />
                 <div style={{ gridColumn: "span 2" }}>
                   <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
                     Desde venta
@@ -555,7 +574,11 @@ function FormBody({
                     <option value="fixed">Monto fijo</option>
                   </select>
                 </div>
-                <div style={{ gridColumn: "span 3" }}>
+                <div
+                  style={{
+                    gridColumn: t.type === "fixed" ? "span 2" : "span 3",
+                  }}
+                >
                   <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
                     {t.type === "percent" ? "%" : "Monto"}
                   </span>
@@ -570,6 +593,29 @@ function FormBody({
                     style={{ ...inputStyle, marginTop: 4 }}
                   />
                 </div>
+                {t.type === "fixed" && (
+                  <div style={{ gridColumn: "span 1" }}>
+                    <span
+                      className="kg-t7"
+                      style={{ color: "var(--kg-text-3)" }}
+                    >
+                      Moneda
+                    </span>
+                    <select
+                      value={t.currency}
+                      onChange={(e) =>
+                        patchTier(i, {
+                          currency: e.target.value as "ARS" | "USD",
+                        })
+                      }
+                      aria-label="Moneda del monto fijo"
+                      style={{ ...inputStyle, marginTop: 4 }}
+                    >
+                      <option value="ARS">AR$</option>
+                      <option value="USD">US$</option>
+                    </select>
+                  </div>
+                )}
                 <div
                   style={{
                     gridColumn: "span 2",
