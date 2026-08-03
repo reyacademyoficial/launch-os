@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 
+import { normalizePaymentsForSaleCurrency } from "@/lib/money/commission-normalize";
+import type { FxLookup } from "@/lib/money/sales-context";
+
 import { computeCommission, findApplicableRule, findTierForRank } from "./calc";
 import type {
   CommissionRuleRow,
@@ -433,5 +436,99 @@ describe("computeCommission — numeric como string (postgrest)", () => {
     );
     expect(result.released).toBe(true);
     expect(result.commission).toBe(500);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+//   normalizePaymentsForSaleCurrency — pre-conversión mixed-currency
+//   Contrato del helper: entregar `computeCommission` payments en la MISMA
+//   moneda que sale.total_amount. Bug post-migración 0106.
+// ────────────────────────────────────────────────────────────────────────────
+describe("normalizePaymentsForSaleCurrency", () => {
+  function pay(id: string, amount: number): { id: string; amount: number } {
+    return { id, amount };
+  }
+
+  it("sin fxLookup → passthrough, hasMixed=false", () => {
+    const s = { id: "s-1", total_amount: 1000, currency: "ARS" as const };
+    const payments = [pay("p-1", 300), pay("p-2", 200)];
+    const result = normalizePaymentsForSaleCurrency(s, payments, undefined);
+    expect(result.hasMixed).toBe(false);
+    expect(result.normalized.map((n) => n.amount)).toEqual([300, 200]);
+  });
+
+  it("todos los payments en misma currency que sale → passthrough", () => {
+    const s = { id: "s-1", total_amount: 1000, currency: "ARS" as const };
+    const lookup: FxLookup = {
+      bySaleId: { "s-1": { currency: "ARS", totalUsd: 1 } },
+      byPaymentId: {
+        "p-1": { currency: "ARS", amountUsd: 0.3 },
+        "p-2": { currency: "ARS", amountUsd: 0.2 },
+      },
+    };
+    const result = normalizePaymentsForSaleCurrency(
+      s,
+      [pay("p-1", 300), pay("p-2", 200)],
+      lookup,
+    );
+    expect(result.hasMixed).toBe(false);
+    expect(result.normalized.map((n) => n.amount)).toEqual([300, 200]);
+  });
+
+  it("sale ARS + 1 payment USD → convierte via tasa derivada del sale", () => {
+    // Sale: 1_000_000 ARS con totalUsd=1000 → tasa efectiva 1000 ARS/USD.
+    // Payment USD de 50 → 50 * 1000 = 50_000 ARS.
+    const s = { id: "s-1", total_amount: 1_000_000, currency: "ARS" as const };
+    const lookup: FxLookup = {
+      bySaleId: { "s-1": { currency: "ARS", totalUsd: 1000 } },
+      byPaymentId: {
+        "p-ars": { currency: "ARS", amountUsd: 100 },
+        "p-usd": { currency: "USD", amountUsd: 50 },
+      },
+    };
+    const result = normalizePaymentsForSaleCurrency(
+      s,
+      [pay("p-ars", 100_000), pay("p-usd", 50)],
+      lookup,
+    );
+    expect(result.hasMixed).toBe(false);
+    expect(result.normalized[0]!.amount).toBe(100_000);
+    expect(result.normalized[1]!.amount).toBeCloseTo(50_000, 5);
+  });
+
+  it("sale USD + 1 payment ARS → normalized.amount = amountUsd", () => {
+    const s = { id: "s-1", total_amount: 500, currency: "USD" as const };
+    const lookup: FxLookup = {
+      bySaleId: { "s-1": { currency: "USD", totalUsd: 500 } },
+      byPaymentId: {
+        "p-usd": { currency: "USD", amountUsd: 200 },
+        "p-ars": { currency: "ARS", amountUsd: 100 },
+      },
+    };
+    const result = normalizePaymentsForSaleCurrency(
+      s,
+      [pay("p-usd", 200), pay("p-ars", 100_000)],
+      lookup,
+    );
+    expect(result.hasMixed).toBe(false);
+    expect(result.normalized[0]!.amount).toBe(200);
+    expect(result.normalized[1]!.amount).toBe(100);
+  });
+
+  it("sale ARS con totalUsd=null → hasMixed=true, amount original", () => {
+    const s = { id: "s-1", total_amount: 1_000_000, currency: "ARS" as const };
+    const lookup: FxLookup = {
+      bySaleId: { "s-1": { currency: "ARS", totalUsd: null } },
+      byPaymentId: {
+        "p-usd": { currency: "USD", amountUsd: 50 },
+      },
+    };
+    const result = normalizePaymentsForSaleCurrency(
+      s,
+      [pay("p-usd", 50)],
+      lookup,
+    );
+    expect(result.hasMixed).toBe(true);
+    expect(result.normalized[0]!.amount).toBe(50);
   });
 });

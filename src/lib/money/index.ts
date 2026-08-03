@@ -51,3 +51,8 @@ export {
   type SaleFxEntry,
   type PaymentFxEntry,
 } from "./sales-context";
+
+export {
+  normalizePaymentsForSaleCurrency,
+  type NormalizedPaymentsResult,
+} from "./commission-normalize";

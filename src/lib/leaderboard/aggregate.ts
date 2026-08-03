@@ -171,6 +171,14 @@ export function aggregateLeaderboardFromStats(input: {
         sale.launch_id,
         sale.product_id,
       );
+      // TODO(mixed-currency): `sale.collected` viene de la RPC
+      // `leaderboard_sale_stats` sumando `payments.amount` crudo, sin FX ni
+      // consulta a `payments.original_currency`. Si un miembro tiene ventas
+      // mixed-currency (sale ARS + cobros USD o viceversa) `collected` está
+      // en unidades cruzadas y el ratio collected/pledged que usa el calc
+      // devuelve basura para thresholds paid_ratio o tiers fixed. Fix
+      // requiere reescribir el RPC para sumar `original_amount * fx_rate`
+      // (o `amount_usd` pre-normalizado) — fuera de scope de este bug fix.
       const breakdown = computeCommissionFromAgg(
         { total_amount: sale.total_amount, commission_rule_snapshot: sale.commission_rule_snapshot },
         { collected: sale.collected, paymentCount: sale.payment_count },

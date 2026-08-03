@@ -16,7 +16,13 @@ import type {
   SaleRow,
 } from "@/lib/commissions/types";
 import { fmtMoney } from "@/lib/format";
-import { fmtNative, fmtUsd, type Currency, type FxLookup } from "@/lib/money";
+import {
+  fmtNative,
+  fmtUsd,
+  normalizePaymentsForSaleCurrency,
+  type Currency,
+  type FxLookup,
+} from "@/lib/money";
 import type { LeadRow } from "@/lib/leads/types";
 import type { PaymentMethodRow } from "@/lib/payment-methods/types";
 import type { ProductRow } from "@/lib/products/types";
@@ -137,6 +143,32 @@ function collectedForSale(
     usd += fxLookup.byPaymentId[p.id]?.amountUsd ?? 0;
   }
   return { amount: usd, currency: "USD", mixed: true };
+}
+
+/**
+ * Clasificador de estado de cobro FX-aware. Con moneda homogénea comparamos
+ * en unidades nativas contra `total_amount`. Con mismatch, comparamos
+ * cobrado(USD) contra `totalUsd`. Sin `totalUsd` (sale sin conversión),
+ * degradamos al criterio crudo — imperfecto pero preserva el filtro.
+ */
+function classifySaleStatus(
+  sale: SaleRow,
+  payments: ReadonlyArray<PaymentRow>,
+  fxLookup: FxLookup | undefined,
+): "paid" | "partial" | "unpaid" {
+  const saleCurrency: Currency =
+    fxLookup?.bySaleId[sale.id]?.currency ?? "ARS";
+  const collected = collectedForSale(saleCurrency, payments, fxLookup);
+  const total = Number(sale.total_amount) || 0;
+  if (collected.mixed) {
+    const usdTotal = fxLookup?.bySaleId[sale.id]?.totalUsd ?? null;
+    if (usdTotal !== null && usdTotal > 0) {
+      if (collected.amount <= 0) return "unpaid";
+      return collected.amount >= usdTotal ? "paid" : "partial";
+    }
+  }
+  if (collected.amount <= 0) return "unpaid";
+  return collected.amount >= total ? "paid" : "partial";
 }
 
 /**
@@ -292,16 +324,23 @@ export function ProjectSalesView({
         s.launch_id,
         s.product_id,
       );
-      const breakdown = computeCommission(
+      // Normalizar payments a la moneda del sale para no romper el ratio
+      // collected/pledged. TODO(ui): mostrar warning si hasMixed.
+      const { normalized } = normalizePaymentsForSaleCurrency(
         s,
         salePays,
+        fxLookup,
+      );
+      const breakdown = computeCommission(
+        s,
+        normalized,
         rule,
         rankBySaleId.get(s.id) ?? 0,
       );
       out.set(s.id, breakdown.commission);
     }
     return out;
-  }, [sales, paymentsBySaleId, rules, rankBySaleId]);
+  }, [sales, paymentsBySaleId, rules, rankBySaleId, fxLookup]);
 
   const normalizedQuery = filters.query.trim().toLowerCase();
 
@@ -349,14 +388,8 @@ export function ProjectSalesView({
     }
 
     if (filters.collection !== "all") {
-      const collected = collectedBySale.get(sale.id) ?? 0;
-      const total = Number(sale.total_amount) || 0;
-      const status: CollectionStatus =
-        collected <= 0
-          ? "unpaid"
-          : collected >= total
-            ? "paid"
-            : "partial";
+      const salePayments = paymentsBySaleId.get(sale.id) ?? [];
+      const status = classifySaleStatus(sale, salePayments, fxLookup);
       if (status !== filters.collection) return false;
     }
 
@@ -366,7 +399,7 @@ export function ProjectSalesView({
   const filteredSales = useMemo(
     () => sales.filter(saleMatches),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sales, filters, leadById, methodIdsBySale, collectedBySale],
+    [sales, filters, leadById, methodIdsBySale, paymentsBySaleId, fxLookup],
   );
 
   const hasUnassignedLaunch = sales.some((s) => s.launch_id === null);

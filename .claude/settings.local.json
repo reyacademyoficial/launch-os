@@ -81,7 +81,10 @@
       "Bash(tee /tmp/tsc.log)",
       "Bash(echo \"Exit: $?\")",
       "PowerShell($out = & npx tsc --noEmit --skipLibCheck 2>&1 | Out-String; if \\($out.Length -gt 5000\\) { $out.Substring\\(0, 5000\\) } else { $out })",
-      "PowerShell($LASTEXITCODE = 0; $out = & npx tsc --noEmit --skipLibCheck 2>&1; Write-Output \"EXIT: $LASTEXITCODE\"; Write-Output \"---OUT---\"; Write-Output \\($out | Out-String\\))"
+      "PowerShell($LASTEXITCODE = 0; $out = & npx tsc --noEmit --skipLibCheck 2>&1; Write-Output \"EXIT: $LASTEXITCODE\"; Write-Output \"---OUT---\"; Write-Output \\($out | Out-String\\))",
+      "Bash(awk 'NR==569{print NR\": \"$0}' src/components/dashboard/sales/project-sales-view.tsx)",
+      "Bash(echo \"EXIT_CODE=$?\")",
+      "Bash(echo \"EXIT:$?\")"
     ]
   }
 }

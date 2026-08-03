@@ -150,6 +150,33 @@ function collectedForSale(
 }
 
 /**
+ * Clasificador de estado de cobro FX-aware. Si el sale y todos los payments
+ * comparten moneda, comparamos en unidades nativas contra `total_amount`. Si
+ * hay mismatch, comparamos el cobrado(USD) contra `totalUsd`. Cuando no hay
+ * `totalUsd` disponible (sale sin conversión), degradamos al criterio crudo
+ * — imperfecto, pero preserva el filtro en vez de romperlo.
+ */
+function classifySaleStatus(
+  sale: SaleRow,
+  payments: ReadonlyArray<PaymentRow>,
+  fxLookup: FxLookup | undefined,
+): "paid" | "partial" | "unpaid" {
+  const saleCurrency: Currency =
+    fxLookup?.bySaleId[sale.id]?.currency ?? "ARS";
+  const collected = collectedForSale(saleCurrency, payments, fxLookup);
+  const total = Number(sale.total_amount) || 0;
+  if (collected.mixed) {
+    const usdTotal = fxLookup?.bySaleId[sale.id]?.totalUsd ?? null;
+    if (usdTotal !== null && usdTotal > 0) {
+      if (collected.amount <= 0) return "unpaid";
+      return collected.amount >= usdTotal ? "paid" : "partial";
+    }
+  }
+  if (collected.amount <= 0) return "unpaid";
+  return collected.amount >= total ? "paid" : "partial";
+}
+
+/**
  * Vista interactiva del tab Cobros. Fase 11: la tabla principal se reduce a
  * los KPIs "de cobro" (Pactado, Cobrado, Vencido, # Cuotas vencidas, Próx
  * vencimiento) y el detalle completo (closer, producto, modalidad, fecha
@@ -387,14 +414,8 @@ export function CobrosView({
     }
 
     if (filters.collection !== "all") {
-      const collected = collectedBySale.get(sale.id) ?? 0;
-      const total = Number(sale.total_amount) || 0;
-      const status: CollectionStatus =
-        collected <= 0
-          ? "unpaid"
-          : collected >= total
-            ? "paid"
-            : "partial";
+      const salePayments = paymentsBySaleId.get(sale.id) ?? [];
+      const status = classifySaleStatus(sale, salePayments, fxLookup);
       if (status !== filters.collection) return false;
     }
 
@@ -404,7 +425,7 @@ export function CobrosView({
   const filteredSales = useMemo(
     () => sales.filter(saleMatches),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sales, filters, leadById, collectedBySale],
+    [sales, filters, leadById, paymentsBySaleId, fxLookup],
   );
   const filteredSaleIds = useMemo(
     () => new Set(filteredSales.map((s) => s.id)),

@@ -34,6 +34,7 @@ export interface KanbanSaleRow {
    */
   launch_id: string | null;
   total_amount: number;
+  currency?: "ARS" | "USD" | null;
 }
 
 export interface KanbanPaymentRow {

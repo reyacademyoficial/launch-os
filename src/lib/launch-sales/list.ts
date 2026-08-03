@@ -182,7 +182,7 @@ export async function getKanbanSalesAggregatesForProject(
   // descarta todas las sales.
   const salesRes = await supabase
     .from("sales")
-    .select("id, lead_id, launch_id, total_amount")
+    .select("id, lead_id, launch_id, total_amount, currency")
     .eq("project_id", projectId);
   const sales = (salesRes.data ?? []) as Array<KanbanSaleRow>;
 

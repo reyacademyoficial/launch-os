@@ -20,7 +20,13 @@ import type {
   SaleRow,
 } from "@/lib/commissions/types";
 import { fmtDate, fmtMoney, fmtPercent } from "@/lib/format";
-import { fmtNative, fmtUsd, type Currency, type FxLookup } from "@/lib/money";
+import {
+  fmtNative,
+  fmtUsd,
+  normalizePaymentsForSaleCurrency,
+  type Currency,
+  type FxLookup,
+} from "@/lib/money";
 
 /**
  * Helpers de formato que respetan la moneda nativa del sale/payment cuando
@@ -717,7 +723,16 @@ function SalePanel({
   const modality = modalities.find((m) => m.id === sale.payment_modality_id);
   const product = products.find((p) => p.id === sale.product_id);
   const rule = findApplicableRule(rules, sale.payment_modality_id, launchId);
-  const breakdown = computeCommission(sale, payments, rule, saleRank);
+  // Normalizamos payments a la moneda del sale antes del calc — evita que
+  // un cobro USD y una venta ARS (o viceversa) crucen unidades en el ratio
+  // collected/pledged. TODO(ui): mostrar warning si hasMixed y no todos los
+  // payments se pudieron convertir.
+  const { normalized: normalizedPayments } = normalizePaymentsForSaleCurrency(
+    sale,
+    payments,
+    fxLookup,
+  );
+  const breakdown = computeCommission(sale, normalizedPayments, rule, saleRank);
   const [deletePending, startDeleteTransition] = useTransition();
 
   const today = todayInAR();
@@ -1859,13 +1874,18 @@ function AddPaymentOnly({
     [installments, payments, sale.grace_days, today],
   );
   const collectedDisplay = collectedForSale(fxLookup, sale, payments);
-  // Saldo: solo tiene sentido nativo si NO hay mismatch (misma moneda que
-  // el pactado). Con mismatch mostramos "—" y confiamos en que el operador
-  // mire la ficha completa; sumar pactado-cobrado en unidades distintas es
-  // exactamente el bug que estamos previniendo.
-  const balance = collectedDisplay.mixed
+  // Saldo: en moneda nativa si TODOS los cobros comparten la moneda del
+  // pactado. Con mismatch usamos USD (mismo criterio que `collectedDisplay`
+  // cuando mixed=true): total_amount convertido a USD − cobrado ya en USD.
+  // Sumar unidades distintas es el bug que estamos previniendo.
+  const totalUsd = fxLookup?.bySaleId[sale.id]?.totalUsd ?? null;
+  const balanceNative = collectedDisplay.mixed
     ? null
     : Math.max(Number(sale.total_amount) - collectedDisplay.amount, 0);
+  const balanceUsd =
+    collectedDisplay.mixed && totalUsd !== null
+      ? Math.max(totalUsd - collectedDisplay.amount, 0)
+      : null;
 
   return (
     <div className="space-y-4">
@@ -1890,8 +1910,15 @@ function AddPaymentOnly({
         {" · "}
         Saldo{" "}
         <b className="tabular-nums text-fg">
-          {balance === null ? "—" : fmtSaleMoney(fxLookup, sale, balance)}
+          {balanceNative !== null
+            ? fmtSaleMoney(fxLookup, sale, balanceNative)
+            : balanceUsd !== null
+              ? fmtUsd(balanceUsd)
+              : "—"}
         </b>
+        {collectedDisplay.mixed && balanceUsd !== null && (
+          <span className="ml-1 text-[10px] text-fg-muted">(USD)</span>
+        )}
       </div>
       <PaymentForm
         installments={installments}

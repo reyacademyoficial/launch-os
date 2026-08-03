@@ -18,7 +18,12 @@ import type {
   SaleRow,
 } from "@/lib/commissions/types";
 import { fmtMoney } from "@/lib/format";
-import { fmtNative, fmtUsd, type FxLookup } from "@/lib/money";
+import {
+  fmtNative,
+  fmtUsd,
+  normalizePaymentsForSaleCurrency,
+  type FxLookup,
+} from "@/lib/money";
 import { LEAD_STATUSES, LEAD_STATUS_LABELS, type LeadRow, type LeadStatus } from "@/lib/leads/types";
 import type { PaymentMethodRow } from "@/lib/payment-methods/types";
 import type { ProductRow } from "@/lib/products/types";
@@ -351,9 +356,17 @@ export function KanbanBoard({
                       s.launch_id,
                       s.product_id,
                     );
-                    const b = computeCommission(
+                    // Normalizar payments a la moneda del sale antes del
+                    // calc — el ratio collected/pledged asume unidades
+                    // homogéneas. TODO(ui): pintar warning cuando hasMixed.
+                    const { normalized } = normalizePaymentsForSaleCurrency(
                       s,
                       pays,
+                      fxLookup,
+                    );
+                    const b = computeCommission(
+                      s,
+                      normalized,
                       rule,
                       rankBySaleId.get(s.id) ?? 0,
                     );
