@@ -740,10 +740,10 @@ function SalePanel({
     ? teamMembers.find((t) => t.id === lead.team_member_id)?.name ?? null
     : null;
 
-  const statuses = useMemo(
-    () => computeInstallmentStatuses(installments, payments, sale.grace_days, today),
-    [installments, payments, sale.grace_days, today],
-  );
+  const statuses = useMemo(() => {
+    const { normalized } = normalizePaymentsForSaleCurrency(sale, payments, fxLookup);
+    return computeInstallmentStatuses(installments, normalized, sale.grace_days, today);
+  }, [installments, payments, fxLookup, sale, today]);
   const overdue = useMemo(() => summarizeSaleOverdue(statuses), [statuses]);
   const classification = useMemo(() => classifyClient(statuses), [statuses]);
 
@@ -1867,11 +1867,10 @@ function AddPaymentOnly({
   readonly methodCurrencies: Record<string, "ARS" | "USD">;
 }) {
   const today = todayInAR();
-  const statuses = useMemo(
-    () =>
-      computeInstallmentStatuses(installments, payments, sale.grace_days, today),
-    [installments, payments, sale.grace_days, today],
-  );
+  const statuses = useMemo(() => {
+    const { normalized } = normalizePaymentsForSaleCurrency(sale, payments, fxLookup);
+    return computeInstallmentStatuses(installments, normalized, sale.grace_days, today);
+  }, [installments, payments, fxLookup, sale, today]);
   const collectedDisplay = collectedForSale(fxLookup, sale, payments);
   // Saldo: en moneda nativa si TODOS los cobros comparten la moneda del
   // pactado. Con mismatch usamos USD (mismo criterio que `collectedDisplay`

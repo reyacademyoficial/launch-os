@@ -15,7 +15,13 @@ import type {
   SaleRow,
 } from "@/lib/commissions/types";
 import { fmtDate, fmtMoney, fmtNumber } from "@/lib/format";
-import { fmtNative, fmtUsd, type Currency, type FxLookup } from "@/lib/money";
+import {
+  fmtNative,
+  fmtUsd,
+  normalizePaymentsForSaleCurrency,
+  type Currency,
+  type FxLookup,
+} from "@/lib/money";
 import {
   computeInstallmentStatuses,
   summarizeSaleOverdue,
@@ -296,9 +302,14 @@ export function CobrosView({
     for (const s of sales) {
       const insts = installmentsBySaleId.get(s.id) ?? [];
       const paysForSale = paymentsBySaleId.get(s.id) ?? [];
+      const { normalized: normalizedPays } = normalizePaymentsForSaleCurrency(
+        s,
+        paysForSale,
+        fxLookup,
+      );
       const statuses = computeInstallmentStatuses(
         insts,
-        paysForSale,
+        normalizedPays,
         s.grace_days,
         today,
       );
