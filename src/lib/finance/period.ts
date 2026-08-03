@@ -34,7 +34,7 @@
  * comparación a calendario KG_TZ, cubierta por los tests de bordes.
  */
 
-export type PeriodKey = "mes-actual" | "mes-anterior" | "90d";
+export type PeriodKey = "mes-actual" | "mes-anterior" | "90d" | "custom";
 
 /** Única fuente de verdad de la zona horaria del sistema. */
 export const KG_TZ = "America/Argentina/Buenos_Aires";
@@ -75,6 +75,12 @@ const MONTH_LABEL_FMT = new Intl.DateTimeFormat("es-AR", {
   month: "short",
 });
 
+const DAY_MONTH_LABEL_FMT = new Intl.DateTimeFormat("es-AR", {
+  timeZone: KG_TZ,
+  day: "numeric",
+  month: "short",
+});
+
 /** Convierte un `Date` a "YYYY-MM-DD" en KG_TZ. Nunca en TZ local. */
 export function toCalendarYmd(d: Date): string {
   const parts = YMD_FMT.formatToParts(d);
@@ -112,14 +118,68 @@ function normalizeKey(v: string | null | undefined): PeriodKey {
   return "mes-actual";
 }
 
+const CUSTOM_YMD_RX = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Etiqueta compacta "1 jul – 15 ago" para el rango custom en KG_TZ. */
+function formatCustomLabel(fromYmd: string, toYmd: string): string {
+  const [fy, fm, fd] = fromYmd.split("-").map(Number) as [number, number, number];
+  const [ty, tm, td] = toYmd.split("-").map(Number) as [number, number, number];
+  // Mediodía UTC — cae en el día calendario correcto en KG_TZ (UTC−3).
+  const from = new Date(Date.UTC(fy, fm - 1, fd, 12));
+  const to = new Date(Date.UTC(ty, tm - 1, td, 12));
+  return `${DAY_MONTH_LABEL_FMT.format(from)} – ${DAY_MONTH_LABEL_FMT.format(to)}`;
+}
+
+/** Días entre dos YMD (inclusivos). Slice-safe, sin TZ. */
+function daysBetweenYmd(fromYmd: string, toYmd: string): number {
+  const [fy, fm, fd] = fromYmd.split("-").map(Number) as [number, number, number];
+  const [ty, tm, td] = toYmd.split("-").map(Number) as [number, number, number];
+  const from = Date.UTC(fy, fm - 1, fd);
+  const to = Date.UTC(ty, tm - 1, td);
+  return Math.round((to - from) / 86_400_000) + 1;
+}
+
 /**
  * Resuelve el período pedido. `now` inyectable para tests deterministas.
- * Cualquier valor no reconocido cae al default "mes-actual".
+ *
+ * Prioridad:
+ *   1. Si `from` y `to` son ambos YMDs válidos → rango custom (key="custom").
+ *      Se ordena de menor a mayor por si el usuario los pasa invertidos.
+ *   2. Si `range` matchea un preset conocido → ese preset.
+ *   3. Default: "mes-actual".
+ *
+ * Un `from` o `to` sueltos se ignoran (no es un rango completo).
  */
 export function resolvePeriod(
-  input: { readonly range?: string | null } | undefined,
+  input:
+    | {
+        readonly range?: string | null;
+        readonly from?: string | null;
+        readonly to?: string | null;
+      }
+    | undefined,
   now: Date = new Date(),
 ): Period {
+  const rawFrom = input?.from ?? null;
+  const rawTo = input?.to ?? null;
+  if (
+    rawFrom &&
+    rawTo &&
+    CUSTOM_YMD_RX.test(rawFrom) &&
+    CUSTOM_YMD_RX.test(rawTo)
+  ) {
+    const [fromYmd, toYmd] =
+      rawFrom <= rawTo ? [rawFrom, rawTo] : [rawTo, rawFrom];
+    const days = daysBetweenYmd(fromYmd, toYmd);
+    return {
+      key: "custom",
+      label: formatCustomLabel(fromYmd, toYmd),
+      fromYmd,
+      toYmd,
+      monthsInWindow: days / DAYS_PER_MONTH,
+    };
+  }
+
   const key = normalizeKey(input?.range);
   const nowYmd = toCalendarYmd(now);
   const [nowY, nowM, nowD] = nowYmd.split("-").map(Number) as [

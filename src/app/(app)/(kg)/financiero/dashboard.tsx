@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
 import {
   Area,
   AreaChart,
@@ -27,7 +26,10 @@ import { SectionHeader } from "@/components/kg/section-header";
 import { StatRow } from "@/components/kg/stat-row";
 import { SupportKpi, type SupportKpiTone } from "@/components/kg/support-kpi";
 import { fCount, fMoney, fMoneyK, fMonths, fPct } from "@/lib/finance/format";
-import { PERIOD_OPTIONS, type PeriodKey } from "@/lib/finance/period";
+import type { PeriodKey } from "@/lib/finance/period";
+import { fmtUsd } from "@/lib/money";
+
+import { PeriodPicker } from "./period-picker";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Shape del dato que la page (server component) pasa a este dashboard.
@@ -49,12 +51,17 @@ export interface RevenueSeries {
   readonly delta: { readonly value: string; readonly dir: "up" | "down" } | null;
 }
 
-export interface CashSnapshot {
-  readonly cashOnHand: number;
-  readonly snapshotDate: string | null;
-  readonly ageDays: number | null;
-  readonly stale: boolean;
-  readonly bucketCount: number;
+/**
+ * Snapshot del KPI "Bancos" (Fila 1). Saldo consolidado en USD derivado de
+ * `banks + payment_methods + payments + bank_movements` — mismos selectores
+ * que /financiero/bancos. ARS convertido con la última tasa mensual a nivel
+ * org. `totalUsd = null` cuando hay saldo ARS pero no hay tasa cargada.
+ */
+export interface BanksSnapshot {
+  readonly totalUsd: number | null;
+  readonly bankCount: number;
+  readonly fxMonth: string | null;
+  readonly needsFxRate: boolean;
 }
 
 /**
@@ -118,7 +125,7 @@ export interface FinancieroDashboardData {
   };
   readonly revenueSeries: RevenueSeries;
   readonly netProfit: FinancieroKpi;
-  readonly cash: CashSnapshot;
+  readonly banks: BanksSnapshot;
   readonly runway: RunwaySnapshot;
   readonly burn: number;
   readonly cashFlow: FinancieroKpi;
@@ -260,7 +267,7 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
         icon={<IconFin size={16} />}
         title="Kingrow · Financiero"
         stats={[
-          { l: "Caja", v: fMoneyK(data.cash.cashOnHand) },
+          { l: "Bancos (USD)", v: fmtUsd(data.banks.totalUsd) },
           { l: "Por cobrar", v: fMoneyK(data.ar.value) },
           { l: "Por pagar", v: fMoneyK(data.ap.value) },
           { l: "Facturas pendientes", v: fCount(data.counts.invoicesPending) },
@@ -270,8 +277,21 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
       />
 
       {/* ═════════════════════ Selector de período ═════════════════════ */}
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-        <PeriodPills current={data.period.key} />
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
+        }}
+      >
+        <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+          Período: <strong style={{ color: "var(--kg-text-1)" }}>{data.period.label}</strong>
+        </div>
+        <PeriodPicker
+          fromYmd={data.period.rangeStart}
+          toYmd={data.period.rangeEnd}
+        />
       </div>
 
       {/* ═════════════════════ Fila 1 · HeroKpi × 4 ═════════════════════ */}
@@ -303,19 +323,19 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
           />
         </div>
         <div style={span(3)}>
-          {data.cash.bucketCount === 0 ? (
+          {data.banks.bankCount === 0 ? (
             <EmptyKpiCard
-              label="Caja"
-              hint="Registrá activos tipo caja/banco para ver el saldo."
+              label="Bancos"
+              hint="Registrá bancos activos en Financiero → Bancos para ver el saldo consolidado."
             />
           ) : (
             <HeroKpi
-              label="Caja"
-              value={data.cash.cashOnHand}
-              format={fMoney}
-              sub={cashSubtitle(data.cash)}
+              label="Bancos"
+              value={data.banks.totalUsd ?? Number.NaN}
+              format={fmtUsd}
+              sub={banksSubtitle(data.banks)}
               tone="neutral"
-              help="Suma del saldo de todos los activos activos tipo Caja o Banco. Es un snapshot manual: se actualiza cuando editás el saldo desde Financiero → Activos. No se deriva de los movimientos bancarios."
+              help="Saldo consolidado en USD de todos los bancos activos. Se calcula en runtime: saldo inicial + cobros (por método de pago vinculado al banco) + movimientos manuales (ingresos − egresos). Los bancos en ARS se convierten con la última tasa mensual cargada a nivel organización."
             />
           )}
         </div>
@@ -610,47 +630,6 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
 // Sub-componentes locales
 // ═══════════════════════════════════════════════════════════════════════════
 
-function PeriodPills({ current }: { readonly current: PeriodKey }) {
-  return (
-    <div
-      style={{
-        display: "inline-flex",
-        background: "var(--kg-surface-2-solid)",
-        border: "1px solid var(--kg-border-subtle)",
-        borderRadius: "var(--kg-r-full)",
-        padding: 2,
-      }}
-      role="tablist"
-      aria-label="Período"
-    >
-      {PERIOD_OPTIONS.map((o) => {
-        const active = o.key === current;
-        return (
-          <Link
-            key={o.key}
-            href={{ pathname: "/financiero", query: { range: o.key } }}
-            className="kg-focus"
-            role="tab"
-            aria-selected={active}
-            style={{
-              padding: "4px 11px",
-              borderRadius: 999,
-              background: active ? "var(--kg-accent-500)" : "transparent",
-              color: active ? "#fff" : "var(--kg-text-3)",
-              fontSize: 11,
-              fontWeight: 700,
-              textDecoration: "none",
-              transition: "all var(--kg-dur) var(--kg-ease)",
-            }}
-          >
-            {o.label}
-          </Link>
-        );
-      })}
-    </div>
-  );
-}
-
 function EmptyKpiCard({ label, hint }: { readonly label: string; readonly hint: string }) {
   return (
     <div
@@ -681,11 +660,13 @@ function EmptyKpiCard({ label, hint }: { readonly label: string; readonly hint: 
   );
 }
 
-function cashSubtitle(cash: CashSnapshot): string {
-  if (!cash.snapshotDate) return `${cash.bucketCount} activos de caja/banco`;
-  const d = new Date(cash.snapshotDate);
-  const formatted = d.toLocaleDateString("es-AR", { day: "numeric", month: "short" });
-  return `Snapshot de activos · ${formatted}`;
+function banksSubtitle(banks: BanksSnapshot): string {
+  if (banks.needsFxRate) {
+    return "Falta cargar tasa ARS/USD para consolidar";
+  }
+  const count = `${banks.bankCount} banco${banks.bankCount === 1 ? "" : "s"} activo${banks.bankCount === 1 ? "" : "s"}`;
+  if (banks.fxMonth) return `${count} · tasa ${banks.fxMonth}`;
+  return count;
 }
 
 function runwaySubtitle(

@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 
+import { computeBankBalances } from "@/lib/banks/balance";
+import { listBanks, listBankMovements } from "@/lib/banks/list";
 import {
   clientBalance,
   computeAccountsPayable,
@@ -15,6 +17,8 @@ import {
 } from "@/lib/finance/kpis";
 import { CASH_ASSET_TYPES } from "@/lib/finance/asset-types";
 import { fPct } from "@/lib/finance/format";
+import { loadLatestOrgFxRate } from "@/lib/money";
+import { listAllPaymentMethods } from "@/lib/payment-methods/list";
 import type { Ownership } from "@/lib/finance/invoice-classification";
 import {
   inPeriodDate,
@@ -81,7 +85,13 @@ export default async function FinancieroPage({
 }) {
   const sp = await searchParams;
   const rangeParam = typeof sp.range === "string" ? sp.range : null;
-  const period = resolvePeriod({ range: rangeParam });
+  const fromParam = typeof sp.from === "string" ? sp.from : null;
+  const toParam = typeof sp.to === "string" ? sp.to : null;
+  const period = resolvePeriod({
+    range: rangeParam,
+    from: fromParam,
+    to: toParam,
+  });
 
   const supabase = await createClient();
 
@@ -105,6 +115,11 @@ export default async function FinancieroPage({
     liabilitiesRes,
     clientTransfersRes,
     bankMovementsRes,
+    banksList,
+    paymentMethodsList,
+    allBankMovements,
+    paymentsForBanksRes,
+    latestFx,
   ] = await Promise.all([
     supabase
       .from("launch_settlements")
@@ -137,6 +152,15 @@ export default async function FinancieroPage({
     supabase.from("liabilities").select("amount, active, settled_at"),
     supabase.from("client_transfers").select("amount, direction, date"),
     supabase.from("bank_movements").select("amount, kind, occurred_at"),
+    // Fuente del KPI "Bancos" (Fila 1): saldo consolidado en USD sobre todos
+    // los bancos activos. `computeBankBalances` reconstruye el saldo runtime
+    // desde opening + cobros vía payment_method → bank + movimientos manuales.
+    // Reutiliza los selectores org-scope de /financiero/bancos.
+    listBanks(),
+    listAllPaymentMethods(),
+    listBankMovements(),
+    supabase.from("payments").select("amount, payment_method_id"),
+    loadLatestOrgFxRate(supabase),
   ]);
 
   // Cast en el borde — postgrest-js colapsa a `never` sobre el Database
@@ -274,8 +298,41 @@ export default async function FinancieroPage({
   });
   const cashFlow = computeCashFlow({ bankMovements: bankMovementsInPeriod });
 
-  // ─── Caja: opción A del reporte — snapshot desde `assets` tipo caja/banco.
-  // Nunca se rellena con 0 si no hay activos: la UI muestra EmptyKpiCard.
+  // ─── Bancos: saldo consolidado en USD sobre todos los bancos activos.
+  // Fuente derivada (no snapshot manual): opening_balance + cobros
+  // (payment_method → bank) + movimientos manuales. ARS convertido a USD con
+  // la última tasa mensual disponible a nivel org. Si hay ARS y no hay tasa
+  // cargada, `banksTotalUsd` queda null y la UI muestra em-dash + hint.
+  const activeBanks = banksList.filter((b) => b.active);
+  const bankBalances = computeBankBalances(
+    activeBanks,
+    paymentMethodsList,
+    (paymentsForBanksRes.data ?? []) as ReadonlyArray<{
+      readonly amount: number;
+      readonly payment_method_id: string | null;
+    }>,
+    allBankMovements,
+  );
+  let banksTotalArsNative = 0;
+  let banksTotalUsdNative = 0;
+  for (const b of activeBanks) {
+    const bal = bankBalances.get(b.id);
+    const total = bal?.total ?? Number(b.opening_balance);
+    if (b.currency === "USD") banksTotalUsdNative += total;
+    else banksTotalArsNative += total;
+  }
+  let banksTotalUsd: number | null;
+  if (banksTotalArsNative === 0) {
+    banksTotalUsd = banksTotalUsdNative;
+  } else if (latestFx) {
+    banksTotalUsd = banksTotalUsdNative + banksTotalArsNative / latestFx.rate;
+  } else {
+    banksTotalUsd = null;
+  }
+
+  // Runway sigue apoyado en el snapshot de assets tipo caja/banco (opción A
+  // del reporte 6b). No se cambia acá: mezclar cashOnHand (posible ARS) con
+  // burn (ARS) requiere un análisis de moneda separado.
   const cashAssets = assets.filter(
     (a) => a.active && CASH_ASSET_TYPES.includes(a.asset_type),
   );
@@ -284,7 +341,6 @@ export default async function FinancieroPage({
     const t = new Date(a.updated_at).getTime();
     return Number.isFinite(t) && t > max ? t : max;
   }, 0);
-  const cashSnapshotDate = latestSnapshotMs > 0 ? new Date(latestSnapshotMs).toISOString() : null;
   const ageDays =
     latestSnapshotMs > 0
       ? Math.floor((Date.now() - latestSnapshotMs) / MS_PER_DAY)
@@ -468,12 +524,11 @@ export default async function FinancieroPage({
         { table: "payroll", field: "total_amount", cond: "período solapado" },
       ],
     },
-    cash: {
-      cashOnHand,
-      snapshotDate: cashSnapshotDate,
-      ageDays,
-      stale,
-      bucketCount: cashAssets.length,
+    banks: {
+      totalUsd: banksTotalUsd,
+      bankCount: activeBanks.length,
+      fxMonth: latestFx?.month ?? null,
+      needsFxRate: banksTotalArsNative !== 0 && latestFx === null,
     },
     runway,
     burn,

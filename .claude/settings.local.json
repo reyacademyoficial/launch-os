@@ -84,7 +84,8 @@
       "PowerShell($LASTEXITCODE = 0; $out = & npx tsc --noEmit --skipLibCheck 2>&1; Write-Output \"EXIT: $LASTEXITCODE\"; Write-Output \"---OUT---\"; Write-Output \\($out | Out-String\\))",
       "Bash(awk 'NR==569{print NR\": \"$0}' src/components/dashboard/sales/project-sales-view.tsx)",
       "Bash(echo \"EXIT_CODE=$?\")",
-      "Bash(echo \"EXIT:$?\")"
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(echo \"EXIT: $?\")"
     ]
   }
 }
