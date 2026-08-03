@@ -259,9 +259,14 @@ export async function getProjectRevenueUsdMap(
 ): Promise<Map<string, { pledgedUsd: number; collectedUsd: number }>> {
   const supabase = await createClient();
 
+  // `closed_at` es crítico para la conversión FX: `saleToUsd` lo usa como
+  // anchor de la tasa mensual. Sin él caía al date_end del launch (o hoy),
+  // y una venta con tasa cargada para SU mes real quedaba sin convertir
+  // cuando el mes del launch no tenía tasa. Los 500 USD del estimado que
+  // no aparecían venían por acá.
   const salesRes = await supabase
     .from("sales")
-    .select("id, lead_id, launch_id, total_amount, currency")
+    .select("id, lead_id, launch_id, total_amount, currency, closed_at")
     .eq("project_id", projectId);
   const sales = (salesRes.data ?? []) as Array<{
     id: string;
@@ -269,6 +274,7 @@ export async function getProjectRevenueUsdMap(
     launch_id: string | null;
     total_amount: number;
     currency?: "ARS" | "USD" | null;
+    closed_at?: string | null;
   }>;
 
   if (sales.length === 0) return new Map();
