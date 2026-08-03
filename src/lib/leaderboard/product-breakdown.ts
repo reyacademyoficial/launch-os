@@ -94,6 +94,11 @@ export function aggregateProductBreakdownFromStats(input: {
       s.launch_id,
       s.product_id,
     );
+    // TODO(mixed-currency): idem `aggregate.ts` — `s.collected` viene del
+    // RPC `leaderboard_sale_stats` sin normalizar por moneda. Ventas con
+    // sale y payments en monedas distintas rompen el ratio del calc. Fix
+    // requiere reescribir el RPC para sumar cobros ya convertidos a la
+    // moneda del sale (o a USD).
     const breakdown = computeCommissionFromAgg(
       {
         total_amount: s.total_amount,

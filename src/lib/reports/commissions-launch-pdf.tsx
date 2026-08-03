@@ -17,6 +17,7 @@ import type {
   SaleRow,
 } from "@/lib/commissions/types";
 import { fmtDate, fmtLaunchWindow } from "@/lib/format";
+import { normalizePaymentsForSaleCurrency } from "@/lib/money";
 import type { TeamMemberRow } from "@/lib/team/types";
 
 /**
@@ -391,7 +392,17 @@ function groupByMember(data: CommissionsLaunchInput): GroupedRow[] {
     );
 
     const saleRank = rankBySaleId.get(sale.id) ?? 0;
-    const computed = computeCommission(sale, payments, rule, saleRank);
+    // Normalizamos payments a la moneda del sale antes del calc.
+    // TODO(fx-pdf): este report todavía no recibe FxLookup — sin lookup el
+    // helper degrada a passthrough. Si un launch tiene sales mixed-currency
+    // la comisión del PDF va a diferir del panel UI hasta que el route
+    // handler arme el FxLookup y lo pase por `CommissionsLaunchInput`.
+    const { normalized } = normalizePaymentsForSaleCurrency(
+      sale,
+      payments,
+      undefined,
+    );
+    const computed = computeCommission(sale, normalized, rule, saleRank);
 
     // Atribución por dueño del lead — NO por `sale.team_member_id`. Si el
     // lead no tiene dueño, va al bucket "Sin asignar".

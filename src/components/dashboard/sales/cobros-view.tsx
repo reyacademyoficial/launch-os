@@ -15,7 +15,7 @@ import type {
   SaleRow,
 } from "@/lib/commissions/types";
 import { fmtDate, fmtMoney, fmtNumber } from "@/lib/format";
-import { fmtNative, fmtUsd, type FxLookup } from "@/lib/money";
+import { fmtNative, fmtUsd, type Currency, type FxLookup } from "@/lib/money";
 import {
   computeInstallmentStatuses,
   summarizeSaleOverdue,
@@ -93,6 +93,88 @@ const EMPTY_FILTERS: FilterState = {
 };
 
 const UNASSIGNED_LAUNCH = "__unassigned__";
+
+/**
+ * Resumen del cobrado de una venta que respeta la moneda. Si todos los
+ * payments comparten la moneda de la venta, devolvemos la suma nativa en
+ * esa moneda. Si hay al menos un payment en moneda distinta, marcamos
+ * `mixed=true` y devolvemos el equivalente USD (evita el bug de sumar
+ * pesos + dólares como si fueran la misma unidad).
+ */
+interface CollectedDisplay {
+  amount: number;
+  currency: Currency;
+  mixed: boolean;
+  /** true si algún payment no pudo convertirse a USD por falta de tasa. */
+  missingRate: boolean;
+}
+function collectedForSale(
+  saleCurrency: Currency,
+  payments: ReadonlyArray<PaymentRow>,
+  fxLookup: FxLookup | undefined,
+): CollectedDisplay {
+  if (payments.length === 0) {
+    return { amount: 0, currency: saleCurrency, mixed: false, missingRate: false };
+  }
+  if (!fxLookup) {
+    let sum = 0;
+    for (const p of payments) sum += Number(p.amount) || 0;
+    return { amount: sum, currency: saleCurrency, mixed: false, missingRate: false };
+  }
+  let allNative = 0;
+  let allSameCurrency = true;
+  for (const p of payments) {
+    const c = fxLookup.byPaymentId[p.id]?.currency ?? saleCurrency;
+    if (c !== saleCurrency) {
+      allSameCurrency = false;
+      break;
+    }
+    allNative += Number(p.amount) || 0;
+  }
+  if (allSameCurrency) {
+    return {
+      amount: allNative,
+      currency: saleCurrency,
+      mixed: false,
+      missingRate: false,
+    };
+  }
+  let usdSum = 0;
+  let missingRate = false;
+  for (const p of payments) {
+    const usd = fxLookup.byPaymentId[p.id]?.amountUsd ?? null;
+    if (usd === null) missingRate = true;
+    else usdSum += usd;
+  }
+  return { amount: usdSum, currency: "USD", mixed: true, missingRate };
+}
+
+/**
+ * Clasificador de estado de cobro FX-aware. Si el sale y todos los payments
+ * comparten moneda, comparamos en unidades nativas contra `total_amount`. Si
+ * hay mismatch, comparamos el cobrado(USD) contra `totalUsd`. Cuando no hay
+ * `totalUsd` disponible (sale sin conversión), degradamos al criterio crudo
+ * — imperfecto, pero preserva el filtro en vez de romperlo.
+ */
+function classifySaleStatus(
+  sale: SaleRow,
+  payments: ReadonlyArray<PaymentRow>,
+  fxLookup: FxLookup | undefined,
+): "paid" | "partial" | "unpaid" {
+  const saleCurrency: Currency =
+    fxLookup?.bySaleId[sale.id]?.currency ?? "ARS";
+  const collected = collectedForSale(saleCurrency, payments, fxLookup);
+  const total = Number(sale.total_amount) || 0;
+  if (collected.mixed) {
+    const usdTotal = fxLookup?.bySaleId[sale.id]?.totalUsd ?? null;
+    if (usdTotal !== null && usdTotal > 0) {
+      if (collected.amount <= 0) return "unpaid";
+      return collected.amount >= usdTotal ? "paid" : "partial";
+    }
+  }
+  if (collected.amount <= 0) return "unpaid";
+  return collected.amount >= total ? "paid" : "partial";
+}
 
 /**
  * Vista interactiva del tab Cobros. Fase 11: la tabla principal se reduce a
@@ -234,16 +316,59 @@ export function CobrosView({
     () => [...payments].sort((a, b) => a.paid_at.localeCompare(b.paid_at)),
     [payments],
   );
+  // Acumulado por venta: si TODOS los cobros de la venta comparten moneda
+  // con el sale, acumulamos en esa moneda nativa. Si hay mismatch, cambiamos
+  // a USD (usando fxLookup) para no sumar pesos + dólares como si fuesen la
+  // misma unidad — mismo criterio que la columna "Cobrado" de SalesTable.
   const accumByPaymentId = useMemo(() => {
-    const out = new Map<string, number>();
+    const out = new Map<
+      string,
+      { amount: number; currency: Currency; mixed: boolean }
+    >();
+    // Pre-computamos por venta si hay mismatch de moneda entre sus payments.
+    const salePaymentsMap = new Map<string, PaymentRow[]>();
+    for (const p of paymentsSorted) {
+      const arr = salePaymentsMap.get(p.sale_id) ?? [];
+      arr.push(p);
+      salePaymentsMap.set(p.sale_id, arr);
+    }
+    const saleMixed = new Map<string, boolean>();
+    const saleCurrencyMap = new Map<string, Currency>();
+    for (const [saleId, pays] of salePaymentsMap) {
+      const saleCurrency: Currency =
+        fxLookup?.bySaleId[saleId]?.currency ?? "ARS";
+      saleCurrencyMap.set(saleId, saleCurrency);
+      let mixed = false;
+      if (fxLookup) {
+        for (const p of pays) {
+          const c = fxLookup.byPaymentId[p.id]?.currency ?? saleCurrency;
+          if (c !== saleCurrency) {
+            mixed = true;
+            break;
+          }
+        }
+      }
+      saleMixed.set(saleId, mixed);
+    }
     const running = new Map<string, number>();
     for (const p of paymentsSorted) {
-      const next = (running.get(p.sale_id) ?? 0) + Number(p.amount);
+      const saleCurrency = saleCurrencyMap.get(p.sale_id) ?? "ARS";
+      const mixed = saleMixed.get(p.sale_id) ?? false;
+      let delta: number;
+      let currency: Currency;
+      if (mixed && fxLookup) {
+        delta = fxLookup.byPaymentId[p.id]?.amountUsd ?? 0;
+        currency = "USD";
+      } else {
+        delta = Number(p.amount) || 0;
+        currency = saleCurrency;
+      }
+      const next = (running.get(p.sale_id) ?? 0) + delta;
       running.set(p.sale_id, next);
-      out.set(p.id, next);
+      out.set(p.id, { amount: next, currency, mixed });
     }
     return out;
-  }, [paymentsSorted]);
+  }, [paymentsSorted, fxLookup]);
 
   const installmentById = useMemo(
     () => new Map(installments.map((i) => [i.id, i])),
@@ -289,14 +414,8 @@ export function CobrosView({
     }
 
     if (filters.collection !== "all") {
-      const collected = collectedBySale.get(sale.id) ?? 0;
-      const total = Number(sale.total_amount) || 0;
-      const status: CollectionStatus =
-        collected <= 0
-          ? "unpaid"
-          : collected >= total
-            ? "paid"
-            : "partial";
+      const salePayments = paymentsBySaleId.get(sale.id) ?? [];
+      const status = classifySaleStatus(sale, salePayments, fxLookup);
       if (status !== filters.collection) return false;
     }
 
@@ -306,7 +425,7 @@ export function CobrosView({
   const filteredSales = useMemo(
     () => sales.filter(saleMatches),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sales, filters, leadById, collectedBySale],
+    [sales, filters, leadById, paymentsBySaleId, fxLookup],
   );
   const filteredSaleIds = useMemo(
     () => new Set(filteredSales.map((s) => s.id)),
@@ -752,7 +871,22 @@ function SalesTable({
                 const nextDue = od?.nextDueDate ?? null;
                 const isSelected = effectiveSelected.has(s.id);
                 const salePayments = paymentsBySaleId.get(s.id) ?? [];
-                const paidUp = total > 0 && collected >= total;
+                const saleCurrency: Currency =
+                  fxLookup?.bySaleId[s.id]?.currency ?? "ARS";
+                const collectedDisplay = collectedForSale(
+                  saleCurrency,
+                  salePayments,
+                  fxLookup,
+                );
+                // "Al día": si hay mismatch, comparamos ambos en USD; sin
+                // mismatch, comparamos en la moneda nativa. Nunca comparamos
+                // ARS crudo contra USD crudo — ese es el bug original.
+                const paidUp = collectedDisplay.mixed
+                  ? (() => {
+                      const usdTotal = fxLookup?.bySaleId[s.id]?.totalUsd ?? null;
+                      return usdTotal !== null && usdTotal > 0 && collectedDisplay.amount >= usdTotal;
+                    })()
+                  : total > 0 && collectedDisplay.amount >= total;
                 const leadForModal: Pick<
                   LeadRow,
                   "id" | "name" | "launch_id" | "team_member_id"
@@ -834,7 +968,21 @@ function SalesTable({
                       {fmtRowMoney(total, s.id)}
                     </td>
                     <td className="px-3 py-3 text-right tabular-nums text-fg">
-                      {fmtRowMoney(collected, s.id)}
+                      <div className="flex items-center justify-end gap-1">
+                        <span>
+                          {fxLookup
+                            ? fmtNative(collectedDisplay.amount, collectedDisplay.currency)
+                            : fmtMoney(collected)}
+                        </span>
+                        {collectedDisplay.mixed && (
+                          <span
+                            className="rounded bg-warning/15 px-1 py-0.5 text-[10px] font-medium text-warning"
+                            title="Los cobros de esta venta están en moneda distinta al pactado. Se muestra el total convertido a USD."
+                          >
+                            moneda distinta
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td
                       className={
@@ -968,7 +1116,10 @@ function PaymentsTable({
   readonly productById: ReadonlyMap<string, ProductRow>;
   readonly installmentById: ReadonlyMap<string, InstallmentRow>;
   readonly paymentMethodById: ReadonlyMap<string, PaymentMethodRow>;
-  readonly accumByPaymentId: ReadonlyMap<string, number>;
+  readonly accumByPaymentId: ReadonlyMap<
+    string,
+    { amount: number; currency: Currency; mixed: boolean }
+  >;
   readonly canEdit: boolean;
   readonly fxLookup?: FxLookup;
   readonly filtersActive: boolean;
@@ -1076,7 +1227,24 @@ function PaymentsTable({
                       {fmtRowPay(p, Number(p.amount))}
                     </td>
                     <td className="px-3 py-3 text-right tabular-nums text-fg-muted">
-                      {fmtRowPay(p, accumByPaymentId.get(p.id) ?? 0)}
+                      {(() => {
+                        const acc = accumByPaymentId.get(p.id);
+                        if (!acc) return fmtRowPay(p, 0);
+                        if (!fxLookup) return fmtMoney(acc.amount);
+                        return (
+                          <span className="inline-flex items-center gap-1">
+                            {fmtNative(acc.amount, acc.currency)}
+                            {acc.mixed && (
+                              <span
+                                className="rounded bg-warning/15 px-1 py-0.5 text-[10px] font-medium text-warning"
+                                title="La venta tiene cobros en más de una moneda. El acumulado se muestra convertido a USD."
+                              >
+                                moneda distinta
+                              </span>
+                            )}
+                          </span>
+                        );
+                      })()}
                     </td>
                     {canEdit && (
                       <td className="px-3 py-3 text-right">

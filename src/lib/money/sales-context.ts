@@ -6,7 +6,10 @@
  *
  * Convención de moneda (coherente con el backfill `src/lib/backfill/fx.ts`):
  *   - Payment: moneda del banco del método (o del método si no tiene banco).
- *   - Sale: ARS si su launch tiene `ars_per_usd` cargado, USD si no.
+ *   - Sale: `sale.currency` (columna operativa desde migración 0106). Antes
+ *     se derivaba de "launch tiene tasa? entonces ARS" — heurística que
+ *     rompía saldos cuando la venta se pactaba en una moneda distinta a la
+ *     nativa del launch.
  *
  * Convención de tasa:
  *   - Payment: launch del sale del payment → fallback a tasa mensual del
@@ -41,6 +44,19 @@ interface SaleLike {
   readonly id: string;
   readonly lead_id: string;
   readonly total_amount: number;
+  readonly currency?: "ARS" | "USD" | null;
+  /**
+   * Atribución directa al launch (Fase 8). Cuando está presente le gana a
+   * `lead.launch_id` — necesario para leads reciclados donde el lead vive en
+   * otro launch pero la venta quedó anclada al original.
+   */
+  readonly launch_id?: string | null;
+  /**
+   * Fecha de cierre — sirve como anchor para el fallback a tasa mensual
+   * cuando el launch no tiene `ars_per_usd`. Si no viene, se usa el mes
+   * anchor del launch.
+   */
+  readonly closed_at?: string | null;
 }
 
 interface BankLike {
@@ -62,6 +78,12 @@ interface LeadLike {
 interface LaunchLike {
   readonly id: string;
   readonly ars_per_usd?: number | null;
+  /**
+   * Fechas del launch — usadas como anchor para el fallback a tasa
+   * mensual cuando el sale no tiene `closed_at` propio.
+   */
+  readonly date_start?: string | null;
+  readonly date_end?: string | null;
 }
 
 export interface BuildSalesFxContextArgs {
@@ -90,6 +112,13 @@ export function buildSalesFxContext(
   function launchOfSale(saleId: string): LaunchLike | null {
     const sale = salesById.get(saleId);
     if (!sale) return null;
+    // Fase 8: atribución propia de la venta le gana a la del lead. Si el
+    // lead fue reciclado a otro launch, la venta original sigue anclada
+    // acá vía `sales.launch_id`. Fallback al lead solo para ventas legacy.
+    if (sale.launch_id) {
+      const direct = launchesById.get(sale.launch_id);
+      if (direct) return direct;
+    }
     const lead = leadsById.get(sale.lead_id);
     if (!lead?.launch_id) return null;
     return launchesById.get(lead.launch_id) ?? null;
@@ -113,6 +142,12 @@ export function buildSalesFxContext(
   }
 
   function saleCurrency(sale: SaleLike): Currency {
+    // Fuente de verdad: `sales.currency` (migración 0106). Fallback a la
+    // heurística vieja sólo si la fila viene sin la columna — puede pasar
+    // en callsites que aún no incluyeron `currency` en el .select() (los
+    // tocamos progresivamente; el fallback los deja funcionando en ARS por
+    // default, que es el default de la columna).
+    if (sale.currency === "ARS" || sale.currency === "USD") return sale.currency;
     return launchRateOfSale(sale.id) ? "ARS" : "USD";
   }
 
@@ -130,9 +165,20 @@ export function buildSalesFxContext(
   function saleToUsd(sale: SaleLike): number | null {
     const currency = saleCurrency(sale);
     const launchRate = launchRateOfSale(sale.id);
+    // Anchor para tasa mensual: closed_at del sale, o el mes anchor del
+    // launch (date_end → date_start), o hoy como último recurso. Sin
+    // anchor no podemos consultar fxMap y las ventas ARS de launches sin
+    // tasa quedan sin convertir — mejor que sumarlas crudas en pesos.
+    const launch = launchOfSale(sale.id);
+    const anchor =
+      sale.closed_at ??
+      launch?.date_end ??
+      launch?.date_start ??
+      new Date().toISOString();
+    const monthlyRate = resolveMonthlyRateFromMap(args.fxMap, anchor);
     return toUsd(
       { amount: Number(sale.total_amount) || 0, currency },
-      { launchArsPerUsd: launchRate },
+      { launchArsPerUsd: launchRate, monthlyArsPerUsd: monthlyRate },
     );
   }
 
@@ -169,7 +215,12 @@ export interface FxLookup {
   byPaymentId: Record<string, PaymentFxEntry>;
 }
 
-type SaleForLookup = { id: string; lead_id: string; total_amount: number };
+type SaleForLookup = {
+  id: string;
+  lead_id: string;
+  total_amount: number;
+  currency?: "ARS" | "USD" | null;
+};
 type PaymentForLookup = {
   id: string;
   amount: number;

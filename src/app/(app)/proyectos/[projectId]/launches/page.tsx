@@ -11,10 +11,15 @@ import {
   getProjectRevenueUsdMap,
 } from "@/lib/launch-sales/list";
 import { listLaunchesForProject } from "@/lib/launches/list";
-import { fmtUsd } from "@/lib/money";
+import {
+  fmtUsd,
+  loadProjectFxRates,
+  resolveLaunchFallbackRate,
+} from "@/lib/money";
 import { listBanks } from "@/lib/banks/list";
 import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { userCanEditProject } from "@/lib/supabase/auth";
+import { createClient } from "@/lib/supabase/server";
 
 import { createLaunch } from "./actions";
 
@@ -26,25 +31,42 @@ export default async function LaunchesPage({
   readonly params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const [launches, canEdit, adsAggregates, kanbanSalesAggregates, paymentMethods, banks] =
-    await Promise.all([
-      listLaunchesForProject(projectId),
-      userCanEditProject(projectId),
-      listAggregatesForProject(projectId),
-      getKanbanSalesAggregatesForProject(projectId),
-      listPaymentMethods(projectId),
-      listBanks(),
-    ]);
+  const supabase = await createClient();
+  const [
+    launches,
+    canEdit,
+    adsAggregates,
+    kanbanSalesAggregates,
+    paymentMethods,
+    banks,
+    fxMap,
+  ] = await Promise.all([
+    listLaunchesForProject(projectId),
+    userCanEditProject(projectId),
+    listAggregatesForProject(projectId),
+    getKanbanSalesAggregatesForProject(projectId),
+    listPaymentMethods(projectId),
+    listBanks(),
+    loadProjectFxRates(supabase, projectId),
+  ]);
 
-  const ratePerLaunch = new Map(
-    launches.map((l) => {
-      const rate = (l as unknown as { ars_per_usd?: number | null }).ars_per_usd ?? null;
-      return [l.id, rate && rate > 0 ? rate : null] as const;
-    }),
-  );
+  const launchesForFx = launches.map((l) => {
+    const row = l as unknown as {
+      ars_per_usd?: number | null;
+      date_start?: string | null;
+      date_end?: string | null;
+    };
+    return {
+      id: l.id,
+      ars_per_usd: row.ars_per_usd ?? null,
+      date_start: row.date_start ?? null,
+      date_end: row.date_end ?? null,
+    };
+  });
   const revenueUsdMap = await getProjectRevenueUsdMap(
     projectId,
-    ratePerLaunch,
+    launchesForFx,
+    fxMap,
     paymentMethods as unknown as Array<{
       id: string;
       bank_id: string | null;
@@ -129,9 +151,10 @@ export default async function LaunchesPage({
               const launchRow = l as unknown as {
                 ars_per_usd?: number | null;
                 ads_currency?: string;
+                date_start?: string | null;
+                date_end?: string | null;
               };
-              const arsPerUsd = launchRow.ars_per_usd ?? null;
-              const revenueRate = arsPerUsd && arsPerUsd > 0 ? arsPerUsd : null;
+              const revenueRate = resolveLaunchFallbackRate(launchRow, fxMap);
               const usdRevenue = revenueUsdMap.get(l.id);
 
               const kpi = calculateLaunchKPIs(l, {
@@ -146,7 +169,18 @@ export default async function LaunchesPage({
                 revenueRatePerUsd: revenueRate,
               });
 
-              const fMoney = revenueRate ? fmtUsd : fmtMoney;
+              // Mostrar en USD si CUALQUIER camino de conversión funcionó:
+              // - hay tasa efectiva del launch (propia o monthly), o
+              // - el kanban devolvió montos USD válidos (via saleToUsd /
+              //   paymentToUsd, que ya aplican fallback interno launch→monthly
+              //   y respetan sale.currency='USD' nativo sin necesitar tasa).
+              // Antes: `revenueRate ? fmtUsd : fmtMoney` — una venta USD nativa
+              // en un launch sin tasa se mostraba como pesos crudos ("500")
+              // aunque el kpi.revenueEstimated ya viniera en USD.
+              const hasUsdRevenue =
+                (usdRevenue?.pledgedUsd ?? 0) > 0 ||
+                (usdRevenue?.collectedUsd ?? 0) > 0;
+              const fMoney = revenueRate || hasUsdRevenue ? fmtUsd : fmtMoney;
               const profitColor =
                 kpi.profitEstimated > 0
                   ? "text-success"

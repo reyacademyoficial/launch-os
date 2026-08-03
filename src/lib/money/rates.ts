@@ -92,6 +92,31 @@ export function getLaunchRate(launch: {
 }
 
 /**
+ * Devuelve la tasa efectiva del launch con fallback a la tasa mensual.
+ *
+ * Regla: `launch.ars_per_usd` → tasa mensual del mes anchor
+ * (`date_end ?? date_start ?? hoy`) → null.
+ *
+ * El anchor es el mes del launch — no el mes de cada cobro — porque este
+ * helper se usa para valores agregados sin fecha propia (revenue manual,
+ * inversión de ads cuando `ads_currency='ARS'`). Los pagos individuales
+ * SÍ deben usar `resolveMonthlyRateFromMap(paid_at)` vía `SalesFxContext`.
+ */
+export function resolveLaunchFallbackRate(
+  launch: {
+    ars_per_usd?: number | null;
+    date_end?: string | null;
+    date_start?: string | null;
+  },
+  fxMap: Map<string, number>,
+): number | null {
+  const own = getLaunchRate(launch);
+  if (own !== null) return own;
+  const anchor = launch.date_end ?? launch.date_start ?? new Date();
+  return resolveMonthlyRateFromMap(fxMap, anchor);
+}
+
+/**
  * Resuelve la moneda efectiva de un método de pago. Regla:
  *   - Si el método tiene banco → moneda del banco (fuente de verdad).
  *   - Si no tiene banco → `method.currency` (efectivo, otros).

@@ -259,7 +259,7 @@ function AddSaleForm({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-[2fr_1fr_1fr]">
         <div>
           <Label htmlFor="add-sale-total">Monto pactado *</Label>
           <Input
@@ -272,6 +272,17 @@ function AddSaleForm({
             placeholder="Ej: 1000"
             onChange={(e) => setTotalAmount(parseFloat(e.target.value) || 0)}
           />
+        </div>
+        <div>
+          <Label htmlFor="add-sale-currency">Moneda</Label>
+          <Select
+            id="add-sale-currency"
+            name="currency"
+            defaultValue="ARS"
+          >
+            <option value="ARS">Pesos (ARS)</option>
+            <option value="USD">Dólares (USD)</option>
+          </Select>
         </div>
         <div>
           <Label htmlFor="add-sale-closed-at">Fecha de cierre</Label>

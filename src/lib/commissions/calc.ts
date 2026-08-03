@@ -138,6 +138,20 @@ export interface CommissionBreakdown {
 /**
  * Cálculo de comisión — derivado en cada lectura, función pura.
  *
+ * ─── CONTRATO DE MONEDA (importante post-migración 0106) ───────────────────
+ * `collected` (suma de payments.amount) y `pledged` (sale.total_amount) DEBEN
+ * estar expresados en la MISMA moneda. Este cálculo hace `collected/pledged`
+ * para thresholds paid_ratio y para el escalado proporcional de tiers fixed;
+ * si un lado va en ARS y el otro en USD el ratio es basura y la comisión
+ * también.
+ *
+ * Es responsabilidad del CALLER normalizar los payments a la moneda del sale
+ * antes de llamar. Ver `normalizePaymentsForSaleCurrency` en
+ * `@/lib/money/commission-normalize` — helper canónico que hace el swap
+ * usando `FxLookup.byPaymentId[id].amountUsd` y la tasa efectiva del sale.
+ * Esta función se mantiene pura (sin FX ni lookups) para preservar
+ * testabilidad y evitar acoplarla al schema de conversión.
+ *
  * Inputs:
  *   - sale, payments: estado de la venta.
  *   - rule: regla aplicable (ya resuelta vía findApplicableRule).
@@ -179,6 +193,13 @@ export function computeCommission(
  * pre-calculados via RPC en vez de traer todos los payments crudos. Toda la
  * lógica de tiers/threshold/accrual es idéntica a `computeCommission`; ese
  * ahora es un wrapper delgado sobre esta función.
+ *
+ * Mismo CONTRATO DE MONEDA que `computeCommission`: `agg.collected` debe estar
+ * en la MISMA moneda que `sale.total_amount`. Bug conocido post-0106: los
+ * RPCs `leaderboard_sale_stats` (y afines) suman `payments.amount` crudo sin
+ * mirar `original_currency` — si un vendedor tiene ventas mixed-currency el
+ * número entra torcido. Fix requiere reescribir el RPC (o los callers
+ * agregados fuera de scope de este helper).
  */
 export function computeCommissionFromAgg(
   sale: Pick<SaleRow, "total_amount" | "commission_rule_snapshot">,
