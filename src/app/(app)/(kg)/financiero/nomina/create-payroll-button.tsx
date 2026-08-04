@@ -38,6 +38,7 @@ export function CreatePayrollButton({
         + Nueva liquidación
       </button>
       <PayrollFormDrawer
+        mode="create"
         open={open}
         onClose={() => setOpen(false)}
         people={people}

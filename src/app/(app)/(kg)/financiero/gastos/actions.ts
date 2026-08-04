@@ -28,6 +28,8 @@ export type LinkPaymentResult =
   | { ok: true }
   | { error: string };
 
+export type DeleteExpenseResult = { ok: true } | { error: string };
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Payload compartido create/update — mismos campos, dos actions distintas
 // ═══════════════════════════════════════════════════════════════════════════
@@ -309,6 +311,58 @@ export async function unlinkExpensePayment(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// deleteExpense — bloquea si el gasto está vinculado a un pago
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Mismo criterio que deleteBankMovement: si hay link (paid_at + bank_movement_id),
+// el operador tiene que desvincular primero desde "Ver pago". Sin este guard,
+// un borrado silencioso deja el bank_movement huérfano sin traza del gasto
+// que lo justificaba — imposible de auditar después.
+
+export async function deleteExpense(
+  expenseId: string,
+): Promise<DeleteExpenseResult> {
+  await requireRole("superadmin");
+
+  if (!expenseId) return { error: "Falta el id del gasto." };
+
+  const supabase = await createClient();
+
+  const { data: existing } = await supabase
+    .from("expenses")
+    .select("id, paid_at, bank_movement_id")
+    .eq("id", expenseId)
+    .maybeSingle();
+  if (!existing) {
+    return { error: "El gasto ya no existe o no tenés acceso." };
+  }
+
+  const row = existing as {
+    id: string;
+    paid_at: string | null;
+    bank_movement_id: string | null;
+  };
+  if (row.paid_at != null || row.bank_movement_id != null) {
+    return {
+      error:
+        "No se puede eliminar: el gasto está vinculado a un movimiento bancario. " +
+        'Desvinculá primero desde "Ver pago" y volvé a intentar.',
+    };
+  }
+
+  const { error } = await supabase
+    .from("expenses")
+    .delete()
+    .eq("id", expenseId);
+
+  if (error) return { error: translateExpenseError(error) };
+
+  revalidatePath("/financiero/gastos");
+  revalidatePath("/financiero");
+  return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Import xlsx — preview + confirm
 // ═══════════════════════════════════════════════════════════════════════════
 //
@@ -364,6 +418,9 @@ export async function previewExpensesImport(
 
   try {
     const parsed = await parseExpensesWorkbook(fileRes.buffer);
+    if (parsed.headerError) {
+      return { ok: false, error: parsed.headerError };
+    }
     return {
       ok: true,
       validCount: parsed.rows.length,
@@ -408,6 +465,9 @@ export async function confirmExpensesImport(
   try {
     const supabase = await createClient();
     const parsed = await parseExpensesWorkbook(fileRes.buffer);
+    if (parsed.headerError) {
+      return { ok: false, error: parsed.headerError };
+    }
 
     if (parsed.rows.length === 0) {
       return {

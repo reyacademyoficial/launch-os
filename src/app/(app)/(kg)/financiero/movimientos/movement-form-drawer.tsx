@@ -1,11 +1,12 @@
 "use client";
 
-import { useActionState, useEffect, useMemo } from "react";
+import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
 
 import { Drawer } from "@/components/kg/drawer";
 
 import {
   createBankMovement,
+  deleteBankMovement,
   updateBankMovement,
   type CreateBankMovementState,
   type UpdateBankMovementState,
@@ -84,9 +85,35 @@ function FormBody({
   const formAction = isEdit ? updateFormAction : createFormAction;
   const pending = isEdit ? updatePending : createPending;
 
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deletePending, startDelete] = useTransition();
+
   useEffect(() => {
     if (state && "ok" in state && state.ok) onClose();
   }, [state, onClose]);
+
+  function handleDelete() {
+    if (!isEdit) return;
+    const id = initial!.id!;
+    // Confirm nativo — mismo patrón que metodos-pago. El server rechaza si
+    // hay links a expenses/invoices/payroll/client_transfers.
+    if (
+      !confirm(
+        "¿Eliminar este movimiento bancario? Esta acción es irreversible y solo funciona si no está vinculado a gastos, facturas, nómina ni transferencias.",
+      )
+    ) {
+      return;
+    }
+    setDeleteError(null);
+    startDelete(async () => {
+      const r = await deleteBankMovement(id);
+      if ("error" in r) {
+        setDeleteError(r.error);
+        return;
+      }
+      onClose();
+    });
+  }
 
   const submitLabel = mode === "create" ? "Crear movimiento" : "Guardar cambios";
 
@@ -180,7 +207,7 @@ function FormBody({
         />
       </Field>
 
-      {state && "error" in state && (
+      {(state && "error" in state) || deleteError ? (
         <div
           style={{
             padding: "10px 14px",
@@ -191,39 +218,59 @@ function FormBody({
             fontSize: 12,
           }}
         >
-          {state.error}
+          {deleteError ?? (state as { error: string }).error}
         </div>
-      )}
+      ) : null}
 
       <div
         style={{
           display: "flex",
-          justifyContent: "flex-end",
+          justifyContent: isEdit ? "space-between" : "flex-end",
           gap: 8,
           marginTop: 4,
+          alignItems: "center",
         }}
       >
-        <button
-          type="button"
-          onClick={onClose}
-          disabled={pending}
-          className="kg-focus"
-          style={secondaryBtn}
-        >
-          Cancelar
-        </button>
-        <button
-          type="submit"
-          disabled={pending}
-          className="kg-focus"
-          style={{ ...primaryBtn, opacity: pending ? 0.7 : 1 }}
-        >
-          {pending
-            ? mode === "create"
-              ? "Creando…"
-              : "Guardando…"
-            : submitLabel}
-        </button>
+        {isEdit && (
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={pending || deletePending}
+            className="kg-focus"
+            style={{
+              ...secondaryBtn,
+              color: "#EF4444",
+              borderColor: "#EF4444",
+              opacity: pending || deletePending ? 0.6 : 1,
+            }}
+            title="Eliminar movimiento"
+          >
+            {deletePending ? "Eliminando…" : "Eliminar"}
+          </button>
+        )}
+        <div style={{ display: "inline-flex", gap: 8, marginLeft: "auto" }}>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={pending || deletePending}
+            className="kg-focus"
+            style={secondaryBtn}
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={pending || deletePending}
+            className="kg-focus"
+            style={{ ...primaryBtn, opacity: pending ? 0.7 : 1 }}
+          >
+            {pending
+              ? mode === "create"
+                ? "Creando…"
+                : "Guardando…"
+              : submitLabel}
+          </button>
+        </div>
       </div>
     </form>
   );

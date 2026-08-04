@@ -17,13 +17,12 @@ import { translateBankMovementError } from "./translate-error";
 // ═══════════════════════════════════════════════════════════════════════════
 // Server actions para bank_movements desde Kingrow — post 0101, org-scope.
 //
-// Sin delete. Un movimiento borrado dejaría `expenses.bank_movement_id` en
-// NULL (FK SET NULL) pero el `expenses.paid_at` seguiría seteado — el gasto
-// queda "pagado sin movimiento", estado inconsistente que el drawer de
-// linkPayment no puede corregir (no ofrece re-vincular un gasto ya pagado).
-// La política es: si te equivocaste, editás; si el movimiento no debería
-// existir, editá la fecha/monto a lo correcto o dejá una nota. Coherente
-// con la política del bloque de gastos.
+// Delete: permitido solo si el movimiento NO está vinculado a expenses,
+// invoices, payroll ni client_transfers. Todas las FKs son ON DELETE SET
+// NULL, así que borrarlo con links dejaría el satélite en estado
+// inconsistente (paid_at seteado pero bank_movement_id=NULL, sin forma de
+// re-vincular desde la UI). Si el movimiento está linkeado, hay que
+// desvincularlo primero desde el módulo correspondiente.
 //
 // bank_id NO se puede cambiar en update. Igual que con `updatePaymentMethod`
 // respecto a project_id — cambiarlo rompería la coherencia con lo que ya
@@ -40,6 +39,8 @@ export type UpdateBankMovementState =
   | { ok: true }
   | { error: string }
   | null;
+
+export type DeleteBankMovementResult = { ok: true } | { error: string };
 
 interface BankMovementPayload {
   readonly bankId: string;
@@ -186,6 +187,83 @@ export async function updateBankMovement(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// deleteBankMovement — solo si no está vinculado a nada
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Chequea manualmente expenses / invoices / payroll / client_transfers antes
+// de borrar. Las FKs son ON DELETE SET NULL, así que la DB no rebota — el
+// guard es exclusivamente aplicativo. Si hay algún link, devolvemos un
+// mensaje que le dice al operador dónde tiene que ir a desvincular primero.
+
+export async function deleteBankMovement(
+  movementId: string,
+): Promise<DeleteBankMovementResult> {
+  await requireRole("superadmin");
+
+  if (!movementId) return { error: "Falta el id del movimiento." };
+
+  const supabase = await createClient();
+
+  // Chequeo de existencia + org via RLS. Si RLS lo esconde, maybeSingle
+  // devuelve null y avisamos claro.
+  const { data: existing } = await supabase
+    .from("bank_movements")
+    .select("id")
+    .eq("id", movementId)
+    .maybeSingle();
+  if (!existing) {
+    return { error: "El movimiento ya no existe o no tenés acceso." };
+  }
+
+  const linkChecks = await Promise.all([
+    supabase
+      .from("expenses")
+      .select("id", { count: "exact", head: true })
+      .eq("bank_movement_id", movementId),
+    supabase
+      .from("invoices")
+      .select("id", { count: "exact", head: true })
+      .eq("bank_movement_id", movementId),
+    supabase
+      .from("payroll")
+      .select("id", { count: "exact", head: true })
+      .eq("bank_movement_id", movementId),
+    supabase
+      .from("client_transfers")
+      .select("id", { count: "exact", head: true })
+      .eq("bank_movement_id", movementId),
+  ]);
+
+  const [expenses, invoices, payroll, transfers] = linkChecks;
+  const linked: string[] = [];
+  if ((expenses.count ?? 0) > 0) linked.push(`${expenses.count} gasto(s)`);
+  if ((invoices.count ?? 0) > 0) linked.push(`${invoices.count} factura(s)`);
+  if ((payroll.count ?? 0) > 0) linked.push(`${payroll.count} liquidación(es) de nómina`);
+  if ((transfers.count ?? 0) > 0) linked.push(`${transfers.count} transferencia(s) a cliente`);
+
+  if (linked.length > 0) {
+    return {
+      error:
+        `No se puede eliminar: este movimiento está vinculado a ${linked.join(", ")}. ` +
+        `Desvinculá primero desde el módulo correspondiente (por ej. "Desvincular pago" en Gastos) y volvé a intentar.`,
+    };
+  }
+
+  const { error } = await supabase
+    .from("bank_movements")
+    .delete()
+    .eq("id", movementId);
+
+  if (error) return { error: translateBankMovementError(error) };
+
+  revalidatePath("/financiero/movimientos");
+  revalidatePath("/financiero/bancos");
+  revalidatePath("/financiero/gastos");
+  revalidatePath("/financiero");
+  return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Import xlsx — preview (dry-run) + confirm (insert batched)
 // ═══════════════════════════════════════════════════════════════════════════
 //
@@ -255,6 +333,9 @@ export async function previewMovementsImport(
   try {
     const banksByName = await loadBanksByName();
     const parsed = await parseMovementsWorkbook(fileRes.buffer, banksByName);
+    if (parsed.headerError) {
+      return { ok: false, error: parsed.headerError };
+    }
     return {
       ok: true,
       validCount: parsed.rows.length,
@@ -300,6 +381,9 @@ export async function confirmMovementsImport(
     const supabase = await createClient();
     const banksByName = await loadBanksByName();
     const parsed = await parseMovementsWorkbook(fileRes.buffer, banksByName);
+    if (parsed.headerError) {
+      return { ok: false, error: parsed.headerError };
+    }
 
     if (parsed.rows.length === 0) {
       return {

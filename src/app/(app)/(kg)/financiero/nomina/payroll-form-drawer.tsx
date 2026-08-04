@@ -5,12 +5,17 @@ import { useActionState, useEffect, useMemo, useState } from "react";
 import { Drawer } from "@/components/kg/drawer";
 import { fMoney } from "@/lib/finance/format";
 
-import { createPayroll, type CreatePayrollState } from "./actions";
+import {
+  createPayroll,
+  updatePayroll,
+  type CreatePayrollState,
+  type UpdatePayrollState,
+} from "./actions";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Drawer para crear una liquidación de nómina.
+// Drawer para crear o editar una liquidación de nómina.
 //
-// Flujo típico:
+// Flujo típico (create):
 //   1) Elegí a la persona → base_salary y currency se autocompletan desde el
 //      perfil (organization_people.monthly_salary, salary_currency).
 //   2) Ajustá el período (default: mes-actual, día 1 → último día).
@@ -19,6 +24,10 @@ import { createPayroll, type CreatePayrollState } from "./actions";
 //   4) Total = base + Σ extras (calculado en vivo).
 //   5) Guardá → row impaga → aparece como cuenta por pagar en el dashboard
 //      financiero hasta que la marques como pagada.
+//
+// Edit: prepobla con `initial`, llama a `updatePayroll` bindeado con el
+// payrollId. NO auto-piso base/currency al cambiar de persona en edit — si
+// el operador cambió a mano, respetamos.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export interface PersonOption {
@@ -28,6 +37,19 @@ export interface PersonOption {
   readonly salary_currency: "ARS" | "USD";
 }
 
+export interface PayrollInitial {
+  readonly id: string;
+  readonly personId: string;
+  readonly periodStart: string;
+  readonly periodEnd: string;
+  readonly baseSalary: number;
+  /** Serializado como {label: amount} — misma forma que jsonb `extras`. */
+  readonly extras: Record<string, number>;
+  readonly currency: "ARS" | "USD";
+  readonly dueDate: string | null;
+  readonly notes: string | null;
+}
+
 interface ExtraRow {
   readonly id: number; // key local, no viaja al server
   readonly label: string;
@@ -35,56 +57,105 @@ interface ExtraRow {
 }
 
 export function PayrollFormDrawer({
+  mode,
   open,
   onClose,
   people,
+  initial,
 }: {
+  readonly mode: "create" | "edit";
   readonly open: boolean;
   readonly onClose: () => void;
   readonly people: ReadonlyArray<PersonOption>;
+  readonly initial?: PayrollInitial;
 }) {
   if (!open) return null;
+  const title = mode === "create" ? "Nueva liquidación" : "Editar liquidación";
   return (
-    <Drawer open={open} onClose={onClose} title="Nueva liquidación" width={560}>
-      <PayrollFormBody people={people} onClose={onClose} />
+    <Drawer open={open} onClose={onClose} title={title} width={560}>
+      <PayrollFormBody
+        mode={mode}
+        people={people}
+        onClose={onClose}
+        initial={initial}
+      />
     </Drawer>
   );
 }
 
 function PayrollFormBody({
+  mode,
   people,
   onClose,
+  initial,
 }: {
+  readonly mode: "create" | "edit";
   readonly people: ReadonlyArray<PersonOption>;
   readonly onClose: () => void;
+  readonly initial?: PayrollInitial;
 }) {
-  const [state, formAction, pending] = useActionState<
+  const isEdit = mode === "edit" && initial != null;
+
+  // Bindeo del updatePayroll con el id — useMemo para que la referencia sea
+  // estable y useActionState no reinicialice.
+  const updateBound = useMemo(() => {
+    if (!isEdit) return null;
+    const id = initial!.id;
+    return async (prev: UpdatePayrollState, fd: FormData) =>
+      updatePayroll(id, prev, fd);
+  }, [isEdit, initial]);
+
+  const [createState, createFormAction, createPending] = useActionState<
     CreatePayrollState,
     FormData
   >(createPayroll, null);
+  const [updateState, updateFormAction, updatePending] = useActionState<
+    UpdatePayrollState,
+    FormData
+  >(
+    updateBound ??
+      (async () => ({ error: "Modo edit sin id" as string }) as never),
+    null,
+  );
+
+  const state = isEdit ? updateState : createState;
+  const formAction = isEdit ? updateFormAction : createFormAction;
+  const pending = isEdit ? updatePending : createPending;
 
   useEffect(() => {
     if (state && "ok" in state && state.ok) onClose();
   }, [state, onClose]);
 
-  // Default: primera persona activa (si hay). Al cambiar la persona, la base
-  // y la moneda se autopoblan desde su perfil en el mismo onChange — evita el
-  // patrón useEffect(setState) que causa render en cascada.
-  const [personId, setPersonId] = useState<string>(people[0]?.id ?? "");
+  // Defaults: edit → initial; create → primera persona activa.
+  const [personId, setPersonId] = useState<string>(
+    initial?.personId ?? people[0]?.id ?? "",
+  );
 
   const initialPeriod = useMemo(() => monthBoundsToday(), []);
-  const [periodStart, setPeriodStart] = useState(initialPeriod.start);
-  const [periodEnd, setPeriodEnd] = useState(initialPeriod.end);
+  const [periodStart, setPeriodStart] = useState(
+    initial?.periodStart ?? initialPeriod.start,
+  );
+  const [periodEnd, setPeriodEnd] = useState(
+    initial?.periodEnd ?? initialPeriod.end,
+  );
 
   const [baseSalary, setBaseSalary] = useState<string>(
-    people[0]?.monthly_salary != null ? String(people[0].monthly_salary) : "0",
+    initial != null
+      ? String(initial.baseSalary)
+      : people[0]?.monthly_salary != null
+        ? String(people[0].monthly_salary)
+        : "0",
   );
   const [currency, setCurrency] = useState<"ARS" | "USD">(
-    people[0]?.salary_currency ?? "ARS",
+    initial?.currency ?? people[0]?.salary_currency ?? "ARS",
   );
 
+  // Solo en create autopoblamos base/currency al cambiar de persona. En edit,
+  // respetamos lo que el operador guardó — cambiar persona no debería pisar
+  // un total ya calculado.
   function handlePersonChange(nextId: string) {
     setPersonId(nextId);
+    if (isEdit) return;
     const next = people.find((p) => p.id === nextId);
     if (next) {
       setBaseSalary(String(next.monthly_salary));
@@ -92,8 +163,17 @@ function PayrollFormBody({
     }
   }
 
-  const [extras, setExtras] = useState<ExtraRow[]>([]);
-  const [nextExtraId, setNextExtraId] = useState(1);
+  const [extras, setExtras] = useState<ExtraRow[]>(() => {
+    if (initial == null) return [];
+    return Object.entries(initial.extras).map(([label, amount], i) => ({
+      id: i + 1,
+      label,
+      amount: String(amount),
+    }));
+  });
+  const [nextExtraId, setNextExtraId] = useState(
+    initial != null ? Object.keys(initial.extras).length + 1 : 1,
+  );
 
   function addExtra() {
     setExtras((prev) => [
@@ -358,7 +438,7 @@ function PayrollFormBody({
           name="due_date"
           type="date"
           style={inputStyle}
-          defaultValue={initialPeriod.end}
+          defaultValue={initial?.dueDate ?? initialPeriod.end}
         />
       </Field>
 
@@ -369,6 +449,7 @@ function PayrollFormBody({
           type="text"
           placeholder="Opcional"
           style={inputStyle}
+          defaultValue={initial?.notes ?? ""}
         />
       </Field>
 
@@ -413,7 +494,13 @@ function PayrollFormBody({
             opacity: pending || totalIsNegative ? 0.7 : 1,
           }}
         >
-          {pending ? "Creando…" : "Crear liquidación"}
+          {pending
+            ? isEdit
+              ? "Guardando…"
+              : "Creando…"
+            : isEdit
+              ? "Guardar cambios"
+              : "Crear liquidación"}
         </button>
       </div>
     </form>

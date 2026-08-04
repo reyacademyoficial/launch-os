@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 
 import { KgDataTable, type Column } from "@/components/kg/data-table";
 import {
@@ -9,6 +9,7 @@ import {
 } from "@/lib/finance/expense-categories";
 import { fMoney } from "@/lib/finance/format";
 
+import { deleteExpense } from "./actions";
 import { ExpenseFormDrawer } from "./expense-form-drawer";
 import { ImportExpensesButton } from "./import-drawer";
 import {
@@ -235,14 +236,35 @@ function RowActions({
   readonly onLink: () => void;
 }) {
   const linked = row.paidAt != null && row.bankMovementId != null;
+  const [deletePending, startDelete] = useTransition();
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  function handleDelete() {
+    const msg = linked
+      ? `¿Eliminar el gasto "${row.description}"? Está vinculado a un movimiento bancario — vas a tener que desvincular primero desde "Ver pago".`
+      : `¿Eliminar el gasto "${row.description}"? Esta acción es irreversible.`;
+    if (!confirm(msg)) return;
+    setDeleteError(null);
+    startDelete(async () => {
+      const r = await deleteExpense(row.id);
+      if ("error" in r) setDeleteError(r.error);
+    });
+  }
+
   return (
     <div
       style={{
         display: "inline-flex",
         gap: 6,
         justifyContent: "flex-end",
+        alignItems: "center",
       }}
     >
+      {deleteError && (
+        <span style={{ color: "#EF4444", fontSize: 10 }} title={deleteError}>
+          ⚠
+        </span>
+      )}
       <button
         type="button"
         onClick={onEdit}
@@ -263,6 +285,21 @@ function RowActions({
         title={linked ? "Ver / desvincular pago" : "Vincular pago"}
       >
         {linked ? "Ver pago" : "Vincular pago"}
+      </button>
+      <button
+        type="button"
+        onClick={handleDelete}
+        disabled={deletePending}
+        className="kg-focus"
+        style={{
+          ...ghostBtn,
+          color: "#EF4444",
+          cursor: deletePending ? "wait" : "pointer",
+          opacity: deletePending ? 0.6 : 1,
+        }}
+        title="Borrar gasto"
+      >
+        {deletePending ? "…" : "Borrar"}
       </button>
     </div>
   );

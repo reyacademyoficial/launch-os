@@ -124,17 +124,28 @@ export function ImportXlsxDrawer({
             </button>
           )}
           {step === "review" && preview && preview.ok && (
-            <button
-              type="button"
-              onClick={handleConfirm}
-              disabled={preview.validCount === 0 || pending}
-              className="kg-focus"
-              style={primaryBtn(preview.validCount === 0 || pending)}
-            >
-              {pending
-                ? "Importando…"
-                : `Importar ${preview.validCount} fila${preview.validCount === 1 ? "" : "s"}`}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setPreview(null)}
+                className="kg-focus"
+                style={ghostBtn}
+                title="Elegir otro archivo o re-analizar el actual después de editarlo"
+              >
+                Cambiar archivo
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirm}
+                disabled={preview.validCount === 0 || pending}
+                className="kg-focus"
+                style={primaryBtn(preview.validCount === 0 || pending)}
+              >
+                {pending
+                  ? "Importando…"
+                  : `Importar ${preview.validCount} fila${preview.validCount === 1 ? "" : "s"}`}
+              </button>
+            </>
           )}
         </div>
       }
@@ -180,6 +191,13 @@ export function ImportXlsxDrawer({
               ref={inputRef}
               type="file"
               accept=".xlsx"
+              // onClick clarea el value ANTES de la selección — sin esto el
+              // navegador no dispara onChange si el usuario re-selecciona el
+              // mismo archivo (aunque lo haya modificado en disco). Efecto
+              // colateral: el drawer se queda pegado con el archivo viejo.
+              onClick={(e) => {
+                (e.currentTarget as HTMLInputElement).value = "";
+              }}
               onChange={(e) => {
                 const f = e.target.files?.[0] ?? null;
                 setFile(f);
@@ -196,6 +214,18 @@ export function ImportXlsxDrawer({
                 fontSize: 13,
               }}
             />
+            {file && (
+              <div
+                className="kg-t7"
+                style={{
+                  color: "var(--kg-text-3)",
+                  marginTop: 6,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {file.name} · {formatBytes(file.size)}
+              </div>
+            )}
           </div>
 
           {preview && !preview.ok && (
@@ -226,10 +256,11 @@ export function ImportXlsxDrawer({
                 className="kg-t7"
                 style={{ color: "var(--kg-text-3)", marginBottom: 8 }}
               >
-                Filas descartadas (mostrando hasta 20)
+                Filas descartadas (mostrando hasta 50). Cada fila lista TODOS
+                los problemas — corregilos todos y volvé a subir el archivo.
               </div>
-              <ErrorList errors={preview.errors.slice(0, 20)} />
-              {preview.errors.length > 20 && (
+              <ErrorList errors={preview.errors.slice(0, 50)} />
+              {preview.errors.length > 50 && (
                 <div
                   className="kg-t7"
                   style={{
@@ -238,7 +269,7 @@ export function ImportXlsxDrawer({
                     fontStyle: "italic",
                   }}
                 >
-                  … y {preview.errors.length - 20} más.
+                  … y {preview.errors.length - 50} más.
                 </div>
               )}
             </div>
@@ -391,6 +422,12 @@ function Callout({
       {children}
     </div>
   );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 const ghostBtn: React.CSSProperties = {
