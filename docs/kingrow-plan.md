@@ -45,11 +45,13 @@ específica de esta fase inicial.
 
 ### Preguntas del Gate 0 resueltas
 
-- **Clients ↔ projects:** confirmado por el usuario. "Cliente" en Kingrow = empresa B2B
-  externa que contrata a Kingrow. Se modela como fila en `projects` con
-  `organization_id`. **No hay tabla `clients` explícita.** Vale para v1; si más adelante
-  crecen los metadatos B2B (contacto, industria, revenue potencial), se sube a tabla
-  propia sin drama.
+- **Clients ↔ projects:** "Cliente" en Kingrow = empresa B2B externa que contrata a
+  Kingrow. **Refactor 2026-08-04 (migración 0110):** se creó tabla `clients` explícita
+  + `projects.client_id nullable → clients(id)`. Las 5 tablas del bloque 3 pivotearon
+  de `project_id` a `client_id` (destructivo seguro, tablas estaban en cero). Ahora un
+  cliente da de alta N projects, no al revés — matchea el flujo natural. Tickets es la
+  excepción: `client_id NOT NULL + project_id NULLABLE` (permite ticket cross-project o
+  específico de un launch, con trigger que valida coherencia).
 - **Guard Academia:** el trigger de `0079_projects_ownership_guard.sql` bloquea downgrade
   de `ownership='propia'` cuando hay students/courses/cohorts colgados. Cada tabla del
   bloque 4 tiene además su `guard_propia_project()` per-row. Rey Academy y Growins
@@ -123,28 +125,57 @@ resume significa reescribirlo después.
 
 ## 1. Clientes
 
-Backend: bloque 3 (0080-0084). Cero filas en las 5 tablas.
+Backend: bloque 3 (0080-0084) + **refactor 0110 a modelo cliente-céntrico**. Cero filas
+en las 5 tablas del bloque 3 al momento del refactor.
+
+### 1.0 Refactor 0110 (2026-08-04) — pivot a cliente-céntrico
+
+Antes: `project → cliente implícito (business_name texto libre)`. Ahora: `client →
+tiene N projects`. Migración destructiva segura porque las 5 tablas estaban vacías.
+
+- [x] Nueva tabla `clients` (org-scope, unique por lower(name) mientras esté active).
+- [x] `projects.client_id nullable → clients(id) on delete set null` (project sin
+      cliente asignado es válido — proyecto interno o heredado de LaunchOS).
+- [x] Pivot de `project_id → client_id NOT NULL` en `project_health`, `nps_responses`,
+      `renewals`, `upsells`.
+- [x] `tickets`: híbrido — `client_id NOT NULL + project_id NULLABLE`, con trigger
+      que valida coherencia (si project_id está seteado, el project pertenece al
+      mismo cliente).
+- [x] Adaptación `src/lib/clients/{types,churn}.ts` + tests (project_id→client_id en
+      shapes, `projectId→clientId` en `ChurnCohortEntry`, `totalProjects→totalClients`
+      en `ChurnRateBreakdown`).
+- [x] Andamio pivoteado: `[projectId]` → `[clientId]`, fetch de `clients`.
 
 ### 1.1 Sub-gate del bloque
 
-- [ ] Leer las 5 migraciones, listar columnas y RLS explícito (aunque ya se auditó a
-      nivel Gate 0, hay que releerlas justo antes de escribir código).
-- [ ] Confirmar que `src/lib/clients/{health,ltv,churn,types}.ts` no cambió desde el
-      Gate 0.
-- [ ] Decidir estructura de rutas: una sola `/clientes` con tabs, o
-      `/clientes/[projectId]/{overview,tickets,renewals,upsells,nps}` con sub-rutas.
+- [x] Leer las 5 migraciones + revisar RLS org-scope + triggers de consistencia.
+- [x] Adaptar `src/lib/clients/*.ts` al modelo post-0110.
+- [x] Estructura de rutas: `/clientes` (dashboard con listado de clientes) +
+      `/clientes/{tickets,renovaciones,upsells,nps}` (tablas globales) +
+      `/clientes/[clientId]` (ficha del cliente con sub-tabs internos + projects
+      atados).
 
 ### 1.2 CRUD (primero — todo en cero)
 
 Cada uno con: form en `Drawer`, server action, validación manual, RLS org-scope.
 
-- [ ] **project_health**: setear health inicial (relationship_status, health_score
-      override manual opcional, last_contact_at, notes).
-- [ ] **nps_responses**: cargar respuesta (respondent, score 0-10, comment, channel).
-- [ ] **tickets**: crear ticket (title, description, priority, category, due_date,
-      assignee_person_id opcional).
-- [ ] **renewals**: registrar renovación (period_start/end, amount, currency, status).
-- [ ] **upsells**: registrar upsell (title, description, amount, currency, status).
+- [ ] **clients** (nuevo — bloque 3.5): crear/editar cliente (name, business_name,
+      industry, notes, active). **Primero del módulo** — sin al menos un cliente no
+      hay dónde colgar el resto.
+- [ ] **project_health**: setear health inicial del cliente (relationship_status,
+      health_score override manual opcional, last_contact_at, notes). 1 fila por
+      cliente (unique client_id).
+- [ ] **projects.client_id (edición)**: desde la ficha del cliente, atar/desatar
+      projects existentes. Es un update de projects, no un CRUD de projects.
+- [ ] **nps_responses**: cargar respuesta del cliente (respondent, score 0-10,
+      comment, channel).
+- [ ] **tickets**: crear ticket del cliente (title, description, priority, category,
+      due_date, assignee_person_id opcional, project_id OPCIONAL — solo si el
+      ticket es específico de un launch del cliente).
+- [ ] **renewals**: registrar renovación del contrato de gestión (period_start/end,
+      amount, currency, status).
+- [ ] **upsells**: registrar upsell al cliente (title, description, amount,
+      currency, status).
 
 Reglas transversales:
 - [ ] Sin borrado. Se cambia status a `perdida` o se marca `active=false`.
@@ -153,13 +184,14 @@ Reglas transversales:
 
 ### 1.3 Lectura (después del CRUD)
 
-- [ ] Listado de clientes (= projects) con estado, responsable y health score
-      calculado.
-- [ ] Ficha de cliente con tabs: overview, tickets, renovaciones, upsells, NPS.
-- [ ] **LTV por cliente.** Reusar la lógica ya existente en `src/lib/clients/ltv.ts`
-      (usa criterio percibido cobrado + liquidaciones retenidas + renewals cobradas +
-      upsells cobrados). Es coherente con `finance/revenue.ts`. No escribir una segunda
-      definición.
+- [ ] Listado de clientes en `/clientes` con estado, responsable y health score
+      calculado. `active=false` van al final o se ocultan por filtro.
+- [ ] Ficha `/clientes/[clientId]` con sub-tabs internos: overview, tickets,
+      renovaciones, upsells, NPS, projects atados.
+- [ ] **LTV por cliente.** Sumar `launch_settlements.kingrow_retained` de los projects
+      atados al cliente + invoices cobradas de esos projects + renewals cobradas del
+      cliente + upsells cobrados del cliente. Reusar `src/lib/clients/ltv.ts` (el
+      selector no cambia; el caller filtra por client_id vía projects).
 - [ ] Dashboard del módulo: clientes activos, en riesgo, NPS promedio, LTV promedio.
 
 ### 1.4 Fórmula de health_score (decisión cerrada, opción A)
@@ -211,10 +243,13 @@ devuelve ese valor y pinta badge `"Manual"`. Volver a null → automático.
 
 ### 1.5 Verificación al cerrar
 
-- [ ] Cargar al menos 3 clientes reales con datos de negocio de Elbio (o reyacademy).
-- [ ] Los 5 forms devuelven a la ficha del cliente sin recargar completo.
+- [ ] Cargar al menos 3 clientes reales, atar 1-2 projects existentes a cada uno.
+- [ ] Los 6 forms (clients, health, nps, tickets, renewals, upsells) devuelven a la
+      ficha del cliente sin recargar completo.
 - [ ] Health score = 100 para un cliente feliz reciente, 0 para uno abandonado.
-- [ ] LTV coincide con Financiero.
+- [ ] LTV coincide con Financiero (sumado sobre los projects atados al cliente).
+- [ ] Un ticket con `project_id` seteado a un project de otro cliente rebota con el
+      mensaje del trigger (verifica el guard de coherencia de 0110).
 
 > Notas del bloque Clientes:
 > _(completar durante el trabajo)_

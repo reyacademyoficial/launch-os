@@ -1,7 +1,15 @@
 /**
- * Tipos org-level para el módulo Clientes de Kingrow (Bloque 3).
+ * Tipos org-level para el módulo Clientes de Kingrow (Bloque 3 + 3.5).
  *
- * "Cliente" acá = `project` gestionado (empresa), NO cliente final del launch.
+ * "Cliente" acá = empresa B2B externa (fila en `clients`, migración 0110),
+ * NO cliente final del launch. Las 5 tablas del bloque 3 (project_health,
+ * nps_responses, tickets, renewals, upsells) pivotearon a client_id en
+ * migración 0110 — vive con el cliente, no con un launch.
+ *
+ * Excepción: TicketRow mantiene project_id OPCIONAL para el caso "esto
+ * pasa en un launch específico". El trigger de tickets valida que si
+ * project_id está seteado, el project pertenece al mismo cliente.
+ *
  * Los selectores en health.ts / ltv.ts / churn.ts leen estos shapes; el
  * caller (server action / loader) es responsable de castear las rows de
  * Supabase antes de pasarlas. Los selectores NUNCA tocan Supabase (patrón
@@ -13,7 +21,20 @@
  */
 
 // ═══════════════════════════════════════════════════════════════════════════
-// project_health (0080)
+// clients (0110)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface ClientRow {
+  id: string;
+  organization_id: string;
+  name: string;
+  business_name: string | null;
+  industry: string | null;
+  active: boolean;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// project_health (0080 → 0110)
 // ═══════════════════════════════════════════════════════════════════════════
 
 export type RelationshipStatus =
@@ -23,7 +44,7 @@ export type RelationshipStatus =
   | "perdida";
 
 export interface ProjectHealthRow {
-  project_id: string;
+  client_id: string;
   organization_id: string;
   health_score: number | null;
   relationship_status: RelationshipStatus;
@@ -31,19 +52,23 @@ export interface ProjectHealthRow {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// nps_responses (0081)
+// nps_responses (0081 → 0110)
 // ═══════════════════════════════════════════════════════════════════════════
 
 export type NpsBucket = "promoter" | "passive" | "detractor";
 
 export interface NpsResponseRow {
-  project_id: string;
+  client_id: string;
   score: number; // 0..10
   responded_at: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// tickets (0082)
+// tickets (0082 → 0110)
+//
+// client_id NOT NULL, project_id OPCIONAL. Un ticket vive con el cliente;
+// project_id atado solo si el ticket es específico de un launch (rota una
+// campaña, cambio de plan en un launch puntual).
 // ═══════════════════════════════════════════════════════════════════════════
 
 export type TicketStatus =
@@ -56,7 +81,8 @@ export type TicketStatus =
 export type TicketPriority = "baja" | "media" | "alta" | "urgente";
 
 export interface TicketRow {
-  project_id: string;
+  client_id: string;
+  project_id: string | null;
   status: TicketStatus;
   priority: TicketPriority;
   created_at: string;
@@ -64,7 +90,7 @@ export interface TicketRow {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// renewals (0083)
+// renewals (0083 → 0110)
 // ═══════════════════════════════════════════════════════════════════════════
 
 export type RenewalStatus =
@@ -75,7 +101,7 @@ export type RenewalStatus =
   | "perdida";
 
 export interface RenewalRow {
-  project_id: string;
+  client_id: string;
   period_start: string;
   period_end: string;
   amount: number;
@@ -84,13 +110,13 @@ export interface RenewalRow {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// upsells (0084)
+// upsells (0084 → 0110)
 // ═══════════════════════════════════════════════════════════════════════════
 
 export type UpsellStatus = RenewalStatus; // misma máquina de estados
 
 export interface UpsellRow {
-  project_id: string;
+  client_id: string;
   amount: number;
   status: UpsellStatus;
   closed_at: string | null;

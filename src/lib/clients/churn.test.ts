@@ -10,9 +10,9 @@ import type { ProjectHealthRow, RenewalRow } from "./types";
 
 function health(
   overrides: Partial<ProjectHealthRow> = {},
-): Pick<ProjectHealthRow, "project_id" | "relationship_status"> {
+): Pick<ProjectHealthRow, "client_id" | "relationship_status"> {
   return {
-    project_id: "proj-a",
+    client_id: "cli-a",
     relationship_status: "activa",
     ...overrides,
   };
@@ -20,7 +20,7 @@ function health(
 
 function renewal(overrides: Partial<RenewalRow> = {}): RenewalRow {
   return {
-    project_id: "proj-a",
+    client_id: "cli-a",
     period_start: "2026-01-01",
     period_end: "2026-01-31",
     amount: 1000,
@@ -91,7 +91,7 @@ describe("isAtRisk", () => {
 describe("computeChurnRate", () => {
   it("cohort vacío → todo null (no dividir por cero)", () => {
     const r = computeChurnRate([]);
-    expect(r.totalProjects).toBe(0);
+    expect(r.totalClients).toBe(0);
     expect(r.churnRate).toBeNull();
     expect(r.atRiskRate).toBeNull();
   });
@@ -99,28 +99,28 @@ describe("computeChurnRate", () => {
   it("cohort de 4: 1 perdida + 1 en_riesgo + 2 activas", () => {
     const cohort: ChurnCohortEntry[] = [
       {
-        projectId: "p1",
+        clientId: "c1",
         input: {
           health: health({ relationship_status: "perdida" }),
           renewals: [],
         },
       },
       {
-        projectId: "p2",
+        clientId: "c2",
         input: {
           health: health({ relationship_status: "en_riesgo" }),
           renewals: [],
         },
       },
       {
-        projectId: "p3",
+        clientId: "c3",
         input: {
           health: health({ relationship_status: "activa" }),
           renewals: [renewal({ status: "cobrada" })],
         },
       },
       {
-        projectId: "p4",
+        clientId: "c4",
         input: {
           health: health({ relationship_status: "activa" }),
           renewals: [],
@@ -128,31 +128,31 @@ describe("computeChurnRate", () => {
       },
     ];
     const r = computeChurnRate(cohort);
-    expect(r.totalProjects).toBe(4);
-    expect(r.churnedProjects).toBe(1);
-    expect(r.atRiskProjects).toBe(1);
+    expect(r.totalClients).toBe(4);
+    expect(r.churnedClients).toBe(1);
+    expect(r.atRiskClients).toBe(1);
     expect(r.churnRate).toBe(0.25);
     expect(r.atRiskRate).toBe(0.25);
   });
 
-  it("un project churneado por renewal cuenta aunque health esté activa", () => {
+  it("un cliente churneado por renewal cuenta aunque health esté activa", () => {
     const r = computeChurnRate([
       {
-        projectId: "p1",
+        clientId: "c1",
         input: {
           health: health({ relationship_status: "activa" }),
           renewals: [renewal({ status: "perdida" })],
         },
       },
     ]);
-    expect(r.churnedProjects).toBe(1);
+    expect(r.churnedClients).toBe(1);
     expect(r.churnRate).toBe(1);
   });
 
   it("perdida + en_riesgo NO se doble-cuentan: churned excluye at_risk", () => {
     const r = computeChurnRate([
       {
-        projectId: "p1",
+        clientId: "c1",
         input: {
           // perdida (el operador ya lo marcó perdida)
           health: health({ relationship_status: "perdida" }),
@@ -160,7 +160,7 @@ describe("computeChurnRate", () => {
         },
       },
     ]);
-    expect(r.churnedProjects).toBe(1);
-    expect(r.atRiskProjects).toBe(0); // NO se cuenta también acá
+    expect(r.churnedClients).toBe(1);
+    expect(r.atRiskClients).toBe(0); // NO se cuenta también acá
   });
 });

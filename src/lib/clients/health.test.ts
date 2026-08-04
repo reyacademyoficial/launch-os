@@ -10,7 +10,7 @@ import type { NpsResponseRow, TicketRow } from "./types";
 
 function nps(overrides: Partial<NpsResponseRow> = {}): NpsResponseRow {
   return {
-    project_id: "proj-a",
+    client_id: "cli-a",
     score: 8,
     responded_at: "2026-07-01T00:00:00Z",
     ...overrides,
@@ -19,7 +19,8 @@ function nps(overrides: Partial<NpsResponseRow> = {}): NpsResponseRow {
 
 function ticket(overrides: Partial<TicketRow> = {}): TicketRow {
   return {
-    project_id: "proj-a",
+    client_id: "cli-a",
+    project_id: null,
     status: "abierto",
     priority: "media",
     created_at: "2026-07-01T00:00:00Z",
