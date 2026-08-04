@@ -3,13 +3,15 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { ContextBar } from "@/components/kg/context-bar";
-import { EmptyState } from "@/components/kg/empty-state";
 import { IconCli } from "@/components/kg/icons";
 import { Panel } from "@/components/kg/panel";
 import { StatusPill } from "@/components/kg/status-pill";
+import { daysSinceLastContact } from "@/lib/clients/health";
+import type { RelationshipStatus } from "@/lib/clients/types";
 import { createClient } from "@/lib/supabase/server";
 
 import type { AvailableProject } from "./attach-project-drawer";
+import { HealthPanel, type HealthCurrent } from "./health-panel";
 import { ProjectsPanel, type AttachedProject } from "./projects-panel";
 
 export const metadata: Metadata = { title: "Cliente · Clientes" };
@@ -30,18 +32,31 @@ interface ProjectDbRow {
   readonly ownership: "propia" | "externa";
 }
 
+interface HealthDbRow {
+  readonly relationship_status: RelationshipStatus;
+  readonly health_score: number | null;
+  readonly last_contact_at: string | null;
+  readonly notes: string | null;
+}
+
+const STATUS_LABEL: Record<RelationshipStatus, string> = {
+  onboarding: "Onboarding",
+  activa: "Activa",
+  en_riesgo: "En riesgo",
+  perdida: "Perdida",
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Ficha del cliente gestionado.
 //
 // Trae:
 //   - El cliente (rebota con notFound si no existe o no hay permisos).
 //   - Los projects atados (client_id = clientId).
-//   - Los projects disponibles para atar (client_id IS NULL) — para el
-//     drawer del ProjectsPanel.
+//   - Los projects disponibles para atar (client_id IS NULL).
+//   - project_health del cliente (opcional — puede no existir).
 //
-// El bloque de Health / LTV / historial de tickets/renewals/upsells/nps
-// llega en commits siguientes. Hoy solo Datos + Projects atados están
-// funcionales; el resto queda como placeholder que explica qué viene.
+// El bloque de LTV / historial de tickets/renewals/upsells/nps llega en
+// commits siguientes. Hoy: Datos + Health + Projects atados.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export default async function ClienteFichaPage({
@@ -53,10 +68,7 @@ export default async function ClienteFichaPage({
 
   const supabase = await createClient();
 
-  // Dos queries separadas de projects para no interpolar clientId en un
-  // filtro `.or(...)` (postgrest no acepta valores parametrizados en OR,
-  // y aunque RLS protege del leak, evitamos la inyección de filtros).
-  const [clientRes, attachedRes, availableRes] = await Promise.all([
+  const [clientRes, attachedRes, availableRes, healthRes] = await Promise.all([
     supabase
       .from("clients")
       .select("id, name, business_name, industry, notes, active")
@@ -72,6 +84,11 @@ export default async function ClienteFichaPage({
       .select("id, name, business_name, ownership")
       .is("client_id", null)
       .order("name", { ascending: true }),
+    supabase
+      .from("project_health")
+      .select("relationship_status, health_score, last_contact_at, notes")
+      .eq("client_id", clientId)
+      .maybeSingle(),
   ]);
 
   const client = clientRes.data as ClientDbRow | null;
@@ -95,16 +112,45 @@ export default async function ClienteFichaPage({
     ownership: p.ownership,
   }));
 
+  const healthRow = healthRes.data as HealthDbRow | null;
+  const health: HealthCurrent | null = healthRow
+    ? {
+        relationshipStatus: healthRow.relationship_status,
+        healthScore: healthRow.health_score,
+        lastContactAt: healthRow.last_contact_at,
+        notes: healthRow.notes,
+      }
+    : null;
+
+  const daysSince = health
+    ? daysSinceLastContact({ last_contact_at: health.lastContactAt })
+    : null;
+  const contactStat =
+    daysSince == null
+      ? "—"
+      : daysSince === 0
+        ? "hoy"
+        : daysSince === 1
+          ? "hace 1 día"
+          : `hace ${daysSince} días`;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <ContextBar
         icon={<IconCli size={16} />}
         title={client.name}
         stats={[
-          { l: "Projects atados", v: String(attached.length) },
-          { l: "Estado", v: client.active ? "Activo" : "Archivado" },
-          { l: "Health", v: "—" },
-          { l: "LTV", v: "—" },
+          { l: "Projects", v: String(attached.length) },
+          {
+            l: "Estado",
+            v: health ? STATUS_LABEL[health.relationshipStatus] : "—",
+          },
+          {
+            l: "Health",
+            v:
+              health?.healthScore == null ? "—" : `${health.healthScore}/100`,
+          },
+          { l: "Último contacto", v: contactStat },
         ]}
       />
 
@@ -123,7 +169,7 @@ export default async function ClienteFichaPage({
             />
             <FieldRow label="Industria" value={client.industry ?? "—"} />
             <FieldRow
-              label="Estado"
+              label="Registro"
               value={
                 <StatusPill
                   text={client.active ? "Activo" : "Archivado"}
@@ -159,20 +205,20 @@ export default async function ClienteFichaPage({
           </div>
         </Panel>
 
-        <Panel title="Projects atados">
-          <ProjectsPanel
+        <Panel title="Health de la relación">
+          <HealthPanel
             clientId={client.id}
-            attached={attached}
-            available={available}
+            clientName={client.name}
+            current={health}
           />
         </Panel>
       </div>
 
-      <Panel title="Health, LTV y actividad">
-        <EmptyState
-          icon={<IconCli size={22} />}
-          title="Historial de relación en construcción"
-          hint="En los próximos commits: health score compuesto (NPS + contacto + tickets urgentes), LTV desglosado (settlements + facturas + renewals + upsells cobrados), y sub-tabs con tickets, renovaciones, upsells y respuestas NPS filtrados por este cliente."
+      <Panel title="Projects atados">
+        <ProjectsPanel
+          clientId={client.id}
+          attached={attached}
+          available={available}
         />
       </Panel>
     </div>

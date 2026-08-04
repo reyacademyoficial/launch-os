@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 
 import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { StatusPill } from "@/components/kg/status-pill";
+import type { RelationshipStatus } from "@/lib/clients/types";
 
 import { deactivateClient, reactivateClient } from "./actions";
 import {
@@ -25,7 +26,23 @@ export interface ClientRowData {
   readonly notes: string | null;
   readonly active: boolean;
   readonly projectsCount: number;
+  readonly relationshipStatus: RelationshipStatus | null;
+  readonly healthScore: number | null;
 }
+
+const RELATIONSHIP_LABEL: Record<RelationshipStatus, string> = {
+  onboarding: "Onboarding",
+  activa: "Activa",
+  en_riesgo: "En riesgo",
+  perdida: "Perdida",
+};
+
+const RELATIONSHIP_TONE: Record<RelationshipStatus, string> = {
+  onboarding: "var(--kg-accent-500)",
+  activa: "var(--kg-positive-500)",
+  en_riesgo: "var(--kg-warning-500)",
+  perdida: "var(--kg-negative-500)",
+};
 
 export function ClientesView({
   rows,
@@ -99,8 +116,33 @@ export function ClientesView({
       render: (r) => (r.projectsCount === 0 ? "—" : String(r.projectsCount)),
     },
     {
+      key: "relationship",
+      label: "Relación",
+      render: (r) =>
+        r.relationshipStatus == null ? (
+          <span style={{ color: "var(--kg-text-3)" }}>—</span>
+        ) : (
+          <StatusPill
+            text={RELATIONSHIP_LABEL[r.relationshipStatus]}
+            tone={RELATIONSHIP_TONE[r.relationshipStatus]}
+          />
+        ),
+    },
+    {
+      key: "health_score",
+      label: "Health",
+      align: "right",
+      numeric: true,
+      render: (r) =>
+        r.healthScore == null ? (
+          <span style={{ color: "var(--kg-text-3)" }}>—</span>
+        ) : (
+          `${r.healthScore}`
+        ),
+    },
+    {
       key: "status",
-      label: "Estado",
+      label: "Registro",
       render: (r) => (
         <StatusPill
           text={r.active ? "Activo" : "Archivado"}

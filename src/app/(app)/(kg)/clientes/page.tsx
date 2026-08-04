@@ -5,6 +5,7 @@ import { IconCli } from "@/components/kg/icons";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
+import type { RelationshipStatus } from "@/lib/clients/types";
 import { createClient } from "@/lib/supabase/server";
 
 import { ClientesView, type ClientRowData } from "./clientes-view";
@@ -48,6 +49,12 @@ interface ProjectClientLink {
   readonly client_id: string | null;
 }
 
+interface HealthLink {
+  readonly client_id: string;
+  readonly relationship_status: RelationshipStatus;
+  readonly health_score: number | null;
+}
+
 export default async function ClientesDashboardPage({
   searchParams,
 }: {
@@ -58,7 +65,7 @@ export default async function ClientesDashboardPage({
 
   const supabase = await createClient();
 
-  const [clientsRes, projectsRes] = await Promise.all([
+  const [clientsRes, projectsRes, healthRes] = await Promise.all([
     supabase
       .from("clients")
       .select("id, name, business_name, industry, notes, active")
@@ -68,11 +75,15 @@ export default async function ClientesDashboardPage({
       .from("projects")
       .select("client_id")
       .not("client_id", "is", null),
+    supabase
+      .from("project_health")
+      .select("client_id, relationship_status, health_score"),
   ]);
 
   const allClients = (clientsRes.data ?? []) as unknown as ClientDbRow[];
   const projectLinks =
     (projectsRes.data ?? []) as unknown as ProjectClientLink[];
+  const healthLinks = (healthRes.data ?? []) as unknown as HealthLink[];
 
   // Contador de projects por client_id.
   const projectsByClient = new Map<string, number>();
@@ -84,6 +95,18 @@ export default async function ClientesDashboardPage({
     );
   }
 
+  // Health por client_id (unique en 0110 → max 1 fila por cliente).
+  const healthByClient = new Map<
+    string,
+    { status: RelationshipStatus; score: number | null }
+  >();
+  for (const h of healthLinks) {
+    healthByClient.set(h.client_id, {
+      status: h.relationship_status,
+      score: h.health_score,
+    });
+  }
+
   const activeCount = allClients.filter((c) => c.active).length;
   const inactiveCount = allClients.length - activeCount;
 
@@ -93,15 +116,25 @@ export default async function ClientesDashboardPage({
     return true;
   });
 
-  const rows: ClientRowData[] = filtered.map((c) => ({
-    id: c.id,
-    name: c.name,
-    businessName: c.business_name,
-    industry: c.industry,
-    notes: c.notes,
-    active: c.active,
-    projectsCount: projectsByClient.get(c.id) ?? 0,
-  }));
+  const rows: ClientRowData[] = filtered.map((c) => {
+    const h = healthByClient.get(c.id);
+    return {
+      id: c.id,
+      name: c.name,
+      businessName: c.business_name,
+      industry: c.industry,
+      notes: c.notes,
+      active: c.active,
+      projectsCount: projectsByClient.get(c.id) ?? 0,
+      relationshipStatus: h?.status ?? null,
+      healthScore: h?.score ?? null,
+    };
+  });
+
+  const withHealth = allClients.filter((c) => healthByClient.has(c.id)).length;
+  const enRiesgo = Array.from(healthByClient.values()).filter(
+    (h) => h.status === "en_riesgo",
+  ).length;
 
   function buildHref(nextShow: ShowFilter): string {
     const params = new URLSearchParams();
@@ -118,7 +151,8 @@ export default async function ClientesDashboardPage({
         stats={[
           { l: "Total", v: fCount(allClients.length) },
           { l: "Activos", v: fCount(activeCount) },
-          { l: "Archivados", v: fCount(inactiveCount) },
+          { l: "Con health", v: fCount(withHealth) },
+          { l: "En riesgo", v: fCount(enRiesgo) },
         ]}
       />
 
