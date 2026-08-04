@@ -24,6 +24,22 @@ function nullIfEmpty(value: FormDataEntryValue | null): string | null {
   return trimmed.length === 0 ? null : trimmed;
 }
 
+/**
+ * Parsea el monthly_salary del form. Acepta vacío → 0 (persona sin sueldo
+ * cargado todavía). No-numérico → 0 con error controlado arriba. Nunca null:
+ * la columna es NOT NULL con default 0 en 0109.
+ */
+function parseSalary(value: FormDataEntryValue | null): number {
+  const raw = String(value ?? "").trim();
+  if (raw.length === 0) return 0;
+  const n = Number(raw.replace(",", "."));
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+function parseSalaryCurrency(value: FormDataEntryValue | null): "ARS" | "USD" {
+  return String(value ?? "").trim() === "USD" ? "USD" : "ARS";
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // createPerson
 // ═══════════════════════════════════════════════════════════════════════════
@@ -43,6 +59,8 @@ export async function createPerson(
   const email = emailRaw ? emailRaw.toLowerCase() : null;
   const phone = nullIfEmpty(formData.get("phone"));
   const notes = nullIfEmpty(formData.get("notes"));
+  const monthlySalary = parseSalary(formData.get("monthly_salary"));
+  const salaryCurrency = parseSalaryCurrency(formData.get("salary_currency"));
 
   let organizationId: string | null;
   try {
@@ -64,6 +82,8 @@ export async function createPerson(
     email,
     phone,
     notes,
+    monthly_salary: monthlySalary,
+    salary_currency: salaryCurrency,
   } as never;
 
   const { data, error } = await supabase
@@ -109,6 +129,8 @@ export async function updatePerson(
   const email = emailRaw ? emailRaw.toLowerCase() : null;
   const phone = nullIfEmpty(formData.get("phone"));
   const notes = nullIfEmpty(formData.get("notes"));
+  const monthlySalary = parseSalary(formData.get("monthly_salary"));
+  const salaryCurrency = parseSalaryCurrency(formData.get("salary_currency"));
 
   const supabase = await createClient();
   const payload = {
@@ -117,6 +139,8 @@ export async function updatePerson(
     email,
     phone,
     notes,
+    monthly_salary: monthlySalary,
+    salary_currency: salaryCurrency,
   } as never;
 
   const { error } = await supabase

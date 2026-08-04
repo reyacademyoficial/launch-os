@@ -9,6 +9,9 @@ import { fCount, fMoney } from "@/lib/finance/format";
 import { overlapsPeriodDate, resolvePeriod, type Period } from "@/lib/finance/period";
 import { createClient } from "@/lib/supabase/server";
 
+import { CreatePayrollButton } from "./create-payroll-button";
+import type { PersonOption } from "./payroll-form-drawer";
+
 export const metadata: Metadata = { title: "Nómina · Financiero" };
 
 // Payroll no tiene volumen alto — cargamos todo y filtramos en TS. Sin
@@ -40,9 +43,12 @@ interface PayrollDbRow {
   readonly paid_at: string | null;
 }
 
-interface PersonRow {
+interface PersonSalaryRow {
   readonly id: string;
-  readonly name: string;
+  readonly full_name: string;
+  readonly monthly_salary: number;
+  readonly salary_currency: "ARS" | "USD";
+  readonly active: boolean;
 }
 
 export default async function NominaPage({
@@ -65,13 +71,28 @@ export default async function NominaPage({
         "id, person_id, period_start, period_end, base_salary, total_amount, due_date, paid_at",
       )
       .order("period_end", { ascending: false }),
-    supabase.from("organization_people").select("id, name"),
+    supabase
+      .from("organization_people")
+      .select("id, full_name, monthly_salary, salary_currency, active")
+      .order("full_name", { ascending: true }),
   ]);
 
   const allRows = (payrollRes.data ?? []) as unknown as PayrollDbRow[];
+  const allPeople = (peopleRes.data ?? []) as unknown as PersonSalaryRow[];
   const personById = new Map<string, string>(
-    ((peopleRes.data ?? []) as PersonRow[]).map((p) => [p.id, p.name]),
+    allPeople.map((p) => [p.id, p.full_name] as const),
   );
+  // Solo personas activas van al drawer de "Nueva liquidación". Inactivas
+  // siguen apareciendo en el histórico si tienen filas antiguas de payroll
+  // (mapeadas vía personById), pero no se les puede crear una nueva.
+  const activePeopleForForm: PersonOption[] = allPeople
+    .filter((p) => p.active)
+    .map((p) => ({
+      id: p.id,
+      full_name: p.full_name,
+      monthly_salary: Number(p.monthly_salary),
+      salary_currency: p.salary_currency,
+    }));
 
   const filtered = allRows.filter((p) => {
     if (paidParam === "pagado" && p.paid_at == null) return false;
@@ -165,6 +186,15 @@ export default async function NominaPage({
           { l: "Impagas", v: fMoney(impagoAmount) },
         ]}
       />
+
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+        }}
+      >
+        <CreatePayrollButton people={activePeopleForForm} />
+      </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <KgParamPills

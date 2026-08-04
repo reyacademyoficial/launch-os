@@ -271,6 +271,7 @@ export default async function GastosPage({
           rows={rows}
           totalCount={totalCount}
           unconciledMovements={unconciledForDrawer}
+          exportHref={buildExportHref(paidParam, rangeParam)}
         />
         <KgPaginator
           page={page}
@@ -281,6 +282,16 @@ export default async function GastosPage({
       </Panel>
     </div>
   );
+}
+
+function buildExportHref(paid: PaidParam, range: RangeParam): string {
+  const params = new URLSearchParams();
+  if (paid !== "todos") params.set("paid", paid);
+  if (range !== "todo") params.set("range", range);
+  const qs = params.toString();
+  return qs
+    ? `/api/financiero/gastos/export?${qs}`
+    : "/api/financiero/gastos/export";
 }
 
 function parsePaid(v: string | string[] | undefined): PaidParam {

@@ -159,7 +159,36 @@ export function LiquidacionesDashboard({
         ]}
       />
 
-      <FilterPills current={filter} onChange={setFilter} rows={rows} />
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          flexWrap: "wrap",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <FilterPills current={filter} onChange={setFilter} rows={rows} />
+        <a
+          href="/api/financiero/liquidaciones/export"
+          className="kg-focus"
+          style={{
+            padding: "6px 14px",
+            borderRadius: 999,
+            background: "transparent",
+            border: "1px solid var(--kg-border-subtle)",
+            color: "var(--kg-text-2)",
+            fontSize: 12,
+            fontWeight: 700,
+            textDecoration: "none",
+            display: "inline-flex",
+            alignItems: "center",
+          }}
+          title="Exportar todas las liquidaciones a Excel"
+        >
+          Exportar Excel
+        </a>
+      </div>
 
       <Panel title="Lanzamientos y liquidaciones">
         {filtered.length === 0 ? (

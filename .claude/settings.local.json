@@ -85,7 +85,10 @@
       "Bash(awk 'NR==569{print NR\": \"$0}' src/components/dashboard/sales/project-sales-view.tsx)",
       "Bash(echo \"EXIT_CODE=$?\")",
       "Bash(echo \"EXIT:$?\")",
-      "Bash(echo \"EXIT: $?\")"
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(grep -n \"normalize\\\\|\\\\\\\\\\\\\\\\u03\" src/lib/finance/xlsx-import.ts)",
+      "Bash(python3 *)",
+      "Bash(tee /tmp/tsc.out)"
     ]
   }
 }

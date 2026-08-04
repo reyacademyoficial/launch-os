@@ -10,6 +10,7 @@ import {
 import { fMoney } from "@/lib/finance/format";
 
 import { ExpenseFormDrawer } from "./expense-form-drawer";
+import { ImportExpensesButton } from "./import-drawer";
 import {
   LinkPaymentDrawer,
   type UnconciledMovement,
@@ -43,10 +44,12 @@ export function GastosView({
   rows,
   totalCount,
   unconciledMovements,
+  exportHref,
 }: {
   readonly rows: readonly ExpenseRowData[];
   readonly totalCount: number;
   readonly unconciledMovements: readonly UnconciledMovement[];
+  readonly exportHref: string;
 }) {
   const [openCreate, setOpenCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -132,10 +135,20 @@ export function GastosView({
         style={{
           display: "flex",
           justifyContent: "flex-end",
+          gap: 8,
           padding: "10px 14px",
           borderBottom: "1px solid var(--kg-border-subtle)",
         }}
       >
+        <a
+          href={exportHref}
+          className="kg-focus"
+          style={ghostBtnLg}
+          title="Exportar la vista actual a Excel"
+        >
+          Exportar Excel
+        </a>
+        <ImportExpensesButton />
         <button
           type="button"
           onClick={() => setOpenCreate(true)}
@@ -264,6 +277,20 @@ const ghostBtn: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
   cursor: "pointer",
+};
+
+const ghostBtnLg: React.CSSProperties = {
+  padding: "6px 14px",
+  borderRadius: 999,
+  background: "transparent",
+  border: "1px solid var(--kg-border-subtle)",
+  color: "var(--kg-text-2)",
+  fontSize: 12,
+  fontWeight: 700,
+  cursor: "pointer",
+  textDecoration: "none",
+  display: "inline-flex",
+  alignItems: "center",
 };
 
 const ellipsis: React.CSSProperties = {

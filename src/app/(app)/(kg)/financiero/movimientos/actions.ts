@@ -3,6 +3,11 @@
 import { revalidatePath } from "next/cache";
 
 import type { BankMovementKind } from "@/lib/banks/types";
+import {
+  normalizeName,
+  parseMovementsWorkbook,
+  type ParseError,
+} from "@/lib/finance/xlsx-import";
 import { resolveCurrentOrganizationId } from "@/lib/organization/current";
 import { requireRole } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -178,4 +183,179 @@ export async function updateBankMovement(
   revalidatePath("/financiero/gastos");
   revalidatePath("/financiero");
   return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Import xlsx — preview (dry-run) + confirm (insert batched)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Igual que el import de leads: dos pasos, archivo se re-sube porque las
+// server actions no persisten binarios entre calls. Sin mapping — usamos la
+// plantilla con headers fijos ("Banco", "Tipo", "Monto", "Fecha", "Descripción").
+//
+// Estrategia de match del banco: `banks.name` normalizado (lower, sin acentos,
+// sin espacios extra). Si el nombre no matchea NINGÚN banco visible por RLS,
+// la fila se marca como error y no se inserta.
+
+const IMPORT_BATCH_SIZE = 200;
+
+export interface ImportPreviewOk {
+  readonly ok: true;
+  readonly validCount: number;
+  readonly errorCount: number;
+  readonly totalRows: number;
+  readonly errors: ReadonlyArray<ParseError>;
+}
+export type ImportPreviewResult =
+  | ImportPreviewOk
+  | { ok: false; error: string };
+
+export interface ImportConfirmOk {
+  readonly ok: true;
+  readonly imported: number;
+  readonly errors: ReadonlyArray<ParseError>;
+}
+export type ImportConfirmResult =
+  | ImportConfirmOk
+  | { ok: false; error: string };
+
+async function loadBanksByName(): Promise<Map<string, string>> {
+  const supabase = await createClient();
+  const { data } = await supabase.from("banks").select("id, name");
+  const map = new Map<string, string>();
+  for (const b of ((data ?? []) as unknown as { id: string; name: string }[])) {
+    map.set(normalizeName(b.name), b.id);
+  }
+  return map;
+}
+
+async function readXlsxFile(
+  formData: FormData,
+): Promise<{ ok: true; buffer: Buffer } | { ok: false; error: string }> {
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) {
+    return { ok: false, error: "Seleccioná un archivo .xlsx" };
+  }
+  if (!file.name.toLowerCase().endsWith(".xlsx")) {
+    return { ok: false, error: "El archivo tiene que ser .xlsx" };
+  }
+  const buffer = Buffer.from(await file.arrayBuffer());
+  return { ok: true, buffer };
+}
+
+export async function previewMovementsImport(
+  _prev: ImportPreviewResult | null,
+  formData: FormData,
+): Promise<ImportPreviewResult> {
+  await requireRole("superadmin");
+
+  const fileRes = await readXlsxFile(formData);
+  if (!fileRes.ok) return { ok: false, error: fileRes.error };
+
+  try {
+    const banksByName = await loadBanksByName();
+    const parsed = await parseMovementsWorkbook(fileRes.buffer, banksByName);
+    return {
+      ok: true,
+      validCount: parsed.rows.length,
+      errorCount: parsed.errors.length,
+      totalRows: parsed.totalRows,
+      errors: parsed.errors,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Error parseando el xlsx",
+    };
+  }
+}
+
+export async function confirmMovementsImport(
+  _prev: ImportConfirmResult | null,
+  formData: FormData,
+): Promise<ImportConfirmResult> {
+  await requireRole("superadmin");
+
+  const fileRes = await readXlsxFile(formData);
+  if (!fileRes.ok) return { ok: false, error: fileRes.error };
+
+  let organizationId: string | null;
+  try {
+    organizationId = await resolveCurrentOrganizationId();
+  } catch (e) {
+    return {
+      ok: false,
+      error:
+        e instanceof Error ? e.message : "Error resolviendo la organización.",
+    };
+  }
+  if (!organizationId) {
+    return {
+      ok: false,
+      error: "No pudimos resolver tu organización. Revisá tus permisos.",
+    };
+  }
+
+  try {
+    const supabase = await createClient();
+    const banksByName = await loadBanksByName();
+    const parsed = await parseMovementsWorkbook(fileRes.buffer, banksByName);
+
+    if (parsed.rows.length === 0) {
+      return {
+        ok: true,
+        imported: 0,
+        errors: parsed.errors,
+      };
+    }
+
+    const { data: userData } = await supabase.auth.getUser();
+    const createdBy = userData.user?.id ?? null;
+
+    const insertErrors: ParseError[] = [];
+    let imported = 0;
+
+    for (let i = 0; i < parsed.rows.length; i += IMPORT_BATCH_SIZE) {
+      const slice = parsed.rows.slice(i, i + IMPORT_BATCH_SIZE);
+      const payload = slice.map((r) => ({
+        bank_id: r.bank_id,
+        organization_id: organizationId,
+        kind: r.kind as BankMovementKind,
+        amount: r.amount,
+        occurred_at: r.occurred_at,
+        description: r.description,
+        created_by: createdBy,
+      })) as never;
+
+      const { data, error } = await supabase
+        .from("bank_movements")
+        .insert(payload)
+        .select("id");
+
+      if (error) {
+        insertErrors.push({
+          rowNumber: i + 2,
+          reason: `Batch: ${translateBankMovementError(error)}`,
+        });
+        continue;
+      }
+      imported += data?.length ?? 0;
+    }
+
+    revalidatePath("/financiero/movimientos");
+    revalidatePath("/financiero/bancos");
+    revalidatePath("/financiero/gastos");
+    revalidatePath("/financiero");
+
+    return {
+      ok: true,
+      imported,
+      errors: [...parsed.errors, ...insertErrors],
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Error procesando el xlsx",
+    };
+  }
 }
