@@ -6,12 +6,23 @@ import { ContextBar } from "@/components/kg/context-bar";
 import { IconCli } from "@/components/kg/icons";
 import { Panel } from "@/components/kg/panel";
 import { StatusPill } from "@/components/kg/status-pill";
-import { daysSinceLastContact } from "@/lib/clients/health";
-import type { RelationshipStatus } from "@/lib/clients/types";
+import {
+  computeHealthScore,
+  daysSinceLastContact,
+} from "@/lib/clients/health";
+import type {
+  NpsResponseRow,
+  RelationshipStatus,
+  TicketRow,
+} from "@/lib/clients/types";
 import { createClient } from "@/lib/supabase/server";
 
 import type { AvailableProject } from "./attach-project-drawer";
-import { HealthPanel, type HealthCurrent } from "./health-panel";
+import {
+  HealthPanel,
+  type HealthComputed,
+  type HealthCurrent,
+} from "./health-panel";
 import { ProjectsPanel, type AttachedProject } from "./projects-panel";
 
 export const metadata: Metadata = { title: "Cliente · Clientes" };
@@ -68,28 +79,39 @@ export default async function ClienteFichaPage({
 
   const supabase = await createClient();
 
-  const [clientRes, attachedRes, availableRes, healthRes] = await Promise.all([
-    supabase
-      .from("clients")
-      .select("id, name, business_name, industry, notes, active")
-      .eq("id", clientId)
-      .maybeSingle(),
-    supabase
-      .from("projects")
-      .select("id, name, business_name, ownership")
-      .eq("client_id", clientId)
-      .order("name", { ascending: true }),
-    supabase
-      .from("projects")
-      .select("id, name, business_name, ownership")
-      .is("client_id", null)
-      .order("name", { ascending: true }),
-    supabase
-      .from("project_health")
-      .select("relationship_status, health_score, last_contact_at, notes")
-      .eq("client_id", clientId)
-      .maybeSingle(),
-  ]);
+  const [clientRes, attachedRes, availableRes, healthRes, npsRes, ticketsRes] =
+    await Promise.all([
+      supabase
+        .from("clients")
+        .select("id, name, business_name, industry, notes, active")
+        .eq("id", clientId)
+        .maybeSingle(),
+      supabase
+        .from("projects")
+        .select("id, name, business_name, ownership")
+        .eq("client_id", clientId)
+        .order("name", { ascending: true }),
+      supabase
+        .from("projects")
+        .select("id, name, business_name, ownership")
+        .is("client_id", null)
+        .order("name", { ascending: true }),
+      supabase
+        .from("project_health")
+        .select("relationship_status, health_score, last_contact_at, notes")
+        .eq("client_id", clientId)
+        .maybeSingle(),
+      // Inputs para computeHealthScore. Traemos TODAS las respuestas NPS y
+      // tickets del cliente — el selector puro filtra por ventana y estado.
+      supabase
+        .from("nps_responses")
+        .select("client_id, score, responded_at")
+        .eq("client_id", clientId),
+      supabase
+        .from("tickets")
+        .select("client_id, project_id, status, priority, created_at, resolved_at")
+        .eq("client_id", clientId),
+    ]);
 
   const client = clientRes.data as ClientDbRow | null;
   if (!client) notFound();
@@ -122,6 +144,31 @@ export default async function ClienteFichaPage({
       }
     : null;
 
+  // Health score compuesto (fórmula plan §1.4). Se usa como fallback
+  // cuando health.healthScore es null (sin override manual). También lo
+  // consumimos para el stat "Health" del ContextBar.
+  const npsRows = (npsRes.data ?? []) as unknown as NpsResponseRow[];
+  const ticketsRows = (ticketsRes.data ?? []) as unknown as TicketRow[];
+  const computedBreakdown = computeHealthScore({
+    nps: npsRows,
+    lastContactAt: health?.lastContactAt ?? null,
+    tickets: ticketsRows,
+  });
+  const computed: HealthComputed = {
+    score: computedBreakdown.score,
+    isLimited: computedBreakdown.isLimited,
+    npsComponent: computedBreakdown.npsComponent,
+    contactComponent: computedBreakdown.contactComponent,
+    ticketsComponent: computedBreakdown.ticketsComponent,
+  };
+
+  const scoreLabel =
+    health == null
+      ? "—"
+      : health.healthScore != null
+        ? `${health.healthScore}`
+        : `${computed.score}${computed.isLimited ? "*" : ""}`;
+
   const daysSince = health
     ? daysSinceLastContact({ last_contact_at: health.lastContactAt })
     : null;
@@ -145,11 +192,7 @@ export default async function ClienteFichaPage({
             l: "Estado",
             v: health ? STATUS_LABEL[health.relationshipStatus] : "—",
           },
-          {
-            l: "Health",
-            v:
-              health?.healthScore == null ? "—" : `${health.healthScore}/100`,
-          },
+          { l: "Health", v: scoreLabel },
           { l: "Último contacto", v: contactStat },
         ]}
       />
@@ -210,6 +253,7 @@ export default async function ClienteFichaPage({
             clientId={client.id}
             clientName={client.name}
             current={health}
+            computed={computed}
           />
         </Panel>
       </div>
