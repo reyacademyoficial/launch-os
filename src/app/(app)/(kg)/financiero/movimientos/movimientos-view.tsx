@@ -5,6 +5,7 @@ import { useState } from "react";
 import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { fMoney } from "@/lib/finance/format";
 
+import { ImportMovementsButton } from "./import-drawer";
 import {
   MovementFormDrawer,
   type BankOption,
@@ -25,10 +26,12 @@ export function MovimientosView({
   rows,
   totalCount,
   banks,
+  exportHref,
 }: {
   readonly rows: readonly MovementRowData[];
   readonly totalCount: number;
   readonly banks: readonly BankOption[];
+  readonly exportHref: string;
 }) {
   const [openCreate, setOpenCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -89,10 +92,20 @@ export function MovimientosView({
         style={{
           display: "flex",
           justifyContent: "flex-end",
+          gap: 8,
           padding: "10px 14px",
           borderBottom: "1px solid var(--kg-border-subtle)",
         }}
       >
+        <a
+          href={exportHref}
+          className="kg-focus"
+          style={ghostBtnLg}
+          title="Exportar la vista actual a Excel"
+        >
+          Exportar Excel
+        </a>
+        <ImportMovementsButton banks={banks} />
         <button
           type="button"
           onClick={() => setOpenCreate(true)}
@@ -174,6 +187,20 @@ const ghostBtn: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
   cursor: "pointer",
+};
+
+const ghostBtnLg: React.CSSProperties = {
+  padding: "6px 14px",
+  borderRadius: 999,
+  background: "transparent",
+  border: "1px solid var(--kg-border-subtle)",
+  color: "var(--kg-text-2)",
+  fontSize: 12,
+  fontWeight: 700,
+  cursor: "pointer",
+  textDecoration: "none",
+  display: "inline-flex",
+  alignItems: "center",
 };
 
 function fmtDate(iso: string): string {

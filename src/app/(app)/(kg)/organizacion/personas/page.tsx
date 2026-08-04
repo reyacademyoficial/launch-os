@@ -34,7 +34,9 @@ export default async function PersonasPage({
   // se limita solo por la etiqueta de estado, no hace falta filtrar por org.
   const { data } = await supabase
     .from("organization_people")
-    .select("id, full_name, national_id, email, phone, notes, active, created_at")
+    .select(
+      "id, full_name, national_id, email, phone, notes, active, created_at, monthly_salary, salary_currency",
+    )
     .order("active", { ascending: false })
     .order("full_name", { ascending: true });
 

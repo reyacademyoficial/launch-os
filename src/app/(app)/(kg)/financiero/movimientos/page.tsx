@@ -202,6 +202,7 @@ export default async function MovimientosPage({
           rows={rows}
           totalCount={totalCount}
           banks={banksForDrawer}
+          exportHref={buildExportHref(kindParam, rangeParam)}
         />
         <KgPaginator
           page={page}
@@ -212,6 +213,16 @@ export default async function MovimientosPage({
       </Panel>
     </div>
   );
+}
+
+function buildExportHref(kind: KindParam, range: RangeParam): string {
+  const params = new URLSearchParams();
+  if (kind !== "todos") params.set("kind", kind);
+  if (range !== "todo") params.set("range", range);
+  const qs = params.toString();
+  return qs
+    ? `/api/financiero/movimientos/export?${qs}`
+    : "/api/financiero/movimientos/export";
 }
 
 function parseKind(v: string | string[] | undefined): KindParam {

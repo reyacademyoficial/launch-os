@@ -13,6 +13,8 @@ export interface PersonRow {
   readonly notes: string | null;
   readonly active: boolean;
   readonly created_at: string;
+  readonly monthly_salary: number;
+  readonly salary_currency: "ARS" | "USD";
 }
 
 export function PersonasTable({
@@ -49,6 +51,9 @@ export function PersonasTable({
             </th>
             <th scope="col" className="px-4 py-3 font-medium">
               Contacto
+            </th>
+            <th scope="col" className="px-4 py-3 text-right font-medium">
+              Sueldo
             </th>
             <th scope="col" className="px-4 py-3 font-medium">
               Estado
@@ -87,6 +92,18 @@ export function PersonasTable({
                       <div className="text-xs text-fg-subtle">{p.phone}</div>
                     )}
                   </div>
+                ) : (
+                  <span className="text-fg-subtle">—</span>
+                )}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums text-fg-muted">
+                {p.monthly_salary > 0 ? (
+                  <span>
+                    {p.salary_currency === "USD" ? "US$" : "AR$"}{" "}
+                    {new Intl.NumberFormat("es-AR", {
+                      maximumFractionDigits: 0,
+                    }).format(p.monthly_salary)}
+                  </span>
                 ) : (
                   <span className="text-fg-subtle">—</span>
                 )}

@@ -110,6 +110,38 @@ export function CreatePersonModal() {
                 />
               </div>
 
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="create-monthly_salary">Sueldo mensual</Label>
+                  <Input
+                    id="create-monthly_salary"
+                    name="monthly_salary"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    autoComplete="off"
+                    placeholder="0"
+                    defaultValue="0"
+                  />
+                  <p className="mt-1 text-[10px] text-fg-subtle">
+                    Se usa como base al cargar la nómina del mes. Los aguinaldos,
+                    bonos o descuentos se agregan como extras en cada liquidación.
+                  </p>
+                </div>
+                <div>
+                  <Label htmlFor="create-salary_currency">Moneda</Label>
+                  <select
+                    id="create-salary_currency"
+                    name="salary_currency"
+                    defaultValue="ARS"
+                    className="w-full rounded-md border border-border bg-bg-elevated px-3 py-2 text-sm text-fg"
+                  >
+                    <option value="ARS">ARS</option>
+                    <option value="USD">USD</option>
+                  </select>
+                </div>
+              </div>
+
               <div>
                 <Label htmlFor="create-notes">Notas</Label>
                 <Input

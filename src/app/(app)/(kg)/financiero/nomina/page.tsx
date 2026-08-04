@@ -1,13 +1,19 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
-import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { IconFin } from "@/components/kg/icons";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount, fMoney } from "@/lib/finance/format";
 import { overlapsPeriodDate, resolvePeriod, type Period } from "@/lib/finance/period";
 import { createClient } from "@/lib/supabase/server";
+
+import {
+  NominaView,
+  type PayrollRowData,
+} from "./nomina-view";
+import type { UnconciledMovement } from "./link-payment-drawer";
+import type { PersonOption } from "./payroll-form-drawer";
 
 export const metadata: Metadata = { title: "Nómina · Financiero" };
 
@@ -36,11 +42,32 @@ interface PayrollDbRow {
   readonly period_end: string;
   readonly base_salary: number;
   readonly total_amount: number;
+  readonly currency: string | null;
+  readonly extras: Record<string, number> | null;
   readonly due_date: string | null;
   readonly paid_at: string | null;
+  readonly bank_movement_id: string | null;
+  readonly notes: string | null;
 }
 
-interface PersonRow {
+interface PersonSalaryRow {
+  readonly id: string;
+  readonly full_name: string;
+  readonly monthly_salary: number;
+  readonly salary_currency: "ARS" | "USD";
+  readonly active: boolean;
+}
+
+interface BankMovementDbRow {
+  readonly id: string;
+  readonly bank_id: string;
+  readonly kind: "in" | "out";
+  readonly amount: number;
+  readonly occurred_at: string;
+  readonly description: string | null;
+}
+
+interface BankRow {
   readonly id: string;
   readonly name: string;
 }
@@ -58,21 +85,97 @@ export default async function NominaPage({
     rangeParam === "todo" ? null : resolvePeriod({ range: rangeParam });
 
   const supabase = await createClient();
+
+  // ─── Fetch base: payroll + people ────────────────────────────────────
+  //
+  // Payroll trae también `currency` y `bank_movement_id` (0066) — el drawer
+  // de vincular pago los necesita para el warning de moneda y para saber si
+  // la fila ya está vinculada.
   const [payrollRes, peopleRes] = await Promise.all([
     supabase
       .from("payroll")
       .select(
-        "id, person_id, period_start, period_end, base_salary, total_amount, due_date, paid_at",
+        "id, person_id, period_start, period_end, base_salary, total_amount, currency, extras, due_date, paid_at, bank_movement_id, notes",
       )
       .order("period_end", { ascending: false }),
-    supabase.from("organization_people").select("id, name"),
+    supabase
+      .from("organization_people")
+      .select("id, full_name, monthly_salary, salary_currency, active")
+      .order("full_name", { ascending: true }),
   ]);
 
   const allRows = (payrollRes.data ?? []) as unknown as PayrollDbRow[];
+  const allPeople = (peopleRes.data ?? []) as unknown as PersonSalaryRow[];
   const personById = new Map<string, string>(
-    ((peopleRes.data ?? []) as PersonRow[]).map((p) => [p.id, p.name]),
+    allPeople.map((p) => [p.id, p.full_name] as const),
+  );
+  const activePeopleForForm: PersonOption[] = allPeople
+    .filter((p) => p.active)
+    .map((p) => ({
+      id: p.id,
+      full_name: p.full_name,
+      monthly_salary: Number(p.monthly_salary),
+      salary_currency: p.salary_currency,
+    }));
+
+  // ─── Bank movements NO conciliados (para el drawer de vincular pago) ──
+  //
+  // "No conciliado" = no está vinculado como bank_movement_id de NINGUNA
+  // liquidación de nómina. NO excluimos las movimientos linkeados a expenses
+  // — 1 movimiento puede pagar 1 gasto + 1 sueldo (ej. una transferencia
+  // grande que discrimina), y el schema lo permite (mismo criterio que la
+  // pestaña de gastos).
+  //
+  // Piso de 12 meses igual que gastos — los pagos frescos son el 99% del uso.
+  const twelveMonthsAgo = ymdMonthsAgo(12);
+  const [allMovementsRes, linkedIdsRes] = await Promise.all([
+    supabase
+      .from("bank_movements")
+      .select("id, bank_id, kind, amount, occurred_at, description")
+      .eq("kind", "out")
+      .gte("occurred_at", twelveMonthsAgo)
+      .order("occurred_at", { ascending: false }),
+    supabase
+      .from("payroll")
+      .select("bank_movement_id")
+      .not("bank_movement_id", "is", null),
+  ]);
+
+  const allMovements =
+    (allMovementsRes.data ?? []) as unknown as BankMovementDbRow[];
+  const linkedBankIds = new Set<string>();
+  for (const r of (linkedIdsRes.data ?? []) as {
+    bank_movement_id: string | null;
+  }[]) {
+    if (r.bank_movement_id) linkedBankIds.add(r.bank_movement_id);
+  }
+  const unconciled = allMovements.filter((m) => !linkedBankIds.has(m.id));
+
+  const bankIds = Array.from(new Set(unconciled.map((m) => m.bank_id)));
+  const banksRes =
+    bankIds.length > 0
+      ? await supabase.from("banks").select("id, name").in("id", bankIds)
+      : { data: [] as BankRow[] };
+  const bankNameById = new Map<string, string>(
+    ((banksRes.data ?? []) as BankRow[]).map((b) => [b.id, b.name]),
   );
 
+  const unconciledForDrawer: UnconciledMovement[] = unconciled.map((m) => ({
+    id: m.id,
+    amount: Number(m.amount),
+    occurredAt: m.occurred_at,
+    // El schema actual de bank_movements NO tiene columna currency; el saldo
+    // se lleva en la moneda nativa del `bank` (banks.currency, 0101/0103).
+    // Para el score, tratamos la moneda del movimiento como null → matchea
+    // como "sin info". Cuando el modelo evolucione a movimiento con moneda
+    // propia, esto se llena desde ahí.
+    currency: null,
+    kind: m.kind,
+    bankName: bankNameById.get(m.bank_id) ?? "—",
+    description: m.description ?? "",
+  }));
+
+  // ─── Filtrado en TS por los pills de estado/período ──────────────────
   const filtered = allRows.filter((p) => {
     if (paidParam === "pagado" && p.paid_at == null) return false;
     if (paidParam === "impago" && p.paid_at != null) return false;
@@ -87,59 +190,21 @@ export default async function NominaPage({
     .filter((p) => p.paid_at == null)
     .reduce((a, p) => a + Number(p.total_amount), 0);
 
-  interface Row {
-    readonly id: string;
-    readonly person: string;
-    readonly periodStart: string;
-    readonly periodEnd: string;
-    readonly baseSalary: number;
-    readonly totalAmount: number;
-    readonly dueDate: string | null;
-    readonly paidAt: string | null;
-  }
-  const rows: Row[] = filtered.map((p) => ({
+  const rows: PayrollRowData[] = filtered.map((p) => ({
     id: p.id,
-    person: personById.get(p.person_id) ?? "—",
+    personId: p.person_id,
+    personName: personById.get(p.person_id) ?? "—",
     periodStart: p.period_start,
     periodEnd: p.period_end,
     baseSalary: Number(p.base_salary),
     totalAmount: Number(p.total_amount),
+    currency: p.currency === "USD" ? "USD" : "ARS",
+    extras: normalizeExtras(p.extras),
     dueDate: p.due_date,
+    notes: p.notes,
     paidAt: p.paid_at,
+    bankMovementId: p.bank_movement_id,
   }));
-
-  const columns: Column<Row>[] = [
-    { key: "person", label: "Persona", render: (r) => r.person },
-    {
-      key: "period",
-      label: "Período",
-      render: (r) => `${fmtDate(r.periodStart)} – ${fmtDate(r.periodEnd)}`,
-    },
-    {
-      key: "base",
-      label: "Base",
-      align: "right",
-      numeric: true,
-      render: (r) => fMoney(r.baseSalary),
-    },
-    {
-      key: "total",
-      label: "Total",
-      align: "right",
-      numeric: true,
-      render: (r) => fMoney(r.totalAmount),
-    },
-    {
-      key: "due",
-      label: "Vence",
-      render: (r) => (r.dueDate ? fmtDate(r.dueDate) : "—"),
-    },
-    {
-      key: "paid",
-      label: "Estado",
-      render: (r) => <PaidPill paidAt={r.paidAt} />,
-    },
-  ];
 
   function buildHref(overrides: {
     paid?: PaidParam;
@@ -163,6 +228,11 @@ export default async function NominaPage({
           { l: "Liquidaciones en la vista", v: fCount(totalCount) },
           { l: "Total", v: fMoney(totalAmount) },
           { l: "Impagas", v: fMoney(impagoAmount) },
+          {
+            l: "Movimientos sin conciliar",
+            v: fCount(unconciled.length),
+            c: unconciled.length > 0 ? "#FFB800" : undefined,
+          },
         ]}
       />
 
@@ -186,13 +256,11 @@ export default async function NominaPage({
       </div>
 
       <Panel title="Nómina" pad={false}>
-        <KgDataTable
-          columns={columns}
+        <NominaView
           rows={rows}
-          rowKey={(r) => r.id}
           totalCount={totalCount}
-          emptyTitle="No hay nómina cargada"
-          emptyHint="Sin nómina cargada, el KPI Nómina del período queda en cero y el Burn mensual se subestima — el runway del dashboard sale inflado. Los movimientos bancarios de sueldos (pestaña Movimientos) NO alimentan estos KPIs — hace falta cargar el registro de nómina acá."
+          people={activePeopleForForm}
+          unconciledMovements={unconciledForDrawer}
         />
       </Panel>
     </div>
@@ -209,42 +277,28 @@ function parseRange(v: string | string[] | undefined): RangeParam {
   const allowed: RangeParam[] = ["todo", "mes-actual", "mes-anterior", "90d"];
   return (allowed as string[]).includes(v) ? (v as RangeParam) : "todo";
 }
-function fmtDate(iso: string): string {
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  return d.toLocaleDateString("es-AR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
+function ymdMonthsAgo(months: number): string {
+  const d = new Date();
+  d.setMonth(d.getMonth() - months);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+function pad(n: number): string {
+  return n < 10 ? `0${n}` : String(n);
 }
 
-function PaidPill({ paidAt }: { readonly paidAt: string | null }) {
-  const paid = paidAt != null;
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "3px 10px",
-        borderRadius: 999,
-        background: paid ? "rgba(0,208,132,0.15)" : "rgba(138,138,153,0.15)",
-        color: paid ? "#00D084" : "var(--kg-text-2)",
-        fontSize: 11,
-        fontWeight: 700,
-      }}
-    >
-      <span
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: 999,
-          background: paid ? "#00D084" : "#8A8A99",
-          display: "inline-block",
-        }}
-      />
-      {paid ? `Pagado ${fmtDate(paidAt!)}` : "Impago"}
-    </span>
-  );
+/**
+ * Postgrest devuelve `extras` como `Record<string, unknown> | null`. Filtramos
+ * a números finitos para no romper el drawer si el jsonb quedó con basura
+ * (ej. un valor viejo `null` o string).
+ */
+function normalizeExtras(
+  extras: Record<string, number> | null,
+): Record<string, number> {
+  if (extras == null) return {};
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(extras)) {
+    const n = Number(v);
+    if (Number.isFinite(n)) out[k] = n;
+  }
+  return out;
 }

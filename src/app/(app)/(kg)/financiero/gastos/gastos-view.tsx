@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 
 import { KgDataTable, type Column } from "@/components/kg/data-table";
 import {
@@ -9,7 +9,9 @@ import {
 } from "@/lib/finance/expense-categories";
 import { fMoney } from "@/lib/finance/format";
 
+import { deleteExpense } from "./actions";
 import { ExpenseFormDrawer } from "./expense-form-drawer";
+import { ImportExpensesButton } from "./import-drawer";
 import {
   LinkPaymentDrawer,
   type UnconciledMovement,
@@ -43,10 +45,12 @@ export function GastosView({
   rows,
   totalCount,
   unconciledMovements,
+  exportHref,
 }: {
   readonly rows: readonly ExpenseRowData[];
   readonly totalCount: number;
   readonly unconciledMovements: readonly UnconciledMovement[];
+  readonly exportHref: string;
 }) {
   const [openCreate, setOpenCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -132,10 +136,20 @@ export function GastosView({
         style={{
           display: "flex",
           justifyContent: "flex-end",
+          gap: 8,
           padding: "10px 14px",
           borderBottom: "1px solid var(--kg-border-subtle)",
         }}
       >
+        <a
+          href={exportHref}
+          className="kg-focus"
+          style={ghostBtnLg}
+          title="Exportar la vista actual a Excel"
+        >
+          Exportar Excel
+        </a>
+        <ImportExpensesButton />
         <button
           type="button"
           onClick={() => setOpenCreate(true)}
@@ -222,14 +236,35 @@ function RowActions({
   readonly onLink: () => void;
 }) {
   const linked = row.paidAt != null && row.bankMovementId != null;
+  const [deletePending, startDelete] = useTransition();
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  function handleDelete() {
+    const msg = linked
+      ? `¿Eliminar el gasto "${row.description}"? Está vinculado a un movimiento bancario — vas a tener que desvincular primero desde "Ver pago".`
+      : `¿Eliminar el gasto "${row.description}"? Esta acción es irreversible.`;
+    if (!confirm(msg)) return;
+    setDeleteError(null);
+    startDelete(async () => {
+      const r = await deleteExpense(row.id);
+      if ("error" in r) setDeleteError(r.error);
+    });
+  }
+
   return (
     <div
       style={{
         display: "inline-flex",
         gap: 6,
         justifyContent: "flex-end",
+        alignItems: "center",
       }}
     >
+      {deleteError && (
+        <span style={{ color: "#EF4444", fontSize: 10 }} title={deleteError}>
+          ⚠
+        </span>
+      )}
       <button
         type="button"
         onClick={onEdit}
@@ -251,6 +286,21 @@ function RowActions({
       >
         {linked ? "Ver pago" : "Vincular pago"}
       </button>
+      <button
+        type="button"
+        onClick={handleDelete}
+        disabled={deletePending}
+        className="kg-focus"
+        style={{
+          ...ghostBtn,
+          color: "#EF4444",
+          cursor: deletePending ? "wait" : "pointer",
+          opacity: deletePending ? 0.6 : 1,
+        }}
+        title="Borrar gasto"
+      >
+        {deletePending ? "…" : "Borrar"}
+      </button>
     </div>
   );
 }
@@ -264,6 +314,20 @@ const ghostBtn: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
   cursor: "pointer",
+};
+
+const ghostBtnLg: React.CSSProperties = {
+  padding: "6px 14px",
+  borderRadius: 999,
+  background: "transparent",
+  border: "1px solid var(--kg-border-subtle)",
+  color: "var(--kg-text-2)",
+  fontSize: 12,
+  fontWeight: 700,
+  cursor: "pointer",
+  textDecoration: "none",
+  display: "inline-flex",
+  alignItems: "center",
 };
 
 const ellipsis: React.CSSProperties = {
