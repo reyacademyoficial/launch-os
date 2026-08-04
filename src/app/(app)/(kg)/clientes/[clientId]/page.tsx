@@ -11,12 +11,24 @@ import {
   daysSinceLastContact,
 } from "@/lib/clients/health";
 import type {
-  NpsResponseRow,
   RelationshipStatus,
-  TicketRow,
+  RenewalStatus,
+  TicketPriority,
+  TicketStatus,
+  UpsellStatus,
 } from "@/lib/clients/types";
 import { createClient } from "@/lib/supabase/server";
 
+import {
+  NpsSummary,
+  RenewalsSummary,
+  TicketsSummary,
+  UpsellsSummary,
+  type NpsSummaryItem,
+  type RenewalSummaryItem,
+  type TicketSummaryItem,
+  type UpsellSummaryItem,
+} from "./activity-summary";
 import type { AvailableProject } from "./attach-project-drawer";
 import {
   HealthPanel,
@@ -50,6 +62,45 @@ interface HealthDbRow {
   readonly notes: string | null;
 }
 
+interface TicketDbRow {
+  readonly id: string;
+  readonly title: string;
+  readonly project_id: string | null;
+  readonly status: TicketStatus;
+  readonly priority: TicketPriority;
+  readonly due_date: string | null;
+  readonly resolved_at: string | null;
+  readonly created_at: string;
+}
+
+interface NpsDbRow {
+  readonly id: string;
+  readonly respondent_name: string | null;
+  readonly respondent_email: string | null;
+  readonly score: number;
+  readonly responded_at: string;
+}
+
+interface RenewalDbRow {
+  readonly id: string;
+  readonly period_start: string;
+  readonly period_end: string;
+  readonly amount: number | string;
+  readonly currency: string;
+  readonly status: RenewalStatus;
+  readonly collected_at: string | null;
+}
+
+interface UpsellDbRow {
+  readonly id: string;
+  readonly title: string;
+  readonly amount: number | string;
+  readonly currency: string;
+  readonly status: UpsellStatus;
+  readonly closed_at: string | null;
+  readonly created_at: string;
+}
+
 const STATUS_LABEL: Record<RelationshipStatus, string> = {
   onboarding: "Onboarding",
   activa: "Activa",
@@ -79,39 +130,57 @@ export default async function ClienteFichaPage({
 
   const supabase = await createClient();
 
-  const [clientRes, attachedRes, availableRes, healthRes, npsRes, ticketsRes] =
-    await Promise.all([
-      supabase
-        .from("clients")
-        .select("id, name, business_name, industry, notes, active")
-        .eq("id", clientId)
-        .maybeSingle(),
-      supabase
-        .from("projects")
-        .select("id, name, business_name, ownership")
-        .eq("client_id", clientId)
-        .order("name", { ascending: true }),
-      supabase
-        .from("projects")
-        .select("id, name, business_name, ownership")
-        .is("client_id", null)
-        .order("name", { ascending: true }),
-      supabase
-        .from("project_health")
-        .select("relationship_status, health_score, last_contact_at, notes")
-        .eq("client_id", clientId)
-        .maybeSingle(),
-      // Inputs para computeHealthScore. Traemos TODAS las respuestas NPS y
-      // tickets del cliente — el selector puro filtra por ventana y estado.
-      supabase
-        .from("nps_responses")
-        .select("client_id, score, responded_at")
-        .eq("client_id", clientId),
-      supabase
-        .from("tickets")
-        .select("client_id, project_id, status, priority, created_at, resolved_at")
-        .eq("client_id", clientId),
-    ]);
+  const [
+    clientRes,
+    attachedRes,
+    availableRes,
+    healthRes,
+    npsRes,
+    ticketsRes,
+    renewalsRes,
+    upsellsRes,
+  ] = await Promise.all([
+    supabase
+      .from("clients")
+      .select("id, name, business_name, industry, notes, active")
+      .eq("id", clientId)
+      .maybeSingle(),
+    supabase
+      .from("projects")
+      .select("id, name, business_name, ownership")
+      .eq("client_id", clientId)
+      .order("name", { ascending: true }),
+    supabase
+      .from("projects")
+      .select("id, name, business_name, ownership")
+      .is("client_id", null)
+      .order("name", { ascending: true }),
+    supabase
+      .from("project_health")
+      .select("relationship_status, health_score, last_contact_at, notes")
+      .eq("client_id", clientId)
+      .maybeSingle(),
+    // NPS del cliente — alimenta computeHealthScore + la sub-sección NPS.
+    supabase
+      .from("nps_responses")
+      .select("id, respondent_name, respondent_email, score, responded_at")
+      .eq("client_id", clientId),
+    // Tickets del cliente — alimenta computeHealthScore + la sub-sección.
+    supabase
+      .from("tickets")
+      .select("id, title, project_id, status, priority, due_date, resolved_at, created_at")
+      .eq("client_id", clientId),
+    // Renewals del cliente — para la sub-sección Renovaciones.
+    supabase
+      .from("renewals")
+      .select("id, period_start, period_end, amount, currency, status, collected_at")
+      .eq("client_id", clientId),
+    // Upsells del cliente — para la sub-sección Upsells.
+    supabase
+      .from("upsells")
+      .select("id, title, amount, currency, status, closed_at, created_at")
+      .eq("client_id", clientId),
+  ]);
 
   const client = clientRes.data as ClientDbRow | null;
   if (!client) notFound();
@@ -147,12 +216,23 @@ export default async function ClienteFichaPage({
   // Health score compuesto (fórmula plan §1.4). Se usa como fallback
   // cuando health.healthScore es null (sin override manual). También lo
   // consumimos para el stat "Health" del ContextBar.
-  const npsRows = (npsRes.data ?? []) as unknown as NpsResponseRow[];
-  const ticketsRows = (ticketsRes.data ?? []) as unknown as TicketRow[];
+  const npsRawRows = (npsRes.data ?? []) as unknown as NpsDbRow[];
+  const ticketsRawRows = (ticketsRes.data ?? []) as unknown as TicketDbRow[];
   const computedBreakdown = computeHealthScore({
-    nps: npsRows,
+    nps: npsRawRows.map((r) => ({
+      client_id: clientId,
+      score: r.score,
+      responded_at: r.responded_at,
+    })),
     lastContactAt: health?.lastContactAt ?? null,
-    tickets: ticketsRows,
+    tickets: ticketsRawRows.map((t) => ({
+      client_id: clientId,
+      project_id: t.project_id,
+      status: t.status,
+      priority: t.priority,
+      created_at: t.created_at,
+      resolved_at: t.resolved_at,
+    })),
   });
   const computed: HealthComputed = {
     score: computedBreakdown.score,
@@ -265,6 +345,64 @@ export default async function ClienteFichaPage({
           available={available}
         />
       </Panel>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+          gap: 16,
+        }}
+      >
+        <TicketsSummary
+          clientId={client.id}
+          tickets={ticketsRawRows.map<TicketSummaryItem>((t) => ({
+            id: t.id,
+            title: t.title,
+            status: t.status,
+            priority: t.priority,
+            dueDate: t.due_date,
+            createdAt: t.created_at,
+          }))}
+        />
+        <RenewalsSummary
+          clientId={client.id}
+          renewals={(
+            (renewalsRes.data ?? []) as unknown as RenewalDbRow[]
+          ).map<RenewalSummaryItem>((r) => ({
+            id: r.id,
+            periodStart: r.period_start,
+            periodEnd: r.period_end,
+            amount: Number(r.amount),
+            currency: r.currency === "USD" ? "USD" : "ARS",
+            status: r.status,
+            collectedAt: r.collected_at,
+          }))}
+        />
+        <UpsellsSummary
+          clientId={client.id}
+          upsells={(
+            (upsellsRes.data ?? []) as unknown as UpsellDbRow[]
+          ).map<UpsellSummaryItem>((u) => ({
+            id: u.id,
+            title: u.title,
+            amount: Number(u.amount),
+            currency: u.currency === "USD" ? "USD" : "ARS",
+            status: u.status,
+            closedAt: u.closed_at,
+            createdAt: u.created_at,
+          }))}
+        />
+        <NpsSummary
+          clientId={client.id}
+          nps={npsRawRows.map<NpsSummaryItem>((r) => ({
+            id: r.id,
+            respondentName: r.respondent_name,
+            respondentEmail: r.respondent_email,
+            score: r.score,
+            respondedAt: r.responded_at,
+          }))}
+        />
+      </div>
     </div>
   );
 }

@@ -27,7 +27,12 @@ export interface ClientRowData {
   readonly active: boolean;
   readonly projectsCount: number;
   readonly relationshipStatus: RelationshipStatus | null;
+  /** Score efectivo. Manual gana; sino, compuesto. */
   readonly healthScore: number | null;
+  /** `manual` = override; `compuesto` = derivado de NPS + contacto + tickets. */
+  readonly healthScoreKind: "manual" | "compuesto";
+  /** Solo relevante para compuesto — true si faltaron ingredientes. */
+  readonly healthScoreLimited: boolean;
 }
 
 const RELATIONSHIP_LABEL: Record<RelationshipStatus, string> = {
@@ -133,12 +138,54 @@ export function ClientesView({
       label: "Health",
       align: "right",
       numeric: true,
-      render: (r) =>
-        r.healthScore == null ? (
-          <span style={{ color: "var(--kg-text-3)" }}>—</span>
-        ) : (
-          `${r.healthScore}`
-        ),
+      render: (r) => {
+        if (r.healthScore == null) {
+          return <span style={{ color: "var(--kg-text-3)" }}>—</span>;
+        }
+        const scoreTone =
+          r.healthScore >= 70
+            ? "var(--kg-positive-500)"
+            : r.healthScore >= 40
+              ? "var(--kg-warning-500)"
+              : "var(--kg-negative-500)";
+        return (
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              justifyContent: "flex-end",
+            }}
+            title={
+              r.healthScoreKind === "manual"
+                ? "Override manual"
+                : r.healthScoreLimited
+                  ? "Compuesto · datos limitados"
+                  : "Compuesto"
+            }
+          >
+            <span
+              className="kg-num"
+              style={{
+                fontVariantNumeric: "tabular-nums",
+                color: "var(--kg-text-1)",
+              }}
+            >
+              {r.healthScore}
+              {r.healthScoreKind === "compuesto" && r.healthScoreLimited && "*"}
+            </span>
+            <span
+              aria-hidden
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: 999,
+                background: scoreTone,
+              }}
+            />
+          </div>
+        );
+      },
     },
     {
       key: "status",
