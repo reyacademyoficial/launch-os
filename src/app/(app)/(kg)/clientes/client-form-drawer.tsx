@@ -1,11 +1,12 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
 
 import { Drawer } from "@/components/kg/drawer";
 
 import {
   createClient,
+  deleteClient,
   updateClient,
   type CreateClientState,
   type UpdateClientState,
@@ -87,6 +88,26 @@ function ClientFormBody({
   }, [state, onClose]);
 
   const [active, setActive] = useState(initial?.active ?? true);
+  const [deletePending, startDeleteTransition] = useTransition();
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  function handleDelete() {
+    if (!isEdit || !initial) return;
+    const ok = window.confirm(
+      `¿Eliminar el cliente "${initial.name}" definitivamente? ` +
+        "Esta acción no se puede deshacer. Si tiene projects/tickets/renewals/upsells/nps o health cargada, la operación va a rebotar — en ese caso usá Archivar.",
+    );
+    if (!ok) return;
+    setDeleteError(null);
+    startDeleteTransition(async () => {
+      const result = await deleteClient(initial.id);
+      if ("error" in result) {
+        setDeleteError(result.error);
+        return;
+      }
+      onClose();
+    });
+  }
 
   return (
     <form
@@ -142,7 +163,7 @@ function ClientFormBody({
 
       {isEdit && (
         <label
-          htmlFor="active"
+          htmlFor="active_toggle"
           style={{
             display: "flex",
             alignItems: "center",
@@ -155,8 +176,7 @@ function ClientFormBody({
           }}
         >
           <input
-            id="active"
-            name="active"
+            id="active_toggle"
             type="checkbox"
             checked={active}
             onChange={(e) => setActive(e.target.checked)}
@@ -180,6 +200,13 @@ function ClientFormBody({
         </label>
       )}
 
+      {/* Hidden input: SIEMPRE envía el estado deseado. Un checkbox HTML
+          crudo omite el valor cuando está unchecked; este hidden garantiza
+          que "on" o "off" viaja explícito al server action. */}
+      {isEdit && (
+        <input type="hidden" name="active" value={active ? "on" : "off"} />
+      )}
+
       {state && "error" in state && (
         <div
           style={{
@@ -195,37 +222,69 @@ function ClientFormBody({
         </div>
       )}
 
+      {deleteError && (
+        <div
+          style={{
+            padding: "10px 14px",
+            borderRadius: "var(--kg-r-8)",
+            background: "rgba(239,68,68,0.10)",
+            border: "1px solid #EF4444",
+            color: "#EF4444",
+            fontSize: 12,
+          }}
+        >
+          {deleteError}
+        </div>
+      )}
+
       <div
         style={{
           display: "flex",
-          justifyContent: "flex-end",
+          justifyContent: "space-between",
+          alignItems: "center",
           gap: 8,
           marginTop: 4,
         }}
       >
-        <button
-          type="button"
-          onClick={onClose}
-          disabled={pending}
-          className="kg-focus"
-          style={secondaryBtn}
-        >
-          Cancelar
-        </button>
-        <button
-          type="submit"
-          disabled={pending}
-          className="kg-focus"
-          style={{ ...primaryBtn, opacity: pending ? 0.7 : 1 }}
-        >
-          {pending
-            ? isEdit
-              ? "Guardando…"
-              : "Creando…"
-            : isEdit
-              ? "Guardar cambios"
-              : "Crear cliente"}
-        </button>
+        {isEdit ? (
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={pending || deletePending}
+            className="kg-focus"
+            style={{ ...dangerBtn, opacity: deletePending ? 0.7 : 1 }}
+            title="Elimina el cliente (solo si no tiene datos colgados)"
+          >
+            {deletePending ? "Eliminando…" : "Eliminar cliente"}
+          </button>
+        ) : (
+          <div />
+        )}
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={pending || deletePending}
+            className="kg-focus"
+            style={secondaryBtn}
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={pending || deletePending}
+            className="kg-focus"
+            style={{ ...primaryBtn, opacity: pending ? 0.7 : 1 }}
+          >
+            {pending
+              ? isEdit
+                ? "Guardando…"
+                : "Creando…"
+              : isEdit
+                ? "Guardar cambios"
+                : "Crear cliente"}
+          </button>
+        </div>
       </div>
     </form>
   );
@@ -294,6 +353,17 @@ const secondaryBtn: React.CSSProperties = {
   border: "1px solid var(--kg-border-subtle)",
   color: "var(--kg-text-2)",
   fontSize: 12,
+  fontWeight: 700,
+  cursor: "pointer",
+};
+
+const dangerBtn: React.CSSProperties = {
+  padding: "8px 14px",
+  borderRadius: 999,
+  background: "transparent",
+  border: "1px solid #EF4444",
+  color: "#EF4444",
+  fontSize: 11,
   fontWeight: 700,
   cursor: "pointer",
 };

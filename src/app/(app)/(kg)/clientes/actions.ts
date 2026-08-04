@@ -18,6 +18,8 @@ export type UpdateClientState = { ok: true } | { error: string } | null;
 
 export type ToggleClientResult = { ok: true } | { error: string };
 
+export type DeleteClientResult = { ok: true } | { error: string };
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Helpers
 // ═══════════════════════════════════════════════════════════════════════════
@@ -48,13 +50,16 @@ function parseClientFormData(
   const industry = nullIfEmpty(formData.get("industry"));
   const notes = nullIfEmpty(formData.get("notes"));
 
-  // Checkbox: presente => true, ausente => false. En create el drawer no
-  // muestra el checkbox (siempre nace activo), por eso caemos al default.
+  // El drawer envía SIEMPRE un hidden input `active="on"|"off"` (controlado
+  // por el toggle visual). Un checkbox HTML crudo omite el valor cuando
+  // está unchecked — el hidden nos garantiza que el estado deseado llega
+  // explícito y no dependemos de defaults. `defaultActive` cubre el caso
+  // create donde el drawer no muestra toggle (siempre nace activo).
   const activeRaw = formData.get("active");
   const active =
-    activeRaw === null || activeRaw === undefined
+    activeRaw === null
       ? defaultActive
-      : String(activeRaw) === "on" || String(activeRaw) === "true";
+      : String(activeRaw) === "on";
 
   return { name, businessName, industry, notes, active };
 }
@@ -210,6 +215,100 @@ export async function reactivateClient(
     }
     return { error: error.message };
   }
+  revalidatePath("/clientes");
+  return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// deleteClient — hard delete con guard duro.
+//
+// La migración 0110 pone `on delete cascade` en health/nps/renewals/upsells/
+// tickets. Borrar un cliente con datos destruye toda su relación sin traza.
+// Por eso el guard chequea CADA dependencia antes de borrar; solo permite
+// eliminar clientes limpios (creados por error, sin nada colgado).
+//
+// projects.client_id tiene `on delete set null`, así que se puede borrar
+// un cliente con projects atados sin destruir los projects — pero igual lo
+// bloqueamos: si atamos un project, es porque el cliente importa. Que el
+// usuario desate primero, o archive el cliente.
+//
+// Para archivar sin borrar: deactivateClient (soft delete reversible).
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function deleteClient(
+  clientId: string,
+): Promise<DeleteClientResult> {
+  if (!clientId) return { error: "Falta el id del cliente." };
+
+  const supabase = await createSupabaseClient();
+
+  // Chequeo por cada dependencia. Usamos { count: 'exact', head: true }
+  // para no traer las filas — solo el conteo.
+  const [projectsRes, healthRes, npsRes, ticketsRes, renewalsRes, upsellsRes] =
+    await Promise.all([
+      supabase
+        .from("projects")
+        .select("id", { count: "exact", head: true })
+        .eq("client_id", clientId),
+      supabase
+        .from("project_health")
+        .select("id", { count: "exact", head: true })
+        .eq("client_id", clientId),
+      supabase
+        .from("nps_responses")
+        .select("id", { count: "exact", head: true })
+        .eq("client_id", clientId),
+      supabase
+        .from("tickets")
+        .select("id", { count: "exact", head: true })
+        .eq("client_id", clientId),
+      supabase
+        .from("renewals")
+        .select("id", { count: "exact", head: true })
+        .eq("client_id", clientId),
+      supabase
+        .from("upsells")
+        .select("id", { count: "exact", head: true })
+        .eq("client_id", clientId),
+    ]);
+
+  const deps: string[] = [];
+  const projectsCount = projectsRes.count ?? 0;
+  const healthCount = healthRes.count ?? 0;
+  const npsCount = npsRes.count ?? 0;
+  const ticketsCount = ticketsRes.count ?? 0;
+  const renewalsCount = renewalsRes.count ?? 0;
+  const upsellsCount = upsellsRes.count ?? 0;
+
+  if (projectsCount > 0) {
+    deps.push(`${projectsCount} project${projectsCount === 1 ? "" : "s"} atado${projectsCount === 1 ? "" : "s"}`);
+  }
+  if (healthCount > 0) deps.push("health cargada");
+  if (ticketsCount > 0) {
+    deps.push(`${ticketsCount} ticket${ticketsCount === 1 ? "" : "s"}`);
+  }
+  if (renewalsCount > 0) {
+    deps.push(`${renewalsCount} renewal${renewalsCount === 1 ? "" : "s"}`);
+  }
+  if (upsellsCount > 0) {
+    deps.push(`${upsellsCount} upsell${upsellsCount === 1 ? "" : "s"}`);
+  }
+  if (npsCount > 0) {
+    deps.push(`${npsCount} respuesta${npsCount === 1 ? "" : "s"} de NPS`);
+  }
+
+  if (deps.length > 0) {
+    return {
+      error:
+        `No se puede eliminar: el cliente tiene ${deps.join(", ")}. ` +
+        "Desatá los projects o borrá las dependencias primero, o usá 'Archivar' " +
+        "en su lugar (reversible, no destruye datos).",
+    };
+  }
+
+  const { error } = await supabase.from("clients").delete().eq("id", clientId);
+  if (error) return { error: error.message };
+
   revalidatePath("/clientes");
   return { ok: true };
 }
