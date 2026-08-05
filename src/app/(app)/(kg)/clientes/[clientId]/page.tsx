@@ -10,13 +10,19 @@ import {
   computeHealthScore,
   daysSinceLastContact,
 } from "@/lib/clients/health";
+import { computeLtv, type LtvBreakdown } from "@/lib/clients/ltv";
 import type {
+  ClientsInvoiceRow,
+  ClientsSettlementRow,
   RelationshipStatus,
+  RenewalRow,
   RenewalStatus,
   TicketPriority,
   TicketStatus,
+  UpsellRow,
   UpsellStatus,
 } from "@/lib/clients/types";
+import { fMoney } from "@/lib/finance/format";
 import { createClient } from "@/lib/supabase/server";
 
 import {
@@ -35,6 +41,7 @@ import {
   type HealthComputed,
   type HealthCurrent,
 } from "./health-panel";
+import { LtvPanel } from "./ltv-panel";
 import { ProjectsPanel, type AttachedProject } from "./projects-panel";
 
 export const metadata: Metadata = { title: "Cliente · Clientes" };
@@ -99,6 +106,20 @@ interface UpsellDbRow {
   readonly status: UpsellStatus;
   readonly closed_at: string | null;
   readonly created_at: string;
+}
+
+interface SettlementDbRow {
+  readonly project_id: string;
+  readonly kingrow_retained: number | string;
+  readonly status: "abierta" | "liquidada" | "transferida";
+}
+
+interface InvoiceDbRow {
+  readonly project_id: string | null;
+  readonly amount_gross: number | string;
+  readonly tax_amount: number | string;
+  readonly currency: string;
+  readonly status: "emitida" | "cobrada" | "vencida" | "anulada";
 }
 
 const STATUS_LABEL: Record<RelationshipStatus, string> = {
@@ -194,6 +215,32 @@ export default async function ClienteFichaPage({
     ownership: p.ownership,
   }));
 
+  // Segundo batch de fetches: settlements + invoices de los projects
+  // atados. Depende del primer batch (necesita los project_ids), por eso
+  // va después. Si el cliente no tiene projects atados, saltamos las
+  // queries — postgrest .in([]) puede rebotar en algunas versiones.
+  const attachedIds = attached.map((p) => p.id);
+  const [settlementsRes, invoicesRes] =
+    attachedIds.length === 0
+      ? [
+          { data: [] as SettlementDbRow[] },
+          { data: [] as InvoiceDbRow[] },
+        ]
+      : await Promise.all([
+          supabase
+            .from("launch_settlements")
+            .select("project_id, kingrow_retained, status")
+            .in("project_id", attachedIds),
+          supabase
+            .from("invoices")
+            .select("project_id, amount_gross, tax_amount, currency, status")
+            .in("project_id", attachedIds),
+        ]);
+
+  const settlementRows =
+    (settlementsRes.data ?? []) as unknown as SettlementDbRow[];
+  const invoiceRows = (invoicesRes.data ?? []) as unknown as InvoiceDbRow[];
+
   const available: AvailableProject[] = (
     (availableRes.data ?? []) as unknown as ProjectDbRow[]
   ).map((p) => ({
@@ -261,6 +308,77 @@ export default async function ClienteFichaPage({
           ? "hace 1 día"
           : `hace ${daysSince} días`;
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // LTV — separado por moneda porque el selector puro suma sin conversión.
+  //
+  // launch_settlements no tiene columna currency (hoy asumido ARS). Los
+  // demás sí. La regla del override manual no aplica al LTV — siempre se
+  // computa a partir de las fuentes cobradas. Reutiliza computeLtv de
+  // src/lib/clients/ltv.ts.
+  // ═══════════════════════════════════════════════════════════════════════
+  const renewalRawRows =
+    (renewalsRes.data ?? []) as unknown as RenewalDbRow[];
+  const upsellRawRows = (upsellsRes.data ?? []) as unknown as UpsellDbRow[];
+
+  const settlementsForLtv: ClientsSettlementRow[] = settlementRows.map((s) => ({
+    project_id: s.project_id,
+    kingrow_retained: Number(s.kingrow_retained),
+    status: s.status,
+  }));
+
+  function invoicesForCurrency(
+    currency: "ARS" | "USD",
+  ): ClientsInvoiceRow[] {
+    return invoiceRows
+      .filter((i) => (i.currency === "USD" ? "USD" : "ARS") === currency)
+      .map((i) => ({
+        project_id: i.project_id,
+        amount_gross: Number(i.amount_gross),
+        tax_amount: Number(i.tax_amount),
+        status: i.status,
+      }));
+  }
+
+  function renewalsForCurrency(currency: "ARS" | "USD"): RenewalRow[] {
+    return renewalRawRows
+      .filter((r) => (r.currency === "USD" ? "USD" : "ARS") === currency)
+      .map((r) => ({
+        client_id: clientId,
+        period_start: r.period_start,
+        period_end: r.period_end,
+        amount: Number(r.amount),
+        status: r.status,
+        collected_at: r.collected_at,
+      }));
+  }
+
+  function upsellsForCurrency(currency: "ARS" | "USD"): UpsellRow[] {
+    return upsellRawRows
+      .filter((u) => (u.currency === "USD" ? "USD" : "ARS") === currency)
+      .map((u) => ({
+        client_id: clientId,
+        amount: Number(u.amount),
+        status: u.status,
+        closed_at: u.closed_at,
+      }));
+  }
+
+  const ltvArs: LtvBreakdown = computeLtv({
+    settlements: settlementsForLtv, // asumido ARS
+    invoices: invoicesForCurrency("ARS"),
+    renewals: renewalsForCurrency("ARS"),
+    upsells: upsellsForCurrency("ARS"),
+  });
+  const ltvUsd: LtvBreakdown = computeLtv({
+    settlements: [], // sin USD para settlements hoy
+    invoices: invoicesForCurrency("USD"),
+    renewals: renewalsForCurrency("USD"),
+    upsells: upsellsForCurrency("USD"),
+  });
+
+  const ltvArsLabel = fMoneyLabel(ltvArs.total, "ARS");
+  const ltvUsdLabel = fMoneyLabel(ltvUsd.total, "USD");
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <ContextBar
@@ -273,6 +391,7 @@ export default async function ClienteFichaPage({
             v: health ? STATUS_LABEL[health.relationshipStatus] : "—",
           },
           { l: "Health", v: scoreLabel },
+          { l: "LTV", v: ltvUsd.total > 0 ? `${ltvArsLabel} · ${ltvUsdLabel}` : ltvArsLabel },
           { l: "Último contacto", v: contactStat },
         ]}
       />
@@ -346,6 +465,8 @@ export default async function ClienteFichaPage({
         />
       </Panel>
 
+      <LtvPanel ltvArs={ltvArs} ltvUsd={ltvUsd} />
+
       <div
         style={{
           display: "grid",
@@ -366,9 +487,7 @@ export default async function ClienteFichaPage({
         />
         <RenewalsSummary
           clientId={client.id}
-          renewals={(
-            (renewalsRes.data ?? []) as unknown as RenewalDbRow[]
-          ).map<RenewalSummaryItem>((r) => ({
+          renewals={renewalRawRows.map<RenewalSummaryItem>((r) => ({
             id: r.id,
             periodStart: r.period_start,
             periodEnd: r.period_end,
@@ -380,9 +499,7 @@ export default async function ClienteFichaPage({
         />
         <UpsellsSummary
           clientId={client.id}
-          upsells={(
-            (upsellsRes.data ?? []) as unknown as UpsellDbRow[]
-          ).map<UpsellSummaryItem>((u) => ({
+          upsells={upsellRawRows.map<UpsellSummaryItem>((u) => ({
             id: u.id,
             title: u.title,
             amount: Number(u.amount),
@@ -405,6 +522,12 @@ export default async function ClienteFichaPage({
       </div>
     </div>
   );
+}
+
+function fMoneyLabel(amount: number, currency: "ARS" | "USD"): string {
+  const raw = fMoney(amount);
+  const prefix = currency === "USD" ? "US$" : "AR$";
+  return raw.replace(/^(-?)\$/, `$1${prefix} `);
 }
 
 function FieldRow({
