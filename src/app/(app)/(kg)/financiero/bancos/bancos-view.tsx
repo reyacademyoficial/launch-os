@@ -13,7 +13,6 @@ export interface BankRowData {
   readonly name: string;
   readonly currency: "ARS" | "USD";
   readonly openingBalance: number;
-  readonly fromPayments: number;
   readonly movementsIn: number;
   readonly movementsOut: number;
   readonly total: number;
@@ -48,13 +47,6 @@ export function BancosView({
       align: "right",
       numeric: true,
       render: (r) => fmtNative(r.openingBalance, r.currency),
-    },
-    {
-      key: "in",
-      label: "Cobros",
-      align: "right",
-      numeric: true,
-      render: (r) => fmtNative(r.fromPayments, r.currency),
     },
     {
       key: "mvIn",
@@ -139,7 +131,7 @@ export function BancosView({
         rowKey={(r) => r.id}
         totalCount={totalCount}
         emptyTitle="No hay bancos registrados"
-        emptyHint="Los bancos son las cuentas donde Kingrow deposita cobros. Cada método de pago se enlaza a un banco desde Métodos de pago. El saldo se calcula: saldo inicial + cobros vía métodos + movimientos manuales de entrada − movimientos manuales de salida."
+        emptyHint="Los bancos son las cuentas donde Kingrow opera. El saldo se calcula: saldo inicial + movimientos de entrada − movimientos de salida. Los cobros de ventas NO alimentan el saldo — para que un cobro impacte el banco hay que cargar el movimiento correspondiente y vincular la factura por Nº de transacción."
       />
 
       <BankFormDrawer

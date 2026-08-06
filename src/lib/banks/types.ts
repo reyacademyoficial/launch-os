@@ -1,9 +1,9 @@
 /**
  * Cuenta bancaria de la organización (Mercado Pago, Santander, Wise, Stripe…).
  * Post 0101 vive a nivel org; `project_id` quedó como nullable para futuros
- * casos "banco escrow de proyecto puntual". Hoy siempre es null. Los
- * `payment_methods` apuntan al banco donde depositan; el saldo se calcula
- * en runtime desde payments + bank_movements.
+ * casos "banco escrow de proyecto puntual". Hoy siempre es null. El saldo se
+ * calcula en runtime desde `opening_balance + bank_movements` — los cobros
+ * NO alimentan el balance.
  */
 export interface BankRow {
   id: string;
@@ -22,10 +22,10 @@ export interface BankRow {
 export type BankMovementKind = "in" | "out";
 
 /**
- * Ingreso o egreso manual sobre un banco. NO reemplaza a `payments` (cobros de
- * venta se agregan al saldo automáticamente por el link method → bank); acá
- * viven las cosas que no son venta: gastos, retiros, transferencias inter-
- * bancos, ajustes.
+ * Ingreso o egreso sobre un banco. Es la ÚNICA fuente que mueve el balance del
+ * banco: gastos, retiros, transferencias inter-bancos, ajustes, y también los
+ * ingresos por cobros conciliados (el operador carga el movimiento entrante y
+ * lo linkea a la factura vía `transaction_number`).
  */
 export interface BankMovementRow {
   id: string;
@@ -42,13 +42,13 @@ export interface BankMovementRow {
 }
 
 /**
- * Detalle del saldo agregado por banco. Se compone en `computeBankBalances` a
- * partir de opening_balance + cobros vía métodos linkeados + movimientos.
+ * Detalle del saldo agregado por banco. `total = opening + movementsIn −
+ * movementsOut`. Los cobros (`payments`) NO alimentan el balance del banco —
+ * ver `computeBankBalances`.
  */
 export interface BankBalance {
   bank_id: string;
   opening: number;
-  fromPayments: number;
   movementsIn: number;
   movementsOut: number;
   total: number;

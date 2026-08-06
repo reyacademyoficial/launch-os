@@ -18,7 +18,6 @@ import {
 import { CASH_ASSET_TYPES } from "@/lib/finance/asset-types";
 import { fPct } from "@/lib/finance/format";
 import { loadLatestOrgFxRate } from "@/lib/money";
-import { listAllPaymentMethods } from "@/lib/payment-methods/list";
 import type { Ownership } from "@/lib/finance/invoice-classification";
 import {
   inPeriodDate,
@@ -116,9 +115,7 @@ export default async function FinancieroPage({
     clientTransfersRes,
     bankMovementsRes,
     banksList,
-    paymentMethodsList,
     allBankMovements,
-    paymentsForBanksRes,
     latestFx,
   ] = await Promise.all([
     supabase
@@ -154,12 +151,11 @@ export default async function FinancieroPage({
     supabase.from("bank_movements").select("amount, kind, occurred_at"),
     // Fuente del KPI "Bancos" (Fila 1): saldo consolidado en USD sobre todos
     // los bancos activos. `computeBankBalances` reconstruye el saldo runtime
-    // desde opening + cobros vía payment_method → bank + movimientos manuales.
-    // Reutiliza los selectores org-scope de /financiero/bancos.
+    // desde opening_balance + bank_movements (kind in/out). Los cobros
+    // (`payments`) NO alimentan el balance — se concilian por movimiento vía
+    // Nº de transacción y links factura ↔ movimiento.
     listBanks(),
-    listAllPaymentMethods(),
     listBankMovements(),
-    supabase.from("payments").select("amount, payment_method_id"),
     loadLatestOrgFxRate(supabase),
   ]);
 
@@ -299,20 +295,12 @@ export default async function FinancieroPage({
   const cashFlow = computeCashFlow({ bankMovements: bankMovementsInPeriod });
 
   // ─── Bancos: saldo consolidado en USD sobre todos los bancos activos.
-  // Fuente derivada (no snapshot manual): opening_balance + cobros
-  // (payment_method → bank) + movimientos manuales. ARS convertido a USD con
-  // la última tasa mensual disponible a nivel org. Si hay ARS y no hay tasa
-  // cargada, `banksTotalUsd` queda null y la UI muestra em-dash + hint.
+  // Fuente derivada (no snapshot manual): opening_balance + movimientos
+  // manuales. ARS convertido a USD con la última tasa mensual disponible a
+  // nivel org. Si hay ARS y no hay tasa cargada, `banksTotalUsd` queda null y
+  // la UI muestra em-dash + hint.
   const activeBanks = banksList.filter((b) => b.active);
-  const bankBalances = computeBankBalances(
-    activeBanks,
-    paymentMethodsList,
-    (paymentsForBanksRes.data ?? []) as ReadonlyArray<{
-      readonly amount: number;
-      readonly payment_method_id: string | null;
-    }>,
-    allBankMovements,
-  );
+  const bankBalances = computeBankBalances(activeBanks, allBankMovements);
   let banksTotalArsNative = 0;
   let banksTotalUsdNative = 0;
   for (const b of activeBanks) {

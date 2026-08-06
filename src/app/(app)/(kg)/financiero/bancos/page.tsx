@@ -8,7 +8,6 @@ import { computeBankBalances } from "@/lib/banks/balance";
 import { listBanks, listBankMovements } from "@/lib/banks/list";
 import { fCount } from "@/lib/finance/format";
 import { fmtArs, fmtUsd, loadLatestOrgFxRate } from "@/lib/money";
-import { listAllPaymentMethods } from "@/lib/payment-methods/list";
 import { createClient } from "@/lib/supabase/server";
 
 import { BancosView, type BankRowData } from "./bancos-view";
@@ -25,11 +24,6 @@ const ACTIVE_OPTIONS: ReadonlyArray<{ value: ActiveParam; label: string }> = [
   { value: "todos", label: "Todos" },
 ];
 
-interface PaymentRow {
-  readonly amount: number;
-  readonly payment_method_id: string | null;
-}
-
 export default async function BancosPage({
   searchParams,
 }: {
@@ -40,23 +34,17 @@ export default async function BancosPage({
 
   const supabase = await createClient();
 
-  // ─── Fetch en paralelo — cuatro fuentes para `computeBankBalances` ────
+  // ─── Fetch en paralelo ─────────────────────────────────────────────────
   //
-  // `payments` es el bulto grande: cobros de TODAS las ventas de todos los
-  // proyectos que el usuario ve por RLS. Por diseño lo traemos completo
-  // (sin paginación) porque el saldo por banco es agregación total sobre el
-  // universo — no hay concepto de "saldo del último mes". Cuando `payments`
-  // supere ~10k filas conviene mover al backend con una view materializada;
-  // hoy hay pocas centenas.
-  const [banks, paymentMethods, movements, paymentsRes, latestFx] =
-    await Promise.all([
-      listBanks(),
-      listAllPaymentMethods(),
-      listBankMovements(),
-      supabase.from("payments").select("amount, payment_method_id"),
-      loadLatestOrgFxRate(supabase),
-    ]);
-  const payments = (paymentsRes.data ?? []) as unknown as PaymentRow[];
+  // Post refactor 2026-08: los cobros (`payments`) NO alimentan el balance
+  // del banco. La única fuente que mueve el saldo son los `bank_movements`.
+  // Los cobros por método siguen visibles en /financiero/metodos-pago como
+  // métrica de trazabilidad.
+  const [banks, movements, latestFx] = await Promise.all([
+    listBanks(),
+    listBankMovements(),
+    loadLatestOrgFxRate(supabase),
+  ]);
 
   const filteredBanks =
     activeParam === "activos"
@@ -65,12 +53,7 @@ export default async function BancosPage({
         ? banks.filter((b) => !b.active)
         : banks;
 
-  const balances = computeBankBalances(
-    filteredBanks,
-    paymentMethods,
-    payments,
-    movements,
-  );
+  const balances = computeBankBalances(filteredBanks, movements);
 
   const rows: BankRowData[] = filteredBanks.map((b) => {
     const bal = balances.get(b.id);
@@ -86,7 +69,6 @@ export default async function BancosPage({
       name: b.name,
       currency: b.currency,
       openingBalance: bal?.opening ?? Number(b.opening_balance),
-      fromPayments: bal?.fromPayments ?? 0,
       movementsIn: bal?.movementsIn ?? 0,
       movementsOut: bal?.movementsOut ?? 0,
       total,
