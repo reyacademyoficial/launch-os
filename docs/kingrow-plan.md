@@ -260,58 +260,102 @@ devuelve ese valor y pinta badge `"Manual"`. Volver a null → automático.
 
 Backend: bloque 5 (0090-0096). Cero filas en las 9 tablas.
 
+### 2.0 Refactor de alcance (2026-08-06)
+
+Ajustes acordados antes de arrancar el CRUD:
+
+- **Teams se muda a `/organizacion/equipos`.** Son config org-level (paralelos a
+  `/organizacion/personas`), no operación día-a-día. Se usan desde Operaciones pero
+  se administran en Organización. El módulo Operaciones queda con 6 tabs (Dashboard,
+  Proyectos, Tareas, Bloqueadores, Tiempo, Procesos).
+- **Vinculación `auth_user_id` en `organization_people`.** Migración nueva
+  `alter table organization_people add column auth_user_id uuid unique references
+  auth.users(id) on delete set null`. **Unique global** (una persona = un
+  auth_user; multi-org es lejano). Backfill por email match + UI en Personas para
+  asignar/desasignar manualmente. Cierra la decisión abierta del Anexo A.
+- **Filtro "mis tareas" por default para operador/analista/etc.** El path natural
+  es "entro y veo lo mío". Superadmin/dev arrancan viendo TODAS y pueden togglear
+  a "mis tareas". La lista queda scoped server-side por `assignee_id` derivado de
+  `auth.uid() → organization_people.id`. Un operador que fuerce `?scope=all` por URL
+  rebota.
+- **Vencidas visualmente marcadas como urgentes en la UI — SIN mutar `priority` en
+  DB.** Mutar priority silenciosamente rompería el historial (no se distingue "el
+  operador la marcó urgente" de "venció y el sistema la marcó"). La regla vive en la
+  presentación (dot rojo + badge "Vencida" si `due_on < today`).
+- **Notion sync postergado — Anexo C.** Es un proyecto aparte (OAuth, sync
+  periódico, dedup, mapping) que se traga el bloque si se mete acá.
+
 ### 2.1 Sub-gate del bloque
 
-- [ ] Releer 0090-0096 justo antes de escribir código.
-- [ ] Confirmar que `src/lib/ops/{types,overdue,carga,throughput}.ts` no cambió.
-- [ ] Decidir estructura de rutas: `/operaciones` con sub-rutas
-      `{proyectos,tareas,bloqueadores,tiempo,procesos,equipos}` o tabs planos.
-- [ ] `tasks.assignee_id → organization_people(id)` — confirmado en Gate 0. El selector
-      del picker de asignatario tiene que leer de `organization_people`, no de
-      `team_members`.
+- [x] Releer 0090-0096 justo antes de escribir código.
+- [x] Confirmar que `src/lib/ops/{types,overdue,carga,throughput}.ts` no cambió.
+- [x] Estructura de rutas decidida: 6 tabs planos en `/operaciones` (Dashboard,
+      Proyectos, Tareas, Bloqueadores, Tiempo, Procesos) + `/operaciones/proyectos/
+      [projectId]` para la ficha del proyecto interno. Equipos vive en Organización.
+- [x] `tasks.assignee_id → organization_people(id)` — confirmado. El picker lee de
+      `organization_people`, no de `team_members` (proyecto-scope de LaunchOS).
 
-### 2.2 CRUD (primero — todo en cero)
+### 2.2 CRUD y sub-piezas (orden de commits)
 
-- [ ] **teams**: crear equipo (name, description, active).
-- [ ] **team_membership**: sumar/quitar personas al equipo (unique parcial `(team_id,
-      person_id) where active` — permite historial).
-- [ ] **internal_projects**: crear proyecto interno (name, description, status,
-      priority, owner_id opcional, fechas).
-- [ ] **tasks**: crear tarea (title, description, internal_project_id opcional,
-      assignee_id opcional, status, priority, due_on).
-- [ ] **checklists**: crear checklist con XOR — o pertenece a task o a
-      internal_project, nunca ambos.
-- [ ] **checklist_items**: agregar item con position, marcar done/undone.
-- [ ] **blockers**: abrir bloqueador con XOR (task o project), resolver con
-      resolved_by + resolved_at.
-- [ ] **time_entries**: cargar horas (person_id, minutos, logged_on, task_id y/o
-      internal_project_id).
-- [ ] **processes**: crear/versionar SOP (title, slug, content_md, category, version).
+Con las decisiones de §2.0. Los ítems marcan commits atómicos, no filas de tabla.
 
-### 2.3 Lectura (después del CRUD)
+- [ ] **Andamio + plan MD update** (este commit).
+- [ ] **Migración `organization_people.auth_user_id`** + backfill por email + UI en
+      `/organizacion/personas` para asignar/desasignar usuario. Helper server-only
+      `resolveCurrentPersonId(): Promise<string | null>` en `src/lib/ops/`.
+- [ ] **CRUD `internal_projects`** + ficha `/operaciones/proyectos/[id]` con
+      placeholders para sub-secciones (tasks/blockers/checklists/time del proyecto).
+- [ ] **CRUD `tasks`** con:
+  - Vista global `/operaciones/tareas`.
+  - Filtro "mis tareas" default (server-scoped por auth_user_id → person_id).
+  - Toggle "Todas" — para operador/analista el toggle NO aparece; para superadmin/
+    dev es visible y default a "Todas".
+  - Marcado visual de vencidas (dot rojo + badge "Vencida").
+  - Integración inline en ficha de proyecto.
+- [ ] **CRUD `blockers`** + integración inline en tasks/projects. XOR duro.
+- [ ] **CRUD `checklists + checklist_items`** inline en tasks/projects (sin vista
+      global — un checklist suelto no aporta). XOR duro.
+- [ ] **CRUD `time_entries`** vista global filtrable por persona/proyecto/tarea/
+      período. Blocked delete on person con historial (already RESTRICT en DB).
+- [ ] **CRUD `teams + team_membership`** en `/organizacion/equipos` (fuera del
+      layout de Operaciones — nueva entrada en `ORGANIZATION_MODULES`).
+- [ ] **CRUD `processes`** — SOPs Markdown. Vista global + ficha con content_md.
+- [ ] **Dashboard `/operaciones`** consumiendo `computeLoadByPerson`,
+      `computeThroughput`, `sumMinutesByPerson`, `filterOverdueTasks`. Ranking de
+      productividad por persona con período configurable.
 
-- [ ] Listado de proyectos internos con responsable, estado y avance derivado del %
-      de tareas done.
-- [ ] Vista de tareas filtrable por proyecto, responsable, estado, vencimiento.
-- [ ] Bloqueadores abiertos con severidad implícita en la antigüedad.
-- [ ] Registros de tiempo agrupables por persona/proyecto/período.
-- [ ] Dashboard: tareas completadas en el período, bloqueadores abiertos, carga por
-      persona (usar `sumMinutesByPerson` y `computeLoadByPerson` de `src/lib/ops/`).
+### 2.3 Reglas transversales
+
+- Todos los CRUD siguen el patrón de Clientes: `Drawer` + `useActionState` + server
+  action con discriminated union `{ok, id} | {error}` + `revalidatePath`.
+- **NO sync automático** entre `tasks.status='blocked'` ↔ `blockers`. La UI puede
+  sugerir "cambiar status a blocked cuando creás un bloqueador", pero no forzar.
+- **NO sync automático** entre `tasks.status='done'` ↔ `completed_at`. La action
+  setea/limpia según transiciones (mismo patrón de tickets con `resolved_at`).
+- Reusar `Drawer`, `EmptyState`, `StatusPill`, `KgDataTable`, `KgParamPills`.
+- Sin borrado duro cuando hay historial contable (time_entries ya lo bloquea a
+  nivel DB con on delete RESTRICT en person_id).
 
 ### 2.4 Fuera de scope de este bloque
 
-- **Mi Jornada** (panel de tareas del usuario logueado en el sidebar): Anexo A.
-- **Dependencias entre tareas**: no están modeladas en backend (`tasks` no tiene
-  `depends_on`). No se agregan en este bloque. Si aparece la necesidad, se decide
-  aparte.
+- **Componente "Mi Jornada" en el sidebar** (Anexo A). La migración de
+  `auth_user_id` sí se hace acá (habilita "mis tareas" en `/operaciones/tareas`);
+  lo que queda en el Anexo A es solo el widget de sidebar.
+- **Dependencias entre tareas** (`depends_on`): no están modeladas en el schema.
+  Fuera de scope.
+- **Sync con Notion**: Anexo C.
 
 ### 2.5 Verificación al cerrar
 
 - [ ] Cargar 1-2 proyectos internos reales.
-- [ ] Cargar 10+ tareas con distintos assignees.
+- [ ] Cargar 10+ tareas con distintos assignees, algunas con `due_on` en el pasado
+      para verificar el marcado visual de "Vencida".
+- [ ] Vincular al menos 2 personas a usuarios distintos (self + otra); entrar como
+      operador y verificar que solo se ven las propias; entrar como superadmin y
+      verificar que se ven todas + toggle "Mis tareas" funciona.
 - [ ] Un bloqueador abierto y otro resuelto.
-- [ ] Time entries de al menos 2 personas.
-- [ ] El dashboard muestra números coherentes.
+- [ ] Time entries de al menos 2 personas en la misma ventana.
+- [ ] El dashboard muestra números coherentes con las tablas.
 
 > Notas del bloque Operaciones:
 > _(completar durante el trabajo)_
@@ -469,44 +513,45 @@ todo sin entrar a ningún módulo.
 
 ---
 
-## Anexo A — Mi Jornada (postergado)
+## Anexo A — Mi Jornada (postergado, parcialmente absorbido en §2)
 
-Panel de tareas del usuario logueado en el sidebar. Postergado explícitamente porque:
+Panel de tareas del usuario logueado **en el sidebar**. Postergado explícitamente
+porque:
 
-1. Requiere un **primitive nuevo** que no existe: resolver `auth.uid() →
-   organization_people(id)`. Es un helper de servidor que no está construido.
-2. Es una feature de conveniencia, no de correctitud. Operaciones funciona sin ella.
+1. Es una feature de conveniencia UX, no de correctitud. Operaciones funciona sin
+   ella — `/operaciones/tareas` con filtro "mis tareas" default (§2.2) cubre el 90%
+   del uso.
+2. Requiere componente en el shell/sidebar que hoy no está pensado para widgets
+   dinámicos.
 
-### Diseño cuando se retome
+### Absorbido en §2 (ya no es puramente Anexo)
 
-- Helper server-only en `src/lib/ops/mi-jornada.ts` que resuelve el `person_id` del
-  usuario logueado a partir de `auth.uid()`.
-  - Estrategia: primero buscar en `organization_people` una fila que tenga
-    `auth_user_id = auth.uid()` (columna que hoy no existe — habría que agregarla en
-    la migración del anexo).
-  - Cachear por request para no volver a resolver en cada componente.
-- Componente `MiJornadaPanel` en el sidebar con:
+- **Migración `auth_user_id`** se hace dentro del bloque Operaciones (§2.2).
+  Decisión cerrada: **unique global**. Una persona = un auth_user; multi-org se
+  refactoriza si aparece.
+- **Helper `resolveCurrentPersonId()`** también nace en §2.2 (se necesita para el
+  filtro "mis tareas" del `/operaciones/tareas`).
+- **UI para vincular usuario a persona** en `/organizacion/personas` — también §2.2.
+
+### Lo que queda para el Anexo cuando se retome
+
+- **Componente `MiJornadaPanel`** en el sidebar (KingrowShell) con:
   - Tareas asignadas al `person_id` con `status ∈ {todo, doing}`.
   - Ordenadas por `due_on asc nulls last`.
-  - Con badge de vencidas (usa `filterOverdueTasks` de `src/lib/ops/overdue.ts`).
+  - Badge de vencidas (usa `filterOverdueTasks` de `src/lib/ops/overdue.ts`).
   - Click en tarea → drawer con detalle + acciones rápidas (marcar done, cambiar
     status, agregar time_entry rápido).
-- Fila en `time_entries` opcional: botón "Trabajé X minutos ahora" que crea entry
-  con `logged_on=today, person_id=me, task_id=selected`.
+- **Botón "Trabajé X minutos ahora"** opcional que crea un `time_entries` con
+  `logged_on=today, person_id=me, task_id=selected`.
 
-### Migración necesaria (cuando se retome)
+### Backfill de `auth_user_id`
 
-- `alter table public.organization_people add column if not exists auth_user_id uuid
-  unique references auth.users(id) on delete set null;`
-- Backfill manual: matchear por email de organization_people con email de auth.users.
+Cuando se corra la migración del §2.2:
 
-### Decisión abierta
-
-- ¿Cómo se maneja el caso de una persona con dos organizaciones? Hoy
-  `organization_people` es org-scope y `auth.users` es global. Si un mismo humano
-  tiene fila en dos orgs distintas, `auth_user_id` en `organization_people` puede
-  colisionar. Decidir antes de agregar la columna: unique global (una persona = un
-  auth_user), o unique por (org, auth_user) que permitiría duplicar.
+- Match automático por email en un script one-shot (organization_people.email ↔
+  auth.users.email, ambos lowercased).
+- Resto asignado manualmente en `/organizacion/personas` con un dropdown "Usuario
+  Kingrow" (personas sin match aparecen con badge "sin usuario").
 
 ---
 
@@ -570,6 +615,60 @@ construirlo.
   integración Meta Feed API, esquema de atribución. **Es un proyecto, no un módulo.**
   Si aparece la necesidad, se decide como bloque backend aparte.
 - Analíticas granulares (creativos, audiencias, keywords). Fuera de v1 explícitamente.
+
+---
+
+## Anexo C — Sync con Notion (postergado)
+
+Integración con el board de Notion del equipo para materializar las tareas en KG y
+poder correr los análisis de productividad sobre esa data. Postergado porque es un
+proyecto aparte (20-40 horas estimadas) que se traga el bloque Operaciones si se
+mete adentro.
+
+### Motivación
+
+- El equipo ya vive en Notion. Duplicar carga en dos lados es fricción y desalinea.
+- El módulo Operaciones nace útil sin Notion (carga manual funciona) — traer Notion
+  es una capa de conveniencia que se justifica cuando ya haya adopción del CRUD
+  nativo.
+
+### Diseño cuando se retome (esbozo)
+
+- **OAuth con Notion**. Token por org (nuevo `organization_integrations`?) o
+  global. Decidir según scope multi-org.
+- **Mapping de propiedades**: Notion `Assignee` (persona Notion) → KG
+  `organization_people` por email/nombre. `Status` → `tasks.status` (mapa
+  configurable — Notion suele tener enums distintos: "Not started", "In progress",
+  "Done"). `Due date` → `tasks.due_on`. `Priority` → `tasks.priority`. Título +
+  descripción directo.
+- **Dedup**: agregar `tasks.notion_page_id text unique` para linkear 1:1. Un update
+  en Notion trae la fila y hace UPDATE, no INSERT.
+- **Estrategia de source of truth**: mejor "Notion manda, KG es sombra" que
+  bidireccional. Bidireccional abre conflictos, versionado y explota complejidad.
+- **Sync**: webhook de Notion (si soporta el nivel de free/pro del equipo) o cron
+  cada 5-15 min. Para arrancar, cron simple + botón "Sincronizar ahora" manual.
+- **UI**: badge "Fuente: Notion" en las tareas sincronizadas + link al page. El
+  operador NO edita esas desde KG (bloquear en el drawer o permitir con warning).
+
+### Migración necesaria (cuando se retome)
+
+- `alter table tasks add column notion_page_id text unique;` (nullable — las nativas
+  KG no la tienen).
+- Nueva tabla `notion_sync_log` con timestamps + status + errores por corrida.
+- Config en `organization_integrations` con el token OAuth.
+
+### Estimación
+
+Con OAuth + mapping + dedup + cron + botón manual + UI de conflictos + tests
+razonables: **20-40h**. Sin producir data nueva; solo importar. Bien puede ser un
+bloque propio (Bloque 6 · Integraciones externas).
+
+### Fuera de alcance incluso al retomarlo
+
+- Escritura KG → Notion. Bidireccional es un multiplicador de complejidad — la
+  primera versión solo lee.
+- Sub-tareas de Notion (nested pages). Se traen como flat; el operador reorganiza
+  si aplica.
 
 ---
 
