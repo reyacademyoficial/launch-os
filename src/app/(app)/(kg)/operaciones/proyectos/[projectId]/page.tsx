@@ -13,6 +13,11 @@ import type {
   OwnerOption,
   ProjectInitial,
 } from "../internal-project-form-drawer";
+import {
+  ChecklistsSection,
+  type ChecklistData,
+  type ChecklistItemData,
+} from "./checklists/checklists-section";
 import { EditProjectButton } from "./edit-project-button";
 
 export const metadata: Metadata = { title: "Proyecto interno · Operaciones" };
@@ -89,7 +94,7 @@ export default async function InternalProjectFichaPage({
 
   const supabase = await createClient();
 
-  const [projectRes, peopleRes] = await Promise.all([
+  const [projectRes, peopleRes, checklistsRes] = await Promise.all([
     supabase
       .from("internal_projects")
       .select(
@@ -101,6 +106,13 @@ export default async function InternalProjectFichaPage({
       .from("organization_people")
       .select("id, full_name, active")
       .order("full_name", { ascending: true }),
+    // Solo las checklists colgadas DIRECTO del proyecto (XOR). Las que
+    // cuelgan de tareas viven en la ficha de la tarea (pendiente).
+    supabase
+      .from("checklists")
+      .select("id, title")
+      .eq("internal_project_id", projectId)
+      .order("created_at", { ascending: true }),
   ]);
 
   const project = projectRes.data as ProjectDbRow | null;
@@ -110,6 +122,45 @@ export default async function InternalProjectFichaPage({
   const ownerName = project.owner_id
     ? allPeople.find((p) => p.id === project.owner_id)?.full_name ?? null
     : null;
+
+  // Segundo batch: items de las checklists del proyecto. En paralelo
+  // porque depende de los checklist_ids.
+  const checklistRows = (checklistsRes.data ?? []) as unknown as {
+    readonly id: string;
+    readonly title: string;
+  }[];
+  const checklistIds = checklistRows.map((c) => c.id);
+  const itemsRes =
+    checklistIds.length === 0
+      ? { data: [] as unknown[] }
+      : await supabase
+          .from("checklist_items")
+          .select("id, checklist_id, content, done, position")
+          .in("checklist_id", checklistIds)
+          .order("position", { ascending: true });
+  const itemRows = (itemsRes.data ?? []) as unknown as {
+    readonly id: string;
+    readonly checklist_id: string;
+    readonly content: string;
+    readonly done: boolean;
+    readonly position: number;
+  }[];
+  const itemsByChecklist = new Map<string, ChecklistItemData[]>();
+  for (const it of itemRows) {
+    const arr = itemsByChecklist.get(it.checklist_id) ?? [];
+    arr.push({
+      id: it.id,
+      content: it.content,
+      done: it.done,
+      position: it.position,
+    });
+    itemsByChecklist.set(it.checklist_id, arr);
+  }
+  const checklists: ChecklistData[] = checklistRows.map((c) => ({
+    id: c.id,
+    title: c.title,
+    items: itemsByChecklist.get(c.id) ?? [],
+  }));
 
   const owners: OwnerOption[] = allPeople
     .filter((p) => p.active)
@@ -243,10 +294,9 @@ export default async function InternalProjectFichaPage({
           />
         </Panel>
         <Panel title="Checklists">
-          <EmptyState
-            icon={<IconOps size={22} />}
-            title="Sub-sección en construcción"
-            hint="Checklists cargadas contra el proyecto (macro-hitos). Las que cuelgan de tareas viven adentro de cada tarea."
+          <ChecklistsSection
+            projectId={project.id}
+            checklists={checklists}
           />
         </Panel>
         <Panel title="Tiempo dedicado">
