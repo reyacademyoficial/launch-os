@@ -121,7 +121,7 @@ export async function createCohort(
   if (error) {
     if (error.code === "23505") {
       return {
-        error: "Ya existe una cohorte con ese nombre en el proyecto.",
+        error: "Ya existe una generación con ese nombre en el proyecto.",
       };
     }
     if (error.code === "23514") {
@@ -149,7 +149,7 @@ export async function updateCohort(
   _prev: UpdateCohortState,
   formData: FormData,
 ): Promise<UpdateCohortState> {
-  if (!cohortId) return { error: "Falta el id de la cohorte." };
+  if (!cohortId) return { error: "Falta el id de la generación." };
 
   const parsed = parseCohortFormData(formData);
   if (typeof parsed === "string") return { error: parsed };
@@ -173,7 +173,7 @@ export async function updateCohort(
   if (error) {
     if (error.code === "23505") {
       return {
-        error: "Ya existe otra cohorte con ese nombre en el proyecto.",
+        error: "Ya existe otra generación con ese nombre en el proyecto.",
       };
     }
     if (error.code === "23514") {
@@ -193,7 +193,7 @@ function translateCheckError(msg: string): string {
     return "El proyecto no es propia. Academia solo admite proyectos con ownership='propia'.";
   }
   if (msg.includes("course") && msg.includes("project")) {
-    return "El curso pertenece a otro proyecto. Elegí un curso del mismo proyecto de la cohorte.";
+    return "El curso pertenece a otro proyecto. Elegí un curso del mismo proyecto de la generación.";
   }
   return msg;
 }
@@ -209,7 +209,7 @@ function translateCheckError(msg: string): string {
 export async function deleteCohort(
   cohortId: string,
 ): Promise<DeleteCohortResult> {
-  if (!cohortId) return { error: "Falta el id de la cohorte." };
+  if (!cohortId) return { error: "Falta el id de la generación." };
 
   const supabase = await createSupabaseClient();
 
@@ -248,7 +248,7 @@ export async function deleteCohort(
   if (deps.length > 0) {
     return {
       error:
-        `No se puede eliminar: la cohorte tiene ${deps.join(", ")}. ` +
+        `No se puede eliminar: la generación tiene ${deps.join(", ")}. ` +
         "Cerrala (status='Terminada' o 'Cancelada') para preservar el historial.",
     };
   }

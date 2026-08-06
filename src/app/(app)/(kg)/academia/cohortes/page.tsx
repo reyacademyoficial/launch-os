@@ -13,7 +13,7 @@ import type {
 } from "./cohort-form-drawer";
 import { CohortsView, type CohortRowData } from "./cohorts-view";
 
-export const metadata: Metadata = { title: "Cohortes · Academia" };
+export const metadata: Metadata = { title: "Generaciones · Academia" };
 
 type Status = "planned" | "active" | "finished" | "cancelled";
 type StatusFilter = "activas" | "cerradas" | "todas";
@@ -171,7 +171,7 @@ export default async function CohortesPage({
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <ContextBar
         icon={<IconAca size={16} />}
-        title="Cohortes"
+        title="Generaciones"
         stats={[
           { l: "Activas", v: fCount(activeCount) },
           { l: "Planeadas", v: fCount(plannedCount) },
@@ -189,7 +189,7 @@ export default async function CohortesPage({
         }))}
       />
 
-      <Panel title="Cohortes">
+      <Panel title="Generaciones">
         <CohortsView
           rows={rows}
           totalCount={rows.length}

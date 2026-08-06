@@ -5,90 +5,72 @@ import { useActionState, useEffect, useMemo, useState, useTransition } from "rea
 import { Drawer } from "@/components/kg/drawer";
 
 import {
-  createCohort,
-  deleteCohort,
-  updateCohort,
-  type CreateCohortState,
-  type UpdateCohortState,
+  createStudentManual,
+  deleteStudent,
+  updateStudent,
+  type CreateStudentState,
+  type UpdateStudentState,
 } from "./actions";
 
-type Status = "planned" | "active" | "finished" | "cancelled";
+type Status = "active" | "inactive" | "graduated";
 
 const STATUS_OPTIONS: ReadonlyArray<{ value: Status; label: string }> = [
-  { value: "planned", label: "Planeada" },
-  { value: "active", label: "Activa" },
-  { value: "finished", label: "Terminada" },
-  { value: "cancelled", label: "Cancelada" },
+  { value: "active", label: "Activo" },
+  { value: "inactive", label: "Inactivo" },
+  { value: "graduated", label: "Graduado" },
 ];
 
-export interface ProjectOptionForCohort {
+export interface ProjectOptionForStudent {
   readonly id: string;
   readonly name: string;
 }
 
-export interface CourseOptionForCohort {
-  readonly id: string;
-  readonly productName: string;
-  readonly projectId: string;
-}
-
-export interface CohortInitial {
+export interface StudentInitial {
   readonly id: string;
   readonly projectId: string;
-  readonly courseId: string | null;
   readonly name: string;
-  readonly startDate: string;
-  readonly endDate: string;
+  readonly email: string | null;
+  readonly phone: string | null;
   readonly status: Status;
   readonly notes: string | null;
 }
 
-export function CohortFormDrawer({
+export function StudentFormDrawer({
   mode,
   open,
   onClose,
   projects,
-  courses,
   initial,
-  presetProjectId,
 }: {
   readonly mode: "create" | "edit";
   readonly open: boolean;
   readonly onClose: () => void;
-  readonly projects: readonly ProjectOptionForCohort[];
-  readonly courses: readonly CourseOptionForCohort[];
-  readonly initial?: CohortInitial;
-  readonly presetProjectId?: string | null;
+  readonly projects: readonly ProjectOptionForStudent[];
+  readonly initial?: StudentInitial;
 }) {
   if (!open) return null;
-  const title = mode === "create" ? "Nueva generación" : "Editar generación";
+  const title = mode === "create" ? "Nuevo estudiante" : "Editar estudiante";
   return (
     <Drawer open={open} onClose={onClose} title={title} width={560}>
-      <CohortFormBody
+      <StudentFormBody
         mode={mode}
         projects={projects}
-        courses={courses}
         initial={initial}
-        presetProjectId={presetProjectId}
         onClose={onClose}
       />
     </Drawer>
   );
 }
 
-function CohortFormBody({
+function StudentFormBody({
   mode,
   projects,
-  courses,
   initial,
-  presetProjectId,
   onClose,
 }: {
   readonly mode: "create" | "edit";
-  readonly projects: readonly ProjectOptionForCohort[];
-  readonly courses: readonly CourseOptionForCohort[];
-  readonly initial?: CohortInitial;
-  readonly presetProjectId?: string | null;
+  readonly projects: readonly ProjectOptionForStudent[];
+  readonly initial?: StudentInitial;
   readonly onClose: () => void;
 }) {
   const isEdit = mode === "edit" && initial != null;
@@ -96,16 +78,16 @@ function CohortFormBody({
   const updateBound = useMemo(() => {
     if (!isEdit) return null;
     const id = initial!.id;
-    return async (prev: UpdateCohortState, fd: FormData) =>
-      updateCohort(id, prev, fd);
+    return async (prev: UpdateStudentState, fd: FormData) =>
+      updateStudent(id, prev, fd);
   }, [isEdit, initial]);
 
   const [createState, createFormAction, createPending] = useActionState<
-    CreateCohortState,
+    CreateStudentState,
     FormData
-  >(createCohort, null);
+  >(createStudentManual, null);
   const [updateState, updateFormAction, updatePending] = useActionState<
-    UpdateCohortState,
+    UpdateStudentState,
     FormData
   >(
     updateBound ??
@@ -121,40 +103,18 @@ function CohortFormBody({
     if (state && "ok" in state && state.ok) onClose();
   }, [state, onClose]);
 
-  const [projectId, setProjectId] = useState<string>(
-    initial?.projectId ?? presetProjectId ?? projects[0]?.id ?? "",
-  );
-  const [courseId, setCourseId] = useState<string>(
-    initial?.courseId ?? "",
-  );
-  const [startDate, setStartDate] = useState<string>(initial?.startDate ?? "");
-  const [endDate, setEndDate] = useState<string>(initial?.endDate ?? "");
-
   const [deletePending, startDeleteTransition] = useTransition();
   const [deleteError, setDeleteError] = useState<string | null>(null);
-
-  const coursesForProject = courses.filter((c) => c.projectId === projectId);
-
-  function handleProjectChange(nextId: string) {
-    setProjectId(nextId);
-    // Si el curso actual no pertenece al nuevo project, limpiar.
-    if (
-      courseId &&
-      !courses.some((c) => c.id === courseId && c.projectId === nextId)
-    ) {
-      setCourseId("");
-    }
-  }
 
   function handleDelete() {
     if (!isEdit || !initial) return;
     const ok = window.confirm(
-      `¿Eliminar la generación "${initial.name}"? Si tiene inscripciones, clases o exámenes va a rebotar — cerrala (status Terminada o Cancelada) para preservar historial.`,
+      `¿Eliminar el estudiante "${initial.name}"? Si tiene inscripciones/asistencia/exámenes/certificados va a rebotar — marcalo como Inactivo o Graduado en su lugar.`,
     );
     if (!ok) return;
     setDeleteError(null);
     startDeleteTransition(async () => {
-      const result = await deleteCohort(initial.id);
+      const result = await deleteStudent(initial.id);
       if ("error" in result) {
         setDeleteError(result.error);
         return;
@@ -170,8 +130,8 @@ function CohortFormBody({
           className="kg-t7"
           style={{ color: "var(--kg-text-3)", lineHeight: 1.55 }}
         >
-          No hay proyectos propios. Academia requiere al menos un project con
-          ownership='propia'. Ver banner en /academia para el SQL de setup.
+          No hay proyectos propios. Ver el banner de /academia para el SQL
+          de setup.
         </div>
       </div>
     );
@@ -186,8 +146,7 @@ function CohortFormBody({
         <select
           id="project_id"
           name="project_id"
-          value={projectId}
-          onChange={(e) => handleProjectChange(e.target.value)}
+          defaultValue={initial?.projectId ?? projects[0]?.id ?? ""}
           required
           style={inputStyle}
         >
@@ -199,32 +158,6 @@ function CohortFormBody({
         </select>
       </Field>
 
-      <Field label="Curso (opcional)" htmlFor="course_id">
-        <select
-          id="course_id"
-          name="course_id"
-          value={courseId}
-          onChange={(e) => setCourseId(e.target.value)}
-          disabled={coursesForProject.length === 0}
-          style={inputStyle}
-        >
-          <option value="">— Sin curso —</option>
-          {coursesForProject.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.productName}
-            </option>
-          ))}
-        </select>
-        <div
-          className="kg-t7"
-          style={{ color: "var(--kg-text-3)", marginTop: 6 }}
-        >
-          {coursesForProject.length === 0
-            ? "El proyecto no tiene cursos cargados. Podés dejar la generación sin curso, pero no podrás vincularla a ventas de LaunchOS."
-            : "Solo se listan cursos del proyecto seleccionado."}
-        </div>
-      </Field>
-
       <Field label="Nombre" htmlFor="name" required>
         <input
           id="name"
@@ -233,32 +166,32 @@ function CohortFormBody({
           required
           maxLength={200}
           defaultValue={initial?.name ?? ""}
-          placeholder="Ej. Generación 2026-Q1"
+          placeholder="Nombre completo del alumno"
           style={inputStyle}
+          autoFocus
         />
       </Field>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field label="Inicio" htmlFor="start_date" required>
+        <Field label="Email" htmlFor="email">
           <input
-            id="start_date"
-            name="start_date"
-            type="date"
-            required
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
+            id="email"
+            name="email"
+            type="email"
+            autoComplete="off"
+            defaultValue={initial?.email ?? ""}
+            placeholder="Opcional"
             style={inputStyle}
           />
         </Field>
-        <Field label="Fin" htmlFor="end_date" required>
+        <Field label="Teléfono" htmlFor="phone">
           <input
-            id="end_date"
-            name="end_date"
-            type="date"
-            required
-            value={endDate}
-            min={startDate || undefined}
-            onChange={(e) => setEndDate(e.target.value)}
+            id="phone"
+            name="phone"
+            type="tel"
+            autoComplete="off"
+            defaultValue={initial?.phone ?? ""}
+            placeholder="+549..."
             style={inputStyle}
           />
         </Field>
@@ -268,7 +201,7 @@ function CohortFormBody({
         <select
           id="status"
           name="status"
-          defaultValue={initial?.status ?? "planned"}
+          defaultValue={initial?.status ?? "active"}
           style={inputStyle}
         >
           {STATUS_OPTIONS.map((o) => (
@@ -310,7 +243,7 @@ function CohortFormBody({
             className="kg-focus"
             style={{ ...dangerBtn, opacity: deletePending ? 0.7 : 1 }}
           >
-            {deletePending ? "Eliminando…" : "Eliminar generación"}
+            {deletePending ? "Eliminando…" : "Eliminar estudiante"}
           </button>
         ) : (
           <div />
@@ -337,7 +270,7 @@ function CohortFormBody({
                 : "Creando…"
               : isEdit
                 ? "Guardar cambios"
-                : "Crear generación"}
+                : "Crear estudiante"}
           </button>
         </div>
       </div>

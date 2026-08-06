@@ -75,7 +75,7 @@ export function CohortsView({
   const columns: Column<CohortRowData>[] = [
     {
       key: "name",
-      label: "Cohorte",
+      label: "Generación",
       render: (r) => (
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <Link
@@ -156,7 +156,7 @@ export function CohortsView({
           className="kg-focus"
           style={primaryBtn}
         >
-          + Nueva cohorte
+          + Nueva generación
         </button>
       </div>
 
@@ -165,8 +165,8 @@ export function CohortsView({
         rows={rows}
         rowKey={(r) => r.id}
         totalCount={totalCount}
-        emptyTitle="Sin cohortes que coincidan con el filtro"
-        emptyHint="Cambiá el filtro o creá una cohorte nueva."
+        emptyTitle="Sin generaciones que coincidan con el filtro"
+        emptyHint="Cambiá el filtro o creá una generación nueva."
       />
 
       <CohortFormDrawer

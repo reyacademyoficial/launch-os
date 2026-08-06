@@ -34,7 +34,7 @@ export default async function AcademiaLayout({
 
   const tabs: readonly TabItem[] = [
     { href: "/academia", label: "Dashboard" },
-    { href: "/academia/cohortes", label: "Cohortes" },
+    { href: "/academia/cohortes", label: "Generaciones" },
     { href: "/academia/estudiantes", label: "Estudiantes" },
     { href: "/academia/cursos", label: "Cursos" },
     { href: "/academia/certificados", label: "Certificados" },

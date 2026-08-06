@@ -16,7 +16,7 @@ import type {
 } from "../cohort-form-drawer";
 import { EditCohortButton } from "./edit-cohort-button";
 
-export const metadata: Metadata = { title: "Cohorte · Academia" };
+export const metadata: Metadata = { title: "Generación · Academia" };
 
 type Status = "planned" | "active" | "finished" | "cancelled";
 
@@ -178,7 +178,7 @@ export default async function CohortFichaPage({
           gap: 16,
         }}
       >
-        <Panel title="Datos de la cohorte">
+        <Panel title="Datos de la generación">
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <FieldRow label="Proyecto" value={projectName ?? "—"} />
             <FieldRow label="Curso" value={courseName ?? "Sin curso"} />

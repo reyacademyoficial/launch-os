@@ -24,7 +24,7 @@ export default function AcademiaDashboardPage() {
         title="Academia"
         stats={[
           { l: "Estudiantes activos", v: fCount(0) },
-          { l: "Cohortes activas", v: fCount(0) },
+          { l: "Generaciones activas", v: fCount(0) },
           { l: "Asistencia promedio", v: "—" },
           { l: "Tasa de aprobación", v: "—" },
         ]}
@@ -32,8 +32,8 @@ export default function AcademiaDashboardPage() {
       <Panel title="Salud de la academia">
         <EmptyState
           icon={<IconAca size={22} />}
-          title="Sin cohortes ni estudiantes cargados"
-          hint="Academia trackea cursos, cohortes, alumnos, asistencia, exámenes y certificados de las empresas propias (Rey Academy, Growins). Empezá cargando un curso desde la pestaña Cursos y después una cohorte."
+          title="Sin generaciones ni estudiantes cargados"
+          hint="Academia trackea cursos, generaciones, alumnos, asistencia, exámenes y certificados de las empresas propias (Rey Academy, Growins). Empezá cargando un curso desde la pestaña Cursos y después una generación."
         />
       </Panel>
     </div>
