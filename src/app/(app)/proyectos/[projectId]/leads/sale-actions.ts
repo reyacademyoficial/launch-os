@@ -189,6 +189,15 @@ export async function createSale(
       await supabase.from("sales").delete().eq("id", saleId);
       return { error: `No se pudieron generar las cuotas: ${genError.message}` };
     }
+
+    // Auto-generar facturas (una por cuota). Fallo NO revierte la venta —
+    // la venta y sus cuotas quedan intactas; el operador puede volver a
+    // regenerar desde /financiero/facturas o al editar la venta. Preferimos
+    // que la venta se cree con facturas faltantes que perderla entera.
+    await supabase.rpc(
+      "generate_invoices_for_sale" as never,
+      { p_sale_id: saleId } as never,
+    );
   }
 
   // Marcar lead cerrado (puede que ya lo esté; es idempotente).
@@ -332,6 +341,12 @@ export async function createSaleWithLead(
         error: `No se pudieron generar las cuotas: ${genErr.message}`,
       };
     }
+
+    // Auto-generar facturas — ver comentario en createSale. Fallo no revierte.
+    await supabase.rpc(
+      "generate_invoices_for_sale" as never,
+      { p_sale_id: saleId } as never,
+    );
   }
 
   revalidateSalesImpact(projectId, launch_id);
@@ -478,6 +493,14 @@ export async function updateSale(
     if (genError) {
       return { error: `No se pudieron regenerar las cuotas: ${genError.message}` };
     }
+
+    // Regenerar facturas junto con las cuotas. La RPC preserva las cobradas
+    // y anuladas; sólo regenera las emitidas sin paid_at. Fallo no revierte
+    // las cuotas — el operador puede reintentar desde /financiero/facturas.
+    await supabase.rpc(
+      "generate_invoices_for_sale" as never,
+      { p_sale_id: saleId } as never,
+    );
   }
 
   await revalidateForSale(projectId, saleId);
