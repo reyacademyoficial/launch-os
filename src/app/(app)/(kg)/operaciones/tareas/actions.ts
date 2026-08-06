@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { resolveCurrentOrganizationId } from "@/lib/organization/current";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -102,12 +103,26 @@ export async function createTask(
   const parsed = parseTaskFormData(formData);
   if (typeof parsed === "string") return { error: parsed };
 
+  let organizationId: string | null;
+  try {
+    organizationId = await resolveCurrentOrganizationId();
+  } catch (e) {
+    return {
+      error:
+        e instanceof Error ? e.message : "Error resolviendo la organización.",
+    };
+  }
+  if (!organizationId) {
+    return { error: "No pudimos resolver tu organización. Revisá tus permisos." };
+  }
+
   const completedAt = CLOSED_STATUSES.has(parsed.status)
     ? new Date().toISOString()
     : null;
 
   const supabase = await createSupabaseClient();
   const payload = {
+    organization_id: organizationId,
     title: parsed.title,
     description: parsed.description,
     status: parsed.status,

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { resolveCurrentOrganizationId } from "@/lib/organization/current";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -105,8 +106,22 @@ export async function createTimeEntry(
   const parsed = parseTimeEntryFormData(formData);
   if (typeof parsed === "string") return { error: parsed };
 
+  let organizationId: string | null;
+  try {
+    organizationId = await resolveCurrentOrganizationId();
+  } catch (e) {
+    return {
+      error:
+        e instanceof Error ? e.message : "Error resolviendo la organización.",
+    };
+  }
+  if (!organizationId) {
+    return { error: "No pudimos resolver tu organización. Revisá tus permisos." };
+  }
+
   const supabase = await createSupabaseClient();
   const payload = {
+    organization_id: organizationId,
     person_id: parsed.personId,
     minutes: parsed.minutes,
     logged_on: parsed.loggedOn,
