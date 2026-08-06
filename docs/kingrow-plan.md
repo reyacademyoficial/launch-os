@@ -417,7 +417,8 @@ antes.
       syllabus.
 - [ ] **cohorts**: crear cohorte (project_id, course_id opcional, name, fechas,
       status). Unique por (project_id, name).
-- [ ] **classes**: crear clase dentro de cohorte (scheduled_at, topic, notes).
+- [x] **classes**: crear clase dentro de cohorte (scheduled_at, topic, notes).
+      Inline en la ficha de la generación con Drawer create/edit + delete rojo.
 - [ ] **students**: crear alumno (project_id, name, email, phone, status). Unique
       parcial por (project_id, phone_normalized) y (project_id, email).
 - [ ] **enrollments**: inscribir alumno a cohorte. **Con dropdown "Origen":**
@@ -425,8 +426,9 @@ antes.
     tenga curso asociado. Muestra "cliente / producto / fecha". Auto-completa
     `sale_id` y valida contra el trigger de consistencia. Badge en listado: "Auto".
   - _Carga manual_: sin `sale_id`. Badge en listado: "Manual".
-- [ ] **attendance**: marcar asistencia por clase. **Carga masiva:** una clase, N
-      alumnos marcados de una — no de a uno. Fila por `(class_id, student_id)`.
+- [x] **attendance**: matriz masiva por clase (Drawer con checkboxes + Marcar
+      todos/Limpiar + upsert `on_conflict=class_id,student_id`). Solo inscriptos
+      con status active/completed entran a la matriz.
 - [ ] **exams**: registrar examen (student, cohort, title, score, passed, taken_at).
       `passed` puede quedar null si aún no corregido.
 - [ ] **certificates**: emitir certificado (student, course, code, issued_at, url).

@@ -23,6 +23,12 @@ import {
   EnrollmentsPanel,
   type EnrollmentRowData,
 } from "./enrollments-panel";
+import {
+  ClassesPanel,
+  type AttendanceMapForClass,
+  type ClassRowData,
+  type EnrolledStudentForAttendance,
+} from "./classes/classes-panel";
 
 export const metadata: Metadata = { title: "Generación · Academia" };
 
@@ -90,6 +96,19 @@ interface LeadDbRow {
   readonly name: string | null;
 }
 
+interface ClassDbRow {
+  readonly id: string;
+  readonly scheduled_at: string;
+  readonly topic: string | null;
+  readonly notes: string | null;
+}
+
+interface AttendanceDbRow {
+  readonly class_id: string;
+  readonly student_id: string;
+  readonly present: boolean;
+}
+
 const STATUS_LABEL: Record<CohortStatus, string> = {
   planned: "Planeada",
   active: "Activa",
@@ -147,8 +166,9 @@ export default async function CohortFichaPage({
       .order("enrolled_at", { ascending: false }),
     supabase
       .from("classes")
-      .select("id", { count: "exact", head: true })
-      .eq("cohort_id", cohortId),
+      .select("id, scheduled_at, topic, notes")
+      .eq("cohort_id", cohortId)
+      .order("scheduled_at", { ascending: false }),
     supabase
       .from("exams")
       .select("id", { count: "exact", head: true })
@@ -296,8 +316,61 @@ export default async function CohortFichaPage({
     notes: e.notes,
   }));
 
-  const classesCount = classesRes.count ?? 0;
+  const classRows = (classesRes.data ?? []) as unknown as ClassDbRow[];
+  const classesCount = classRows.length;
   const examsCount = examsRes.count ?? 0;
+
+  // Attendance batch: para todas las clases de esta cohort, para poder
+  // contar presentes por clase y precargar la matriz al abrir el drawer.
+  const classIds = classRows.map((c) => c.id);
+  const attendanceRes =
+    classIds.length === 0
+      ? { data: [] as AttendanceDbRow[] }
+      : await supabase
+          .from("attendance")
+          .select("class_id, student_id, present")
+          .in("class_id", classIds);
+  const attendanceRows =
+    (attendanceRes.data ?? []) as unknown as AttendanceDbRow[];
+
+  // Presentes por clase.
+  const presentCountByClass = new Map<string, number>();
+  const attendanceByClass: Record<
+    string,
+    Array<{ studentId: string; present: boolean }>
+  > = {};
+  for (const a of attendanceRows) {
+    if (a.present) {
+      presentCountByClass.set(
+        a.class_id,
+        (presentCountByClass.get(a.class_id) ?? 0) + 1,
+      );
+    }
+    const bucket = attendanceByClass[a.class_id] ?? [];
+    bucket.push({ studentId: a.student_id, present: a.present });
+    attendanceByClass[a.class_id] = bucket;
+  }
+
+  const classesForPanel: ClassRowData[] = classRows.map((c) => ({
+    id: c.id,
+    scheduledAtIso: c.scheduled_at,
+    topic: c.topic,
+    notes: c.notes,
+    presentCount: presentCountByClass.get(c.id) ?? 0,
+  }));
+
+  // Inscriptos vigentes (active/completed) para la matriz de asistencia.
+  // Los dropped/suspended salen — ya no vienen a clase.
+  const enrolledStudentsForAttendance: EnrolledStudentForAttendance[] =
+    enrollmentRows
+      .filter((e) => e.status === "active" || e.status === "completed")
+      .map((e) => ({
+        studentId: e.student_id,
+        studentName: studentNameById.get(e.student_id) ?? "—",
+      }))
+      .sort((a, b) => a.studentName.localeCompare(b.studentName));
+
+  const attendanceMap: AttendanceMapForClass = attendanceByClass;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -393,10 +466,12 @@ export default async function CohortFichaPage({
         }}
       >
         <Panel title="Clases">
-          <EmptyState
-            icon={<IconAca size={22} />}
-            title="Sub-sección en construcción"
-            hint="Programación de clases + carga masiva de asistencia por clase (una clase, N alumnos marcados de una)."
+          <ClassesPanel
+            cohortId={cohort.id}
+            cohortName={cohort.name}
+            classes={classesForPanel}
+            enrolledStudents={enrolledStudentsForAttendance}
+            attendanceByClass={attendanceMap}
           />
         </Panel>
         <Panel title="Exámenes">
