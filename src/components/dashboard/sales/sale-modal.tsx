@@ -61,6 +61,19 @@ interface CollectedDisplay {
   currency: Currency;
   mixed: boolean;
 }
+
+/**
+ * Factura emitida asociable a un cobro. Post 0114/0115/0116: cada cuota tiene
+ * una factura emitida generada automáticamente. El form de cobro auto-elige
+ * la factura correspondiente a la cuota seleccionada (1 cuota = 1 factura).
+ */
+export interface InvoiceOption {
+  readonly id: string;
+  readonly invoice_number: string | null;
+  readonly installment_id: string | null;
+  readonly amount_gross: number;
+  readonly status: string;
+}
 function collectedForSale(
   fxLookup: FxLookup | undefined,
   sale: { id: string },
@@ -181,6 +194,7 @@ export function SaleModal({
   saleRanks,
   paymentsBySaleId,
   installmentsBySaleId,
+  invoicesBySaleId,
   modalities,
   products,
   rules,
@@ -218,6 +232,8 @@ export function SaleModal({
   readonly paymentsBySaleId: ReadonlyMap<string, ReadonlyArray<PaymentRow>>;
   /** Cuotas indexadas por sale_id — Fase 11. Puede estar vacío para ventas legacy sin backfill (no debería ocurrir tras 0043). */
   readonly installmentsBySaleId: ReadonlyMap<string, ReadonlyArray<InstallmentRow>>;
+  /** Facturas emitidas indexadas por sale_id — Paso 4. Opcional (compat con callers que aún no la resuelven). */
+  readonly invoicesBySaleId?: ReadonlyMap<string, ReadonlyArray<InvoiceOption>>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
   readonly products: ReadonlyArray<ProductRow>;
   readonly rules: ReadonlyArray<CommissionRuleRow>;
@@ -361,6 +377,7 @@ export function SaleModal({
                     installments={
                       installmentsBySaleId.get(selectedSale.id) ?? []
                     }
+                    invoices={invoicesBySaleId?.get(selectedSale.id) ?? []}
                     paymentMethods={paymentMethods}
                     addPaymentAction={(prev, fd) =>
                       addPaymentAction(selectedSale.id, prev, fd)
@@ -406,6 +423,7 @@ export function SaleModal({
                   saleRank={saleRanks.get(selectedSale.id) ?? 0}
                   payments={paymentsBySaleId.get(selectedSale.id) ?? []}
                   installments={installmentsBySaleId.get(selectedSale.id) ?? []}
+                  invoices={invoicesBySaleId?.get(selectedSale.id) ?? []}
                   paymentMethods={paymentMethods}
                   modalities={modalities}
                   products={products}
@@ -671,6 +689,7 @@ function SalePanel({
   saleRank,
   payments,
   installments,
+  invoices,
   paymentMethods,
   modalities,
   products,
@@ -695,6 +714,7 @@ function SalePanel({
   readonly saleRank: number;
   readonly payments: ReadonlyArray<PaymentRow>;
   readonly installments: ReadonlyArray<InstallmentRow>;
+  readonly invoices?: ReadonlyArray<InvoiceOption>;
   readonly paymentMethods: ReadonlyArray<PaymentMethodRow>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
   readonly products: ReadonlyArray<ProductRow>;
@@ -860,6 +880,7 @@ function SalePanel({
       {/* Form cargar cobro */}
       <PaymentForm
         installments={installments}
+        invoices={invoices ?? []}
         statuses={statuses}
         paymentMethods={paymentMethods}
         addPaymentAction={addPaymentAction}
@@ -1272,6 +1293,7 @@ function Card({
 
 function PaymentForm({
   installments,
+  invoices,
   statuses,
   paymentMethods,
   addPaymentAction,
@@ -1280,6 +1302,8 @@ function PaymentForm({
   saleCurrency,
 }: {
   readonly installments: ReadonlyArray<InstallmentRow>;
+  /** Facturas emitidas de la venta (una por cuota tras el paso 4). Vacío OK. */
+  readonly invoices: ReadonlyArray<InvoiceOption>;
   readonly statuses: ReadonlyArray<InstallmentStatus>;
   readonly paymentMethods: ReadonlyArray<PaymentMethodRow>;
   readonly addPaymentAction: BoundAddPayment;
@@ -1319,6 +1343,16 @@ function PaymentForm({
   const installmentId = userInstallmentId ?? suggested?.installmentId ?? "";
   const amount =
     userAmount ?? (suggested ? String(suggested.amount) : "");
+
+  // Auto-selección de factura por cuota (1 cuota = 1 factura tras el paso 4).
+  // La factura viable es la EMITIDA de la cuota elegida. Si no hay (ej. venta
+  // legacy sin backfill), o está cobrada/anulada, `matchedInvoice` es null y
+  // el cobro se guarda sin invoice_id.
+  const matchedInvoice = installmentId
+    ? invoices.find(
+        (i) => i.installment_id === installmentId && i.status === "emitida",
+      ) ?? null
+    : null;
 
   function handleSubmit(formData: FormData) {
     setError(null);
@@ -1479,6 +1513,24 @@ function PaymentForm({
           <Input id="pay-notes" name="notes" placeholder="Opcional" />
         </div>
       </div>
+      <input
+        type="hidden"
+        name="invoice_id"
+        value={matchedInvoice?.id ?? ""}
+      />
+      {installmentId ? (
+        <div className="text-xs text-fg-muted">
+          {matchedInvoice ? (
+            <>
+              Se aplicará a la factura{" "}
+              <b className="text-fg">{matchedInvoice.invoice_number ?? "—"}</b>{" "}
+              (emitida por esta cuota).
+            </>
+          ) : (
+            <>Sin factura emitida para esta cuota — el cobro queda sin factura vinculada.</>
+          )}
+        </div>
+      ) : null}
       <div className="flex items-center gap-3">
         <Button type="submit" disabled={pending}>
           {pending ? "Cargando…" : "+ Agregar cobro"}
@@ -1859,6 +1911,7 @@ function AddPaymentOnly({
   sale,
   payments,
   installments,
+  invoices,
   paymentMethods,
   addPaymentAction,
   onSuccess,
@@ -1868,6 +1921,7 @@ function AddPaymentOnly({
   readonly sale: SaleRow;
   readonly payments: ReadonlyArray<PaymentRow>;
   readonly installments: ReadonlyArray<InstallmentRow>;
+  readonly invoices?: ReadonlyArray<InvoiceOption>;
   readonly paymentMethods: ReadonlyArray<PaymentMethodRow>;
   readonly addPaymentAction: BoundAddPayment;
   readonly onSuccess: () => void;
@@ -1928,6 +1982,7 @@ function AddPaymentOnly({
       </div>
       <PaymentForm
         installments={installments}
+        invoices={invoices ?? []}
         statuses={statuses}
         paymentMethods={paymentMethods}
         addPaymentAction={addPaymentAction}

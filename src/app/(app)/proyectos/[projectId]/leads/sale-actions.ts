@@ -754,6 +754,8 @@ export async function addPayment(
       ? originalCurrencyRaw
       : null;
   const transaction_number = nullable(str(formData, "transaction_number"));
+  const invoiceIdRaw = str(formData, "invoice_id");
+  const invoice_id = invoiceIdRaw === "" ? null : invoiceIdRaw;
 
   if (!installment_id) {
     return { error: "Elegí a qué cuota se aplica el cobro." };
@@ -777,6 +779,37 @@ export async function addPayment(
     return { error: "La cuota seleccionada no pertenece a esta venta." };
   }
 
+  // Guard: si el operador eligió factura, tiene que pertenecer a esta venta
+  // y estar emitida (no cobrada ni anulada). El status pasa a 'cobrada' recién
+  // en el paso 5b cuando se linkea al movimiento del banco.
+  let invoiceNeedsTxNumber = false;
+  if (invoice_id) {
+    const { data: invRow } = await supabase
+      .from("invoices")
+      .select("id, sale_id, status, transaction_number")
+      .eq("id", invoice_id)
+      .maybeSingle();
+    const inv = invRow as
+      | {
+          id: string;
+          sale_id: string | null;
+          status: string;
+          transaction_number: string | null;
+        }
+      | null;
+    if (!inv || inv.sale_id !== saleId) {
+      return { error: "La factura elegida no pertenece a esta venta." };
+    }
+    if (inv.status !== "emitida") {
+      return {
+        error:
+          "La factura elegida no está emitida (puede estar cobrada o anulada).",
+      };
+    }
+    invoiceNeedsTxNumber =
+      transaction_number !== null && inv.transaction_number === null;
+  }
+
   const payload = {
     sale_id: saleId,
     amount,
@@ -786,10 +819,21 @@ export async function addPayment(
     payment_method_id,
     ...(original_currency && { original_currency }),
     ...(transaction_number !== null && { transaction_number }),
+    ...(invoice_id && { invoice_id }),
   } as never;
 
   const { error } = await supabase.from("payments").insert(payload);
   if (error) return { error: error.message };
+
+  // Propagar transaction_number del cobro a la factura si ésta no lo tenía.
+  // Sirve para que el match factura ↔ movimiento del banco (paso 5b) tenga
+  // por dónde arrancar aunque el operador nunca haya tocado la factura.
+  if (invoice_id && invoiceNeedsTxNumber) {
+    await supabase
+      .from("invoices")
+      .update({ transaction_number } as never)
+      .eq("id", invoice_id);
+  }
 
   await revalidateForSale(projectId, saleId);
   return { ok: true };

@@ -105,6 +105,7 @@ export function KanbanBoard({
   salesByLeadId,
   paymentsBySaleId,
   installmentsBySaleId,
+  invoicesBySaleId,
   modalities,
   products,
   rules,
@@ -138,6 +139,16 @@ export function KanbanBoard({
   readonly salesByLeadId: ReadonlyMap<string, ReadonlyArray<SaleRow>>;
   readonly paymentsBySaleId: ReadonlyMap<string, ReadonlyArray<PaymentRow>>;
   readonly installmentsBySaleId: ReadonlyMap<string, ReadonlyArray<InstallmentRow>>;
+  readonly invoicesBySaleId: ReadonlyMap<
+    string,
+    ReadonlyArray<{
+      readonly id: string;
+      readonly invoice_number: string | null;
+      readonly installment_id: string | null;
+      readonly amount_gross: number;
+      readonly status: string;
+    }>
+  >;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
   readonly products: ReadonlyArray<ProductRow>;
   readonly rules: ReadonlyArray<CommissionRuleRow>;
@@ -466,6 +477,7 @@ export function KanbanBoard({
                               saleRanks={rankBySaleId}
                               paymentsBySaleId={paymentsBySaleId}
                               installmentsBySaleId={installmentsBySaleId}
+                              invoicesBySaleId={invoicesBySaleId}
                               modalities={modalities}
                               products={products}
                               rules={rules}

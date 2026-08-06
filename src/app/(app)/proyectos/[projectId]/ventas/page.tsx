@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 
 import { ProjectSalesView } from "@/components/dashboard/sales/project-sales-view";
 import { listBanks } from "@/lib/banks/list";
+import { listInvoicesForSales } from "@/lib/invoices/list-by-sale";
 import {
   listCommissionRules,
   listPaymentModalities,
@@ -131,6 +132,7 @@ export default async function ProjectSalesPage({
         sales={salesData.sales}
         payments={salesData.payments}
         installments={salesData.installments}
+        invoices={await listInvoicesForSales(salesData.sales.map((s) => s.id))}
         leads={salesData.leads}
         launches={launches.map((l) => ({ id: l.id, name: l.name }))}
         modalities={modalities}

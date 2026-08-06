@@ -33,6 +33,7 @@ import {
 import {
   listInstallmentsForSales,
 } from "@/lib/installments/list";
+import { listInvoicesForSales } from "@/lib/invoices/list-by-sale";
 import {
   listPaymentsForProject,
   listSalesForProject,
@@ -123,7 +124,11 @@ export default async function LeadsPage({
 
   // Fase 11: cuotas por venta. Se cargan una vez y se agrupan por sale_id
   // para pasárselas al SaleModal (evita N+1 en el kanban).
-  const installments = await listInstallmentsForSales(sales.map((s) => s.id));
+  const saleIds = sales.map((s) => s.id);
+  const [installments, invoicesForSales] = await Promise.all([
+    listInstallmentsForSales(saleIds),
+    listInvoicesForSales(saleIds),
+  ]);
 
   const teamForForm = teamMembers.map((m) => ({
     id: m.id,
@@ -155,6 +160,29 @@ export default async function LeadsPage({
     const existing = installmentsBySaleId.get(i.sale_id);
     if (existing) existing.push(i);
     else installmentsBySaleId.set(i.sale_id, [i]);
+  }
+  const invoicesBySaleId = new Map<
+    string,
+    Array<{
+      readonly id: string;
+      readonly invoice_number: string | null;
+      readonly installment_id: string | null;
+      readonly amount_gross: number;
+      readonly status: string;
+    }>
+  >();
+  for (const inv of invoicesForSales) {
+    if (inv.sale_id == null) continue;
+    const existing = invoicesBySaleId.get(inv.sale_id);
+    const shaped = {
+      id: inv.id,
+      invoice_number: inv.invoice_number,
+      installment_id: inv.installment_id,
+      amount_gross: Number(inv.amount_gross),
+      status: inv.status,
+    };
+    if (existing) existing.push(shaped);
+    else invoicesBySaleId.set(inv.sale_id, [shaped]);
   }
 
   const createAction = createLead.bind(null, projectId);
@@ -245,6 +273,7 @@ export default async function LeadsPage({
           salesByLeadId={salesByLeadId}
           paymentsBySaleId={paymentsBySaleId}
           installmentsBySaleId={installmentsBySaleId}
+          invoicesBySaleId={invoicesBySaleId}
           modalities={modalities}
           products={products}
           rules={rules}
@@ -415,6 +444,7 @@ async function KanbanTab({
   salesByLeadId,
   paymentsBySaleId,
   installmentsBySaleId,
+  invoicesBySaleId,
   modalities,
   products,
   rules,
@@ -453,6 +483,16 @@ async function KanbanTab({
   readonly salesByLeadId: ReadonlyMap<string, ReadonlyArray<SaleRow>>;
   readonly paymentsBySaleId: ReadonlyMap<string, ReadonlyArray<PaymentRow>>;
   readonly installmentsBySaleId: ReadonlyMap<string, ReadonlyArray<InstallmentRow>>;
+  readonly invoicesBySaleId: ReadonlyMap<
+    string,
+    ReadonlyArray<{
+      readonly id: string;
+      readonly invoice_number: string | null;
+      readonly installment_id: string | null;
+      readonly amount_gross: number;
+      readonly status: string;
+    }>
+  >;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly modalities: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -526,6 +566,7 @@ async function KanbanTab({
       salesByLeadId={salesByLeadId}
       paymentsBySaleId={paymentsBySaleId}
       installmentsBySaleId={installmentsBySaleId}
+      invoicesBySaleId={invoicesBySaleId}
       modalities={modalities}
       products={products}
       rules={rules}

@@ -187,6 +187,7 @@ export function ProjectSalesView({
   sales,
   payments,
   installments,
+  invoices,
   leads,
   launches,
   modalities,
@@ -211,6 +212,14 @@ export function ProjectSalesView({
   readonly sales: ReadonlyArray<SaleRow>;
   readonly payments: ReadonlyArray<PaymentRow>;
   readonly installments: ReadonlyArray<InstallmentRow>;
+  readonly invoices?: ReadonlyArray<{
+    readonly id: string;
+    readonly sale_id: string | null;
+    readonly invoice_number: string | null;
+    readonly installment_id: string | null;
+    readonly amount_gross: number;
+    readonly status: string;
+  }>;
   readonly leads: ReadonlyArray<LeadForSales>;
   readonly launches: ReadonlyArray<{ id: string; name: string }>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
@@ -281,6 +290,33 @@ export function ProjectSalesView({
     }
     return out;
   }, [installments]);
+
+  const invoicesBySaleId = useMemo(() => {
+    const out = new Map<
+      string,
+      Array<{
+        readonly id: string;
+        readonly invoice_number: string | null;
+        readonly installment_id: string | null;
+        readonly amount_gross: number;
+        readonly status: string;
+      }>
+    >();
+    for (const inv of invoices ?? []) {
+      if (inv.sale_id == null) continue;
+      const shaped = {
+        id: inv.id,
+        invoice_number: inv.invoice_number,
+        installment_id: inv.installment_id,
+        amount_gross: Number(inv.amount_gross),
+        status: inv.status,
+      };
+      const arr = out.get(inv.sale_id);
+      if (arr) arr.push(shaped);
+      else out.set(inv.sale_id, [shaped]);
+    }
+    return out;
+  }, [invoices]);
 
   const collectedBySale = useMemo(() => {
     const out = new Map<string, number>();
@@ -577,6 +613,9 @@ export function ProjectSalesView({
                         installmentsBySaleId={
                           new Map([[s.id, saleInstallments]])
                         }
+                        invoicesBySaleId={
+                          new Map([[s.id, invoicesBySaleId.get(s.id) ?? []]])
+                        }
                         initialSaleId={s.id}
                         allowCreateAnother={false}
                         modalities={modalities}
@@ -660,6 +699,9 @@ export function ProjectSalesView({
                             }
                             installmentsBySaleId={
                               new Map([[s.id, saleInstallments]])
+                            }
+                            invoicesBySaleId={
+                              new Map([[s.id, invoicesBySaleId.get(s.id) ?? []]])
                             }
                             initialSaleId={s.id}
                             allowCreateAnother={false}

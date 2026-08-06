@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { RecalculateBulkModal } from "@/components/dashboard/commissions/recalculate-bulk-modal";
 import { CobrosView } from "@/components/dashboard/sales/cobros-view";
 import { listBanks } from "@/lib/banks/list";
+import { listInvoicesForSales } from "@/lib/invoices/list-by-sale";
 import {
   listCommissionRules,
   listPaymentModalities,
@@ -105,6 +106,11 @@ export default async function ProjectCobrosPage({
   const closedSaleLeadIds = new Set(closedSales.map((s) => s.lead_id));
   const closedLeads = salesData.leads.filter((l) =>
     closedSaleLeadIds.has(l.id),
+  );
+
+  // Facturas emitidas de las ventas cerradas — para auto-atar al cobro (paso 5).
+  const invoicesForSales = await listInvoicesForSales(
+    Array.from(closedSaleIds),
   );
 
   // ─── Agregado project-wide en USD ─────────────────────────────────────
@@ -239,6 +245,7 @@ export default async function ProjectCobrosPage({
         sales={closedSales}
         payments={closedPayments}
         installments={closedInstallments}
+        invoices={invoicesForSales}
         leads={closedLeads}
         launches={launches.map((l) => ({ id: l.id, name: l.name }))}
         modalities={modalities}

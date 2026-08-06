@@ -192,6 +192,7 @@ export function CobrosView({
   sales,
   payments,
   installments,
+  invoices,
   leads,
   launches,
   modalities,
@@ -216,6 +217,15 @@ export function CobrosView({
   readonly sales: ReadonlyArray<SaleRow>;
   readonly payments: ReadonlyArray<PaymentRow>;
   readonly installments: ReadonlyArray<InstallmentRow>;
+  /** Facturas emitidas por venta — Paso 5. Vacío en callers legacy. */
+  readonly invoices?: ReadonlyArray<{
+    readonly id: string;
+    readonly sale_id: string | null;
+    readonly invoice_number: string | null;
+    readonly installment_id: string | null;
+    readonly amount_gross: number;
+    readonly status: string;
+  }>;
   readonly leads: ReadonlyArray<LeadForCobros>;
   /**
    * Universo de launches para el filtro. Omitido → vista por launch única
@@ -294,6 +304,33 @@ export function CobrosView({
     }
     return out;
   }, [payments]);
+
+  const invoicesBySaleId = useMemo(() => {
+    const out = new Map<
+      string,
+      Array<{
+        readonly id: string;
+        readonly invoice_number: string | null;
+        readonly installment_id: string | null;
+        readonly amount_gross: number;
+        readonly status: string;
+      }>
+    >();
+    for (const inv of invoices ?? []) {
+      if (inv.sale_id == null) continue;
+      const shaped = {
+        id: inv.id,
+        invoice_number: inv.invoice_number,
+        installment_id: inv.installment_id,
+        amount_gross: Number(inv.amount_gross),
+        status: inv.status,
+      };
+      const arr = out.get(inv.sale_id);
+      if (arr) arr.push(shaped);
+      else out.set(inv.sale_id, [shaped]);
+    }
+    return out;
+  }, [invoices]);
 
   const today = todayInAR();
 
@@ -496,6 +533,7 @@ export function CobrosView({
         collectedBySale={collectedBySale}
         overdueBySale={overdueBySale}
         installmentsBySaleId={installmentsBySaleId}
+        invoicesBySaleId={invoicesBySaleId}
         paymentsBySaleId={paymentsBySaleId}
         rankBySaleId={rankBySaleId}
         modalities={modalities}
@@ -674,6 +712,7 @@ function SalesTable({
   collectedBySale,
   overdueBySale,
   installmentsBySaleId,
+  invoicesBySaleId,
   paymentsBySaleId,
   rankBySaleId,
   modalities,
@@ -702,6 +741,16 @@ function SalesTable({
   readonly collectedBySale: ReadonlyMap<string, number>;
   readonly overdueBySale: ReadonlyMap<string, SaleOverdueSummary>;
   readonly installmentsBySaleId: ReadonlyMap<string, ReadonlyArray<InstallmentRow>>;
+  readonly invoicesBySaleId: ReadonlyMap<
+    string,
+    ReadonlyArray<{
+      readonly id: string;
+      readonly invoice_number: string | null;
+      readonly installment_id: string | null;
+      readonly amount_gross: number;
+      readonly status: string;
+    }>
+  >;
   readonly paymentsBySaleId: ReadonlyMap<string, ReadonlyArray<PaymentRow>>;
   readonly rankBySaleId: ReadonlyMap<string, number>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
@@ -944,6 +993,9 @@ function SalesTable({
                         paymentsBySaleId={new Map([[s.id, salePayments]])}
                         installmentsBySaleId={new Map([
                           [s.id, installmentsBySaleId.get(s.id) ?? []],
+                        ])}
+                        invoicesBySaleId={new Map([
+                          [s.id, invoicesBySaleId.get(s.id) ?? []],
                         ])}
                         initialSaleId={s.id}
                         allowCreateAnother={false}
