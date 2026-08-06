@@ -15,10 +15,19 @@ import type {
   ProjectOptionForCohort,
 } from "../cohort-form-drawer";
 import { EditCohortButton } from "./edit-cohort-button";
+import type {
+  SaleOptionForEnroll,
+  StudentOptionForEnroll,
+} from "./enroll-student-drawer";
+import {
+  EnrollmentsPanel,
+  type EnrollmentRowData,
+} from "./enrollments-panel";
 
 export const metadata: Metadata = { title: "Generación · Academia" };
 
-type Status = "planned" | "active" | "finished" | "cancelled";
+type CohortStatus = "planned" | "active" | "finished" | "cancelled";
+type EnrollmentStatus = "active" | "completed" | "dropped" | "suspended";
 
 interface CohortDbRow {
   readonly id: string;
@@ -27,7 +36,7 @@ interface CohortDbRow {
   readonly name: string;
   readonly start_date: string;
   readonly end_date: string;
-  readonly status: Status;
+  readonly status: CohortStatus;
   readonly notes: string | null;
 }
 
@@ -49,14 +58,46 @@ interface ProductDbRow {
   readonly name: string;
 }
 
-const STATUS_LABEL: Record<Status, string> = {
+interface EnrollmentDbRow {
+  readonly id: string;
+  readonly student_id: string;
+  readonly sale_id: string | null;
+  readonly enrolled_at: string;
+  readonly status: EnrollmentStatus;
+  readonly progress_percent: number;
+  readonly notes: string | null;
+}
+
+interface StudentDbRow {
+  readonly id: string;
+  readonly project_id: string;
+  readonly name: string;
+  readonly email: string | null;
+  readonly status: "active" | "inactive" | "graduated";
+}
+
+interface SaleDbRow {
+  readonly id: string;
+  readonly product_id: string;
+  readonly lead_id: string | null;
+  readonly total_amount: number | string;
+  readonly currency: string | null;
+  readonly created_at: string;
+}
+
+interface LeadDbRow {
+  readonly id: string;
+  readonly name: string | null;
+}
+
+const STATUS_LABEL: Record<CohortStatus, string> = {
   planned: "Planeada",
   active: "Activa",
   finished: "Terminada",
   cancelled: "Cancelada",
 };
 
-const STATUS_TONE: Record<Status, string> = {
+const STATUS_TONE: Record<CohortStatus, string> = {
   planned: "var(--kg-neutral-500)",
   active: "var(--kg-positive-500)",
   finished: "var(--kg-accent-500)",
@@ -99,8 +140,11 @@ export default async function CohortFichaPage({
     supabase.from("products").select("id, name"),
     supabase
       .from("enrollments")
-      .select("id", { count: "exact", head: true })
-      .eq("cohort_id", cohortId),
+      .select(
+        "id, student_id, sale_id, enrolled_at, status, progress_percent, notes",
+      )
+      .eq("cohort_id", cohortId)
+      .order("enrolled_at", { ascending: false }),
     supabase
       .from("classes")
       .select("id", { count: "exact", head: true })
@@ -119,6 +163,8 @@ export default async function CohortFichaPage({
   const activeCourses =
     (coursesRes.data ?? []) as unknown as CourseDbRow[];
   const allProducts = (productsRes.data ?? []) as unknown as ProductDbRow[];
+  const enrollmentRows =
+    (enrollmentsRes.data ?? []) as unknown as EnrollmentDbRow[];
 
   const productNameById = new Map<string, string>();
   for (const p of allProducts) productNameById.set(p.id, p.name);
@@ -131,6 +177,73 @@ export default async function CohortFichaPage({
   const courseName = cohort.course_id
     ? courseNameById.get(cohort.course_id) ?? null
     : null;
+
+  // Segundo batch: students del proyecto de la cohort (para el dropdown de
+  // inscribir) + sales del mismo producto que el curso (para el vínculo
+  // opcional). El vínculo solo aplica si la cohort tiene curso.
+  const [studentsRes, salesRes] = await Promise.all([
+    supabase
+      .from("students")
+      .select("id, project_id, name, email, status")
+      .eq("project_id", cohort.project_id)
+      .eq("status", "active")
+      .order("name", { ascending: true }),
+    cohort.course_id
+      ? (async () => {
+          const course = activeCourses.find((c) => c.id === cohort.course_id);
+          if (!course) return { data: [] as SaleDbRow[] };
+          return supabase
+            .from("sales")
+            .select(
+              "id, product_id, lead_id, total_amount, currency, created_at",
+            )
+            .eq("product_id", course.product_id)
+            .order("created_at", { ascending: false });
+        })()
+      : Promise.resolve({ data: [] as SaleDbRow[] }),
+  ]);
+
+  const activeStudents =
+    (studentsRes.data ?? []) as unknown as StudentDbRow[];
+  const cohortSales = (salesRes.data ?? []) as unknown as SaleDbRow[];
+
+  const studentNameById = new Map<string, string>();
+  for (const s of activeStudents) studentNameById.set(s.id, s.name);
+
+  // Fetch todos los student names (incluye inactivos) para poder mostrar
+  // en la tabla el nombre del student aunque haya cambiado a inactivo
+  // después de inscribirse. Bounded a project_id.
+  const allStudentsResExtra = await supabase
+    .from("students")
+    .select("id, name")
+    .eq("project_id", cohort.project_id);
+  for (const s of (allStudentsResExtra.data ?? []) as unknown as {
+    id: string;
+    name: string;
+  }[]) {
+    studentNameById.set(s.id, s.name);
+  }
+
+  // Leads para las sales.
+  const leadIds = Array.from(
+    new Set(cohortSales.map((s) => s.lead_id).filter((v): v is string => v != null)),
+  );
+  const leadsRes =
+    leadIds.length === 0
+      ? { data: [] as LeadDbRow[] }
+      : await supabase.from("leads").select("id, name").in("id", leadIds);
+  const leadNameById = new Map<string, string>();
+  for (const l of (leadsRes.data ?? []) as unknown as LeadDbRow[]) {
+    if (l.name) leadNameById.set(l.id, l.name);
+  }
+
+  // Sales ya vinculadas a algún enrollment de esta cohort — filtrar del
+  // dropdown de vinculación (una sale no puede ligarse a dos enrollments).
+  const alreadyLinkedSaleIds = new Set(
+    enrollmentRows
+      .map((e) => e.sale_id)
+      .filter((v): v is string => v != null),
+  );
 
   const projectOptions: ProjectOptionForCohort[] = propiaProjects
     .map((p) => ({ id: p.id, name: p.name }))
@@ -154,7 +267,35 @@ export default async function CohortFichaPage({
     notes: cohort.notes,
   };
 
-  const enrollmentsCount = enrollmentsRes.count ?? 0;
+  // Options para el drawer de inscribir.
+  const availableStudents: StudentOptionForEnroll[] = activeStudents.map(
+    (s) => ({
+      id: s.id,
+      name: s.name,
+      email: s.email,
+    }),
+  );
+  const availableSales: SaleOptionForEnroll[] = cohortSales
+    .filter((s) => !alreadyLinkedSaleIds.has(s.id))
+    .map((s) => ({
+      id: s.id,
+      leadName: s.lead_id ? leadNameById.get(s.lead_id) ?? "—" : "—",
+      amount: Number(s.total_amount),
+      currency: s.currency === "USD" ? "USD" : "ARS",
+      createdAt: s.created_at,
+    }));
+
+  const enrollments: EnrollmentRowData[] = enrollmentRows.map((e) => ({
+    id: e.id,
+    studentId: e.student_id,
+    studentName: studentNameById.get(e.student_id) ?? "—",
+    saleId: e.sale_id,
+    enrolledAt: e.enrolled_at,
+    status: e.status,
+    progressPercent: e.progress_percent,
+    notes: e.notes,
+  }));
+
   const classesCount = classesRes.count ?? 0;
   const examsCount = examsRes.count ?? 0;
 
@@ -165,7 +306,7 @@ export default async function CohortFichaPage({
         title={cohort.name}
         stats={[
           { l: "Estado", v: STATUS_LABEL[cohort.status] },
-          { l: "Inscriptos", v: String(enrollmentsCount) },
+          { l: "Inscriptos", v: String(enrollments.length) },
           { l: "Clases", v: String(classesCount) },
           { l: "Exámenes", v: String(examsCount) },
         ]}
@@ -233,10 +374,13 @@ export default async function CohortFichaPage({
         </Panel>
 
         <Panel title="Inscriptos">
-          <EmptyState
-            icon={<IconAca size={22} />}
-            title="Sub-sección en construcción"
-            hint="En el próximo commit acá van los estudiantes inscriptos + botón para inscribir con dropdown Origen (venta LaunchOS auto-fill o carga manual)."
+          <EnrollmentsPanel
+            cohortId={cohort.id}
+            cohortName={cohort.name}
+            cohortHasCourse={cohort.course_id != null}
+            enrollments={enrollments}
+            availableStudents={availableStudents}
+            availableSales={availableSales}
           />
         </Panel>
       </div>

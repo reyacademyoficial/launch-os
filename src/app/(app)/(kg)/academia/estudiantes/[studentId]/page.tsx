@@ -36,6 +36,31 @@ interface ProjectDbRow {
   readonly ownership: string;
 }
 
+type EnrollStatus = "active" | "completed" | "dropped" | "suspended";
+
+interface EnrollmentBrief {
+  readonly id: string;
+  readonly cohort_id: string;
+  readonly sale_id: string | null;
+  readonly enrolled_at: string;
+  readonly status: EnrollStatus;
+  readonly progress_percent: number;
+}
+
+const ENROLL_STATUS_LABEL: Record<EnrollStatus, string> = {
+  active: "Activo",
+  completed: "Completado",
+  dropped: "Abandonó",
+  suspended: "Suspendido",
+};
+
+const ENROLL_STATUS_TONE: Record<EnrollStatus, string> = {
+  active: "var(--kg-positive-500)",
+  completed: "var(--kg-accent-500)",
+  dropped: "var(--kg-negative-500)",
+  suspended: "var(--kg-warning-500)",
+};
+
 const STATUS_LABEL: Record<Status, string> = {
   active: "Activo",
   inactive: "Inactivo",
@@ -57,36 +82,47 @@ export default async function StudentFichaPage({
 
   const supabase = await createClient();
 
-  const [studentRes, projectsRes, enrollmentsRes, attendanceRes, examsRes, certsRes] =
-    await Promise.all([
-      supabase
-        .from("students")
-        .select(
-          "id, project_id, name, email, phone, status, notes, enrolled_at",
-        )
-        .eq("id", studentId)
-        .maybeSingle(),
-      supabase
-        .from("projects")
-        .select("id, name, ownership")
-        .eq("ownership", "propia"),
-      supabase
-        .from("enrollments")
-        .select("id", { count: "exact", head: true })
-        .eq("student_id", studentId),
-      supabase
-        .from("attendance")
-        .select("id", { count: "exact", head: true })
-        .eq("student_id", studentId),
-      supabase
-        .from("exams")
-        .select("id", { count: "exact", head: true })
-        .eq("student_id", studentId),
-      supabase
-        .from("certificates")
-        .select("id", { count: "exact", head: true })
-        .eq("student_id", studentId),
-    ]);
+  const [
+    studentRes,
+    projectsRes,
+    enrollmentsRes,
+    attendanceRes,
+    examsRes,
+    certsRes,
+    cohortsRes,
+  ] = await Promise.all([
+    supabase
+      .from("students")
+      .select(
+        "id, project_id, name, email, phone, status, notes, enrolled_at",
+      )
+      .eq("id", studentId)
+      .maybeSingle(),
+    supabase
+      .from("projects")
+      .select("id, name, ownership")
+      .eq("ownership", "propia"),
+    supabase
+      .from("enrollments")
+      .select(
+        "id, cohort_id, sale_id, enrolled_at, status, progress_percent",
+      )
+      .eq("student_id", studentId)
+      .order("enrolled_at", { ascending: false }),
+    supabase
+      .from("attendance")
+      .select("id", { count: "exact", head: true })
+      .eq("student_id", studentId),
+    supabase
+      .from("exams")
+      .select("id", { count: "exact", head: true })
+      .eq("student_id", studentId),
+    supabase
+      .from("certificates")
+      .select("id", { count: "exact", head: true })
+      .eq("student_id", studentId),
+    supabase.from("cohorts").select("id, name"),
+  ]);
 
   const student = studentRes.data as StudentDbRow | null;
   if (!student) notFound();
@@ -110,7 +146,13 @@ export default async function StudentFichaPage({
     notes: student.notes,
   };
 
-  const enrollmentsCount = enrollmentsRes.count ?? 0;
+  const enrollmentRows =
+    (enrollmentsRes.data ?? []) as unknown as EnrollmentBrief[];
+  const cohortsData =
+    (cohortsRes.data ?? []) as unknown as { id: string; name: string }[];
+  const cohortNameById = new Map<string, string>();
+  for (const c of cohortsData) cohortNameById.set(c.id, c.name);
+
   const attendanceCount = attendanceRes.count ?? 0;
   const examsCount = examsRes.count ?? 0;
   const certsCount = certsRes.count ?? 0;
@@ -122,7 +164,7 @@ export default async function StudentFichaPage({
         title={student.name}
         stats={[
           { l: "Estado", v: STATUS_LABEL[student.status] },
-          { l: "Generaciones", v: String(enrollmentsCount) },
+          { l: "Generaciones", v: String(enrollmentRows.length) },
           { l: "Asistencias", v: String(attendanceCount) },
           { l: "Certificados", v: String(certsCount) },
         ]}
@@ -190,11 +232,109 @@ export default async function StudentFichaPage({
         </Panel>
 
         <Panel title="Generaciones">
-          <EmptyState
-            icon={<IconAca size={22} />}
-            title="Sin generaciones asignadas"
-            hint="En el próximo commit acá va la lista de inscripciones del estudiante con la generación, curso, fecha de inscripción, progreso y estado (active/completed/dropped/suspended). Además del botón para inscribirlo a una nueva generación con o sin vínculo a venta."
-          />
+          {enrollmentRows.length === 0 ? (
+            <EmptyState
+              icon={<IconAca size={22} />}
+              title="Sin generaciones asignadas"
+              hint="Este estudiante todavía no está inscripto en ninguna generación. Andá a la ficha de la generación (Generaciones → nombre) y usá 'Inscribir' desde allí."
+            />
+          ) : (
+            <div
+              style={{ display: "flex", flexDirection: "column", gap: 6 }}
+            >
+              {enrollmentRows.map((e) => (
+                <div
+                  key={e.id}
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: "var(--kg-r-8)",
+                    background: "var(--kg-surface-2-solid)",
+                    border: "1px solid var(--kg-border-subtle)",
+                    display: "grid",
+                    gridTemplateColumns: "1fr auto",
+                    gap: 12,
+                    alignItems: "center",
+                  }}
+                >
+                  <div>
+                    <Link
+                      href={`/academia/cohortes/${e.cohort_id}`}
+                      className="kg-focus"
+                      style={{
+                        color: "var(--kg-text-1)",
+                        textDecoration: "none",
+                        fontWeight: 600,
+                        fontSize: 13,
+                      }}
+                    >
+                      {cohortNameById.get(e.cohort_id) ?? "—"}
+                    </Link>
+                    <div
+                      className="kg-t7"
+                      style={{
+                        color: "var(--kg-text-3)",
+                        marginTop: 2,
+                        display: "flex",
+                        gap: 10,
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <span>desde {formatDate(e.enrolled_at)}</span>
+                      {e.sale_id && (
+                        <span
+                          style={{
+                            padding: "1px 6px",
+                            borderRadius: 4,
+                            background: "var(--kg-surface-1-solid)",
+                            color: "var(--kg-accent-text)",
+                            fontSize: 10,
+                            fontWeight: 700,
+                          }}
+                        >
+                          Auto
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 4,
+                      alignItems: "flex-end",
+                    }}
+                  >
+                    <StatusPill
+                      text={ENROLL_STATUS_LABEL[e.status]}
+                      tone={ENROLL_STATUS_TONE[e.status]}
+                    />
+                    <div
+                      className="kg-t7"
+                      style={{
+                        color: "var(--kg-text-3)",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {e.progress_percent}%
+                    </div>
+                  </div>
+                </div>
+              ))}
+              <div
+                className="kg-t7"
+                style={{
+                  color: "var(--kg-text-3)",
+                  marginTop: 4,
+                  padding: "0 2px",
+                  fontStyle: "italic",
+                }}
+              >
+                Editar o quitar inscripciones se hace desde la ficha de
+                cada generación.
+              </div>
+            </div>
+          )}
         </Panel>
       </div>
 
