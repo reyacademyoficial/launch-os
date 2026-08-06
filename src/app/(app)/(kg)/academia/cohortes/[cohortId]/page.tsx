@@ -3,7 +3,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { ContextBar } from "@/components/kg/context-bar";
-import { EmptyState } from "@/components/kg/empty-state";
 import { IconAca } from "@/components/kg/icons";
 import { Panel } from "@/components/kg/panel";
 import { StatusPill } from "@/components/kg/status-pill";
@@ -29,6 +28,8 @@ import {
   type ClassRowData,
   type EnrolledStudentForAttendance,
 } from "./classes/classes-panel";
+import type { StudentOptionForExam } from "./exams/exam-form-drawer";
+import { ExamsPanel, type ExamRowData } from "./exams/exams-panel";
 
 export const metadata: Metadata = { title: "Generación · Academia" };
 
@@ -109,6 +110,16 @@ interface AttendanceDbRow {
   readonly present: boolean;
 }
 
+interface ExamDbRow {
+  readonly id: string;
+  readonly student_id: string;
+  readonly title: string;
+  readonly taken_at: string;
+  readonly score: number | string | null;
+  readonly passed: boolean | null;
+  readonly notes: string | null;
+}
+
 const STATUS_LABEL: Record<CohortStatus, string> = {
   planned: "Planeada",
   active: "Activa",
@@ -171,8 +182,9 @@ export default async function CohortFichaPage({
       .order("scheduled_at", { ascending: false }),
     supabase
       .from("exams")
-      .select("id", { count: "exact", head: true })
-      .eq("cohort_id", cohortId),
+      .select("id, student_id, title, taken_at, score, passed, notes")
+      .eq("cohort_id", cohortId)
+      .order("taken_at", { ascending: false }),
   ]);
 
   const cohort = cohortRes.data as CohortDbRow | null;
@@ -318,7 +330,8 @@ export default async function CohortFichaPage({
 
   const classRows = (classesRes.data ?? []) as unknown as ClassDbRow[];
   const classesCount = classRows.length;
-  const examsCount = examsRes.count ?? 0;
+  const examRows = (examsRes.data ?? []) as unknown as ExamDbRow[];
+  const examsCount = examRows.length;
 
   // Attendance batch: para todas las clases de esta cohort, para poder
   // contar presentes por clase y precargar la matriz al abrir el drawer.
@@ -371,6 +384,30 @@ export default async function CohortFichaPage({
       .sort((a, b) => a.studentName.localeCompare(b.studentName));
 
   const attendanceMap: AttendanceMapForClass = attendanceByClass;
+
+  // Exams: shape para el panel. El score viene como string por la
+  // representación numeric(5,2) en postgrest — convertimos a number para
+  // la UI (null-safe).
+  const examsForPanel: ExamRowData[] = examRows.map((e) => ({
+    id: e.id,
+    studentId: e.student_id,
+    studentName: studentNameById.get(e.student_id) ?? "—",
+    title: e.title,
+    takenAt: e.taken_at,
+    score: e.score == null ? null : Number(e.score),
+    passed: e.passed,
+    notes: e.notes,
+  }));
+
+  // Options de estudiantes para el drawer de examen: TODOS los inscriptos
+  // (incluidos dropped/suspended) — un dropped puede tener un examen
+  // histórico rendido antes de irse.
+  const examStudentOptions: StudentOptionForExam[] = enrollmentRows
+    .map((e) => ({
+      studentId: e.student_id,
+      studentName: studentNameById.get(e.student_id) ?? "—",
+    }))
+    .sort((a, b) => a.studentName.localeCompare(b.studentName));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -475,10 +512,11 @@ export default async function CohortFichaPage({
           />
         </Panel>
         <Panel title="Exámenes">
-          <EmptyState
-            icon={<IconAca size={22} />}
-            title="Sub-sección en construcción"
-            hint="Registro de exámenes por estudiante con score 0-100 y passed opcional (null = pendiente de corrección)."
+          <ExamsPanel
+            cohortId={cohort.id}
+            cohortName={cohort.name}
+            exams={examsForPanel}
+            studentOptions={examStudentOptions}
           />
         </Panel>
       </div>

@@ -429,8 +429,10 @@ antes.
 - [x] **attendance**: matriz masiva por clase (Drawer con checkboxes + Marcar
       todos/Limpiar + upsert `on_conflict=class_id,student_id`). Solo inscriptos
       con status active/completed entran a la matriz.
-- [ ] **exams**: registrar examen (student, cohort, title, score, passed, taken_at).
-      `passed` puede quedar null si aún no corregido.
+- [x] **exams**: registrar examen (student, cohort, title, score, passed, taken_at).
+      Inline en la ficha de la generación con Drawer create/edit + delete rojo.
+      Radio Pendiente/Aprobado/Reprobado (passed null/true/false) independiente
+      del score (nullable si aún no se corrigió).
 - [ ] **certificates**: emitir certificado (student, course, code, issued_at, url).
       **Manual** — no hay automatismo al aprobar examen (decisión de negocio).
 
