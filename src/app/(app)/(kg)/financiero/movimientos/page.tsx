@@ -42,6 +42,7 @@ interface MovementDbRow {
   readonly amount: number;
   readonly occurred_at: string;
   readonly description: string | null;
+  readonly transaction_number: string | null;
   readonly created_at: string;
 }
 
@@ -74,7 +75,9 @@ export default async function MovimientosPage({
 
   let query = supabase
     .from("bank_movements")
-    .select("id, bank_id, kind, amount, occurred_at, description, created_at")
+    .select(
+      "id, bank_id, kind, amount, occurred_at, description, transaction_number, created_at",
+    )
     .order("occurred_at", { ascending: false })
     .order("created_at", { ascending: false });
 
@@ -140,6 +143,7 @@ export default async function MovimientosPage({
       amount: Number(m.amount),
       occurredAt: m.occurred_at,
       description: m.description ?? "",
+      transactionNumber: m.transaction_number,
     };
   });
 

@@ -40,6 +40,7 @@ interface ExpenseDbRow extends FinanceExpenseRow {
   readonly currency: string | null;
   readonly notes: string | null;
   readonly due_date: string | null;
+  readonly transaction_number: string | null;
 }
 
 interface SupplierRow {
@@ -86,7 +87,7 @@ export default async function GastosPage({
   let query = supabase
     .from("expenses")
     .select(
-      "id, description, category, supplier_id, amount_gross, tax_amount, currency, expense_date, due_date, paid_at, bank_movement_id, notes",
+      "id, description, category, supplier_id, amount_gross, tax_amount, currency, expense_date, due_date, paid_at, bank_movement_id, notes, transaction_number",
     )
     .order("expense_date", { ascending: false });
 
@@ -195,6 +196,7 @@ export default async function GastosPage({
     paidAt: e.paid_at,
     bankMovementId: e.bank_movement_id,
     notes: e.notes,
+    transactionNumber: e.transaction_number,
   }));
 
   const unconciledForDrawer: UnconciledMovement[] = unconciled.map((m) => {

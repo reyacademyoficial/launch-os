@@ -43,6 +43,7 @@ interface ExpensePayload {
   readonly expenseDate: string;
   readonly dueDate: string | null;
   readonly notes: string | null;
+  readonly transactionNumber: string | null;
 }
 
 function parseExpenseFormData(formData: FormData): ExpensePayload | string {
@@ -89,6 +90,9 @@ function parseExpenseFormData(formData: FormData): ExpensePayload | string {
   const notesRaw = String(formData.get("notes") ?? "").trim();
   const notes = notesRaw.length === 0 ? null : notesRaw;
 
+  const txRaw = String(formData.get("transaction_number") ?? "").trim();
+  const transactionNumber = txRaw.length === 0 ? null : txRaw;
+
   return {
     description,
     category,
@@ -98,6 +102,7 @@ function parseExpenseFormData(formData: FormData): ExpensePayload | string {
     expenseDate,
     dueDate,
     notes,
+    transactionNumber,
   };
 }
 
@@ -151,6 +156,7 @@ export async function createExpense(
     paid_at: null,
     bank_movement_id: null,
     notes: parsed.notes,
+    transaction_number: parsed.transactionNumber,
   } as never;
 
   const { data, error } = await supabase
@@ -193,6 +199,7 @@ export async function updateExpense(
     expense_date: parsed.expenseDate,
     due_date: parsed.dueDate,
     notes: parsed.notes,
+    transaction_number: parsed.transactionNumber,
     // NO tocamos paid_at ni bank_movement_id. Ese flujo va por
     // linkExpenseToPayment / unlinkExpensePayment.
   } as never;

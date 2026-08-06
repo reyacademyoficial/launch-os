@@ -20,6 +20,7 @@ export interface MovementRowData {
   readonly amount: number;
   readonly occurredAt: string;
   readonly description: string;
+  readonly transactionNumber: string | null;
 }
 
 export function MovimientosView({
@@ -63,6 +64,18 @@ export function MovimientosView({
         r.description ? (
           <span title={r.description} style={ellipsis}>
             {r.description}
+          </span>
+        ) : (
+          "—"
+        ),
+    },
+    {
+      key: "transaction_number",
+      label: "Nº transacción",
+      render: (r) =>
+        r.transactionNumber ? (
+          <span title={r.transactionNumber} style={ellipsis}>
+            {r.transactionNumber}
           </span>
         ) : (
           "—"
@@ -162,6 +175,7 @@ export function MovimientosView({
             amount: editingRow.amount,
             occurredAt: editingRow.occurredAt,
             description: editingRow.description,
+            transactionNumber: editingRow.transactionNumber,
           }}
         />
       )}

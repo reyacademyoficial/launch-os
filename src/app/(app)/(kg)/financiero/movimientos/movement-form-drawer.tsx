@@ -33,6 +33,7 @@ export interface MovementInitial {
   readonly amount?: number;
   readonly occurredAt?: string;
   readonly description?: string | null;
+  readonly transactionNumber?: string | null;
 }
 
 export interface MovementFormDrawerProps {
@@ -203,6 +204,17 @@ function FormBody({
           type="text"
           defaultValue={initial?.description ?? ""}
           placeholder="Ej. Pago Metricool, transferencia a proveedor"
+          style={inputStyle}
+        />
+      </Field>
+
+      <Field label="Nº de transacción" htmlFor="transaction_number">
+        <input
+          id="transaction_number"
+          name="transaction_number"
+          type="text"
+          defaultValue={initial?.transactionNumber ?? ""}
+          placeholder="Opcional (comprobante del banco, para conciliar)"
           style={inputStyle}
         />
       </Field>

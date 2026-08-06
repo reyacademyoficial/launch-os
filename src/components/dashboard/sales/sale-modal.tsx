@@ -1467,6 +1467,14 @@ function PaymentForm({
           />
         </div>
         <div>
+          <Label htmlFor="pay-transaction">Nº de transacción</Label>
+          <Input
+            id="pay-transaction"
+            name="transaction_number"
+            placeholder="Opcional (comprobante del banco)"
+          />
+        </div>
+        <div>
           <Label htmlFor="pay-notes">Notas</Label>
           <Input id="pay-notes" name="notes" placeholder="Opcional" />
         </div>

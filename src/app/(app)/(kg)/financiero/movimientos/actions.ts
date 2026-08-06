@@ -48,6 +48,7 @@ interface BankMovementPayload {
   readonly amount: number;
   readonly occurredAt: string;
   readonly description: string | null;
+  readonly transactionNumber: string | null;
 }
 
 function parseFormData(
@@ -76,7 +77,10 @@ function parseFormData(
   const descriptionRaw = String(formData.get("description") ?? "").trim();
   const description = descriptionRaw.length === 0 ? null : descriptionRaw;
 
-  return { bankId, kind, amount, occurredAt, description };
+  const txRaw = String(formData.get("transaction_number") ?? "").trim();
+  const transactionNumber = txRaw.length === 0 ? null : txRaw;
+
+  return { bankId, kind, amount, occurredAt, description, transactionNumber };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -129,6 +133,7 @@ export async function createBankMovement(
     amount: parsed.amount,
     occurred_at: parsed.occurredAt,
     description: parsed.description,
+    transaction_number: parsed.transactionNumber,
     created_by: userData.user?.id ?? null,
   } as never;
 
@@ -170,6 +175,7 @@ export async function updateBankMovement(
     amount: parsed.amount,
     occurred_at: parsed.occurredAt,
     description: parsed.description,
+    transaction_number: parsed.transactionNumber,
   } as never;
 
   const { error } = await supabase

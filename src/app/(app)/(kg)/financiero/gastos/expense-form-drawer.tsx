@@ -42,6 +42,7 @@ export interface ExpenseInitial {
   readonly expenseDate?: string;
   readonly dueDate?: string | null;
   readonly notes?: string | null;
+  readonly transactionNumber?: string | null;
 }
 
 export interface ExpenseFormDrawerProps {
@@ -244,6 +245,17 @@ function ExpenseFormBody({
           />
         </Field>
       </div>
+
+      <Field label="Nº de transacción" htmlFor="transaction_number">
+        <input
+          id="transaction_number"
+          name="transaction_number"
+          type="text"
+          defaultValue={initial?.transactionNumber ?? ""}
+          placeholder="Opcional (comprobante del banco, para conciliar)"
+          style={inputStyle}
+        />
+      </Field>
 
       <Field label="Notas" htmlFor="notes">
         <input

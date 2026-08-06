@@ -35,6 +35,7 @@ export interface ExpenseRowData {
   readonly paidAt: string | null;
   readonly bankMovementId: string | null;
   readonly notes: string | null;
+  readonly transactionNumber: string | null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -115,6 +116,18 @@ export function GastosView({
       key: "paid",
       label: "Estado",
       render: (r) => <PaidPill paidAt={r.paidAt} />,
+    },
+    {
+      key: "transaction_number",
+      label: "Nº transacción",
+      render: (r) =>
+        r.transactionNumber ? (
+          <span title={r.transactionNumber} style={ellipsis}>
+            {r.transactionNumber}
+          </span>
+        ) : (
+          "—"
+        ),
     },
     {
       key: "actions",
@@ -199,6 +212,7 @@ export function GastosView({
             expenseDate: editingRow.expenseDate,
             dueDate: editingRow.dueDate,
             notes: editingRow.notes,
+            transactionNumber: editingRow.transactionNumber,
           }}
         />
       )}
