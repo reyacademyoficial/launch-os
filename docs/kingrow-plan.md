@@ -367,18 +367,33 @@ Con las decisiones de §2.0. Los ítems marcan commits atómicos, no filas de ta
 Backend: bloque 4 (0070-0078) + guard 0079. Cero filas en las 8 tablas.
 **Restringido a empresas propias** (`projects.ownership='propia'`).
 
+### 3.0 Refactor de alcance (2026-08-06)
+
+- **Estructura de rutas** decidida: 5 tabs planos en `/academia` (Dashboard,
+  Cohortes, Estudiantes, Cursos, Certificados) + fichas
+  `/academia/cohortes/[id]` y `/academia/estudiantes/[id]`. Ver §3.1.
+- **"Sin empresas propias"** (§3.5): banner amarillo en el layout si no hay
+  ningún project con `ownership='propia'`. No bloquea navegación; explica por
+  qué las tablas van a rechazar cualquier insert (`guard_propia_project`
+  rebota con `23514`) y muestra el SQL para setear una empresa como propia
+  desde Studio.
+- **Migración renumerada:** el puente estudiante-venta es **0112** (no 0110
+  como decía la primera versión del plan — 0110 ya fue usada para el pivot
+  de Clientes). Ver §3.2.
+
 ### 3.1 Sub-gate del bloque
 
-- [ ] Releer 0070-0079 justo antes de escribir código, especialmente el guard.
-- [ ] Confirmar que `src/lib/academia/kpis.ts` no cambió.
-- [ ] Confirmar que `products.project_id` y `sales.product_id NOT NULL` siguen
-      vigentes (base del puente estudiante-venta).
-- [ ] Confirmar que Rey Academy y Growins están con `ownership='propia'` — si no, el
-      módulo se ve vacío legítimamente.
-- [ ] Decidir estructura de rutas: `/academia/{cohortes,estudiantes,clases,examenes}`
-      con o sin scoping por proyecto propio.
+- [x] Releer 0070-0079 justo antes de escribir código, especialmente el guard.
+- [x] `src/lib/academia/kpis.ts` intacto. 5 KPIs (activeStudents,
+      completionRate, averageAttendance, examPassRate, certificationRate).
+- [x] `products.project_id` y `sales.product_id NOT NULL` siguen vigentes.
+- [x] Rey Academy y Growins como propia: **acción manual del operador** en
+      Studio si aún no está seteado (`update projects set ownership='propia'
+      where name in ('Rey Academy', 'Growins');`). Con `ownership='externa'`,
+      el guard rebota cualquier insert. El banner del layout lo aclara.
+- [x] Estructura de rutas: 5 tabs planos + fichas de cohorte y estudiante.
 
-### 3.2 Migración 0110 — puente estudiante-venta
+### 3.2 Migración 0112 — puente estudiante-venta
 
 Aditiva, sin backfill (todo cero). Se corre **dentro del sub-bloque academia**, no
 antes.
@@ -389,8 +404,8 @@ antes.
 - [ ] Trigger de consistencia: si `sale_id is not null`, validar que la venta
       apunta al mismo producto que el `course` de la `cohort` del `enrollment`. Es
       decir: `sales.product_id = courses.product_id where courses.id =
-      cohorts.course_id where cohorts.id = enrollments.cohort_id`. Si no, error con
-      mensaje claro.
+      cohorts.course_id where cohorts.id = enrollments.cohort_id`. Si la cohort
+      no tiene `course_id`, rebota — no se puede validar coherencia.
 - [ ] Sin cambios en `students` — el atado del alumno al comprador vive en
       `enrollments.sale_id` porque un alumno puede inscribirse a varios cursos vía
       varias ventas.
