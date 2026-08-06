@@ -15,14 +15,25 @@ export interface PersonRow {
   readonly created_at: string;
   readonly monthly_salary: number;
   readonly salary_currency: "ARS" | "USD";
+  /** Usuario Kingrow vinculado. `null` = persona sin usuario (freelance, etc). */
+  readonly auth_user_id: string | null;
+}
+
+/** Subset de UserListItem que el dropdown de vinculación necesita. */
+export interface AssignableUser {
+  readonly id: string;
+  readonly email: string;
+  readonly fullName: string | null;
 }
 
 export function PersonasTable({
   rows,
   showingFilter,
+  assignableUsers,
 }: {
   readonly rows: readonly PersonRow[];
   readonly showingFilter: "active" | "inactive" | "all";
+  readonly assignableUsers: readonly AssignableUser[];
 }) {
   if (rows.length === 0) {
     const message =
@@ -38,9 +49,12 @@ export function PersonasTable({
     );
   }
 
+  const userById = new Map<string, AssignableUser>();
+  for (const u of assignableUsers) userById.set(u.id, u);
+
   return (
     <div className="overflow-x-auto rounded-md border border-border">
-      <table className="w-full min-w-[820px] text-sm">
+      <table className="w-full min-w-[920px] text-sm">
         <thead className="bg-surface text-left text-xs uppercase tracking-wide text-fg-subtle">
           <tr>
             <th scope="col" className="px-4 py-3 font-medium">
@@ -51,6 +65,9 @@ export function PersonasTable({
             </th>
             <th scope="col" className="px-4 py-3 font-medium">
               Contacto
+            </th>
+            <th scope="col" className="px-4 py-3 font-medium">
+              Usuario
             </th>
             <th scope="col" className="px-4 py-3 text-right font-medium">
               Sueldo
@@ -96,6 +113,34 @@ export function PersonasTable({
                   <span className="text-fg-subtle">—</span>
                 )}
               </td>
+              <td className="px-4 py-3 text-fg-muted">
+                {p.auth_user_id ? (
+                  (() => {
+                    const u = userById.get(p.auth_user_id);
+                    if (!u) {
+                      // Persona vinculada a un user que hoy no está en la
+                      // lista asignable (rol cliente, dev, o soft-deleted).
+                      return (
+                        <span className="text-xs text-fg-subtle italic">
+                          Vinculada
+                        </span>
+                      );
+                    }
+                    return (
+                      <div className="space-y-0.5">
+                        <div className="text-xs">{u.email}</div>
+                        {u.fullName && (
+                          <div className="text-xs text-fg-subtle">
+                            {u.fullName}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()
+                ) : (
+                  <span className="text-fg-subtle">Sin usuario</span>
+                )}
+              </td>
               <td className="px-4 py-3 text-right tabular-nums text-fg-muted">
                 {p.monthly_salary > 0 ? (
                   <span>
@@ -118,7 +163,10 @@ export function PersonasTable({
               </td>
               <td className="px-4 py-3 text-right">
                 <div className="inline-flex items-center gap-4">
-                  <EditPersonModal person={p} />
+                  <EditPersonModal
+                    person={p}
+                    assignableUsers={assignableUsers}
+                  />
                   <PersonActiveToggle personId={p.id} active={p.active} />
                 </div>
               </td>
