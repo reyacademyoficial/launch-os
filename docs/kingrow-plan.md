@@ -440,21 +440,26 @@ antes.
 
 ### 3.4 Lectura (después del CRUD)
 
-- [ ] Listado de cohortes con producto asociado, instructor, fechas, ocupación.
-- [ ] Listado de estudiantes con badges Auto/Manual, cohorte activa, progreso,
+- [x] Listado de cohortes con producto asociado, instructor, fechas, ocupación.
+- [x] Listado de estudiantes con badges Auto/Manual, cohorte activa, progreso,
       status.
-- [ ] Vista de clase con asistencia inline editable.
-- [ ] Vista de exámenes por cohorte.
-- [ ] Vista de certificados emitidos.
-- [ ] Dashboard: estudiantes activos, tasa de completion (`completionRate`),
+- [x] Vista de clase con asistencia inline editable.
+- [x] Vista de exámenes por cohorte.
+- [x] Vista de certificados emitidos.
+- [x] Dashboard: estudiantes activos, tasa de completion (`completionRate`),
       asistencia promedio (`averageAttendance`), tasa de aprobación
       (`examPassRate`), tasa de certificación (`certificationRate`).
+      Consume los 5 KPIs puros + tabla "Salud por generación" ordenada por
+      status (active → planned → finished → cancelled) con enrolled,
+      completed, asistencia y aprobación por cohort.
 
 ### 3.5 Riesgo específico
 
-- [ ] Si no hay empresas propias en la org, la pantalla tiene que **decirlo
+- [x] Si no hay empresas propias en la org, la pantalla tiene que **decirlo
       explícitamente** — "Academia se activa cuando la organización opera al menos un
       proyecto propio" — no mostrar cero cohortes como si no hubiera datos.
+      El dashboard muestra un panel dedicado con ese mensaje cuando no hay
+      projects propios (el banner del layout lo aclara además desde arriba).
 
 ### 3.6 Verificación al cerrar
 
