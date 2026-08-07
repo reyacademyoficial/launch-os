@@ -119,6 +119,7 @@ export async function createCourse(
   if (!created) return { error: "El insert no devolvió fila." };
 
   revalidatePath("/academia/cursos");
+  revalidatePath("/academia/estudiantes");
   revalidatePath("/academia");
   return { ok: true, courseId: created.id };
 }
@@ -164,6 +165,7 @@ export async function updateCourse(
   }
 
   revalidatePath("/academia/cursos");
+  revalidatePath("/academia/estudiantes");
   revalidatePath("/academia");
   return { ok: true };
 }
@@ -199,6 +201,7 @@ export async function deleteCourse(
   if (error) return { error: error.message };
 
   revalidatePath("/academia/cursos");
+  revalidatePath("/academia/estudiantes");
   revalidatePath("/academia");
   return { ok: true };
 }
