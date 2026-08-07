@@ -87,30 +87,27 @@ export const UTILITY_MODULES: readonly KgModule[] = [];
  * El prefijo `/organizacion` nombra exactamente el scope del gate SQL, así
  * el vocabulario del código, la URL y la RLS coinciden.
  */
-export const ORGANIZATION_MODULES: readonly KgModule[] = [
-  { id: "org-personas", label: "Personas", href: "/organizacion/personas", icon: IconOrg },
-  { id: "org-reglas-split", label: "Reglas de split", href: "/organizacion/reglas-split", icon: IconOrg },
-];
-
 /**
- * Sección "Sistema" — separada de las capas, sólo visible para roles con
- * capacidad de administrar la plataforma. El artefacto no la define, la
- * agregamos porque LaunchOS ya tiene /admin/proyectos y /admin/usuarios y
- * necesitan entrada visible.
+ * Organización y Sistema se vaciaron: las rutas se administran desde
+ * /configuracion (pestaña Personas, Proyectos, Usuarios, Distribución).
+ * Los arrays se exportan vacíos para no romper imports externos; el sidebar
+ * los ignorará al renderizar.
  */
-export const SYSTEM_MODULES: readonly KgModule[] = [
-  { id: "admin-proyectos", label: "Proyectos", href: "/admin/proyectos", icon: IconAdmin },
-  { id: "admin-usuarios", label: "Usuarios", href: "/admin/usuarios", icon: IconAdmin },
-];
+export const ORGANIZATION_MODULES: readonly KgModule[] = [];
+export const SYSTEM_MODULES: readonly KgModule[] = [];
 
 /**
- * Páginas que existen pero no aparecen en la sidebar (destinos accesibles
- * desde otras superficies: user-block link a Configuración, ruta directa a
- * Auditoría). El topbar las usa para resolver el título del módulo activo.
+ * Páginas ocultas en la sidebar pero visibles para el topbar.
+ * Incluye las rutas que antes vivían en Organización/Sistema (ahora en
+ * Configuración) para que el topbar resuelva el título al editar/crear.
  */
 const HIDDEN_MODULES: readonly KgModule[] = [
   { id: "configuracion", label: "Configuración", href: "/configuracion", icon: IconAdmin },
   { id: "auditoria", label: "Auditoría", href: "/dev/auditoria", icon: IconAdmin },
+  { id: "org-personas", label: "Personas", href: "/organizacion/personas", icon: IconOrg },
+  { id: "org-reglas-split", label: "Distribución de ingresos", href: "/organizacion/reglas-split", icon: IconOrg },
+  { id: "admin-proyectos", label: "Proyectos", href: "/admin/proyectos", icon: IconAdmin },
+  { id: "admin-usuarios", label: "Usuarios", href: "/admin/usuarios", icon: IconAdmin },
 ];
 
 export function canSeeSystem(role: Role): boolean {

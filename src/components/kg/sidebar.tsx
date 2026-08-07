@@ -78,7 +78,7 @@ export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
           </LayerGroup>
         )}
 
-        {!isRestricted && showOrganization && (
+        {!isRestricted && showOrganization && ORGANIZATION_MODULES.length > 0 && (
           <LayerGroup label="Organización">
             {ORGANIZATION_MODULES.map((m) => (
               <KgNavItem
@@ -91,7 +91,7 @@ export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
           </LayerGroup>
         )}
 
-        {!isRestricted && showSystem && (
+        {!isRestricted && showSystem && SYSTEM_MODULES.length > 0 && (
           <LayerGroup label="Sistema">
             {SYSTEM_MODULES.map((m) => (
               <KgNavItem
