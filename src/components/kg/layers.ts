@@ -5,7 +5,6 @@ import type { Role } from "@/lib/supabase/auth";
 import {
   IconAca,
   IconAdmin,
-  IconCalc,
   IconCli,
   IconExec,
   IconFin,
@@ -73,12 +72,11 @@ export const LAYERS: readonly KgLayer[] = [
 
 /**
  * Sección "Utilidades" — no es una capa, va debajo de las capas. Herramientas
- * transversales sin scope de módulo. Calculadora hoy es la única — la
- * permisología fina (canUseCalculator) sigue viviendo en la page.
+ * transversales sin scope de módulo.
+ * Calculadora se movió a la sidebar del ProjectShell (LaunchOS) — desde ahí
+ * tiene contexto de proyecto y es donde el operador la usa realmente.
  */
-export const UTILITY_MODULES: readonly KgModule[] = [
-  { id: "calculadora", label: "Calculadora", href: "/calculadora", icon: IconCalc },
-];
+export const UTILITY_MODULES: readonly KgModule[] = [];
 
 /**
  * Sección "Organización" — configuración a nivel org (Kingrow). Personas
@@ -91,7 +89,6 @@ export const UTILITY_MODULES: readonly KgModule[] = [
  */
 export const ORGANIZATION_MODULES: readonly KgModule[] = [
   { id: "org-personas", label: "Personas", href: "/organizacion/personas", icon: IconOrg },
-  { id: "org-equipos", label: "Equipos", href: "/organizacion/equipos", icon: IconOrg },
   { id: "org-reglas-split", label: "Reglas de split", href: "/organizacion/reglas-split", icon: IconOrg },
 ];
 
@@ -122,6 +119,27 @@ export function canSeeSystem(role: Role): boolean {
 
 export function canSeeOrganization(role: Role): boolean {
   return role === "superadmin" || role === "dev";
+}
+
+/**
+ * IDs de módulos KG visibles según rol.
+ *
+ *   cliente   → solo lanzamientos (acceden a LaunchOS read-only, nada más de KG)
+ *   operador  → lanzamientos + operaciones (sus tareas + el ProjectShell)
+ *   otros     → todos (sin filtro adicional más allá de canSeeSystem/Org)
+ */
+const ROLE_MODULE_ALLOWLIST: Partial<Record<Role, ReadonlySet<string>>> = {
+  cliente: new Set(["lanzamientos"]),
+  operador: new Set(["lanzamientos", "operaciones"]),
+};
+
+export function visibleModulesForRole(
+  modules: readonly KgModule[],
+  role: Role,
+): readonly KgModule[] {
+  const allowlist = ROLE_MODULE_ALLOWLIST[role];
+  if (!allowlist) return modules;
+  return modules.filter((m) => allowlist.has(m.id));
 }
 
 /**

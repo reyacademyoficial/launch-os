@@ -1,4 +1,4 @@
-import { requireSessionProfile } from "@/lib/supabase/auth";
+import { requireRole } from "@/lib/supabase/auth";
 import { KgTabsBar, type TabItem } from "@/components/kg/tabs-bar";
 
 /**
@@ -11,9 +11,6 @@ import { KgTabsBar, type TabItem } from "@/components/kg/tabs-bar";
  * La ficha muestra su propio contexto arriba y un botón explícito para
  * volver al listado.
  *
- * Equipos NO vive acá — vive en `/organizacion/equipos` porque son config
- * org-level (paralelos a `/organizacion/personas`). Ver §2.0 del plan.
- *
  * Gate de rol: hereda de `(app)/layout.tsx` (rechaza cliente_role). Sin
  * requireRole más estricto acá — todo dev/superadmin/analista/operador
  * tiene lectura sobre Operaciones (con filtro "mis tareas" por default,
@@ -24,7 +21,8 @@ export default async function OperacionesLayout({
 }: {
   readonly children: React.ReactNode;
 }) {
-  await requireSessionProfile();
+  // Operadores pueden acceder; clientes son redirigidos a /lanzamientos.
+  await requireRole("superadmin", "admin", "analista", "operador");
 
   const tabs: readonly TabItem[] = [
     { href: "/operaciones", label: "Dashboard" },

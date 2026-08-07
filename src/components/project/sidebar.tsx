@@ -42,6 +42,8 @@ export function ProjectSidebar({ profile: _profile }: { readonly profile: Sessio
           <NavLink scopedSuffix="/ventas">Ventas</NavLink>
           <NavLink scopedSuffix="/cobros">Cobros</NavLink>
         </NavGroup>
+        {/* Calculadora — herramienta transversal, accede desde el contexto de proyecto */}
+        <NavLink href="/calculadora">Calculadora</NavLink>
       </nav>
     </aside>
   );

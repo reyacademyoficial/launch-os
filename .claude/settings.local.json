@@ -89,7 +89,8 @@
       "Bash(grep -n \"normalize\\\\|\\\\\\\\\\\\\\\\u03\" src/lib/finance/xlsx-import.ts)",
       "Bash(python3 *)",
       "Bash(tee /tmp/tsc.out)",
-      "Bash(echo \"---exit: $?\")"
+      "Bash(echo \"---exit: $?\")",
+      "Read(//c/c/Users/40306/Desktop/Rey academy/Descargas/launch-os/**)"
     ]
   }
 }

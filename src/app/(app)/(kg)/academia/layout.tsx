@@ -1,29 +1,24 @@
-import { requireSessionProfile } from "@/lib/supabase/auth";
+import { requireRole } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { KgTabsBar, type TabItem } from "@/components/kg/tabs-bar";
 
 /**
- * Layout del módulo Academia. Envuelve el dashboard + las 4 pestañas de
- * datos (Cohortes, Estudiantes, Cursos, Certificados) con la barra de
- * navegación intra-módulo.
+ * Layout del módulo Academia.
+ *
+ * Visible para superadmin / admin / analista. Operadores y clientes son
+ * redirigidos a su módulo raíz vía requireRole.
  *
  * ACADEMIA VIVE SOBRE PROYECTOS PROPIOS (guard 0070). Si la organización
  * no tiene ningún project con `ownership='propia'`, mostramos un banner
  * arriba del contenido para que se sepa por qué las tablas van a estar
- * vacías (§3.5 del plan). Las páginas siguen navegables — el banner es
- * información, no bloqueo.
- *
- * Gate de rol: hereda de (app)/layout.tsx (rechaza cliente). Sin
- * requireRole más estricto — todo dev/superadmin/analista/operador
- * puede ver academia (los que la operan concretamente son admins de
- * las empresas propias).
+ * vacías. Las páginas siguen navegables — el banner es información, no bloqueo.
  */
 export default async function AcademiaLayout({
   children,
 }: {
   readonly children: React.ReactNode;
 }) {
-  await requireSessionProfile();
+  await requireRole("superadmin", "admin", "analista");
 
   const supabase = await createClient();
   const { count: propiasCount } = await supabase
