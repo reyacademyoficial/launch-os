@@ -112,17 +112,33 @@ export default async function GastosPage({
   // vincule un pago viejo (>12m) el drawer no lo va a mostrar — decisión
   // pragmática: los pagos frescos son el 99% del uso.
   const twelveMonthsAgo = ymdMonthsAgo(12);
-  const [allMovementsRes, allExpensesBankIdsRes] = await Promise.all([
-    supabase
-      .from("bank_movements")
-      .select("id, bank_id, kind, amount, occurred_at, description")
-      .gte("occurred_at", twelveMonthsAgo)
-      .order("occurred_at", { ascending: false }),
-    supabase
-      .from("expenses")
-      .select("bank_movement_id")
-      .not("bank_movement_id", "is", null),
-  ]);
+  const expenseIdsPaged = expenses.map((e) => e.id);
+  const [allMovementsRes, allExpensesBankIdsRes, bridgeAllRes, bridgePagedRes] =
+    await Promise.all([
+      supabase
+        .from("bank_movements")
+        .select("id, bank_id, kind, amount, occurred_at, description")
+        .gte("occurred_at", twelveMonthsAgo)
+        .order("occurred_at", { ascending: false }),
+      supabase
+        .from("expenses")
+        .select("bank_movement_id")
+        .not("bank_movement_id", "is", null),
+      // Todos los links del bridge — para detectar movimientos ya linkeados
+      // a algún gasto (aunque sea comisión / otro) y sacarlos de la lista
+      // "no conciliados".
+      supabase.from("expense_bank_movements").select("bank_movement_id"),
+      // Bridge sólo de los gastos paginados — para popular linkedMovements
+      // en cada ExpenseRowData (evita traer el mundo entero).
+      expenseIdsPaged.length > 0
+        ? supabase
+            .from("expense_bank_movements")
+            .select(
+              "expense_id, bank_movement_id, role, bank_movements!inner(amount, kind, occurred_at, description, bank_id)",
+            )
+            .in("expense_id", expenseIdsPaged)
+        : Promise.resolve({ data: [] }),
+    ]);
 
   const allMovements =
     (allMovementsRes.data ?? []) as unknown as BankMovementDbRow[];
@@ -132,7 +148,32 @@ export default async function GastosPage({
   }[]) {
     if (r.bank_movement_id) linkedBankIds.add(r.bank_movement_id);
   }
+  for (const r of (bridgeAllRes.data ?? []) as { bank_movement_id: string }[]) {
+    linkedBankIds.add(r.bank_movement_id);
+  }
   const unconciled = allMovements.filter((m) => !linkedBankIds.has(m.id));
+
+  // Bridge de los gastos paginados agrupado por expense_id.
+  interface BridgePagedRow {
+    readonly expense_id: string;
+    readonly bank_movement_id: string;
+    readonly role: "principal" | "comision" | "otro";
+    readonly bank_movements: {
+      readonly amount: number;
+      readonly kind: "in" | "out";
+      readonly occurred_at: string;
+      readonly description: string | null;
+      readonly bank_id: string;
+    } | null;
+  }
+  const bridgeRows = (bridgePagedRes.data ?? []) as unknown as BridgePagedRow[];
+  const bridgeBankIds = Array.from(
+    new Set(
+      bridgeRows
+        .map((b) => b.bank_movements?.bank_id)
+        .filter((id): id is string => !!id),
+    ),
+  );
 
   // ─── Resolver nombres de suppliers, banks, projects ──────────────────
   const supplierIds = Array.from(
@@ -140,7 +181,9 @@ export default async function GastosPage({
       expenses.map((e) => e.supplier_id).filter((id): id is string => id != null),
     ),
   );
-  const bankIds = Array.from(new Set(unconciled.map((m) => m.bank_id)));
+  const bankIds = Array.from(
+    new Set([...unconciled.map((m) => m.bank_id), ...bridgeBankIds]),
+  );
 
   const [suppliersRes, banksRes] = await Promise.all([
     supplierIds.length > 0
@@ -179,6 +222,35 @@ export default async function GastosPage({
     .filter((e) => e.paid_at == null)
     .reduce((a, e) => a + (e.amount_gross - e.tax_amount), 0);
 
+  // ─── Movimientos linkeados por gasto (paso 6) ────────────────────────
+  const linkedMovementsByExpenseId = new Map<
+    string,
+    Array<{
+      movementId: string;
+      role: "principal" | "comision" | "otro";
+      amount: number;
+      kind: "in" | "out";
+      occurredAt: string;
+      description: string | null;
+      bankName: string;
+    }>
+  >();
+  for (const b of bridgeRows) {
+    if (!b.bank_movements) continue;
+    const shaped = {
+      movementId: b.bank_movement_id,
+      role: b.role,
+      amount: Number(b.bank_movements.amount),
+      kind: b.bank_movements.kind,
+      occurredAt: b.bank_movements.occurred_at,
+      description: b.bank_movements.description,
+      bankName: bankById.get(b.bank_movements.bank_id)?.name ?? "—",
+    };
+    const arr = linkedMovementsByExpenseId.get(b.expense_id);
+    if (arr) arr.push(shaped);
+    else linkedMovementsByExpenseId.set(b.expense_id, [shaped]);
+  }
+
   // ─── Serializar filas para el cliente ────────────────────────────────
   const rows: ExpenseRowData[] = paged.map((e) => ({
     id: e.id,
@@ -197,6 +269,7 @@ export default async function GastosPage({
     bankMovementId: e.bank_movement_id,
     notes: e.notes,
     transactionNumber: e.transaction_number,
+    linkedMovements: linkedMovementsByExpenseId.get(e.id) ?? [],
   }));
 
   const unconciledForDrawer: UnconciledMovement[] = unconciled.map((m) => {

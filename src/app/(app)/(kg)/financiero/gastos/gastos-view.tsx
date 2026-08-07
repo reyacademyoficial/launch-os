@@ -36,6 +36,15 @@ export interface ExpenseRowData {
   readonly bankMovementId: string | null;
   readonly notes: string | null;
   readonly transactionNumber: string | null;
+  readonly linkedMovements: ReadonlyArray<{
+    readonly movementId: string;
+    readonly role: "principal" | "comision" | "otro";
+    readonly amount: number;
+    readonly kind: "in" | "out";
+    readonly occurredAt: string;
+    readonly description: string | null;
+    readonly bankName: string;
+  }>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -227,6 +236,7 @@ export function GastosView({
             expenseDate: linkingRow.expenseDate,
             paidAt: linkingRow.paidAt,
             bankMovementId: linkingRow.bankMovementId,
+            linkedMovements: linkingRow.linkedMovements,
           }}
           unconciledMovements={unconciledMovements}
           onClose={() => setLinkingId(null)}
