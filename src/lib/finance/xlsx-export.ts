@@ -318,6 +318,105 @@ export async function buildBankReportWorkbook(
   return finalize(workbook);
 }
 
+// ─── Invoice report (paso 10) ────────────────────────────────────────────
+
+export interface InvoiceReportBucketRow {
+  readonly status: "emitida" | "cobrada" | "vencida" | "anulada";
+  readonly currency: string;
+  readonly count: number;
+  readonly amountGross: number;
+  readonly gatewayFee: number;
+}
+
+export interface InvoiceReportDetailExportRow {
+  readonly invoiceNumber: string | null;
+  readonly issueDate: string;
+  readonly dueDate: string | null;
+  readonly status: "emitida" | "cobrada" | "vencida" | "anulada";
+  readonly currency: string;
+  readonly amountGross: number;
+  readonly gatewayFee: number | null;
+  readonly projectName: string;
+  readonly buyerName: string | null;
+  readonly description: string;
+}
+
+export async function buildInvoiceReportWorkbook(
+  buckets: ReadonlyArray<InvoiceReportBucketRow>,
+  detail: ReadonlyArray<InvoiceReportDetailExportRow>,
+  periodLabel: string,
+): Promise<Uint8Array> {
+  const workbook = newWorkbook();
+
+  const summary = workbook.addWorksheet("Resumen");
+  summary.columns = [
+    { header: "Concepto", key: "concept", width: 30 },
+    { header: "Valor", key: "value", width: 24 },
+  ];
+  summary.addRow({ concept: "Rango", value: periodLabel });
+  summary.addRow({ concept: "Total facturas", value: detail.length });
+  boldHeader(summary);
+
+  const bucketSheet = workbook.addWorksheet("Por estado");
+  bucketSheet.columns = [
+    { header: "Estado", key: "status", width: 14 },
+    { header: "Moneda", key: "currency", width: 10 },
+    { header: "# facturas", key: "count", width: 12 },
+    { header: "Monto bruto", key: "gross", width: 16, style: MONEY_STYLE },
+    { header: "Comisión pasarela", key: "fee", width: 18, style: MONEY_STYLE },
+  ];
+  for (const b of buckets) {
+    bucketSheet.addRow({
+      status: statusLabelInvoice(b.status),
+      currency: b.currency,
+      count: b.count,
+      gross: b.amountGross,
+      fee: b.gatewayFee,
+    });
+  }
+  boldHeader(bucketSheet);
+
+  const detailSheet = workbook.addWorksheet("Detalle");
+  detailSheet.columns = [
+    { header: "Nº", key: "number", width: 14 },
+    { header: "Emisión", key: "issue", width: 12 },
+    { header: "Vencimiento", key: "due", width: 12 },
+    { header: "Estado", key: "status", width: 12 },
+    { header: "Moneda", key: "currency", width: 8 },
+    { header: "Monto", key: "amount", width: 16, style: MONEY_STYLE },
+    { header: "Comisión pasarela", key: "fee", width: 18, style: MONEY_STYLE },
+    { header: "Proyecto", key: "project", width: 22 },
+    { header: "Comprador", key: "buyer", width: 26 },
+    { header: "Descripción", key: "description", width: 40 },
+  ];
+  for (const r of detail) {
+    detailSheet.addRow({
+      number: r.invoiceNumber ?? "",
+      issue: ymdToDate(r.issueDate),
+      due: r.dueDate ? ymdToDate(r.dueDate) : "",
+      status: statusLabelInvoice(r.status),
+      currency: r.currency,
+      amount: r.amountGross,
+      fee: r.gatewayFee ?? "",
+      project: r.projectName,
+      buyer: r.buyerName ?? "",
+      description: r.description,
+    });
+  }
+  boldHeader(detailSheet);
+
+  return finalize(workbook);
+}
+
+function statusLabelInvoice(
+  s: "emitida" | "cobrada" | "vencida" | "anulada",
+): string {
+  if (s === "cobrada") return "Cobrada";
+  if (s === "vencida") return "Vencida";
+  if (s === "anulada") return "Anulada";
+  return "Emitida";
+}
+
 // ─── internals ───────────────────────────────────────────────────────────
 
 const MONEY_STYLE = {
