@@ -10,6 +10,8 @@ import { resolvePeriod, type Period } from "@/lib/finance/period";
 import type { FinanceExpenseRow } from "@/lib/finance/types";
 import { createClient } from "@/lib/supabase/server";
 
+import { RangePills, type PresetOption } from "../range-pills";
+
 import type { UnconciledMovement } from "./link-payment-drawer";
 import { GastosView, type ExpenseRowData } from "./gastos-view";
 
@@ -18,14 +20,14 @@ export const metadata: Metadata = { title: "Gastos · Financiero" };
 const PAGE_SIZE = 50;
 
 type PaidParam = "todos" | "pagado" | "impago";
-type RangeParam = "todo" | "mes-actual" | "mes-anterior" | "90d";
+type RangeParam = "todo" | "mes-actual" | "mes-anterior" | "90d" | "custom";
 
 const PAID_OPTIONS: ReadonlyArray<{ value: PaidParam; label: string }> = [
   { value: "todos", label: "Todos" },
   { value: "pagado", label: "Pagados" },
   { value: "impago", label: "Impagos" },
 ];
-const RANGE_OPTIONS: ReadonlyArray<{ value: RangeParam; label: string }> = [
+const RANGE_PRESETS: readonly PresetOption[] = [
   { value: "todo", label: "Todo" },
   { value: "mes-actual", label: "Mes actual" },
   { value: "mes-anterior", label: "Mes anterior" },
@@ -76,10 +78,18 @@ export default async function GastosPage({
   const sp = await searchParams;
   const paidParam = parsePaid(sp.paid);
   const rangeParam = parseRange(sp.range);
+  const fromParam = parseYmd(sp.from);
+  const toParam = parseYmd(sp.to);
   const page = parsePage(sp.page);
 
+  const isCustom = fromParam != null && toParam != null;
+  const effectiveRange: RangeParam = isCustom ? "custom" : rangeParam;
   const period: Period | null =
-    rangeParam === "todo" ? null : resolvePeriod({ range: rangeParam });
+    effectiveRange === "todo"
+      ? null
+      : isCustom
+        ? resolvePeriod({ from: fromParam, to: toParam })
+        : resolvePeriod({ range: effectiveRange });
 
   const supabase = await createClient();
 
@@ -290,15 +300,18 @@ export default async function GastosPage({
 
   function buildHref(overrides: {
     paid?: PaidParam;
-    range?: RangeParam;
     page?: number;
   }): string {
     const nextPaid = overrides.paid ?? paidParam;
-    const nextRange = overrides.range ?? rangeParam;
     const nextPage = overrides.page ?? page;
     const params = new URLSearchParams();
     if (nextPaid !== "todos") params.set("paid", nextPaid);
-    if (nextRange !== "todo") params.set("range", nextRange);
+    if (isCustom && fromParam && toParam) {
+      params.set("from", fromParam);
+      params.set("to", toParam);
+    } else if (rangeParam !== "todo") {
+      params.set("range", rangeParam);
+    }
     if (nextPage > 1) params.set("page", String(nextPage));
     const qs = params.toString();
     return qs ? `/financiero/gastos?${qs}` : "/financiero/gastos";
@@ -331,13 +344,12 @@ export default async function GastosPage({
             active: paidParam === o.value,
           }))}
         />
-        <KgParamPills
-          ariaLabel="Filtrar por período"
-          options={RANGE_OPTIONS.map((o) => ({
-            label: o.label,
-            href: buildHref({ range: o.value, page: 1 }),
-            active: rangeParam === o.value,
-          }))}
+        <RangePills
+          presets={RANGE_PRESETS}
+          activePreset={isCustom ? null : rangeParam === "custom" ? null : rangeParam}
+          activeFrom={period?.fromYmd ?? null}
+          activeTo={period?.toYmd ?? null}
+          baseHref="/financiero/gastos"
         />
       </div>
 
@@ -346,7 +358,7 @@ export default async function GastosPage({
           rows={rows}
           totalCount={totalCount}
           unconciledMovements={unconciledForDrawer}
-          exportHref={buildExportHref(paidParam, rangeParam)}
+          exportHref={buildExportHref(paidParam, rangeParam, fromParam, toParam)}
         />
         <KgPaginator
           page={page}
@@ -359,10 +371,20 @@ export default async function GastosPage({
   );
 }
 
-function buildExportHref(paid: PaidParam, range: RangeParam): string {
+function buildExportHref(
+  paid: PaidParam,
+  range: RangeParam,
+  from: string | null,
+  to: string | null,
+): string {
   const params = new URLSearchParams();
   if (paid !== "todos") params.set("paid", paid);
-  if (range !== "todo") params.set("range", range);
+  if (from && to) {
+    params.set("from", from);
+    params.set("to", to);
+  } else if (range !== "todo") {
+    params.set("range", range);
+  }
   const qs = params.toString();
   return qs
     ? `/api/financiero/gastos/export?${qs}`
@@ -376,8 +398,18 @@ function parsePaid(v: string | string[] | undefined): PaidParam {
 }
 function parseRange(v: string | string[] | undefined): RangeParam {
   if (typeof v !== "string") return "todo";
-  const allowed: RangeParam[] = ["todo", "mes-actual", "mes-anterior", "90d"];
+  const allowed: RangeParam[] = [
+    "todo",
+    "mes-actual",
+    "mes-anterior",
+    "90d",
+    "custom",
+  ];
   return (allowed as string[]).includes(v) ? (v as RangeParam) : "todo";
+}
+function parseYmd(v: string | string[] | undefined): string | null {
+  if (typeof v !== "string") return null;
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
 }
 function parsePage(v: string | string[] | undefined): number {
   if (typeof v !== "string") return 1;

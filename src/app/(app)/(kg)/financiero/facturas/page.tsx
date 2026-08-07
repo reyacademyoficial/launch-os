@@ -16,6 +16,8 @@ import { listAllProducts } from "@/lib/products/list";
 import { listAccessibleProjects } from "@/lib/projects/list";
 import { createClient } from "@/lib/supabase/server";
 
+import { RangePills, type PresetOption } from "../range-pills";
+
 import {
   FacturasView,
   type FacturaRowData,
@@ -35,7 +37,7 @@ export const metadata: Metadata = { title: "Facturas · Financiero" };
 const PAGE_SIZE = 50;
 
 type StatusParam = InvoiceStatus | "todos";
-type RangeParam = "todo" | "mes-actual" | "mes-anterior" | "90d";
+type RangeParam = "todo" | "mes-actual" | "mes-anterior" | "90d" | "custom";
 
 const STATUS_OPTIONS: ReadonlyArray<{
   readonly value: StatusParam;
@@ -48,10 +50,7 @@ const STATUS_OPTIONS: ReadonlyArray<{
   { value: "anulada", label: "Anuladas" },
 ];
 
-const RANGE_OPTIONS: ReadonlyArray<{
-  readonly value: RangeParam;
-  readonly label: string;
-}> = [
+const RANGE_PRESETS: readonly PresetOption[] = [
   { value: "todo", label: "Todo el histórico" },
   { value: "mes-actual", label: "Mes actual" },
   { value: "mes-anterior", label: "Mes anterior" },
@@ -104,10 +103,20 @@ export default async function FacturasPage({
   const sp = await searchParams;
   const statusParam = parseStatus(sp.status);
   const rangeParam = parseRange(sp.range);
+  const fromParam = parseYmd(sp.from);
+  const toParam = parseYmd(sp.to);
   const page = parsePage(sp.page);
 
+  // Prioridad: si vienen from+to, se aplica rango custom aunque range esté
+  // presente. Alineado con la lógica de resolvePeriod.
+  const isCustom = fromParam != null && toParam != null;
+  const effectiveRange: RangeParam = isCustom ? "custom" : rangeParam;
   const period: Period | null =
-    rangeParam === "todo" ? null : resolvePeriod({ range: rangeParam });
+    effectiveRange === "todo"
+      ? null
+      : isCustom
+        ? resolvePeriod({ from: fromParam, to: toParam })
+        : resolvePeriod({ range: effectiveRange });
 
   const supabase = await createClient();
 
@@ -322,15 +331,19 @@ export default async function FacturasPage({
 
   function buildHref(overrides: {
     status?: StatusParam;
-    range?: RangeParam;
     page?: number;
   }): string {
     const nextStatus = overrides.status ?? statusParam;
-    const nextRange = overrides.range ?? rangeParam;
     const nextPage = overrides.page ?? page;
     const params = new URLSearchParams();
     if (nextStatus !== "todos") params.set("status", nextStatus);
-    if (nextRange !== "todo") params.set("range", nextRange);
+    // Preservar rango vigente (preset o custom) al re-filtrar por otro eje.
+    if (isCustom && fromParam && toParam) {
+      params.set("from", fromParam);
+      params.set("to", toParam);
+    } else if (rangeParam !== "todo") {
+      params.set("range", rangeParam);
+    }
     if (nextPage > 1) params.set("page", String(nextPage));
     const qs = params.toString();
     return qs ? `/financiero/facturas?${qs}` : "/financiero/facturas";
@@ -357,13 +370,12 @@ export default async function FacturasPage({
             active: statusParam === o.value,
           }))}
         />
-        <KgParamPills
-          ariaLabel="Filtrar por período"
-          options={RANGE_OPTIONS.map((o) => ({
-            label: o.label,
-            href: buildHref({ range: o.value, page: 1 }),
-            active: rangeParam === o.value,
-          }))}
+        <RangePills
+          presets={RANGE_PRESETS}
+          activePreset={isCustom || rangeParam === "custom" ? null : rangeParam}
+          activeFrom={period?.fromYmd ?? null}
+          activeTo={period?.toYmd ?? null}
+          baseHref="/financiero/facturas"
         />
       </div>
 
@@ -405,8 +417,19 @@ function parseStatus(v: string | string[] | undefined): StatusParam {
 
 function parseRange(v: string | string[] | undefined): RangeParam {
   if (typeof v !== "string") return "todo";
-  const allowed: RangeParam[] = ["todo", "mes-actual", "mes-anterior", "90d"];
+  const allowed: RangeParam[] = [
+    "todo",
+    "mes-actual",
+    "mes-anterior",
+    "90d",
+    "custom",
+  ];
   return (allowed as string[]).includes(v) ? (v as RangeParam) : "todo";
+}
+
+function parseYmd(v: string | string[] | undefined): string | null {
+  if (typeof v !== "string") return null;
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
 }
 
 function parsePage(v: string | string[] | undefined): number {

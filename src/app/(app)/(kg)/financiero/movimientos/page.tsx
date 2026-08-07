@@ -10,6 +10,8 @@ import { fCount, fMoney } from "@/lib/finance/format";
 import { resolvePeriod, type Period } from "@/lib/finance/period";
 import { createClient } from "@/lib/supabase/server";
 
+import { RangePills, type PresetOption } from "../range-pills";
+
 import type { BankOption } from "./movement-form-drawer";
 import {
   MovimientosView,
@@ -21,14 +23,14 @@ export const metadata: Metadata = { title: "Movimientos · Financiero" };
 const PAGE_SIZE = 50;
 
 type KindParam = "todos" | "in" | "out";
-type RangeParam = "todo" | "mes-actual" | "mes-anterior" | "90d";
+type RangeParam = "todo" | "mes-actual" | "mes-anterior" | "90d" | "custom";
 
 const KIND_OPTIONS: ReadonlyArray<{ value: KindParam; label: string }> = [
   { value: "todos", label: "Todos" },
   { value: "in", label: "Entradas" },
   { value: "out", label: "Salidas" },
 ];
-const RANGE_OPTIONS: ReadonlyArray<{ value: RangeParam; label: string }> = [
+const RANGE_PRESETS: readonly PresetOption[] = [
   { value: "todo", label: "Todo" },
   { value: "mes-actual", label: "Mes actual" },
   { value: "mes-anterior", label: "Mes anterior" },
@@ -66,10 +68,18 @@ export default async function MovimientosPage({
   const sp = await searchParams;
   const kindParam = parseKind(sp.kind);
   const rangeParam = parseRange(sp.range);
+  const fromParam = parseYmd(sp.from);
+  const toParam = parseYmd(sp.to);
   const page = parsePage(sp.page);
 
+  const isCustom = fromParam != null && toParam != null;
+  const effectiveRange: RangeParam = isCustom ? "custom" : rangeParam;
   const period: Period | null =
-    rangeParam === "todo" ? null : resolvePeriod({ range: rangeParam });
+    effectiveRange === "todo"
+      ? null
+      : isCustom
+        ? resolvePeriod({ from: fromParam, to: toParam })
+        : resolvePeriod({ range: effectiveRange });
 
   const supabase = await createClient();
 
@@ -254,15 +264,18 @@ export default async function MovimientosPage({
 
   function buildHref(overrides: {
     kind?: KindParam;
-    range?: RangeParam;
     page?: number;
   }): string {
     const nextKind = overrides.kind ?? kindParam;
-    const nextRange = overrides.range ?? rangeParam;
     const nextPage = overrides.page ?? page;
     const params = new URLSearchParams();
     if (nextKind !== "todos") params.set("kind", nextKind);
-    if (nextRange !== "todo") params.set("range", nextRange);
+    if (isCustom && fromParam && toParam) {
+      params.set("from", fromParam);
+      params.set("to", toParam);
+    } else if (rangeParam !== "todo") {
+      params.set("range", rangeParam);
+    }
     if (nextPage > 1) params.set("page", String(nextPage));
     const qs = params.toString();
     return qs ? `/financiero/movimientos?${qs}` : "/financiero/movimientos";
@@ -290,13 +303,12 @@ export default async function MovimientosPage({
             active: kindParam === o.value,
           }))}
         />
-        <KgParamPills
-          ariaLabel="Filtrar por período"
-          options={RANGE_OPTIONS.map((o) => ({
-            label: o.label,
-            href: buildHref({ range: o.value, page: 1 }),
-            active: rangeParam === o.value,
-          }))}
+        <RangePills
+          presets={RANGE_PRESETS}
+          activePreset={isCustom ? null : rangeParam === "custom" ? null : rangeParam}
+          activeFrom={period?.fromYmd ?? null}
+          activeTo={period?.toYmd ?? null}
+          baseHref="/financiero/movimientos"
         />
       </div>
 
@@ -305,7 +317,12 @@ export default async function MovimientosPage({
           rows={rows}
           totalCount={totalCount}
           banks={banksForDrawer}
-          exportHref={buildExportHref(kindParam, rangeParam)}
+          exportHref={buildExportHref(
+            kindParam,
+            rangeParam,
+            fromParam,
+            toParam,
+          )}
         />
         <KgPaginator
           page={page}
@@ -318,10 +335,20 @@ export default async function MovimientosPage({
   );
 }
 
-function buildExportHref(kind: KindParam, range: RangeParam): string {
+function buildExportHref(
+  kind: KindParam,
+  range: RangeParam,
+  from: string | null,
+  to: string | null,
+): string {
   const params = new URLSearchParams();
   if (kind !== "todos") params.set("kind", kind);
-  if (range !== "todo") params.set("range", range);
+  if (from && to) {
+    params.set("from", from);
+    params.set("to", to);
+  } else if (range !== "todo") {
+    params.set("range", range);
+  }
   const qs = params.toString();
   return qs
     ? `/api/financiero/movimientos/export?${qs}`
@@ -335,8 +362,18 @@ function parseKind(v: string | string[] | undefined): KindParam {
 }
 function parseRange(v: string | string[] | undefined): RangeParam {
   if (typeof v !== "string") return "todo";
-  const allowed: RangeParam[] = ["todo", "mes-actual", "mes-anterior", "90d"];
+  const allowed: RangeParam[] = [
+    "todo",
+    "mes-actual",
+    "mes-anterior",
+    "90d",
+    "custom",
+  ];
   return (allowed as string[]).includes(v) ? (v as RangeParam) : "todo";
+}
+function parseYmd(v: string | string[] | undefined): string | null {
+  if (typeof v !== "string") return null;
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
 }
 function parsePage(v: string | string[] | undefined): number {
   if (typeof v !== "string") return 1;
