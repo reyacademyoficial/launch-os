@@ -8,6 +8,10 @@ import { StatusPill } from "@/components/kg/status-pill";
 
 import { deleteEnrollment } from "../../enrollments/actions";
 import {
+  BulkEnrollDrawer,
+  type BulkEnrollCandidate,
+} from "./bulk-enroll-drawer";
+import {
   EnrollStudentDrawer,
   type EnrollmentInitial,
   type SaleOptionForEnroll,
@@ -48,6 +52,7 @@ export function EnrollmentsPanel({
   enrollments,
   availableStudents,
   availableSales,
+  bulkCandidates,
 }: {
   readonly cohortId: string;
   readonly cohortName: string;
@@ -55,8 +60,10 @@ export function EnrollmentsPanel({
   readonly enrollments: readonly EnrollmentRowData[];
   readonly availableStudents: readonly StudentOptionForEnroll[];
   readonly availableSales: readonly SaleOptionForEnroll[];
+  readonly bulkCandidates: readonly BulkEnrollCandidate[];
 }) {
   const [enrolling, setEnrolling] = useState(false);
+  const [bulkEnrolling, setBulkEnrolling] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -104,14 +111,24 @@ export function EnrollmentsPanel({
             ? "Sin inscriptos"
             : `${enrollments.length} inscripto${enrollments.length === 1 ? "" : "s"}`}
         </div>
-        <button
-          type="button"
-          onClick={() => setEnrolling(true)}
-          className="kg-focus"
-          style={primaryBtn}
-        >
-          + Inscribir
-        </button>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button
+            type="button"
+            onClick={() => setBulkEnrolling(true)}
+            className="kg-focus"
+            style={secondaryBtn}
+          >
+            + Inscribir varios
+          </button>
+          <button
+            type="button"
+            onClick={() => setEnrolling(true)}
+            className="kg-focus"
+            style={primaryBtn}
+          >
+            + Inscribir
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -261,6 +278,14 @@ export function EnrollmentsPanel({
         sales={availableSales}
         initial={editingInitial}
       />
+
+      <BulkEnrollDrawer
+        open={bulkEnrolling}
+        onClose={() => setBulkEnrolling(false)}
+        cohortId={cohortId}
+        cohortName={cohortName}
+        candidates={bulkCandidates}
+      />
     </div>
   );
 }
@@ -284,6 +309,17 @@ const primaryBtn: React.CSSProperties = {
   background: "var(--kg-accent-500)",
   border: "none",
   color: "#fff",
+  fontSize: 11,
+  fontWeight: 700,
+  cursor: "pointer",
+};
+
+const secondaryBtn: React.CSSProperties = {
+  padding: "6px 14px",
+  borderRadius: 999,
+  background: "transparent",
+  border: "1px solid var(--kg-border-subtle)",
+  color: "var(--kg-text-2)",
   fontSize: 11,
   fontWeight: 700,
   cursor: "pointer",

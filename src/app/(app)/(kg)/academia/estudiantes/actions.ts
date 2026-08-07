@@ -8,10 +8,12 @@ import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 // CRUD de students (bloque 4 · 0071).
 //
 // Dos flujos de alta:
-//   1) createStudentManual — form vacío, operador tipea todo.
-//   2) createStudentFromSale — lee la venta + su lead, auto-fillea el
-//      student. Es el flujo primario (la mayoría de estudiantes son
-//      compradores de un producto-curso).
+//   1) createStudentManual — form vacío, operador tipea todo (usado para
+//      históricos sin venta asociada).
+//   2) bulkCreateStudentsFromSales — desde la pestaña "Compradores
+//      pendientes" en /academia/estudiantes. Crea N students en un solo
+//      llamado, con opción a inscribirlos también en una cohort del
+//      curso.
 //
 // Los students son alumnos de proyectos propios. El guard_propia_project
 // rebota si project_id no es propia.
@@ -31,9 +33,18 @@ export type CreateStudentState =
   | { error: string }
   | null;
 
-export type CreateStudentFromSaleResult =
-  | { ok: true; studentId: string }
-  | { error: string };
+export interface BulkFailure {
+  readonly saleId: string;
+  readonly leadName: string;
+  readonly error: string;
+}
+
+export type BulkCreateFromSalesResult = {
+  ok: true;
+  createdCount: number;
+  enrolledCount: number;
+  failures: readonly BulkFailure[];
+};
 
 export type UpdateStudentState = { ok: true } | { error: string } | null;
 
@@ -148,109 +159,204 @@ export async function createStudentManual(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// createStudentFromSale — flujo primario
+// bulkCreateStudentsFromSales
 //
-// Lee la sale + su lead, y crea el student con:
-//   - project_id = product.project_id (el sale, product y student
-//     comparten proyecto propio).
-//   - name/email/phone auto-fill del lead.
+// Crea N students en un solo llamado, iterando internamente. Errores
+// individuales (unique/guard) se agregan en `failures`. Si el operador
+// pasa `enrollInCohortId`, además crea los enrollments con `sale_id`
+// seteado para trazabilidad LTV.
 //
-// Notas opcionales que el operador puede agregar antes de crear.
+// El caller ya verificó que todos los seleccionados corresponden al
+// producto del curso de esa cohort — acá defendemos igualmente en cada
+// insert vía el trigger de consistency (rebota 23514 si product mismatch).
 // ═══════════════════════════════════════════════════════════════════════════
 
-interface FromSaleInputs {
-  readonly saleId: string;
-  readonly notes: string | null;
-}
-
-export async function createStudentFromSale(
-  inputs: FromSaleInputs,
-): Promise<CreateStudentFromSaleResult> {
-  const { saleId, notes } = inputs;
-  if (!saleId) return { error: "Falta el id de la venta." };
+export async function bulkCreateStudentsFromSales(
+  saleIds: readonly string[],
+  options: { readonly enrollInCohortId: string | null } = {
+    enrollInCohortId: null,
+  },
+): Promise<BulkCreateFromSalesResult> {
+  if (saleIds.length === 0) {
+    return { ok: true, createdCount: 0, enrolledCount: 0, failures: [] };
+  }
 
   const supabase = await createSupabaseClient();
 
-  // Traigo sale + product + lead en tres queries (más simple que un
-  // select con relaciones anidadas).
-  const { data: saleData, error: saleErr } = await supabase
+  // Traigo todas las sales del batch en una query.
+  const { data: salesData } = await supabase
     .from("sales")
     .select("id, project_id, product_id, lead_id")
-    .eq("id", saleId)
-    .maybeSingle();
-
-  if (saleErr) return { error: saleErr.message };
-  const sale = saleData as {
+    .in("id", [...saleIds]);
+  const sales = (salesData ?? []) as unknown as ReadonlyArray<{
     id: string;
     project_id: string;
     product_id: string;
     lead_id: string | null;
-  } | null;
-  if (!sale) return { error: "La venta ya no existe o no tenés acceso." };
-  if (!sale.lead_id) {
-    return {
-      error:
-        "La venta no tiene lead asociado — no hay datos para completar el estudiante. Cargalo manualmente.",
-    };
-  }
+  }>;
 
-  const { data: leadData, error: leadErr } = await supabase
-    .from("leads")
-    .select("name, email, phone")
-    .eq("id", sale.lead_id)
-    .maybeSingle();
-
-  if (leadErr) return { error: leadErr.message };
-  const lead = leadData as {
+  const leadIds = Array.from(
+    new Set(
+      sales.map((s) => s.lead_id).filter((v): v is string => v != null),
+    ),
+  );
+  const { data: leadsData } =
+    leadIds.length === 0
+      ? { data: [] }
+      : await supabase
+          .from("leads")
+          .select("id, name, email, phone")
+          .in("id", leadIds);
+  const leads = (leadsData ?? []) as unknown as ReadonlyArray<{
+    id: string;
     name: string | null;
     email: string | null;
     phone: string | null;
-  } | null;
-  if (!lead || !lead.name) {
-    return {
-      error:
-        "El lead de la venta no tiene nombre. Cargá el estudiante manualmente.",
-    };
+  }>;
+  const leadById = new Map<string, (typeof leads)[number]>();
+  for (const l of leads) leadById.set(l.id, l);
+
+  const salesTouchedProjects = new Set<string>();
+  const salesTouchedStudentPaths = new Set<string>();
+  const failures: BulkFailure[] = [];
+  const createdStudentBySale = new Map<
+    string,
+    { studentId: string; projectId: string }
+  >();
+
+  // Alta secuencial. Un batch pequeño no gana con concurrencia en un
+  // server action y el orden de errores es más predecible.
+  for (const saleId of saleIds) {
+    const sale = sales.find((s) => s.id === saleId);
+    if (!sale) {
+      failures.push({
+        saleId,
+        leadName: "—",
+        error: "La venta ya no existe o no tenés acceso.",
+      });
+      continue;
+    }
+    if (!sale.lead_id) {
+      failures.push({
+        saleId,
+        leadName: "—",
+        error: "La venta no tiene lead asociado.",
+      });
+      continue;
+    }
+    const lead = leadById.get(sale.lead_id);
+    if (!lead || !lead.name) {
+      failures.push({
+        saleId,
+        leadName: lead?.name ?? "—",
+        error: "El lead no tiene nombre.",
+      });
+      continue;
+    }
+
+    const payload = {
+      project_id: sale.project_id,
+      name: lead.name,
+      email: lead.email ? lead.email.toLowerCase() : null,
+      phone: normalizePhone(lead.phone),
+      status: "active" as Status,
+      enrolled_at: todayYmd(),
+      notes: null,
+    } as never;
+
+    const { data, error } = await supabase
+      .from("students")
+      .insert(payload)
+      .select("id")
+      .single();
+
+    if (error) {
+      let message = error.message;
+      if (error.code === "23505") {
+        message =
+          "Ya existe un estudiante con ese email o teléfono en el proyecto.";
+      } else if (error.code === "23514") {
+        message =
+          "El proyecto no es propia. Academia solo admite ownership='propia'.";
+      }
+      failures.push({ saleId, leadName: lead.name, error: message });
+      continue;
+    }
+
+    const created = data as { id: string } | null;
+    if (!created) {
+      failures.push({
+        saleId,
+        leadName: lead.name,
+        error: "El insert no devolvió fila.",
+      });
+      continue;
+    }
+    createdStudentBySale.set(saleId, {
+      studentId: created.id,
+      projectId: sale.project_id,
+    });
+    salesTouchedProjects.add(sale.project_id);
+    salesTouchedStudentPaths.add(created.id);
   }
 
-  const payload = {
-    project_id: sale.project_id,
-    name: lead.name,
-    email: lead.email ? lead.email.toLowerCase() : null,
-    phone: normalizePhone(lead.phone),
-    status: "active" as Status,
-    enrolled_at: todayYmd(),
-    notes,
-  } as never;
+  // Fase 2: si vino cohortId, crear los enrollments para los que se
+  // pudieron crear como student. sale_id seteado para trazabilidad.
+  let enrolledCount = 0;
+  if (options.enrollInCohortId && createdStudentBySale.size > 0) {
+    for (const [saleId, entry] of createdStudentBySale) {
+      const enrPayload = {
+        student_id: entry.studentId,
+        cohort_id: options.enrollInCohortId,
+        sale_id: saleId,
+        enrolled_at: todayYmd(),
+        status: "active",
+        progress_percent: 0,
+        notes: null,
+      } as never;
 
-  const { data, error } = await supabase
-    .from("students")
-    .insert(payload)
-    .select("id")
-    .single();
+      const { error } = await supabase
+        .from("enrollments")
+        .insert(enrPayload);
 
-  if (error) {
-    if (error.code === "23505") {
-      return {
-        error:
-          "Ya existe un estudiante con ese email o teléfono en el proyecto. Buscalo en el listado y asignalo a la generación.",
-      };
+      if (error) {
+        let message = error.message;
+        if (error.code === "23505") {
+          message = "Ya estaba inscripto en esta generación.";
+        } else if (error.code === "23514") {
+          message =
+            "La cohort no coincide con el proyecto/producto del estudiante.";
+        }
+        // El student SÍ se creó — reportamos como parcial en failures
+        // (con studentId en el mensaje para debug).
+        failures.push({
+          saleId,
+          leadName: "(alta ok, falló inscripción)",
+          error: message,
+        });
+        continue;
+      }
+      enrolledCount++;
     }
-    if (error.code === "23514") {
-      return {
-        error:
-          "El proyecto no es propia. Academia solo admite proyectos con ownership='propia'.",
-      };
-    }
-    return { error: error.message };
   }
 
-  const created = data as { id: string } | null;
-  if (!created) return { error: "El insert no devolvió fila." };
-
+  // Revalidations globales.
   revalidatePath("/academia/estudiantes");
+  for (const studentId of salesTouchedStudentPaths) {
+    revalidatePath(`/academia/estudiantes/${studentId}`);
+  }
+  if (options.enrollInCohortId) {
+    revalidatePath(`/academia/cohortes/${options.enrollInCohortId}`);
+  }
+  revalidatePath("/academia/cohortes");
   revalidatePath("/academia");
-  return { ok: true, studentId: created.id };
+
+  return {
+    ok: true,
+    createdCount: createdStudentBySale.size,
+    enrolledCount,
+    failures,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

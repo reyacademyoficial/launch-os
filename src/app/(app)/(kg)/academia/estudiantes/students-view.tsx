@@ -7,10 +7,6 @@ import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { StatusPill } from "@/components/kg/status-pill";
 
 import {
-  CreateFromSaleDrawer,
-  type PendingSale,
-} from "./create-from-sale-drawer";
-import {
   StudentFormDrawer,
   type ProjectOptionForStudent,
   type StudentInitial,
@@ -46,15 +42,12 @@ export function StudentsView({
   rows,
   totalCount,
   projects,
-  pendingSales,
 }: {
   readonly rows: readonly StudentRowData[];
   readonly totalCount: number;
   readonly projects: readonly ProjectOptionForStudent[];
-  readonly pendingSales: readonly PendingSale[];
 }) {
   const [creatingManual, setCreatingManual] = useState(false);
-  const [creatingFromSale, setCreatingFromSale] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const editing =
@@ -170,29 +163,6 @@ export function StudentsView({
       >
         <button
           type="button"
-          onClick={() => setCreatingFromSale(true)}
-          className="kg-focus"
-          style={secondaryBtn}
-        >
-          + Desde comprador
-          {pendingSales.length > 0 && (
-            <span
-              style={{
-                marginLeft: 6,
-                padding: "1px 6px",
-                borderRadius: 999,
-                background: "var(--kg-accent-500)",
-                color: "#fff",
-                fontSize: 10,
-                fontWeight: 700,
-              }}
-            >
-              {pendingSales.length}
-            </span>
-          )}
-        </button>
-        <button
-          type="button"
           onClick={() => setCreatingManual(true)}
           className="kg-focus"
           style={primaryBtn}
@@ -224,12 +194,6 @@ export function StudentsView({
         projects={projects}
         initial={editingInitial}
       />
-
-      <CreateFromSaleDrawer
-        open={creatingFromSale}
-        onClose={() => setCreatingFromSale(false)}
-        pendingSales={pendingSales}
-      />
     </div>
   );
 }
@@ -243,19 +207,6 @@ const primaryBtn: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 700,
   cursor: "pointer",
-};
-
-const secondaryBtn: React.CSSProperties = {
-  padding: "8px 16px",
-  borderRadius: 999,
-  background: "transparent",
-  border: "1px solid var(--kg-border-subtle)",
-  color: "var(--kg-text-2)",
-  fontSize: 12,
-  fontWeight: 700,
-  cursor: "pointer",
-  display: "inline-flex",
-  alignItems: "center",
 };
 
 const rowBtn: React.CSSProperties = {

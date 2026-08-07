@@ -14,6 +14,7 @@ import type {
   ProjectOptionForCohort,
 } from "../cohort-form-drawer";
 import { EditCohortButton } from "./edit-cohort-button";
+import type { BulkEnrollCandidate } from "./bulk-enroll-drawer";
 import type {
   SaleOptionForEnroll,
   StudentOptionForEnroll,
@@ -242,19 +243,56 @@ export default async function CohortFichaPage({
   const studentNameById = new Map<string, string>();
   for (const s of activeStudents) studentNameById.set(s.id, s.name);
 
-  // Fetch todos los student names (incluye inactivos) para poder mostrar
-  // en la tabla el nombre del student aunque haya cambiado a inactivo
-  // después de inscribirse. Bounded a project_id.
-  const allStudentsResExtra = await supabase
+  // Fetch todos los students del proyecto (incluye inactivos y graduados).
+  // Uso doble: (a) poblar studentNameById para nombres en el listado
+  // aunque haya cambiado a inactivo después de inscribirse, y (b)
+  // alimentar el bulk-enroll con candidatos.
+  const projectStudentsRes = await supabase
     .from("students")
-    .select("id, name")
-    .eq("project_id", cohort.project_id);
-  for (const s of (allStudentsResExtra.data ?? []) as unknown as {
+    .select("id, name, email, status")
+    .eq("project_id", cohort.project_id)
+    .order("name", { ascending: true });
+  const projectStudents = (projectStudentsRes.data ?? []) as unknown as {
     id: string;
     name: string;
-  }[]) {
+    email: string | null;
+    status: "active" | "inactive" | "graduated";
+  }[];
+  for (const s of projectStudents) {
     studentNameById.set(s.id, s.name);
   }
+
+  // Enrollments de todos los students del proyecto — para saber en cuántas
+  // otras generaciones ya están inscriptos (badge en el bulk-enroll).
+  const projectStudentIds = projectStudents.map((s) => s.id);
+  const projectEnrollmentsRes =
+    projectStudentIds.length === 0
+      ? { data: [] as { student_id: string }[] }
+      : await supabase
+          .from("enrollments")
+          .select("student_id")
+          .in("student_id", projectStudentIds);
+  const enrollmentCountByStudent = new Map<string, number>();
+  for (const e of (projectEnrollmentsRes.data ?? []) as unknown as {
+    student_id: string;
+  }[]) {
+    enrollmentCountByStudent.set(
+      e.student_id,
+      (enrollmentCountByStudent.get(e.student_id) ?? 0) + 1,
+    );
+  }
+
+  // Bulk candidates: students del proyecto NO inscriptos aún en ESTA
+  // cohort. Los ya inscriptos en otras cohorts sí pueden entrar acá.
+  const alreadyEnrolledIds = new Set(enrollmentRows.map((e) => e.student_id));
+  const bulkCandidates: BulkEnrollCandidate[] = projectStudents
+    .filter((s) => !alreadyEnrolledIds.has(s.id))
+    .map((s) => ({
+      studentId: s.id,
+      studentName: s.name,
+      studentEmail: s.email,
+      currentEnrollments: enrollmentCountByStudent.get(s.id) ?? 0,
+    }));
 
   // Leads para las sales.
   const leadIds = Array.from(
@@ -491,6 +529,7 @@ export default async function CohortFichaPage({
             enrollments={enrollments}
             availableStudents={availableStudents}
             availableSales={availableSales}
+            bulkCandidates={bulkCandidates}
           />
         </Panel>
       </div>

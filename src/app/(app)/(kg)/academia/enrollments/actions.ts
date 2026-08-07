@@ -32,6 +32,17 @@ export type UpdateEnrollmentState = { ok: true } | { error: string } | null;
 
 export type DeleteEnrollmentResult = { ok: true } | { error: string };
 
+export interface BulkEnrollFailure {
+  readonly studentId: string;
+  readonly error: string;
+}
+
+export type BulkEnrollResult = {
+  ok: true;
+  enrolledCount: number;
+  failures: readonly BulkEnrollFailure[];
+};
+
 const YMD_RX = /^\d{4}-\d{2}-\d{2}$/;
 
 function nullIfEmpty(value: FormDataEntryValue | null): string | null {
@@ -214,6 +225,63 @@ export async function updateEnrollment(
   revalidatePath("/academia/estudiantes");
   revalidatePath("/academia");
   return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// bulkEnrollStudents
+//
+// Inscribe N students en una cohort en un solo llamado. sale_id=null en
+// todos (badge "Manual" en el listado). Los errores por student (unique
+// por ya-inscripto, o guard por proyecto mismatch) se agregan en
+// `failures`. Los que fallan no rompen el batch.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function bulkEnrollStudents(
+  cohortId: string,
+  studentIds: readonly string[],
+): Promise<BulkEnrollResult | { error: string }> {
+  if (!cohortId) return { error: "Falta el id de la generación." };
+  if (studentIds.length === 0) {
+    return { ok: true, enrolledCount: 0, failures: [] };
+  }
+
+  const supabase = await createSupabaseClient();
+
+  const failures: BulkEnrollFailure[] = [];
+  let enrolledCount = 0;
+
+  for (const studentId of studentIds) {
+    const payload = {
+      student_id: studentId,
+      cohort_id: cohortId,
+      sale_id: null,
+      enrolled_at: todayYmd(),
+      status: "active",
+      progress_percent: 0,
+      notes: null,
+    } as never;
+
+    const { error } = await supabase.from("enrollments").insert(payload);
+
+    if (error) {
+      let message = error.message;
+      if (error.code === "23505") {
+        message = "Ya estaba inscripto en esta generación.";
+      } else if (error.code === "23514") {
+        message = translateCheckError(error.message);
+      }
+      failures.push({ studentId, error: message });
+      continue;
+    }
+    enrolledCount++;
+  }
+
+  revalidatePath(`/academia/cohortes/${cohortId}`);
+  revalidatePath("/academia/cohortes");
+  revalidatePath("/academia/estudiantes");
+  revalidatePath("/academia");
+
+  return { ok: true, enrolledCount, failures };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

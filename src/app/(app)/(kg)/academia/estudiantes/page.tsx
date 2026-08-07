@@ -7,21 +7,23 @@ import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
 import { createClient } from "@/lib/supabase/server";
 
-import type { PendingSale } from "./create-from-sale-drawer";
+import {
+  PendingBuyersView,
+  type CohortOptionForBulk,
+  type PendingBuyer,
+} from "./pending-buyers-view";
 import type { ProjectOptionForStudent } from "./student-form-drawer";
 import { StudentsView, type StudentRowData } from "./students-view";
 
 export const metadata: Metadata = { title: "Estudiantes · Academia" };
 
 type Status = "active" | "inactive" | "graduated";
-type ShowFilter = "active" | "graduated" | "inactive" | "all";
-
-const SHOW_OPTIONS: ReadonlyArray<{ value: ShowFilter; label: string }> = [
-  { value: "active", label: "Activos" },
-  { value: "graduated", label: "Graduados" },
-  { value: "inactive", label: "Inactivos" },
-  { value: "all", label: "Todos" },
-];
+type ShowFilter =
+  | "active"
+  | "graduated"
+  | "inactive"
+  | "all"
+  | "pending";
 
 interface StudentDbRow {
   readonly id: string;
@@ -40,6 +42,7 @@ interface ProjectDbRow {
 }
 
 interface CourseLink {
+  readonly id: string;
   readonly product_id: string;
   readonly project_id: string;
 }
@@ -70,6 +73,13 @@ interface EnrollmentLink {
   readonly student_id: string;
 }
 
+interface CohortDbRow {
+  readonly id: string;
+  readonly course_id: string | null;
+  readonly name: string;
+  readonly status: "planned" | "active" | "finished" | "cancelled";
+}
+
 export default async function EstudiantesPage({
   searchParams,
 }: {
@@ -86,6 +96,7 @@ export default async function EstudiantesPage({
     coursesRes,
     productsRes,
     enrollmentsRes,
+    cohortsRes,
   ] = await Promise.all([
     supabase
       .from("students")
@@ -97,10 +108,11 @@ export default async function EstudiantesPage({
       .eq("ownership", "propia"),
     supabase
       .from("courses")
-      .select("product_id, project_id")
+      .select("id, product_id, project_id")
       .eq("active", true),
     supabase.from("products").select("id, name"),
     supabase.from("enrollments").select("student_id"),
+    supabase.from("cohorts").select("id, course_id, name, status"),
   ]);
 
   const allStudents =
@@ -113,6 +125,8 @@ export default async function EstudiantesPage({
     (productsRes.data ?? []) as unknown as ProductDbRow[];
   const enrollments =
     (enrollmentsRes.data ?? []) as unknown as EnrollmentLink[];
+  const allCohorts =
+    (cohortsRes.data ?? []) as unknown as CohortDbRow[];
 
   const projectNameById = new Map<string, string>();
   for (const p of propiaProjects) projectNameById.set(p.id, p.name);
@@ -128,8 +142,27 @@ export default async function EstudiantesPage({
     );
   }
 
-  // Segundo batch: fetch de sales de products-course + sus leads.
-  // Depende del primer batch — necesita los product_ids que son courses.
+  // Courses indexado por product_id (unique en la tabla) — el flujo
+  // "comprador → curso" pasa por matching product_id.
+  const courseByProductId = new Map<string, CourseLink>();
+  for (const c of activeCourses) courseByProductId.set(c.product_id, c);
+
+  // Cohorts agrupadas por course_id — para el drawer de bulk create con
+  // "inscribir en generación".
+  const cohortsByCourse: Record<string, CohortOptionForBulk[]> = {};
+  for (const c of allCohorts) {
+    if (!c.course_id) continue;
+    const bucket = cohortsByCourse[c.course_id] ?? [];
+    bucket.push({
+      id: c.id,
+      courseId: c.course_id,
+      name: c.name,
+      status: c.status,
+    });
+    cohortsByCourse[c.course_id] = bucket;
+  }
+
+  // Segundo batch: sales de products-course + sus leads.
   const courseProductIds = new Set(activeCourses.map((c) => c.product_id));
 
   const salesRes =
@@ -158,9 +191,9 @@ export default async function EstudiantesPage({
   const leadById = new Map<string, LeadDbRow>();
   for (const l of allLeads) leadById.set(l.id, l);
 
-  // Filtrar sales de products-course cuyo (project_id, email/phone del
-  // lead) NO están ya como student. Matching por email en primer lugar,
-  // fallback por phone.
+  // Filtrar sales de products-course cuyo comprador NO está aún como
+  // student. Matching por email primero, fallback por teléfono, ambos
+  // scoped al project_id de la venta.
   const studentKeysByProject = new Set<string>();
   for (const s of allStudents) {
     if (s.email) {
@@ -189,23 +222,26 @@ export default async function EstudiantesPage({
     return false;
   }
 
-  const pendingSales: PendingSale[] = allSales
+  const pendingBuyers: PendingBuyer[] = allSales
     .filter((s) => {
       if (!s.lead_id) return false;
       const lead = leadById.get(s.lead_id);
       if (!lead || !lead.name) return false;
-      // Ver si ya existe un student en el mismo proyecto con matching.
       return !isAlreadyStudent(s.project_id, lead);
     })
     .map((s) => {
       const lead = leadById.get(s.lead_id!)!;
+      const course = courseByProductId.get(s.product_id) ?? null;
       return {
         saleId: s.id,
         leadName: lead.name!,
         leadEmail: lead.email,
         leadPhone: lead.phone,
+        productId: s.product_id,
         productName: productNameById.get(s.product_id) ?? "—",
+        projectId: s.project_id,
         projectName: projectNameById.get(s.project_id) ?? "—",
+        courseId: course?.id ?? null,
         amount: Number(s.total_amount),
         currency: s.currency === "USD" ? "USD" : "ARS",
         createdAt: s.created_at,
@@ -224,6 +260,7 @@ export default async function EstudiantesPage({
     if (show === "active") return s.status === "active";
     if (show === "graduated") return s.status === "graduated";
     if (show === "inactive") return s.status === "inactive";
+    if (show === "pending") return false; // el otro tab gobierna
     return true;
   });
 
@@ -243,6 +280,22 @@ export default async function EstudiantesPage({
     .map((p) => ({ id: p.id, name: p.name }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
+  const SHOW_OPTIONS: ReadonlyArray<{
+    value: ShowFilter;
+    label: string;
+    badge?: number;
+  }> = [
+    { value: "active", label: "Activos" },
+    { value: "graduated", label: "Graduados" },
+    { value: "inactive", label: "Inactivos" },
+    { value: "all", label: "Todos" },
+    {
+      value: "pending",
+      label: "Compradores pendientes",
+      badge: pendingBuyers.length,
+    },
+  ];
+
   function buildHref(nextShow: ShowFilter): string {
     const params = new URLSearchParams();
     if (nextShow !== "active") params.set("show", nextShow);
@@ -261,8 +314,8 @@ export default async function EstudiantesPage({
           { l: "Inactivos", v: fCount(inactiveCount) },
           {
             l: "Compradores pendientes",
-            v: fCount(pendingSales.length),
-            c: pendingSales.length > 0 ? "#FFB800" : undefined,
+            v: fCount(pendingBuyers.length),
+            c: pendingBuyers.length > 0 ? "#FFB800" : undefined,
           },
         ]}
       />
@@ -270,26 +323,42 @@ export default async function EstudiantesPage({
       <KgParamPills
         ariaLabel="Filtrar por estado"
         options={SHOW_OPTIONS.map((o) => ({
-          label: o.label,
+          label:
+            o.badge && o.badge > 0 ? `${o.label} (${o.badge})` : o.label,
           href: buildHref(o.value),
           active: show === o.value,
         }))}
       />
 
-      <Panel title="Estudiantes">
-        <StudentsView
-          rows={rows}
-          totalCount={rows.length}
-          projects={projectOptions}
-          pendingSales={pendingSales}
-        />
-      </Panel>
+      {show === "pending" ? (
+        <Panel title="Compradores pendientes de alta">
+          <PendingBuyersView
+            buyers={pendingBuyers}
+            cohortsByCourse={cohortsByCourse}
+          />
+        </Panel>
+      ) : (
+        <Panel title="Estudiantes">
+          <StudentsView
+            rows={rows}
+            totalCount={rows.length}
+            projects={projectOptions}
+          />
+        </Panel>
+      )}
     </div>
   );
 }
 
 function parseShow(v: string | string[] | undefined): ShowFilter {
   if (typeof v !== "string") return "active";
-  if (v === "graduated" || v === "inactive" || v === "all") return v;
+  if (
+    v === "graduated" ||
+    v === "inactive" ||
+    v === "all" ||
+    v === "pending"
+  ) {
+    return v;
+  }
   return "active";
 }
