@@ -166,15 +166,27 @@ export function FacturasView({
       label: "",
       align: "right",
       render: (r) => (
-        <button
-          type="button"
-          onClick={() => setEditingId(r.id)}
-          className="kg-focus"
-          style={ghostBtn}
-          title="Editar factura"
-        >
-          Editar
-        </button>
+        <span style={{ display: "inline-flex", gap: 6 }}>
+          <a
+            href={`/api/facturas/${r.id}/pdf`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="kg-focus"
+            style={{ ...ghostBtn, textDecoration: "none" }}
+            title="Descargar remito en PDF"
+          >
+            Remito
+          </a>
+          <button
+            type="button"
+            onClick={() => setEditingId(r.id)}
+            className="kg-focus"
+            style={ghostBtn}
+            title="Editar factura"
+          >
+            Editar
+          </button>
+        </span>
       ),
     },
   ];

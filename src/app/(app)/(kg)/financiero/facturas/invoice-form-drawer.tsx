@@ -484,6 +484,18 @@ function FormBody({
           </button>
         )}
         <div style={{ display: "inline-flex", gap: 8, marginLeft: "auto" }}>
+          {isEdit && initial?.id && (
+            <a
+              href={`/api/facturas/${initial.id}/pdf`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="kg-focus"
+              style={{ ...secondaryBtn, textDecoration: "none" }}
+              title="Descargar remito en PDF"
+            >
+              Descargar remito
+            </a>
+          )}
           <button
             type="button"
             onClick={onClose}
