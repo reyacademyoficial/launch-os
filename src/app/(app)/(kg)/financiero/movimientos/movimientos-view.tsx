@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 
 import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { fMoney } from "@/lib/finance/format";
 
+import { linkInvoiceToMovement } from "../facturas/actions";
 import { ImportMovementsButton } from "./import-drawer";
 import {
   MovementFormDrawer,
@@ -21,6 +22,19 @@ export interface MovementRowData {
   readonly occurredAt: string;
   readonly description: string;
   readonly transactionNumber: string | null;
+  readonly invoiceLink:
+    | null
+    | {
+        readonly kind: "linked";
+        readonly invoiceId: string;
+        readonly invoiceNumber: string | null;
+        readonly role: "principal" | "comision" | "otro";
+      }
+    | {
+        readonly kind: "suggested";
+        readonly invoiceId: string;
+        readonly invoiceNumber: string | null;
+      };
 }
 
 export function MovimientosView({
@@ -80,6 +94,11 @@ export function MovimientosView({
         ) : (
           "—"
         ),
+    },
+    {
+      key: "invoice_link",
+      label: "Factura",
+      render: (r) => <InvoiceLinkCell row={r} />,
     },
     {
       key: "actions",
@@ -180,6 +199,107 @@ export function MovimientosView({
         />
       )}
     </div>
+  );
+}
+
+function InvoiceLinkCell({ row }: { readonly row: MovementRowData }) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const link = row.invoiceLink;
+
+  if (!link) return <span style={{ color: "var(--kg-text-3)" }}>—</span>;
+
+  if (link.kind === "linked") {
+    return (
+      <span
+        title={`Factura ${link.invoiceNumber ?? "—"} · rol ${link.role}`}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 4,
+          fontSize: 11,
+        }}
+      >
+        {link.invoiceNumber ?? "—"}
+        {link.role !== "principal" && (
+          <span
+            style={{
+              padding: "1px 6px",
+              borderRadius: 999,
+              background: "rgba(138,138,153,0.15)",
+              color: "var(--kg-text-3)",
+              fontSize: 10,
+            }}
+          >
+            {link.role}
+          </span>
+        )}
+      </span>
+    );
+  }
+
+  // Sugerido por match de transaction_number.
+  const suggestedInvoiceId = link.invoiceId;
+  function handleLink() {
+    setError(null);
+    startTransition(async () => {
+      const r = await linkInvoiceToMovement(
+        suggestedInvoiceId,
+        row.id,
+        "principal",
+      );
+      if ("error" in r) setError(r.error);
+    });
+  }
+
+  return (
+    <span
+      style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+      title={
+        error ??
+        `Match por Nº transacción con la factura ${link.invoiceNumber ?? "—"}. Al vincular, la factura pasa a 'cobrada'.`
+      }
+    >
+      <span style={{ fontSize: 11 }}>
+        {link.invoiceNumber ?? "—"}{" "}
+        <span
+          style={{
+            padding: "1px 6px",
+            borderRadius: 999,
+            background: "rgba(255,184,0,0.15)",
+            color: "#FFB800",
+            fontSize: 10,
+            fontWeight: 700,
+          }}
+        >
+          Sugerido
+        </span>
+      </span>
+      <button
+        type="button"
+        onClick={handleLink}
+        disabled={pending}
+        className="kg-focus"
+        style={{
+          padding: "3px 10px",
+          borderRadius: 999,
+          background: "var(--kg-accent-500)",
+          color: "#fff",
+          border: "none",
+          fontSize: 10,
+          fontWeight: 700,
+          cursor: pending ? "wait" : "pointer",
+          opacity: pending ? 0.6 : 1,
+        }}
+      >
+        {pending ? "…" : "Vincular"}
+      </button>
+      {error && (
+        <span style={{ color: "#EF4444", fontSize: 10 }} title={error}>
+          ⚠
+        </span>
+      )}
+    </span>
   );
 }
 

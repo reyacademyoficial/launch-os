@@ -130,8 +130,106 @@ export default async function MovimientosPage({
     .reduce((a, m) => a + Number(m.amount), 0);
   const net = cashIn - cashOut;
 
+  // ─── Resolver factura vinculada por movimiento ─────────────────────────
+  //
+  // Dos fuentes:
+  //   1. Bridge `invoice_bank_movements` para los movimientos que YA fueron
+  //      linkeados. Fuente de verdad.
+  //   2. Facturas emitidas con `transaction_number` ≠ null. Si el movimiento
+  //      del extracto también trae transaction_number y no está atado, se
+  //      muestra como "sugerido" para vinculación con un click.
+  const pagedIds = paged.map((m) => m.id);
+  const [bridgeRes, invoicesForSuggestionRes] = await Promise.all([
+    pagedIds.length > 0
+      ? supabase
+          .from("invoice_bank_movements")
+          .select(
+            "bank_movement_id, invoice_id, role, invoices!inner(invoice_number)",
+          )
+          .in("bank_movement_id", pagedIds)
+      : Promise.resolve({ data: [] }),
+    supabase
+      .from("invoices")
+      .select("id, invoice_number, transaction_number")
+      .eq("status", "emitida")
+      .not("transaction_number", "is", null),
+  ]);
+
+  interface BridgeRow {
+    readonly bank_movement_id: string;
+    readonly invoice_id: string;
+    readonly role: "principal" | "comision" | "otro";
+    readonly invoices: { invoice_number: string | null } | null;
+  }
+  interface SuggestedInvoiceRow {
+    readonly id: string;
+    readonly invoice_number: string | null;
+    readonly transaction_number: string;
+  }
+  const bridgeRows = (bridgeRes.data ?? []) as unknown as BridgeRow[];
+  const suggestedInvoices = (invoicesForSuggestionRes.data ??
+    []) as unknown as SuggestedInvoiceRow[];
+
+  // Indexado por movimiento (para lookup del link vigente).
+  const linkedByMovement = new Map<
+    string,
+    {
+      invoiceId: string;
+      invoiceNumber: string | null;
+      role: "principal" | "comision" | "otro";
+    }
+  >();
+  for (const r of bridgeRows) {
+    // Un movimiento puede estar linkeado a más de una factura en teoría
+    // (ajustes), pero mostramos sólo el primero. Si aparece el caso, la
+    // ficha de factura muestra el detalle completo.
+    if (!linkedByMovement.has(r.bank_movement_id)) {
+      linkedByMovement.set(r.bank_movement_id, {
+        invoiceId: r.invoice_id,
+        invoiceNumber: r.invoices?.invoice_number ?? null,
+        role: r.role,
+      });
+    }
+  }
+
+  // Indexado por transaction_number (para sugerencia). Sólo si el movimiento
+  // no está ya linkeado a NINGUNA factura por bridge. Un mismo Nº puede
+  // aparecer en varias facturas; en ese caso mostramos la primera y la ficha
+  // del movimiento permite elegir.
+  const suggestedByTx = new Map<
+    string,
+    { invoiceId: string; invoiceNumber: string | null }
+  >();
+  for (const inv of suggestedInvoices) {
+    if (!suggestedByTx.has(inv.transaction_number)) {
+      suggestedByTx.set(inv.transaction_number, {
+        invoiceId: inv.id,
+        invoiceNumber: inv.invoice_number,
+      });
+    }
+  }
+
   const rows: MovementRowData[] = paged.map((m) => {
     const bank = bankById.get(m.bank_id);
+    const linked = linkedByMovement.get(m.id);
+    let invoiceLink: MovementRowData["invoiceLink"] = null;
+    if (linked) {
+      invoiceLink = {
+        kind: "linked",
+        invoiceId: linked.invoiceId,
+        invoiceNumber: linked.invoiceNumber,
+        role: linked.role,
+      };
+    } else if (m.transaction_number && m.kind === "in") {
+      const suggestion = suggestedByTx.get(m.transaction_number);
+      if (suggestion) {
+        invoiceLink = {
+          kind: "suggested",
+          invoiceId: suggestion.invoiceId,
+          invoiceNumber: suggestion.invoiceNumber,
+        };
+      }
+    }
     return {
       id: m.id,
       bankId: m.bank_id,
@@ -144,6 +242,7 @@ export default async function MovimientosPage({
       occurredAt: m.occurred_at,
       description: m.description ?? "",
       transactionNumber: m.transaction_number,
+      invoiceLink,
     };
   });
 

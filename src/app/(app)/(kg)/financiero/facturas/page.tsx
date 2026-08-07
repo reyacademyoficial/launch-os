@@ -142,19 +142,29 @@ export default async function FacturasPage({
     ),
   );
 
-  const [projectsRes, launchesRes, allProjects, allProducts] = await Promise.all([
-    projectIds.length > 0
-      ? supabase
-          .from("projects")
-          .select("id, name, ownership")
-          .in("id", projectIds)
-      : Promise.resolve({ data: [] as ProjectRow[] }),
-    launchIds.length > 0
-      ? supabase.from("launches").select("id, name").in("id", launchIds)
-      : Promise.resolve({ data: [] as LaunchNameRow[] }),
-    listAccessibleProjects(),
-    listAllProducts(),
-  ]);
+  const invoiceIds = invoices.map((i) => i.id);
+  const [projectsRes, launchesRes, allProjects, allProducts, bridgeRes] =
+    await Promise.all([
+      projectIds.length > 0
+        ? supabase
+            .from("projects")
+            .select("id, name, ownership")
+            .in("id", projectIds)
+        : Promise.resolve({ data: [] as ProjectRow[] }),
+      launchIds.length > 0
+        ? supabase.from("launches").select("id, name").in("id", launchIds)
+        : Promise.resolve({ data: [] as LaunchNameRow[] }),
+      listAccessibleProjects(),
+      listAllProducts(),
+      invoiceIds.length > 0
+        ? supabase
+            .from("invoice_bank_movements")
+            .select(
+              "invoice_id, bank_movement_id, role, bank_movements!inner(amount, kind, occurred_at, description, transaction_number, bank_id)",
+            )
+            .in("invoice_id", invoiceIds)
+        : Promise.resolve({ data: [] }),
+    ]);
 
   const projectById = new Map<string, ProjectRow>(
     ((projectsRes.data ?? []) as ProjectRow[]).map((p) => [p.id, p]),
@@ -169,6 +179,86 @@ export default async function FacturasPage({
   const resolveOwnership = (projectId: string | null): Ownership =>
     projectId ? projectById.get(projectId)?.ownership ?? null : null;
 
+  // ─── Movimientos linkeados por factura + gateway_fee derivado ─────────
+  //
+  // gateway_fee = amount_gross - Σ(movimientos role='principal' kind='in').
+  // Si no hay principal linkeado, gateway_fee es null (indeterminado).
+  interface BridgeMovementRow {
+    readonly invoice_id: string;
+    readonly bank_movement_id: string;
+    readonly role: "principal" | "comision" | "otro";
+    readonly bank_movements: {
+      readonly amount: number;
+      readonly kind: "in" | "out";
+      readonly occurred_at: string;
+      readonly description: string | null;
+      readonly transaction_number: string | null;
+      readonly bank_id: string;
+    } | null;
+  }
+  const bridgeRows = (bridgeRes.data ?? []) as unknown as BridgeMovementRow[];
+  interface LinkedMovement {
+    readonly movementId: string;
+    readonly role: "principal" | "comision" | "otro";
+    readonly amount: number;
+    readonly kind: "in" | "out";
+    readonly occurredAt: string;
+    readonly description: string | null;
+    readonly bankName: string;
+  }
+  const movementsByInvoiceId = new Map<string, LinkedMovement[]>();
+  const principalSumByInvoice = new Map<string, number>();
+  for (const b of bridgeRows) {
+    if (!b.bank_movements) continue;
+    // NOTA: los bancos ya se resolvieron parcialmente; para el nombre acá
+    // fetchemos la fila una sola vez del set de invoices. Por simplicidad
+    // resolvemos vía consulta separada abajo (los bancos son pocos).
+    const shaped: LinkedMovement = {
+      movementId: b.bank_movement_id,
+      role: b.role,
+      amount: Number(b.bank_movements.amount),
+      kind: b.bank_movements.kind,
+      occurredAt: b.bank_movements.occurred_at,
+      description: b.bank_movements.description,
+      bankName: b.bank_movements.bank_id, // placeholder, resolvemos abajo
+    };
+    const arr = movementsByInvoiceId.get(b.invoice_id);
+    if (arr) arr.push(shaped);
+    else movementsByInvoiceId.set(b.invoice_id, [shaped]);
+    if (b.role === "principal" && b.bank_movements.kind === "in") {
+      principalSumByInvoice.set(
+        b.invoice_id,
+        (principalSumByInvoice.get(b.invoice_id) ?? 0) +
+          Number(b.bank_movements.amount),
+      );
+    }
+  }
+  // Resolvemos nombres de bancos para los movements linkeados.
+  const bankIdsInBridge = Array.from(
+    new Set(
+      bridgeRows
+        .map((b) => b.bank_movements?.bank_id)
+        .filter((id): id is string => !!id),
+    ),
+  );
+  const bankNameById = new Map<string, string>();
+  if (bankIdsInBridge.length > 0) {
+    const bankRes = await supabase
+      .from("banks")
+      .select("id, name")
+      .in("id", bankIdsInBridge);
+    for (const b of ((bankRes.data ?? []) as { id: string; name: string }[])) {
+      bankNameById.set(b.id, b.name);
+    }
+  }
+  for (const [, arr] of movementsByInvoiceId) {
+    for (const m of arr) {
+      m as LinkedMovement;
+      (m as { bankName: string }).bankName =
+        bankNameById.get((m as { bankName: string }).bankName) ?? "—";
+    }
+  }
+
   const totalCount = invoices.length;
   const start = (page - 1) * PAGE_SIZE;
   const paged = invoices.slice(start, start + PAGE_SIZE);
@@ -180,6 +270,14 @@ export default async function FacturasPage({
 
   const rows: FacturaRowData[] = paged.map((i) => {
     const project = i.project_id ? projectById.get(i.project_id) ?? null : null;
+    const linkedMovements = movementsByInvoiceId.get(i.id) ?? [];
+    const principalSum = principalSumByInvoice.get(i.id) ?? 0;
+    // gateway_fee sólo tiene sentido cuando hay al menos un movimiento
+    // principal linkeado. Sin principal, es null (desconocido).
+    const gatewayFee =
+      principalSum > 0
+        ? Math.max(Number(i.amount_gross) - principalSum, 0)
+        : null;
     return {
       id: i.id,
       issueDate: i.issue_date,
@@ -207,6 +305,8 @@ export default async function FacturasPage({
       buyerEmail: i.buyer_email,
       buyerDocument: i.buyer_document,
       notes: i.notes,
+      linkedMovements,
+      gatewayFee,
     };
   });
 

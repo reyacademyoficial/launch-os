@@ -25,6 +25,8 @@ export interface PaymentMethodRowData {
   /** Currency del método (nullable en DB, usado al editar). */
   readonly currency: "ARS" | "USD" | null;
   readonly amountCollected: number;
+  /** Comisión pasarela acumulada — derivada del bridge factura↔movimiento (paso 5b). */
+  readonly gatewayFeeAccumulated: number;
   readonly active: boolean;
 }
 
@@ -77,6 +79,16 @@ export function MetodosPagoView({
       align: "right",
       numeric: true,
       render: (r) => fmtNative(r.amountCollected, r.effectiveCurrency),
+    },
+    {
+      key: "gateway_fee",
+      label: "Comisión pasarela",
+      align: "right",
+      numeric: true,
+      render: (r) =>
+        r.gatewayFeeAccumulated > 0
+          ? fmtNative(r.gatewayFeeAccumulated, r.effectiveCurrency)
+          : "—",
     },
     {
       key: "state",

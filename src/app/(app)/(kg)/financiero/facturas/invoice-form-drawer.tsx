@@ -7,6 +7,7 @@ import { fMoney } from "@/lib/finance/format";
 
 import {
   createInvoice,
+  unlinkInvoiceFromMovement,
   updateInvoice,
   voidInvoice,
   type CreateInvoiceState,
@@ -57,11 +58,25 @@ export interface InvoiceInitial {
   readonly notes?: string | null;
 }
 
+export interface LinkedMovementDrawer {
+  readonly movementId: string;
+  readonly role: "principal" | "comision" | "otro";
+  readonly amount: number;
+  readonly kind: "in" | "out";
+  readonly occurredAt: string;
+  readonly description: string | null;
+  readonly bankName: string;
+}
+
 export interface InvoiceFormDrawerProps {
   readonly mode: "create" | "edit";
   readonly initial?: InvoiceInitial;
   readonly projects: readonly ProjectOption[];
   readonly products: readonly ProductOption[];
+  /** Movimientos bancarios vinculados a esta factura (solo mode='edit'). */
+  readonly linkedMovements?: readonly LinkedMovementDrawer[];
+  /** amount_gross − Σ(principal.amount). null si no hay principal linkeado. */
+  readonly gatewayFee?: number | null;
   readonly open: boolean;
   readonly onClose: () => void;
 }
@@ -91,6 +106,8 @@ function FormBody({
   initial,
   projects,
   products,
+  linkedMovements,
+  gatewayFee,
   onClose,
 }: InvoiceFormDrawerProps) {
   const isEdit = mode === "edit" && !!initial?.id;
@@ -209,6 +226,17 @@ function FormBody({
             : "Factura cobrada — para revertir, desvinculá primero el cobro asociado."}
         </div>
       )}
+
+      {isEdit &&
+        linkedMovements &&
+        linkedMovements.length > 0 &&
+        initial?.id && (
+          <LinkedMovementsCard
+            invoiceId={initial.id}
+            movements={linkedMovements}
+            gatewayFee={gatewayFee ?? null}
+          />
+        )}
 
       <Field label="Descripción" htmlFor="description" required>
         <input
@@ -483,6 +511,168 @@ function FormBody({
         </div>
       </div>
     </form>
+  );
+}
+
+function LinkedMovementsCard({
+  invoiceId,
+  movements,
+  gatewayFee,
+}: {
+  readonly invoiceId: string;
+  readonly movements: readonly LinkedMovementDrawer[];
+  readonly gatewayFee: number | null;
+}) {
+  const [unlinkingId, setUnlinkingId] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  function handleUnlink(movementId: string) {
+    if (
+      !confirm(
+        "¿Desvincular este movimiento de la factura? Si era el 'principal' que la cubría, la factura vuelve a 'emitida'.",
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    setUnlinkingId(movementId);
+    startTransition(async () => {
+      const r = await unlinkInvoiceFromMovement(invoiceId, movementId);
+      if ("error" in r) setError(r.error);
+      setUnlinkingId(null);
+    });
+  }
+
+  return (
+    <div
+      style={{
+        padding: "12px 14px",
+        borderRadius: "var(--kg-r-8)",
+        background: "var(--kg-surface-2-solid)",
+        border: "1px solid var(--kg-border-subtle)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+          marginBottom: 8,
+        }}
+      >
+        <div className="kg-t7" style={{ color: "var(--kg-text-2)", fontWeight: 700 }}>
+          Movimientos bancarios vinculados
+        </div>
+        <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+          {gatewayFee != null ? (
+            <>
+              Comisión pasarela:{" "}
+              <b style={{ color: "var(--kg-text-1)" }}>
+                {fMoney(gatewayFee)}
+              </b>
+            </>
+          ) : (
+            "Comisión pasarela: —"
+          )}
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {movements.map((m) => (
+          <div
+            key={m.movementId}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "auto 1fr auto auto",
+              gap: 10,
+              alignItems: "center",
+              padding: "6px 8px",
+              borderRadius: "var(--kg-r-8)",
+              background: "var(--kg-surface-1-solid)",
+              fontSize: 12,
+            }}
+          >
+            <span
+              style={{
+                padding: "1px 8px",
+                borderRadius: 999,
+                background:
+                  m.role === "principal"
+                    ? "rgba(0,208,132,0.15)"
+                    : m.role === "comision"
+                      ? "rgba(255,184,0,0.15)"
+                      : "rgba(138,138,153,0.15)",
+                color:
+                  m.role === "principal"
+                    ? "#00D084"
+                    : m.role === "comision"
+                      ? "#FFB800"
+                      : "var(--kg-text-2)",
+                fontSize: 10,
+                fontWeight: 700,
+              }}
+            >
+              {m.role}
+            </span>
+            <span style={{ color: "var(--kg-text-2)" }}>
+              {m.bankName} · {m.occurredAt}
+              {m.description && (
+                <span style={{ color: "var(--kg-text-3)" }}>
+                  {" · "}
+                  {m.description}
+                </span>
+              )}
+            </span>
+            <span
+              style={{
+                color: m.kind === "in" ? "#00D084" : "#EF4444",
+                fontWeight: 700,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {m.kind === "in" ? "+" : "−"}
+              {fMoney(m.amount)}
+            </span>
+            <button
+              type="button"
+              onClick={() => handleUnlink(m.movementId)}
+              disabled={pending && unlinkingId === m.movementId}
+              className="kg-focus"
+              style={{
+                padding: "3px 10px",
+                borderRadius: 999,
+                background: "transparent",
+                border: "1px solid var(--kg-border-subtle)",
+                color: "#EF4444",
+                fontSize: 10,
+                fontWeight: 700,
+                cursor: "pointer",
+                opacity: pending && unlinkingId === m.movementId ? 0.6 : 1,
+              }}
+              title="Desvincular movimiento"
+            >
+              {pending && unlinkingId === m.movementId
+                ? "…"
+                : "Desvincular"}
+            </button>
+          </div>
+        ))}
+      </div>
+      {error && (
+        <div
+          style={{
+            marginTop: 8,
+            padding: "6px 10px",
+            borderRadius: "var(--kg-r-8)",
+            background: "rgba(239,68,68,0.10)",
+            color: "#EF4444",
+            fontSize: 11,
+          }}
+        >
+          {error}
+        </div>
+      )}
+    </div>
   );
 }
 

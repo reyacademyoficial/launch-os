@@ -19,6 +19,16 @@ import {
 
 export type InvoiceStatus = "emitida" | "cobrada" | "vencida" | "anulada";
 
+export interface LinkedMovement {
+  readonly movementId: string;
+  readonly role: "principal" | "comision" | "otro";
+  readonly amount: number;
+  readonly kind: "in" | "out";
+  readonly occurredAt: string;
+  readonly description: string | null;
+  readonly bankName: string;
+}
+
 export interface FacturaRowData {
   readonly id: string;
   readonly issueDate: string;
@@ -45,6 +55,10 @@ export interface FacturaRowData {
   readonly buyerEmail: string | null;
   readonly buyerDocument: string | null;
   readonly notes: string | null;
+  // Post 0117 — movimientos linkeados + comisión pasarela derivada.
+  readonly linkedMovements: readonly LinkedMovement[];
+  /** amount_gross − Σ(principal.amount). null si no hay principal linkeado. */
+  readonly gatewayFee: number | null;
 }
 
 export function FacturasView({
@@ -140,6 +154,14 @@ export function FacturasView({
         ),
     },
     {
+      key: "gateway_fee",
+      label: "Comisión pasarela",
+      align: "right",
+      numeric: true,
+      render: (r) =>
+        r.gatewayFee != null ? fMoney(r.gatewayFee) : "—",
+    },
+    {
       key: "actions",
       label: "",
       align: "right",
@@ -210,6 +232,8 @@ export function FacturasView({
           onClose={() => setEditingId(null)}
           projects={projects}
           products={products}
+          linkedMovements={editingRow.linkedMovements}
+          gatewayFee={editingRow.gatewayFee}
           initial={{
             id: editingRow.id,
             invoiceNumber: editingRow.invoiceNumber,

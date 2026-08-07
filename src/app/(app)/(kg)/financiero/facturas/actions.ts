@@ -34,6 +34,10 @@ export type UpdateInvoiceState = { ok: true } | { error: string } | null;
 
 export type VoidInvoiceResult = { ok: true } | { error: string };
 
+export type LinkInvoiceMovementResult = { ok: true } | { error: string };
+
+export type InvoiceMovementRole = "principal" | "comision" | "otro";
+
 interface InvoicePayload {
   readonly projectId: string | null;
   readonly saleId: string | null;
@@ -303,6 +307,123 @@ export async function voidInvoice(
   if (error) return { error: translateInvoiceError(error) };
 
   revalidatePath("/financiero/facturas");
+  revalidatePath("/financiero");
+  return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// linkInvoiceToMovement — inserta fila en invoice_bank_movements
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// El trigger AFTER INSERT de la migración 0117 recalcula el status de la
+// factura. Si la suma de movimientos entrantes con role='principal' cubre el
+// amount_gross, la factura pasa automáticamente a 'cobrada' + paid_at.
+//
+// Validaciones acá:
+//   - 'principal' + kind='in' es la combinación canónica. Un 'principal' con
+//     kind='out' se acepta a nivel schema pero el trigger lo excluye del
+//     cálculo (no infla el cobrado); avisamos con warning en el mensaje.
+//   - 'comision' + kind='out' es lo típico (Wise/Stripe muestran comisión
+//     como salida separada). También aceptamos 'comision' + kind='in' por si
+//     hay un ajuste raro; sólo informativo.
+
+export async function linkInvoiceToMovement(
+  invoiceId: string,
+  movementId: string,
+  role: InvoiceMovementRole,
+): Promise<LinkInvoiceMovementResult> {
+  await requireRole("superadmin");
+
+  if (!invoiceId || !movementId) {
+    return { error: "Falta invoice_id o bank_movement_id." };
+  }
+
+  const supabase = await createClient();
+
+  // Precheck: existencia + org de la factura y del movimiento coinciden.
+  // RLS ya lo bloquearía pero un error temprano es más claro.
+  const [{ data: invRow }, { data: mvRow }] = await Promise.all([
+    supabase
+      .from("invoices")
+      .select("id, status, organization_id")
+      .eq("id", invoiceId)
+      .maybeSingle(),
+    supabase
+      .from("bank_movements")
+      .select("id, kind, organization_id")
+      .eq("id", movementId)
+      .maybeSingle(),
+  ]);
+  const inv = invRow as
+    | { id: string; status: string; organization_id: string }
+    | null;
+  const mv = mvRow as
+    | { id: string; kind: "in" | "out"; organization_id: string }
+    | null;
+  if (!inv) return { error: "La factura ya no existe o no tenés acceso." };
+  if (!mv) return { error: "El movimiento ya no existe o no tenés acceso." };
+  if (inv.organization_id !== mv.organization_id) {
+    return { error: "Factura y movimiento son de organizaciones distintas." };
+  }
+  if (inv.status === "anulada") {
+    return { error: "No se puede vincular movimientos a una factura anulada." };
+  }
+  if (role === "principal" && mv.kind !== "in") {
+    return {
+      error:
+        "El movimiento 'principal' de una factura tiene que ser una ENTRADA. Elegí role='comision' u 'otro' para egresos.",
+    };
+  }
+
+  const { error } = await supabase
+    .from("invoice_bank_movements")
+    .insert({
+      invoice_id: invoiceId,
+      bank_movement_id: movementId,
+      role,
+    } as never);
+
+  if (error) {
+    if (error.code === "23505") {
+      return { error: "Ese movimiento ya está vinculado a esta factura." };
+    }
+    return { error: translateInvoiceError(error) };
+  }
+
+  revalidatePath("/financiero/facturas");
+  revalidatePath("/financiero/movimientos");
+  revalidatePath("/financiero/metodos-pago");
+  revalidatePath("/financiero");
+  return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// unlinkInvoiceFromMovement — borra fila del bridge, trigger revierte status
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function unlinkInvoiceFromMovement(
+  invoiceId: string,
+  movementId: string,
+): Promise<LinkInvoiceMovementResult> {
+  await requireRole("superadmin");
+
+  if (!invoiceId || !movementId) {
+    return { error: "Falta invoice_id o bank_movement_id." };
+  }
+
+  const supabase = await createClient();
+
+  const { error } = await supabase
+    .from("invoice_bank_movements")
+    .delete()
+    .eq("invoice_id", invoiceId)
+    .eq("bank_movement_id", movementId);
+
+  if (error) return { error: translateInvoiceError(error) };
+
+  revalidatePath("/financiero/facturas");
+  revalidatePath("/financiero/movimientos");
+  revalidatePath("/financiero/metodos-pago");
   revalidatePath("/financiero");
   return { ok: true };
 }
