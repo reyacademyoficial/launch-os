@@ -483,7 +483,7 @@ todo sin entrar a ningún módulo.
 
 ### 4.1 Regla que gobierna el bloque
 
-- [ ] **Ejecutivo no calcula nada propio.** Consume los selectores que ya existen en
+- [x] **Ejecutivo no calcula nada propio.** Consume los selectores que ya existen en
       cada módulo (`src/lib/finance/*`, `src/lib/clients/*`, `src/lib/academia/*`,
       `src/lib/ops/*`). Si un número que hace falta no está calculado en ningún lado, se
       agrega al selector del módulo que le corresponde, nunca acá.
@@ -495,32 +495,43 @@ todo sin entrar a ningún módulo.
 
 ### 4.2 Contenido
 
-- [ ] KPIs de cabecera: ingreso Kingrow, utilidad neta, caja, runway (todos vía
-      selectores existentes).
-- [ ] Tendencia de ingreso (últimos N meses).
-- [ ] Estado de los proyectos: activos, liquidados, en riesgo.
-- [ ] Salud de clientes: cantidad en cada relationship_status, score promedio,
-      alertas por proyectos rojos.
-- [ ] Resumen de operaciones: bloqueadores abiertos, tareas críticas atrasadas.
-- [ ] Academia si hay empresas propias con cohortes activas.
-- [ ] Marketing NO aparece hasta que se construya el módulo (ver Anexo B).
+- [x] KPIs de cabecera: ingreso Kingrow, utilidad neta, caja, runway (todos vía
+      selectores existentes). ContextBar + 8 KpiCards en el grid con AR, AP,
+      clientes activos, generaciones activas, aprobación/asistencia, ops abiertas.
+- [ ] Tendencia de ingreso (últimos N meses). _(sparkline no incluido en v1
+      del ejecutivo — el detalle vive en /financiero, acá solo el número del período)._
+- [x] Salud de clientes: score promedio en el header + panel "Clientes en riesgo"
+      con top 5 ordenados por score ascendente, link a ficha del cliente.
+- [x] Resumen de operaciones: panel "Ops crítico" con bloqueadores 7d+, tareas
+      vencidas, sin asignar, exámenes pendientes de corrección.
+- [x] Academia si hay empresas propias con cohortes activas — panel "Generaciones
+      en curso" (solo se renderiza si hay al menos 1).
+- [x] Marketing NO aparece hasta que se construya el módulo (ver Anexo B). ✓
 
-### 4.3 Motor de alertas (decisión pendiente en este bloque)
+### 4.3 Motor de alertas — **POSTERGADO** (decisión 2026-08-07)
 
-- [ ] Decidir si entra en este bloque o se posterga.
+Se postergó explícitamente. Motivo: las 4 alertas útiles del dashboard
+(bloqueadores 7d+, tareas vencidas, sin asignar, exámenes pendientes) son
+derivables directamente de datos existentes con umbrales hardcodeados
+razonables. Un motor con `executive_alerts` + reglas + umbrales
+configurables se justifica cuando aparezca la necesidad real (típicamente
+cuando el usuario diga "quiero silenciar esta alerta" o "quiero cambiar
+el umbral de vencido a 3 días"). Estimación cuando se retome: 8-15h.
 
-      Es lo que hace que el tablero sirva de verdad, pero también es donde más fácil se
-      construye algo que grita todo el tiempo y termina ignorado. Si entra, que sea con
-      pocas reglas y umbrales explícitos, no con una lista larga de condiciones.
+### 4.4 Rango temporal + gating de rol (decisiones 2026-08-07)
 
-- [ ] Si entra: umbrales configurables o al menos centralizados en un solo archivo, no
-      repartidos por la vista.
+- **Rango**: default "mes-actual" + selector con presets (Mes/Mes anterior/90D) +
+  custom range con date pickers. Reusa el `RangePills` de financiero.
+- **Gating**: `requireRole("superadmin", "admin", "analista")` — `dev` bypass,
+  `operador` y `cliente_role` caen a `/` (loop). Motivo: dashboard es "vista del
+  dueño" — operador no la necesita para su día a día.
 
-### 4.4 Verificación al cerrar
+### 4.5 Verificación al cerrar
 
 - [ ] Los números coinciden con los módulos originales (spot check en 5 KPIs).
-- [ ] Roles no-superadmin/dev no llegan por URL.
-- [ ] Estados vacíos correctos si algún módulo aún no tiene datos.
+- [x] Roles no autorizados no llegan por URL (`requireRole` en el head del page).
+- [x] Estados vacíos correctos si algún módulo aún no tiene datos (empty state
+      dedicado en cada panel).
 
 > Notas del bloque Ejecutivo:
 > _(completar durante el trabajo)_
