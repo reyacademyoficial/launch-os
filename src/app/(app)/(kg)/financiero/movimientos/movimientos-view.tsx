@@ -8,9 +8,49 @@ import { fMoney } from "@/lib/finance/format";
 import { linkInvoiceToMovement } from "../facturas/actions";
 import { ImportMovementsButton } from "./import-drawer";
 import {
+  MovementDetailDrawer,
+} from "./movement-detail-drawer";
+import {
   MovementFormDrawer,
   type BankOption,
 } from "./movement-form-drawer";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Modelo serializable para la fila.
+//
+// `conciliations` es la lista completa de vínculos del movimiento con las 4
+// tablas satélite (invoice_bank_movements, expense_bank_movements, payroll,
+// client_transfers). El drawer de detalle las renderiza todas con link al
+// módulo de origen. Si la lista es vacía, el movimiento está SIN CONCILIAR.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type MovementConciliation =
+  | {
+      readonly kind: "invoice";
+      readonly id: string;
+      readonly role: "principal" | "comision" | "otro";
+      readonly label: string;
+      readonly amount: number;
+    }
+  | {
+      readonly kind: "expense";
+      readonly id: string;
+      readonly role: "principal" | "comision" | "otro";
+      readonly label: string;
+      readonly amount: number;
+    }
+  | {
+      readonly kind: "payroll";
+      readonly id: string;
+      readonly label: string;
+      readonly amount: number;
+    }
+  | {
+      readonly kind: "transfer";
+      readonly id: string;
+      readonly label: string;
+      readonly amount: number;
+    };
 
 export interface MovementRowData {
   readonly id: string;
@@ -35,6 +75,7 @@ export interface MovementRowData {
         readonly invoiceId: string;
         readonly invoiceNumber: string | null;
       };
+  readonly conciliations: readonly MovementConciliation[];
 }
 
 export function MovimientosView({
@@ -49,9 +90,9 @@ export function MovimientosView({
   readonly exportHref: string;
 }) {
   const [openCreate, setOpenCreate] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const editingRow = editingId
-    ? rows.find((r) => r.id === editingId) ?? null
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const detailRow = detailId
+    ? rows.find((r) => r.id === detailId) ?? null
     : null;
 
   const columns: Column<MovementRowData>[] = [
@@ -84,21 +125,9 @@ export function MovimientosView({
         ),
     },
     {
-      key: "transaction_number",
-      label: "Nº transacción",
-      render: (r) =>
-        r.transactionNumber ? (
-          <span title={r.transactionNumber} style={ellipsis}>
-            {r.transactionNumber}
-          </span>
-        ) : (
-          "—"
-        ),
-    },
-    {
-      key: "invoice_link",
-      label: "Factura",
-      render: (r) => <InvoiceLinkCell row={r} />,
+      key: "conciliation",
+      label: "Conciliación",
+      render: (r) => <ConciliationCell row={r} />,
     },
     {
       key: "actions",
@@ -107,12 +136,12 @@ export function MovimientosView({
       render: (r) => (
         <button
           type="button"
-          onClick={() => setEditingId(r.id)}
+          onClick={() => setDetailId(r.id)}
           className="kg-focus"
           style={ghostBtn}
-          title="Editar movimiento"
+          title="Ver ficha del movimiento"
         >
-          Editar
+          Ver ficha
         </button>
       ),
     },
@@ -180,48 +209,48 @@ export function MovimientosView({
         banks={banks}
       />
 
-      {editingRow && (
-        <MovementFormDrawer
-          mode="edit"
-          open
-          onClose={() => setEditingId(null)}
+      {detailRow && (
+        <MovementDetailDrawer
+          row={detailRow}
           banks={banks}
-          initial={{
-            id: editingRow.id,
-            bankId: editingRow.bankId,
-            bankName: editingRow.bankName,
-            kind: editingRow.kind,
-            amount: editingRow.amount,
-            occurredAt: editingRow.occurredAt,
-            description: editingRow.description,
-            transactionNumber: editingRow.transactionNumber,
-          }}
+          onClose={() => setDetailId(null)}
         />
       )}
     </div>
   );
 }
 
-function InvoiceLinkCell({ row }: { readonly row: MovementRowData }) {
+// ═══════════════════════════════════════════════════════════════════════════
+// Celda "Conciliación"
+//
+// Prioridad de render:
+//   1. Hay conciliaciones → chip resumen ("Factura F-001", "Gasto ...",
+//      "+2 más" si son varias). No mostramos monto — el drawer detalla.
+//   2. Sin conciliar + sugerencia por transaction_number → chip "Sugerido"
+//      con botón Vincular (comportamiento heredado).
+//   3. Sin conciliar y sin sugerencia → chip "Sin conciliar" ámbar (para que
+//      el usuario lo detecte al scannear la tabla).
+// ═══════════════════════════════════════════════════════════════════════════
+
+function ConciliationCell({ row }: { readonly row: MovementRowData }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const link = row.invoiceLink;
 
-  if (!link) return <span style={{ color: "var(--kg-text-3)" }}>—</span>;
-
-  if (link.kind === "linked") {
+  if (row.conciliations.length > 0) {
+    const first = row.conciliations[0]!;
+    const rest = row.conciliations.length - 1;
     return (
       <span
-        title={`Factura ${link.invoiceNumber ?? "—"} · rol ${link.role}`}
+        title={row.conciliations.map(describe).join(" · ")}
         style={{
           display: "inline-flex",
           alignItems: "center",
-          gap: 4,
+          gap: 6,
           fontSize: 11,
         }}
       >
-        {link.invoiceNumber ?? "—"}
-        {link.role !== "principal" && (
+        <ConciliationBadge conciliation={first} />
+        {rest > 0 && (
           <span
             style={{
               padding: "1px 6px",
@@ -229,78 +258,185 @@ function InvoiceLinkCell({ row }: { readonly row: MovementRowData }) {
               background: "rgba(138,138,153,0.15)",
               color: "var(--kg-text-3)",
               fontSize: 10,
+              fontWeight: 700,
             }}
           >
-            {link.role}
+            +{rest}
           </span>
         )}
       </span>
     );
   }
 
-  // Sugerido por match de transaction_number.
-  const suggestedInvoiceId = link.invoiceId;
-  function handleLink() {
-    setError(null);
-    startTransition(async () => {
-      const r = await linkInvoiceToMovement(
-        suggestedInvoiceId,
-        row.id,
-        "principal",
-      );
-      if ("error" in r) setError(r.error);
-    });
+  const link = row.invoiceLink;
+  if (link && link.kind === "suggested") {
+    const suggestedInvoiceId = link.invoiceId;
+    function handleLink() {
+      setError(null);
+      startTransition(async () => {
+        const r = await linkInvoiceToMovement(
+          suggestedInvoiceId,
+          row.id,
+          "principal",
+        );
+        if ("error" in r) setError(r.error);
+      });
+    }
+    return (
+      <span
+        style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+        title={
+          error ??
+          `Match por Nº transacción con la factura ${link.invoiceNumber ?? "—"}. Al vincular, la factura pasa a 'cobrada'.`
+        }
+      >
+        <span style={{ fontSize: 11 }}>
+          {link.invoiceNumber ?? "—"}{" "}
+          <span
+            style={{
+              padding: "1px 6px",
+              borderRadius: 999,
+              background: "rgba(255,184,0,0.15)",
+              color: "#FFB800",
+              fontSize: 10,
+              fontWeight: 700,
+            }}
+          >
+            Sugerido
+          </span>
+        </span>
+        <button
+          type="button"
+          onClick={handleLink}
+          disabled={pending}
+          className="kg-focus"
+          style={{
+            padding: "3px 10px",
+            borderRadius: 999,
+            background: "var(--kg-accent-500)",
+            color: "#fff",
+            border: "none",
+            fontSize: 10,
+            fontWeight: 700,
+            cursor: pending ? "wait" : "pointer",
+            opacity: pending ? 0.6 : 1,
+          }}
+        >
+          {pending ? "…" : "Vincular"}
+        </button>
+        {error && (
+          <span style={{ color: "#EF4444", fontSize: 10 }} title={error}>
+            ⚠
+          </span>
+        )}
+      </span>
+    );
   }
 
   return (
     <span
-      style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-      title={
-        error ??
-        `Match por Nº transacción con la factura ${link.invoiceNumber ?? "—"}. Al vincular, la factura pasa a 'cobrada'.`
-      }
+      title="Este movimiento no está atado a ninguna factura, gasto, nómina ni transferencia. Puede ser un ajuste manual — o un error a corregir."
+      style={{
+        padding: "2px 8px",
+        borderRadius: 999,
+        background: "rgba(255,184,0,0.12)",
+        color: "#FFB800",
+        fontSize: 10,
+        fontWeight: 700,
+      }}
     >
-      <span style={{ fontSize: 11 }}>
-        {link.invoiceNumber ?? "—"}{" "}
-        <span
-          style={{
-            padding: "1px 6px",
-            borderRadius: 999,
-            background: "rgba(255,184,0,0.15)",
-            color: "#FFB800",
-            fontSize: 10,
-            fontWeight: 700,
-          }}
-        >
-          Sugerido
-        </span>
-      </span>
-      <button
-        type="button"
-        onClick={handleLink}
-        disabled={pending}
-        className="kg-focus"
-        style={{
-          padding: "3px 10px",
-          borderRadius: 999,
-          background: "var(--kg-accent-500)",
-          color: "#fff",
-          border: "none",
-          fontSize: 10,
-          fontWeight: 700,
-          cursor: pending ? "wait" : "pointer",
-          opacity: pending ? 0.6 : 1,
-        }}
-      >
-        {pending ? "…" : "Vincular"}
-      </button>
-      {error && (
-        <span style={{ color: "#EF4444", fontSize: 10 }} title={error}>
-          ⚠
-        </span>
-      )}
+      Sin conciliar
     </span>
   );
+}
+
+function ConciliationBadge({
+  conciliation,
+}: {
+  readonly conciliation: MovementConciliation;
+}) {
+  const label = describeShort(conciliation);
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        maxWidth: 240,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <TypeChip kind={conciliation.kind} />
+      <span
+        style={{
+          color: "var(--kg-text-1)",
+          fontSize: 11,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {label}
+      </span>
+    </span>
+  );
+}
+
+function TypeChip({
+  kind,
+}: {
+  readonly kind: MovementConciliation["kind"];
+}) {
+  const map: Record<MovementConciliation["kind"], { label: string; bg: string; fg: string }> = {
+    invoice: { label: "F", bg: "rgba(0,208,132,0.18)", fg: "#00D084" },
+    expense: { label: "G", bg: "rgba(239,68,68,0.18)", fg: "#EF4444" },
+    payroll: { label: "N", bg: "rgba(64,120,255,0.18)", fg: "#4078FF" },
+    transfer: { label: "T", bg: "rgba(255,184,0,0.18)", fg: "#FFB800" },
+  };
+  const s = map[kind];
+  return (
+    <span
+      title={typeLabel(kind)}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 16,
+        height: 16,
+        borderRadius: 4,
+        background: s.bg,
+        color: s.fg,
+        fontSize: 9,
+        fontWeight: 800,
+      }}
+    >
+      {s.label}
+    </span>
+  );
+}
+
+function typeLabel(kind: MovementConciliation["kind"]): string {
+  return kind === "invoice"
+    ? "Factura"
+    : kind === "expense"
+      ? "Gasto"
+      : kind === "payroll"
+        ? "Nómina"
+        : "Transferencia a cliente";
+}
+
+function describe(c: MovementConciliation): string {
+  const base = `${typeLabel(c.kind)}: ${c.label}`;
+  if (c.kind === "invoice" || c.kind === "expense") {
+    return c.role === "principal" ? base : `${base} (${c.role})`;
+  }
+  return base;
+}
+
+function describeShort(c: MovementConciliation): string {
+  return c.label;
 }
 
 const ellipsis: React.CSSProperties = {

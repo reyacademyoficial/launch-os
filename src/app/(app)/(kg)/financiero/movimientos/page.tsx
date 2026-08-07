@@ -15,6 +15,7 @@ import { RangePills, type PresetOption } from "../range-pills";
 import type { BankOption } from "./movement-form-drawer";
 import {
   MovimientosView,
+  type MovementConciliation,
   type MovementRowData,
 } from "./movimientos-view";
 
@@ -23,12 +24,18 @@ export const metadata: Metadata = { title: "Movimientos · Financiero" };
 const PAGE_SIZE = 50;
 
 type KindParam = "todos" | "in" | "out";
+type ConcilParam = "todos" | "conciliados" | "sin-conciliar";
 type RangeParam = "todo" | "mes-actual" | "mes-anterior" | "90d" | "custom";
 
 const KIND_OPTIONS: ReadonlyArray<{ value: KindParam; label: string }> = [
   { value: "todos", label: "Todos" },
   { value: "in", label: "Entradas" },
   { value: "out", label: "Salidas" },
+];
+const CONCIL_OPTIONS: ReadonlyArray<{ value: ConcilParam; label: string }> = [
+  { value: "todos", label: "Todos" },
+  { value: "conciliados", label: "Conciliados" },
+  { value: "sin-conciliar", label: "Sin conciliar" },
 ];
 const RANGE_PRESETS: readonly PresetOption[] = [
   { value: "todo", label: "Todo" },
@@ -67,6 +74,7 @@ export default async function MovimientosPage({
 }) {
   const sp = await searchParams;
   const kindParam = parseKind(sp.kind);
+  const concilParam = parseConcil(sp.concil);
   const rangeParam = parseRange(sp.range);
   const fromParam = parseYmd(sp.from);
   const toParam = parseYmd(sp.to);
@@ -99,7 +107,29 @@ export default async function MovimientosPage({
   }
 
   const movRes = await query;
-  const movements = (movRes.data ?? []) as unknown as MovementDbRow[];
+  const allMovements = (movRes.data ?? []) as unknown as MovementDbRow[];
+
+  // ─── Set global de movimientos conciliados en la vista ─────────────────
+  //
+  // Un movimiento cuenta como CONCILIADO si aparece linkeado en al menos una
+  // de las 4 tablas satélite: invoice_bank_movements, expense_bank_movements,
+  // payroll.bank_movement_id, client_transfers.bank_movement_id. Los dos
+  // primeros son bridge N:M (0117/0119); los otros dos siguen siendo 1:1 con
+  // columna FK directa (nunca se migraron a bridge porque nómina y
+  // transferencia-a-cliente no tienen caso de "comisión separada" hoy).
+  //
+  // Traemos los ids de linkeo por separado para no depender de un JOIN N:M
+  // grande; el set completo cabe en RAM (típicamente <10k ids en total).
+  const allInPeriodIds = allMovements.map((m) => m.id);
+  const linkedIds = await loadLinkedMovementIds(supabase, allInPeriodIds);
+
+  // Aplicar filtro de conciliación en TS — no hay una forma limpia de
+  // hacerlo desde SQL sin construir el set primero.
+  const filteredByConcil = allMovements.filter((m) => {
+    if (concilParam === "conciliados") return linkedIds.has(m.id);
+    if (concilParam === "sin-conciliar") return !linkedIds.has(m.id);
+    return true;
+  });
 
   // Traemos TODOS los bancos (no solo los de los movimientos) para el
   // selector del drawer de "Nuevo movimiento". `listBanks()` post 0101
@@ -129,83 +159,47 @@ export default async function MovimientosPage({
     }
   }
 
-  const totalCount = movements.length;
-  const paged = movements.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalCount = filteredByConcil.length;
+  const paged = filteredByConcil.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const cashIn = movements
+  const cashIn = filteredByConcil
     .filter((m) => m.kind === "in")
     .reduce((a, m) => a + Number(m.amount), 0);
-  const cashOut = movements
+  const cashOut = filteredByConcil
     .filter((m) => m.kind === "out")
     .reduce((a, m) => a + Number(m.amount), 0);
   const net = cashIn - cashOut;
 
-  // ─── Resolver factura vinculada por movimiento ─────────────────────────
-  //
-  // Dos fuentes:
-  //   1. Bridge `invoice_bank_movements` para los movimientos que YA fueron
-  //      linkeados. Fuente de verdad.
-  //   2. Facturas emitidas con `transaction_number` ≠ null. Si el movimiento
-  //      del extracto también trae transaction_number y no está atado, se
-  //      muestra como "sugerido" para vinculación con un click.
-  const pagedIds = paged.map((m) => m.id);
-  const [bridgeRes, invoicesForSuggestionRes] = await Promise.all([
-    pagedIds.length > 0
-      ? supabase
-          .from("invoice_bank_movements")
-          .select(
-            "bank_movement_id, invoice_id, role, invoices!inner(invoice_number)",
-          )
-          .in("bank_movement_id", pagedIds)
-      : Promise.resolve({ data: [] }),
-    supabase
-      .from("invoices")
-      .select("id, invoice_number, transaction_number")
-      .eq("status", "emitida")
-      .not("transaction_number", "is", null),
-  ]);
+  const unconciledGlobalCount = allMovements.filter(
+    (m) => !linkedIds.has(m.id),
+  ).length;
 
-  interface BridgeRow {
-    readonly bank_movement_id: string;
-    readonly invoice_id: string;
-    readonly role: "principal" | "comision" | "otro";
-    readonly invoices: { invoice_number: string | null } | null;
-  }
+  // ─── Conciliaciones detalladas para las filas de la página ─────────────
+  //
+  // Cargamos las 4 fuentes SOLO para los ids paginados — cada fila puede
+  // tener 1..N conciliaciones (un mismo movimiento podría ser principal de
+  // un gasto Y comisión de una factura, por ejemplo). El drawer de detalle
+  // muestra todas.
+  const pagedIds = paged.map((m) => m.id);
+  const conciliationsById = await loadConciliations(supabase, pagedIds);
+
+  // Sugerencia por Nº transacción: si el movimiento no está ligado a NINGUNA
+  // factura, y su transaction_number matchea una factura emitida, sugerimos
+  // vincular con un click desde la fila.
+  const invoicesForSuggestionRes = await supabase
+    .from("invoices")
+    .select("id, invoice_number, transaction_number")
+    .eq("status", "emitida")
+    .not("transaction_number", "is", null);
+
   interface SuggestedInvoiceRow {
     readonly id: string;
     readonly invoice_number: string | null;
     readonly transaction_number: string;
   }
-  const bridgeRows = (bridgeRes.data ?? []) as unknown as BridgeRow[];
   const suggestedInvoices = (invoicesForSuggestionRes.data ??
     []) as unknown as SuggestedInvoiceRow[];
 
-  // Indexado por movimiento (para lookup del link vigente).
-  const linkedByMovement = new Map<
-    string,
-    {
-      invoiceId: string;
-      invoiceNumber: string | null;
-      role: "principal" | "comision" | "otro";
-    }
-  >();
-  for (const r of bridgeRows) {
-    // Un movimiento puede estar linkeado a más de una factura en teoría
-    // (ajustes), pero mostramos sólo el primero. Si aparece el caso, la
-    // ficha de factura muestra el detalle completo.
-    if (!linkedByMovement.has(r.bank_movement_id)) {
-      linkedByMovement.set(r.bank_movement_id, {
-        invoiceId: r.invoice_id,
-        invoiceNumber: r.invoices?.invoice_number ?? null,
-        role: r.role,
-      });
-    }
-  }
-
-  // Indexado por transaction_number (para sugerencia). Sólo si el movimiento
-  // no está ya linkeado a NINGUNA factura por bridge. Un mismo Nº puede
-  // aparecer en varias facturas; en ese caso mostramos la primera y la ficha
-  // del movimiento permite elegir.
   const suggestedByTx = new Map<
     string,
     { invoiceId: string; invoiceNumber: string | null }
@@ -221,16 +215,18 @@ export default async function MovimientosPage({
 
   const rows: MovementRowData[] = paged.map((m) => {
     const bank = bankById.get(m.bank_id);
-    const linked = linkedByMovement.get(m.id);
+    const conciliations = conciliationsById.get(m.id) ?? [];
+    const hasInvoiceLink = conciliations.some((c) => c.kind === "invoice");
     let invoiceLink: MovementRowData["invoiceLink"] = null;
-    if (linked) {
+    const primaryInvoice = conciliations.find((c) => c.kind === "invoice");
+    if (primaryInvoice && primaryInvoice.kind === "invoice") {
       invoiceLink = {
         kind: "linked",
-        invoiceId: linked.invoiceId,
-        invoiceNumber: linked.invoiceNumber,
-        role: linked.role,
+        invoiceId: primaryInvoice.id,
+        invoiceNumber: primaryInvoice.label,
+        role: primaryInvoice.role,
       };
-    } else if (m.transaction_number && m.kind === "in") {
+    } else if (!hasInvoiceLink && m.transaction_number && m.kind === "in") {
       const suggestion = suggestedByTx.get(m.transaction_number);
       if (suggestion) {
         invoiceLink = {
@@ -253,6 +249,7 @@ export default async function MovimientosPage({
       description: m.description ?? "",
       transactionNumber: m.transaction_number,
       invoiceLink,
+      conciliations,
     };
   });
 
@@ -264,12 +261,15 @@ export default async function MovimientosPage({
 
   function buildHref(overrides: {
     kind?: KindParam;
+    concil?: ConcilParam;
     page?: number;
   }): string {
     const nextKind = overrides.kind ?? kindParam;
+    const nextConcil = overrides.concil ?? concilParam;
     const nextPage = overrides.page ?? page;
     const params = new URLSearchParams();
     if (nextKind !== "todos") params.set("kind", nextKind);
+    if (nextConcil !== "todos") params.set("concil", nextConcil);
     if (isCustom && fromParam && toParam) {
       params.set("from", fromParam);
       params.set("to", toParam);
@@ -291,6 +291,11 @@ export default async function MovimientosPage({
           { l: "Entradas", v: fMoney(cashIn) },
           { l: "Salidas", v: fMoney(cashOut) },
           { l: "Neto", v: fMoney(net) },
+          {
+            l: "Sin conciliar (todo el rango)",
+            v: fCount(unconciledGlobalCount),
+            c: unconciledGlobalCount > 0 ? "#FFB800" : undefined,
+          },
         ]}
       />
 
@@ -301,6 +306,14 @@ export default async function MovimientosPage({
             label: o.label,
             href: buildHref({ kind: o.value, page: 1 }),
             active: kindParam === o.value,
+          }))}
+        />
+        <KgParamPills
+          ariaLabel="Filtrar por estado de conciliación"
+          options={CONCIL_OPTIONS.map((o) => ({
+            label: o.label,
+            href: buildHref({ concil: o.value, page: 1 }),
+            active: concilParam === o.value,
           }))}
         />
         <RangePills
@@ -335,6 +348,200 @@ export default async function MovimientosPage({
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Fetchers de conciliación
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Devuelve el set de ids de movimientos que ya están linkeados a AL MENOS
+ * una factura / gasto / nómina / transferencia. Alimenta el filtro
+ * "Sin conciliar" y el contador global de la ContextBar.
+ */
+async function loadLinkedMovementIds(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  movementIds: readonly string[],
+): Promise<Set<string>> {
+  const linked = new Set<string>();
+  if (movementIds.length === 0) return linked;
+
+  const [invRes, expRes, payRes, ctRes] = await Promise.all([
+    supabase
+      .from("invoice_bank_movements")
+      .select("bank_movement_id")
+      .in("bank_movement_id", movementIds),
+    supabase
+      .from("expense_bank_movements")
+      .select("bank_movement_id")
+      .in("bank_movement_id", movementIds),
+    supabase
+      .from("payroll")
+      .select("bank_movement_id")
+      .in("bank_movement_id", movementIds),
+    supabase
+      .from("client_transfers")
+      .select("bank_movement_id")
+      .in("bank_movement_id", movementIds),
+  ]);
+
+  for (const r of (invRes.data ?? []) as { bank_movement_id: string }[]) {
+    linked.add(r.bank_movement_id);
+  }
+  for (const r of (expRes.data ?? []) as { bank_movement_id: string }[]) {
+    linked.add(r.bank_movement_id);
+  }
+  for (const r of (payRes.data ?? []) as { bank_movement_id: string | null }[]) {
+    if (r.bank_movement_id) linked.add(r.bank_movement_id);
+  }
+  for (const r of (ctRes.data ?? []) as { bank_movement_id: string | null }[]) {
+    if (r.bank_movement_id) linked.add(r.bank_movement_id);
+  }
+  return linked;
+}
+
+/**
+ * Trae el detalle completo de conciliaciones para los movimientos paginados.
+ * Un movimiento puede aparecer atado a varias filas satélite — devolvemos
+ * todas para que el drawer de detalle las liste sin ocultar nada.
+ */
+async function loadConciliations(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  movementIds: readonly string[],
+): Promise<Map<string, MovementConciliation[]>> {
+  const out = new Map<string, MovementConciliation[]>();
+  if (movementIds.length === 0) return out;
+
+  interface InvBridgeRow {
+    readonly bank_movement_id: string;
+    readonly invoice_id: string;
+    readonly role: "principal" | "comision" | "otro";
+    readonly invoices: { invoice_number: string | null; amount_gross: number } | null;
+  }
+  interface ExpBridgeRow {
+    readonly bank_movement_id: string;
+    readonly expense_id: string;
+    readonly role: "principal" | "comision" | "otro";
+    readonly expenses: {
+      description: string | null;
+      amount_gross: number;
+    } | null;
+  }
+  interface PayRow {
+    readonly id: string;
+    readonly bank_movement_id: string;
+    readonly total_amount: number;
+    readonly period_start: string;
+    readonly period_end: string;
+    readonly person_id: string;
+  }
+  interface CtRow {
+    readonly id: string;
+    readonly bank_movement_id: string;
+    readonly amount: number;
+    readonly project_id: string;
+    readonly launch_settlement_id: string | null;
+  }
+
+  const [invRes, expRes, payRes, ctRes] = await Promise.all([
+    supabase
+      .from("invoice_bank_movements")
+      .select(
+        "bank_movement_id, invoice_id, role, invoices!inner(invoice_number, amount_gross)",
+      )
+      .in("bank_movement_id", movementIds),
+    supabase
+      .from("expense_bank_movements")
+      .select(
+        "bank_movement_id, expense_id, role, expenses!inner(description, amount_gross)",
+      )
+      .in("bank_movement_id", movementIds),
+    supabase
+      .from("payroll")
+      .select("id, bank_movement_id, total_amount, period_start, period_end, person_id")
+      .in("bank_movement_id", movementIds),
+    supabase
+      .from("client_transfers")
+      .select("id, bank_movement_id, amount, project_id, launch_settlement_id")
+      .in("bank_movement_id", movementIds),
+  ]);
+
+  function push(mvId: string, c: MovementConciliation) {
+    const cur = out.get(mvId) ?? [];
+    cur.push(c);
+    out.set(mvId, cur);
+  }
+
+  for (const r of (invRes.data ?? []) as unknown as InvBridgeRow[]) {
+    push(r.bank_movement_id, {
+      kind: "invoice",
+      id: r.invoice_id,
+      role: r.role,
+      label: r.invoices?.invoice_number ?? "s/n",
+      amount: Number(r.invoices?.amount_gross ?? 0),
+    });
+  }
+  for (const r of (expRes.data ?? []) as unknown as ExpBridgeRow[]) {
+    push(r.bank_movement_id, {
+      kind: "expense",
+      id: r.expense_id,
+      role: r.role,
+      label: r.expenses?.description ?? "Gasto s/descripción",
+      amount: Number(r.expenses?.amount_gross ?? 0),
+    });
+  }
+
+  // Nómina: resolvemos nombre de la persona a partir del person_id.
+  const payRows = (payRes.data ?? []) as unknown as PayRow[];
+  const personIds = Array.from(new Set(payRows.map((p) => p.person_id)));
+  const personNameById = new Map<string, string>();
+  if (personIds.length > 0) {
+    const { data } = await supabase
+      .from("organization_people")
+      .select("id, full_name")
+      .in("id", personIds);
+    for (const p of (data ?? []) as { id: string; full_name: string }[]) {
+      personNameById.set(p.id, p.full_name);
+    }
+  }
+  for (const r of payRows) {
+    push(r.bank_movement_id, {
+      kind: "payroll",
+      id: r.id,
+      label: `${personNameById.get(r.person_id) ?? "—"} · ${fmtShort(r.period_start)}–${fmtShort(r.period_end)}`,
+      amount: Number(r.total_amount),
+    });
+  }
+
+  // Transferencia a cliente: resolvemos nombre del proyecto.
+  const ctRows = (ctRes.data ?? []) as unknown as CtRow[];
+  const ctProjectIds = Array.from(new Set(ctRows.map((c) => c.project_id)));
+  const ctProjectNameById = new Map<string, string>();
+  if (ctProjectIds.length > 0) {
+    const { data } = await supabase
+      .from("projects")
+      .select("id, name")
+      .in("id", ctProjectIds);
+    for (const p of (data ?? []) as { id: string; name: string }[]) {
+      ctProjectNameById.set(p.id, p.name);
+    }
+  }
+  for (const r of ctRows) {
+    push(r.bank_movement_id, {
+      kind: "transfer",
+      id: r.id,
+      label: `Transferencia a ${ctProjectNameById.get(r.project_id) ?? "cliente"}`,
+      amount: Number(r.amount),
+    });
+  }
+
+  return out;
+}
+
+function fmtShort(ymd: string): string {
+  // "2026-08-01" → "08/26" — el detalle completo va en el drawer.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
+  return `${ymd.slice(5, 7)}/${ymd.slice(2, 4)}`;
+}
+
 function buildExportHref(
   kind: KindParam,
   range: RangeParam,
@@ -359,6 +566,11 @@ function parseKind(v: string | string[] | undefined): KindParam {
   if (typeof v !== "string") return "todos";
   const allowed: KindParam[] = ["todos", "in", "out"];
   return (allowed as string[]).includes(v) ? (v as KindParam) : "todos";
+}
+function parseConcil(v: string | string[] | undefined): ConcilParam {
+  if (typeof v !== "string") return "todos";
+  const allowed: ConcilParam[] = ["todos", "conciliados", "sin-conciliar"];
+  return (allowed as string[]).includes(v) ? (v as ConcilParam) : "todos";
 }
 function parseRange(v: string | string[] | undefined): RangeParam {
   if (typeof v !== "string") return "todo";

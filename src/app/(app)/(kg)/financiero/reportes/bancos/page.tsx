@@ -75,10 +75,12 @@ export default async function ReporteBancosPage({
     return ymd >= period.fromYmd && ymd <= period.toYmd;
   });
 
-  // Set de movement_ids linkeados a factura O gasto (para el cross-check
-  // de conciliación). Vamos a las dos bridge tables 0117/0119.
+  // Set de movement_ids linkeados a factura / gasto / nómina / transferencia
+  // (para el cross-check de conciliación). Factura y gasto usan bridge N:M
+  // (0117/0119); nómina y transferencia-a-cliente siguen 1:1 con FK directa
+  // en su fila (payroll.bank_movement_id / client_transfers.bank_movement_id).
   const movementIds = movementsInPeriod.map((m) => m.id);
-  const [invLinksRes, expLinksRes] = await Promise.all([
+  const [invLinksRes, expLinksRes, payLinksRes, ctLinksRes] = await Promise.all([
     movementIds.length > 0
       ? supabase
           .from("invoice_bank_movements")
@@ -91,6 +93,18 @@ export default async function ReporteBancosPage({
           .select("bank_movement_id")
           .in("bank_movement_id", movementIds)
       : Promise.resolve({ data: [] }),
+    movementIds.length > 0
+      ? supabase
+          .from("payroll")
+          .select("bank_movement_id")
+          .in("bank_movement_id", movementIds)
+      : Promise.resolve({ data: [] }),
+    movementIds.length > 0
+      ? supabase
+          .from("client_transfers")
+          .select("bank_movement_id")
+          .in("bank_movement_id", movementIds)
+      : Promise.resolve({ data: [] }),
   ]);
   const linkedMovementIds = new Set<string>();
   for (const r of (invLinksRes.data ?? []) as { bank_movement_id: string }[]) {
@@ -98,6 +112,12 @@ export default async function ReporteBancosPage({
   }
   for (const r of (expLinksRes.data ?? []) as { bank_movement_id: string }[]) {
     linkedMovementIds.add(r.bank_movement_id);
+  }
+  for (const r of (payLinksRes.data ?? []) as { bank_movement_id: string | null }[]) {
+    if (r.bank_movement_id) linkedMovementIds.add(r.bank_movement_id);
+  }
+  for (const r of (ctLinksRes.data ?? []) as { bank_movement_id: string | null }[]) {
+    if (r.bank_movement_id) linkedMovementIds.add(r.bank_movement_id);
   }
 
   const report = buildBankReport(banks, movementsInPeriod, linkedMovementIds);

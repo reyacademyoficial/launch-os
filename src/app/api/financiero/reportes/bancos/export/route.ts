@@ -59,7 +59,7 @@ export async function GET(request: Request) {
   });
 
   const movementIds = movementsInPeriod.map((m) => m.id);
-  const [invLinksRes, expLinksRes] = await Promise.all([
+  const [invLinksRes, expLinksRes, payLinksRes, ctLinksRes] = await Promise.all([
     movementIds.length > 0
       ? supabase
           .from("invoice_bank_movements")
@@ -72,6 +72,18 @@ export async function GET(request: Request) {
           .select("bank_movement_id")
           .in("bank_movement_id", movementIds)
       : Promise.resolve({ data: [] }),
+    movementIds.length > 0
+      ? supabase
+          .from("payroll")
+          .select("bank_movement_id")
+          .in("bank_movement_id", movementIds)
+      : Promise.resolve({ data: [] }),
+    movementIds.length > 0
+      ? supabase
+          .from("client_transfers")
+          .select("bank_movement_id")
+          .in("bank_movement_id", movementIds)
+      : Promise.resolve({ data: [] }),
   ]);
   const linkedIds = new Set<string>();
   for (const r of (invLinksRes.data ?? []) as { bank_movement_id: string }[]) {
@@ -79,6 +91,12 @@ export async function GET(request: Request) {
   }
   for (const r of (expLinksRes.data ?? []) as { bank_movement_id: string }[]) {
     linkedIds.add(r.bank_movement_id);
+  }
+  for (const r of (payLinksRes.data ?? []) as { bank_movement_id: string | null }[]) {
+    if (r.bank_movement_id) linkedIds.add(r.bank_movement_id);
+  }
+  for (const r of (ctLinksRes.data ?? []) as { bank_movement_id: string | null }[]) {
+    if (r.bank_movement_id) linkedIds.add(r.bank_movement_id);
   }
 
   const report = buildBankReport(banks, movementsInPeriod, linkedIds);
