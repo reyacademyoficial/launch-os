@@ -150,19 +150,42 @@ export async function listProjectSalesData(
 
 /**
  * Calcula el agregado de kanban (sales+payments en cerrado) para un launch.
- * Helper de conveniencia que combina `listLaunchSalesData` + agregado.
+ *
+ * Usa queries lean (columnas exactas que necesita el aggregate) en vez de
+ * pasar por `listLaunchSalesData`: ese helper trae `sales.*` y
+ * `leads.team_member_id`, columnas que `cliente_role` no tiene grant sobre
+ * (0023). El portal cliente llama esta función para armar sus KPIs — si
+ * arrastra los selects gordos, PostgREST responde 42501, `.data ?? []`
+ * silencia el error y el revenue termina en 0.
  */
 export async function getKanbanSalesAggregateForLaunch(
   projectId: string,
   launchId: string,
 ): Promise<KanbanSalesAggregate> {
-  const { sales, payments, leads } = await listLaunchSalesData(projectId, launchId);
-  return aggregateKanbanSales(
-    sales as unknown as KanbanSaleRow[],
-    payments as unknown as KanbanPaymentRow[],
-    leads as unknown as KanbanLeadStatusRow[],
-    launchId,
-  );
+  const supabase = await createClient();
+
+  const salesRes = await supabase
+    .from("sales")
+    .select("id, lead_id, launch_id, total_amount, currency")
+    .eq("project_id", projectId)
+    .eq("launch_id", launchId);
+  const sales = (salesRes.data ?? []) as Array<KanbanSaleRow>;
+  if (sales.length === 0) return EMPTY_KANBAN_SALES_AGGREGATE;
+
+  const leadIds = Array.from(new Set(sales.map((s) => s.lead_id)));
+  const saleIds = sales.map((s) => s.id);
+
+  const [leadsRes, paymentsRes] = await Promise.all([
+    supabase
+      .from("leads")
+      .select("id, status, launch_id")
+      .in("id", leadIds),
+    supabase.from("payments").select("sale_id, amount").in("sale_id", saleIds),
+  ]);
+  const leads = (leadsRes.data ?? []) as Array<KanbanLeadStatusRow>;
+  const payments = (paymentsRes.data ?? []) as Array<KanbanPaymentRow>;
+
+  return aggregateKanbanSales(sales, payments, leads, launchId);
 }
 
 /**
