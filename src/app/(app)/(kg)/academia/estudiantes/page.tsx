@@ -67,7 +67,7 @@ interface LeadDbRow {
   readonly id: string;
   readonly name: string | null;
   readonly email: string | null;
-  readonly phone: string | null;
+  readonly phone_normalized: string | null;
 }
 
 interface ProductDbRow {
@@ -191,15 +191,15 @@ export default async function EstudiantesPage({
       ? { data: [] as LeadDbRow[] }
       : await supabase
           .from("leads")
-          .select("id, name, email, phone")
+          .select("id, name, email, phone_normalized")
           .in("id", leadIds);
   const allLeads = (leadsRes.data ?? []) as unknown as LeadDbRow[];
   const leadById = new Map<string, LeadDbRow>();
   for (const l of allLeads) leadById.set(l.id, l);
 
   // Filtrar sales de products-course cuyo comprador NO está aún como
-  // student. Matching por email primero, fallback por teléfono, ambos
-  // scoped al project_id de la venta.
+  // student. Matching por email primero, fallback por teléfono
+  // normalizado, ambos scoped al project_id de la venta.
   const studentKeysByProject = new Set<string>();
   for (const s of allStudents) {
     if (s.email) {
@@ -219,9 +219,12 @@ export default async function EstudiantesPage({
         return true;
       }
     }
-    if (lead.phone) {
-      const normalized = lead.phone.replace(/[^\d+]/g, "");
-      if (studentKeysByProject.has(`${projectId}::phone::${normalized}`)) {
+    if (lead.phone_normalized) {
+      if (
+        studentKeysByProject.has(
+          `${projectId}::phone::${lead.phone_normalized}`,
+        )
+      ) {
         return true;
       }
     }
@@ -242,7 +245,7 @@ export default async function EstudiantesPage({
         saleId: s.id,
         leadName: lead.name!,
         leadEmail: lead.email,
-        leadPhone: lead.phone,
+        leadPhone: lead.phone_normalized,
         productId: s.product_id,
         productName: productNameById.get(s.product_id) ?? "—",
         projectId: s.project_id,

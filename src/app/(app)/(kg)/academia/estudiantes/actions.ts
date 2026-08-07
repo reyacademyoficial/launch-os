@@ -205,13 +205,13 @@ export async function bulkCreateStudentsFromSales(
       ? { data: [] }
       : await supabase
           .from("leads")
-          .select("id, name, email, phone")
+          .select("id, name, email, phone_normalized")
           .in("id", leadIds);
   const leads = (leadsData ?? []) as unknown as ReadonlyArray<{
     id: string;
     name: string | null;
     email: string | null;
-    phone: string | null;
+    phone_normalized: string | null;
   }>;
   const leadById = new Map<string, (typeof leads)[number]>();
   for (const l of leads) leadById.set(l.id, l);
@@ -258,7 +258,7 @@ export async function bulkCreateStudentsFromSales(
       project_id: sale.project_id,
       name: lead.name,
       email: lead.email ? lead.email.toLowerCase() : null,
-      phone: normalizePhone(lead.phone),
+      phone: normalizePhone(lead.phone_normalized),
       status: "active" as Status,
       enrolled_at: todayYmd(),
       notes: null,
