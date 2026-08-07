@@ -433,8 +433,10 @@ antes.
       Inline en la ficha de la generación con Drawer create/edit + delete rojo.
       Radio Pendiente/Aprobado/Reprobado (passed null/true/false) independiente
       del score (nullable si aún no se corrigió).
-- [ ] **certificates**: emitir certificado (student, course, code, issued_at, url).
+- [x] **certificates**: emitir certificado (student, course, code, issued_at, url).
       **Manual** — no hay automatismo al aprobar examen (decisión de negocio).
+      Vista global `/academia/certificados` con tabla + drawer, y panel inline
+      en la ficha del estudiante que reusa el mismo drawer con student presetado.
 
 ### 3.4 Lectura (después del CRUD)
 

@@ -9,11 +9,16 @@ import { Panel } from "@/components/kg/panel";
 import { StatusPill } from "@/components/kg/status-pill";
 import { createClient } from "@/lib/supabase/server";
 
+import type { CourseOptionForCert } from "../../certificados/certificate-form-drawer";
 import type {
   ProjectOptionForStudent,
   StudentInitial,
 } from "../student-form-drawer";
 import { EditStudentButton } from "./edit-student-button";
+import {
+  StudentCertificatesPanel,
+  type StudentCertRowData,
+} from "./student-certificates-panel";
 
 export const metadata: Metadata = { title: "Estudiante · Academia" };
 
@@ -45,6 +50,26 @@ interface EnrollmentBrief {
   readonly enrolled_at: string;
   readonly status: EnrollStatus;
   readonly progress_percent: number;
+}
+
+interface CertBriefDbRow {
+  readonly id: string;
+  readonly course_id: string;
+  readonly code: string | null;
+  readonly issued_at: string;
+  readonly url: string | null;
+  readonly notes: string | null;
+}
+
+interface CourseBriefDbRow {
+  readonly id: string;
+  readonly product_id: string;
+  readonly project_id: string;
+}
+
+interface ProductBriefDbRow {
+  readonly id: string;
+  readonly name: string;
 }
 
 const ENROLL_STATUS_LABEL: Record<EnrollStatus, string> = {
@@ -119,8 +144,9 @@ export default async function StudentFichaPage({
       .eq("student_id", studentId),
     supabase
       .from("certificates")
-      .select("id", { count: "exact", head: true })
-      .eq("student_id", studentId),
+      .select("id, course_id, code, issued_at, url, notes")
+      .eq("student_id", studentId)
+      .order("issued_at", { ascending: false }),
     supabase.from("cohorts").select("id, name"),
   ]);
 
@@ -155,7 +181,51 @@ export default async function StudentFichaPage({
 
   const attendanceCount = attendanceRes.count ?? 0;
   const examsCount = examsRes.count ?? 0;
-  const certsCount = certsRes.count ?? 0;
+  const certRows = (certsRes.data ?? []) as unknown as CertBriefDbRow[];
+  const certsCount = certRows.length;
+
+  // Courses del proyecto del student — para mostrar el nombre en la lista
+  // y alimentar el drawer de emisión. Filtrado en server para no bombear
+  // toda la tabla al cliente.
+  const [studentCoursesRes, productsForCertsRes] = await Promise.all([
+    supabase
+      .from("courses")
+      .select("id, product_id, project_id")
+      .eq("project_id", student.project_id),
+    supabase.from("products").select("id, name"),
+  ]);
+  const studentCourseRows =
+    (studentCoursesRes.data ?? []) as unknown as CourseBriefDbRow[];
+  const productRowsForCerts =
+    (productsForCertsRes.data ?? []) as unknown as ProductBriefDbRow[];
+  const productNameByIdForCerts = new Map<string, string>();
+  for (const p of productRowsForCerts)
+    productNameByIdForCerts.set(p.id, p.name);
+  const courseNameById = new Map<string, string>();
+  for (const c of studentCourseRows) {
+    courseNameById.set(
+      c.id,
+      productNameByIdForCerts.get(c.product_id) ?? "—",
+    );
+  }
+
+  const studentCerts: StudentCertRowData[] = certRows.map((c) => ({
+    id: c.id,
+    courseId: c.course_id,
+    courseName: courseNameById.get(c.course_id) ?? "—",
+    code: c.code,
+    issuedAt: c.issued_at,
+    url: c.url,
+    notes: c.notes,
+  }));
+
+  const courseOptionsForCert: CourseOptionForCert[] = studentCourseRows.map(
+    (c) => ({
+      id: c.id,
+      productName: productNameByIdForCerts.get(c.product_id) ?? "—",
+      projectId: c.project_id,
+    }),
+  );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -360,10 +430,13 @@ export default async function StudentFichaPage({
           />
         </Panel>
         <Panel title="Certificados">
-          <EmptyState
-            icon={<IconAca size={22} />}
-            title="Sub-sección en construcción"
-            hint={`${certsCount} certificados emitidos.`}
+          <StudentCertificatesPanel
+            studentId={student.id}
+            studentName={student.name}
+            studentProjectId={student.project_id}
+            studentProjectName={projectName ?? "—"}
+            certificates={studentCerts}
+            courses={courseOptionsForCert}
           />
         </Panel>
       </div>
