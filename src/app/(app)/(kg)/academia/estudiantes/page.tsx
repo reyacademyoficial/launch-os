@@ -17,6 +17,12 @@ import { StudentsView, type StudentRowData } from "./students-view";
 
 export const metadata: Metadata = { title: "Estudiantes · Academia" };
 
+// La pestaña "Compradores pendientes" depende de sales/leads que se
+// crean fuera del ciclo de Kingrow (LaunchOS, sync de GHL). Forzamos
+// dynamic para evitar snapshot cacheado — el volumen es bajo y la
+// consulta rápida, no vale la pena optimizar.
+export const dynamic = "force-dynamic";
+
 type Status = "active" | "inactive" | "graduated";
 type ShowFilter =
   | "active"
