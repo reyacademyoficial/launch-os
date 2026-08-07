@@ -194,7 +194,8 @@ export default async function ReporteBancosPage({
     0,
   );
 
-  const exportHref = buildExportHref(rangeParam, fromParam, toParam);
+  const exportXlsxHref = buildExportHref("xlsx", rangeParam, fromParam, toParam);
+  const exportPdfHref = buildExportHref("pdf", rangeParam, fromParam, toParam);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -221,12 +222,22 @@ export default async function ReporteBancosPage({
           baseHref="/financiero/reportes/bancos"
         />
         <a
-          href={exportHref}
+          href={exportXlsxHref}
           className="kg-focus"
           style={ghostBtnLg}
           title="Exportar el reporte a Excel"
         >
           Exportar Excel
+        </a>
+        <a
+          href={exportPdfHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="kg-focus"
+          style={ghostBtnLg}
+          title="Descargar el reporte en PDF"
+        >
+          Exportar PDF
         </a>
       </div>
 
@@ -347,6 +358,7 @@ function StatCell({
 }
 
 function buildExportHref(
+  format: "xlsx" | "pdf",
   range: RangeParam,
   from: string | null,
   to: string | null,
@@ -359,9 +371,11 @@ function buildExportHref(
     params.set("range", range);
   }
   const qs = params.toString();
-  return qs
-    ? `/api/financiero/reportes/bancos/export?${qs}`
-    : "/api/financiero/reportes/bancos/export";
+  const base =
+    format === "pdf"
+      ? "/api/financiero/reportes/bancos/export-pdf"
+      : "/api/financiero/reportes/bancos/export";
+  return qs ? `${base}?${qs}` : base;
 }
 
 function parseRange(v: string | string[] | undefined): RangeParam {

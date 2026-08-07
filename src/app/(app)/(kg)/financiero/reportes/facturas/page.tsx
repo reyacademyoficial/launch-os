@@ -223,7 +223,16 @@ export default async function ReporteFacturasPage({
     },
   ];
 
-  const exportHref = buildExportHref({
+  const exportXlsxHref = buildExportHref({
+    format: "xlsx",
+    status: statusParam,
+    project: projectFilter,
+    range: rangeParam,
+    from: fromParam,
+    to: toParam,
+  });
+  const exportPdfHref = buildExportHref({
+    format: "pdf",
     status: statusParam,
     project: projectFilter,
     range: rangeParam,
@@ -286,12 +295,22 @@ export default async function ReporteFacturasPage({
           baseHref="/financiero/reportes/facturas"
         />
         <a
-          href={exportHref}
+          href={exportXlsxHref}
           className="kg-focus"
           style={ghostBtnLg}
           title="Exportar el reporte a Excel"
         >
           Exportar Excel
+        </a>
+        <a
+          href={exportPdfHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="kg-focus"
+          style={ghostBtnLg}
+          title="Descargar el reporte en PDF"
+        >
+          Exportar PDF
         </a>
       </div>
 
@@ -509,6 +528,7 @@ function fmtDate(iso: string): string {
 }
 
 function buildExportHref(o: {
+  format: "xlsx" | "pdf";
   status: StatusFilter;
   project: string | null;
   range: RangeParam;
@@ -525,9 +545,11 @@ function buildExportHref(o: {
     params.set("range", o.range);
   }
   const qs = params.toString();
-  return qs
-    ? `/api/financiero/reportes/facturas/export?${qs}`
-    : "/api/financiero/reportes/facturas/export";
+  const base =
+    o.format === "pdf"
+      ? "/api/financiero/reportes/facturas/export-pdf"
+      : "/api/financiero/reportes/facturas/export";
+  return qs ? `${base}?${qs}` : base;
 }
 
 function parseStatus(v: string | string[] | undefined): StatusFilter {
