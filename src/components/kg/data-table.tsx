@@ -61,6 +61,12 @@ export interface DataTableProps<Row> {
   /** Contenido a mostrar cuando `rows.length === 0`. Requerido. */
   readonly emptyTitle: string;
   readonly emptyHint?: string;
+  /**
+   * Cuando se seta, el <tbody> scrollea internamente con este max-height
+   * (ej. `"calc(100vh - 340px)"` o `"60vh"`) y el <thead> queda sticky. Sin
+   * esto la tabla crece a lo alto y el scroll queda a nivel de página.
+   */
+  readonly maxBodyHeight?: string;
 }
 
 export function KgDataTable<Row>({
@@ -70,6 +76,7 @@ export function KgDataTable<Row>({
   totalCount,
   emptyTitle,
   emptyHint,
+  maxBodyHeight,
 }: DataTableProps<Row>) {
   if (rows.length === 0) {
     return <EmptyState title={emptyTitle} hint={emptyHint} />;
@@ -81,9 +88,22 @@ export function KgDataTable<Row>({
       ? `${fCount(total)} ${total === 1 ? "registro" : "registros"}`
       : `${fCount(rows.length)} de ${fCount(total)} registros`;
 
+  const scrollStyle = maxBodyHeight
+    ? { overflow: "auto" as const, maxHeight: maxBodyHeight }
+    : { overflowX: "auto" as const };
+
+  const stickyThStyle: React.CSSProperties | undefined = maxBodyHeight
+    ? {
+        position: "sticky",
+        top: 0,
+        zIndex: 1,
+        background: "var(--kg-surface-1-solid)",
+      }
+    : undefined;
+
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
-      <div style={{ overflowX: "auto" }}>
+      <div style={scrollStyle}>
         <table
           style={{
             width: "100%",
@@ -108,6 +128,7 @@ export function KgDataTable<Row>({
                     textTransform: "uppercase",
                     width: c.width,
                     whiteSpace: "nowrap",
+                    ...stickyThStyle,
                   }}
                 >
                   {c.label}

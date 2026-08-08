@@ -74,7 +74,10 @@ export function MovementDetailDrawer({
               value={row.kind === "in" ? "Entrada" : "Salida"}
               tone={row.kind === "in" ? "positive" : "negative"}
             />
-            <Metric label="Monto" value={fMoney(signedAmount)} />
+            <Metric
+              label={`Monto (${row.bankCurrency})`}
+              value={fMoney(signedAmount)}
+            />
             <Metric label="Fecha" value={fmtDate(row.occurredAt)} />
             <Metric
               label="Nº transacción"

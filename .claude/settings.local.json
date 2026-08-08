@@ -90,7 +90,9 @@
       "Bash(python3 *)",
       "Bash(tee /tmp/tsc.out)",
       "Bash(echo \"---exit: $?\")",
-      "Read(//c/c/Users/40306/Desktop/Rey academy/Descargas/launch-os/**)"
+      "Read(//c/c/Users/40306/Desktop/Rey academy/Descargas/launch-os/**)",
+      "Bash(pnpm tsc *)",
+      "Bash(pnpm test *)"
     ]
   }
 }

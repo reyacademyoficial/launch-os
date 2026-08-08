@@ -60,6 +60,7 @@ interface BankRow {
   readonly name: string;
   readonly project_id: string | null;
   readonly active: boolean;
+  readonly currency: "ARS" | "USD";
 }
 
 interface ProjectNameRow {
@@ -240,6 +241,7 @@ export default async function MovimientosPage({
       id: m.id,
       bankId: m.bank_id,
       bankName: bank?.name ?? "—",
+      bankCurrency: bank?.currency ?? "ARS",
       projectName: bank?.project_id
         ? projectNameById.get(bank.project_id) ?? "—"
         : "—",
@@ -257,6 +259,7 @@ export default async function MovimientosPage({
     id: b.id,
     name: b.name,
     active: b.active,
+    currency: b.currency,
   }));
 
   function buildHref(overrides: {

@@ -57,6 +57,8 @@ export interface MovementRowData {
   readonly id: string;
   readonly bankId: string;
   readonly bankName: string;
+  /** Moneda del banco al que pertenece — un movimiento no tiene moneda propia. */
+  readonly bankCurrency: "ARS" | "USD";
   readonly projectName: string;
   readonly kind: "in" | "out";
   readonly amount: number;
@@ -170,7 +172,33 @@ export function MovimientosView({
       ),
     },
     { key: "date", label: "Fecha", render: (r) => fmtDate(r.occurredAt) },
-    { key: "bank", label: "Banco", render: (r) => r.bankName },
+    {
+      key: "bank",
+      label: "Banco",
+      render: (r) => (
+        <span>
+          {r.bankName}{" "}
+          <span
+            style={{
+              padding: "1px 6px",
+              borderRadius: 999,
+              background:
+                r.bankCurrency === "USD"
+                  ? "rgba(0,208,132,0.15)"
+                  : "rgba(138,138,153,0.15)",
+              color:
+                r.bankCurrency === "USD" ? "#00D084" : "var(--kg-text-3)",
+              fontSize: 10,
+              fontWeight: 700,
+              marginLeft: 4,
+            }}
+            title={`Movimiento en ${r.bankCurrency}`}
+          >
+            {r.bankCurrency}
+          </span>
+        </span>
+      ),
+    },
     { key: "project", label: "Proyecto", render: (r) => r.projectName },
     {
       key: "kind",
@@ -183,7 +211,22 @@ export function MovimientosView({
       align: "right",
       numeric: true,
       // Salidas con signo negativo. El color va por la pill, no por el número.
-      render: (r) => (r.kind === "out" ? fMoney(-r.amount) : fMoney(r.amount)),
+      // La moneda aparece como sufijo — sin él ARS 1000 y USD 1000 se
+      // confunden y arruinan la conciliación.
+      render: (r) => (
+        <span>
+          {r.kind === "out" ? fMoney(-r.amount) : fMoney(r.amount)}{" "}
+          <span
+            style={{
+              fontSize: 10,
+              color: "var(--kg-text-3)",
+              fontWeight: 500,
+            }}
+          >
+            {r.bankCurrency}
+          </span>
+        </span>
+      ),
     },
     {
       key: "description",

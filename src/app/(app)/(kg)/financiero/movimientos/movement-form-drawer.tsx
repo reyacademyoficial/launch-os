@@ -23,6 +23,8 @@ export interface BankOption {
   readonly id: string;
   readonly name: string;
   readonly active: boolean;
+  /** Moneda nativa del banco. El movimiento hereda esta moneda — no hay override. */
+  readonly currency: "ARS" | "USD";
 }
 
 export interface MovementInitial {
@@ -122,6 +124,16 @@ function FormBody({
     (b) => b.active || b.id === initial?.bankId,
   );
 
+  // Moneda derivada del banco seleccionado — un movimiento hereda la moneda
+  // del banco (banks.currency, 0103), NO tiene columna propia. Mostramos el
+  // ticker al lado del monto para que el operador no cargue plata pensando
+  // que es pesos cuando el banco está configurado en USD.
+  const [selectedBankId, setSelectedBankId] = useState<string>(
+    initial?.bankId ?? "",
+  );
+  const selectedBank = banks.find((b) => b.id === selectedBankId) ?? null;
+  const currencyLabel = selectedBank?.currency ?? null;
+
   return (
     <form
       action={formAction}
@@ -132,7 +144,8 @@ function FormBody({
           id="bank_id"
           name="bank_id"
           required
-          defaultValue={initial?.bankId ?? ""}
+          value={selectedBankId}
+          onChange={(e) => setSelectedBankId(e.target.value)}
           disabled={isEdit ? true : false}
           style={{
             ...inputStyle,
@@ -143,7 +156,7 @@ function FormBody({
           {!isEdit && <option value="">Elegí un banco…</option>}
           {banksForSelect.map((b) => (
             <option key={b.id} value={b.id}>
-              {b.name}
+              {b.name} · {b.currency}
               {!b.active ? " (inactivo)" : ""}
             </option>
           ))}
@@ -172,7 +185,11 @@ function FormBody({
         </select>
       </Field>
 
-      <Field label="Monto" htmlFor="amount" required>
+      <Field
+        label={currencyLabel ? `Monto (${currencyLabel})` : "Monto"}
+        htmlFor="amount"
+        required
+      >
         <input
           id="amount"
           name="amount"
@@ -184,6 +201,16 @@ function FormBody({
           placeholder="0.00"
           style={inputStyle}
         />
+        {currencyLabel && (
+          <div
+            className="kg-t7"
+            style={{ color: "var(--kg-text-3)", marginTop: 6 }}
+          >
+            Se registra en {currencyLabel} — la moneda la define el banco
+            elegido. Para cargar un movimiento en la otra moneda, elegí un
+            banco {currencyLabel === "ARS" ? "USD" : "ARS"} o creá uno nuevo.
+          </div>
+        )}
       </Field>
 
       <Field label="Fecha" htmlFor="occurred_at" required>

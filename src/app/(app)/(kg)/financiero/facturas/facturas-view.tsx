@@ -11,6 +11,10 @@ import {
   type ProductOption,
   type ProjectOption,
 } from "./invoice-form-drawer";
+import {
+  LinkInvoiceMovementDrawer,
+  type UnconciledMovementForInvoice,
+} from "./link-invoice-movement-drawer";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Vista client-side de facturas — envuelve la tabla + botón crear + drawer
@@ -66,6 +70,7 @@ export function FacturasView({
   totalCount,
   projects,
   products,
+  unconciledMovements,
   emptyTitle,
   emptyHint,
 }: {
@@ -73,13 +78,18 @@ export function FacturasView({
   readonly totalCount: number;
   readonly projects: readonly ProjectOption[];
   readonly products: readonly ProductOption[];
+  readonly unconciledMovements: readonly UnconciledMovementForInvoice[];
   readonly emptyTitle: string;
   readonly emptyHint: string;
 }) {
   const [openCreate, setOpenCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [linkingId, setLinkingId] = useState<string | null>(null);
   const editingRow = editingId
     ? rows.find((r) => r.id === editingId) ?? null
+    : null;
+  const linkingRow = linkingId
+    ? rows.find((r) => r.id === linkingId) ?? null
     : null;
 
   const columns: Column<FacturaRowData>[] = [
@@ -165,29 +175,52 @@ export function FacturasView({
       key: "actions",
       label: "",
       align: "right",
-      render: (r) => (
-        <span style={{ display: "inline-flex", gap: 6 }}>
-          <a
-            href={`/api/facturas/${r.id}/pdf`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="kg-focus"
-            style={{ ...ghostBtn, textDecoration: "none" }}
-            title="Descargar remito en PDF"
-          >
-            Remito
-          </a>
-          <button
-            type="button"
-            onClick={() => setEditingId(r.id)}
-            className="kg-focus"
-            style={ghostBtn}
-            title="Editar factura"
-          >
-            Editar
-          </button>
-        </span>
-      ),
+      render: (r) => {
+        const canLink = r.status !== "anulada";
+        const linkLabel =
+          r.linkedMovements.length > 0 ? "Ver conciliación" : "Conciliar";
+        return (
+          <span style={{ display: "inline-flex", gap: 6 }}>
+            <a
+              href={`/api/facturas/${r.id}/pdf`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="kg-focus"
+              style={{ ...ghostBtn, textDecoration: "none" }}
+              title="Descargar remito en PDF"
+            >
+              Remito
+            </a>
+            <button
+              type="button"
+              onClick={() => setLinkingId(r.id)}
+              disabled={!canLink}
+              className="kg-focus"
+              style={{
+                ...ghostBtn,
+                opacity: canLink ? 1 : 0.5,
+                cursor: canLink ? "pointer" : "not-allowed",
+              }}
+              title={
+                canLink
+                  ? "Conciliar con uno o más movimientos bancarios"
+                  : "Las facturas anuladas no se pueden conciliar"
+              }
+            >
+              {linkLabel}
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditingId(r.id)}
+              className="kg-focus"
+              style={ghostBtn}
+              title="Editar factura"
+            >
+              Editar
+            </button>
+          </span>
+        );
+      },
     },
   ];
 
@@ -227,6 +260,10 @@ export function FacturasView({
         totalCount={totalCount}
         emptyTitle={emptyTitle}
         emptyHint={emptyHint}
+        // Ajustada a la altura del viewport — la tabla scrollea internamente
+        // en lugar de estirar la página. El offset compensa ContextBar +
+        // filtros + header del Panel + toolbar del listado + paginador.
+        maxBodyHeight="calc(100vh - 360px)"
       />
 
       <InvoiceFormDrawer
@@ -267,6 +304,24 @@ export function FacturasView({
             transactionNumber: editingRow.transactionNumber,
             notes: editingRow.notes,
           }}
+        />
+      )}
+
+      {linkingRow && (
+        <LinkInvoiceMovementDrawer
+          invoice={{
+            id: linkingRow.id,
+            invoiceNumber:
+              linkingRow.invoiceNumber === "—" ? null : linkingRow.invoiceNumber,
+            description: linkingRow.description,
+            amountGross: linkingRow.amountGross,
+            currency: linkingRow.currency,
+            issueDate: linkingRow.issueDate,
+            status: linkingRow.status,
+            linkedMovements: linkingRow.linkedMovements,
+          }}
+          unconciledMovements={unconciledMovements}
+          onClose={() => setLinkingId(null)}
         />
       )}
     </div>

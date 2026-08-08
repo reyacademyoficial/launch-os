@@ -27,6 +27,7 @@ import type {
   ProductOption,
   ProjectOption,
 } from "./invoice-form-drawer";
+import type { UnconciledMovementForInvoice } from "./link-invoice-movement-drawer";
 
 export const metadata: Metadata = { title: "Facturas · Financiero" };
 
@@ -151,9 +152,31 @@ export default async function FacturasPage({
     ),
   );
 
+  // ─── Movimientos sin conciliar (para el drawer de conciliación) ───────
+  //
+  // Un movimiento está "sin conciliar" cuando NO está vinculado a ningún
+  // gasto, factura, nómina o transferencia. Se resuelve con queries
+  // separadas + set difference — postgrest-js no tiene NOT EXISTS elegante.
+  //
+  // Ventana de 12 meses para no traer historia entera. Consistente con el
+  // criterio de `gastos/page.tsx`.
+  const twelveMonthsAgo = ymdMonthsAgo(12);
+
   const invoiceIds = invoices.map((i) => i.id);
-  const [projectsRes, launchesRes, allProjects, allProducts, bridgeRes] =
-    await Promise.all([
+  const [
+    projectsRes,
+    launchesRes,
+    allProjects,
+    allProducts,
+    bridgeRes,
+    allMovementsRes,
+    expensesBankIdsRes,
+    invoicesBankIdsRes,
+    payrollBankIdsRes,
+    transfersBankIdsRes,
+    expenseBridgeAllRes,
+    invoiceBridgeAllRes,
+  ] = await Promise.all([
       projectIds.length > 0
         ? supabase
             .from("projects")
@@ -173,6 +196,29 @@ export default async function FacturasPage({
             )
             .in("invoice_id", invoiceIds)
         : Promise.resolve({ data: [] }),
+      supabase
+        .from("bank_movements")
+        .select("id, bank_id, kind, amount, occurred_at, description")
+        .gte("occurred_at", twelveMonthsAgo)
+        .order("occurred_at", { ascending: false }),
+      supabase
+        .from("expenses")
+        .select("bank_movement_id")
+        .not("bank_movement_id", "is", null),
+      supabase
+        .from("invoices")
+        .select("bank_movement_id")
+        .not("bank_movement_id", "is", null),
+      supabase
+        .from("payroll")
+        .select("bank_movement_id")
+        .not("bank_movement_id", "is", null),
+      supabase
+        .from("client_transfers")
+        .select("bank_movement_id")
+        .not("bank_movement_id", "is", null),
+      supabase.from("expense_bank_movements").select("bank_movement_id"),
+      supabase.from("invoice_bank_movements").select("bank_movement_id"),
     ]);
 
   const projectById = new Map<string, ProjectRow>(
@@ -242,31 +288,134 @@ export default async function FacturasPage({
       );
     }
   }
-  // Resolvemos nombres de bancos para los movements linkeados.
-  const bankIdsInBridge = Array.from(
+  // ─── Unconciled movements: set difference con todas las tablas satélite ─
+  interface BankMovementDbRow {
+    readonly id: string;
+    readonly bank_id: string;
+    readonly kind: "in" | "out";
+    readonly amount: number;
+    readonly occurred_at: string;
+    readonly description: string | null;
+  }
+  const allMovements =
+    (allMovementsRes.data ?? []) as unknown as BankMovementDbRow[];
+  const linkedBankIds = new Set<string>();
+  for (const r of (expensesBankIdsRes.data ?? []) as {
+    bank_movement_id: string | null;
+  }[]) {
+    if (r.bank_movement_id) linkedBankIds.add(r.bank_movement_id);
+  }
+  for (const r of (invoicesBankIdsRes.data ?? []) as {
+    bank_movement_id: string | null;
+  }[]) {
+    if (r.bank_movement_id) linkedBankIds.add(r.bank_movement_id);
+  }
+  for (const r of (payrollBankIdsRes.data ?? []) as {
+    bank_movement_id: string | null;
+  }[]) {
+    if (r.bank_movement_id) linkedBankIds.add(r.bank_movement_id);
+  }
+  for (const r of (transfersBankIdsRes.data ?? []) as {
+    bank_movement_id: string | null;
+  }[]) {
+    if (r.bank_movement_id) linkedBankIds.add(r.bank_movement_id);
+  }
+  for (const r of (expenseBridgeAllRes.data ?? []) as {
+    bank_movement_id: string;
+  }[]) {
+    linkedBankIds.add(r.bank_movement_id);
+  }
+  for (const r of (invoiceBridgeAllRes.data ?? []) as {
+    bank_movement_id: string;
+  }[]) {
+    linkedBankIds.add(r.bank_movement_id);
+  }
+  const unconciled = allMovements.filter((m) => !linkedBankIds.has(m.id));
+
+  // ─── Resolver nombres de bancos + proyectos para el drawer y el bridge ─
+  //
+  // Los bank_movements no tienen columna `currency` propia — heredan de
+  // `banks.currency` (introducida en 0103). Antes hardcodeábamos "ARS" para
+  // todos, lo cual generaba matches falsos: una factura USD contra
+  // movimientos de un banco USD quedaban con currencyMismatch=true y bajo
+  // score. Ahora el drawer ve la moneda real del banco.
+  interface BankRow {
+    readonly id: string;
+    readonly name: string;
+    readonly project_id: string;
+    readonly currency: "ARS" | "USD";
+  }
+  const bankIdsForBridge = Array.from(
     new Set(
       bridgeRows
         .map((b) => b.bank_movements?.bank_id)
         .filter((id): id is string => !!id),
     ),
   );
-  const bankNameById = new Map<string, string>();
-  if (bankIdsInBridge.length > 0) {
+  const bankIdsToResolve = Array.from(
+    new Set([
+      ...bankIdsForBridge,
+      ...unconciled.map((m) => m.bank_id),
+    ]),
+  );
+
+  const banks: BankRow[] = [];
+  if (bankIdsToResolve.length > 0) {
     const bankRes = await supabase
       .from("banks")
+      .select("id, name, project_id, currency")
+      .in("id", bankIdsToResolve);
+    banks.push(...((bankRes.data ?? []) as BankRow[]));
+  }
+  const bankById = new Map<string, BankRow>(banks.map((b) => [b.id, b]));
+
+  const bankProjectIds = Array.from(
+    new Set(banks.map((b) => b.project_id).filter((id): id is string => !!id)),
+  );
+  const missingProjectIds = bankProjectIds.filter((id) => !projectById.has(id));
+  const bankProjectNameById = new Map<string, string>();
+  for (const [id, p] of projectById) bankProjectNameById.set(id, p.name);
+  if (missingProjectIds.length > 0) {
+    const extraProjectsRes = await supabase
+      .from("projects")
       .select("id, name")
-      .in("id", bankIdsInBridge);
-    for (const b of ((bankRes.data ?? []) as { id: string; name: string }[])) {
-      bankNameById.set(b.id, b.name);
+      .in("id", missingProjectIds);
+    for (const p of ((extraProjectsRes.data ?? []) as {
+      id: string;
+      name: string;
+    }[])) {
+      bankProjectNameById.set(p.id, p.name);
     }
   }
+
+  // Backfill nombre de banco en los movimientos linkeados por factura.
   for (const [, arr] of movementsByInvoiceId) {
     for (const m of arr) {
-      m as LinkedMovement;
       (m as { bankName: string }).bankName =
-        bankNameById.get((m as { bankName: string }).bankName) ?? "—";
+        bankById.get((m as { bankName: string }).bankName)?.name ?? "—";
     }
   }
+
+  const unconciledForDrawer: UnconciledMovementForInvoice[] = unconciled.map(
+    (m) => {
+      const bank = bankById.get(m.bank_id);
+      return {
+        id: m.id,
+        amount: Number(m.amount),
+        occurredAt: m.occurred_at,
+        // Los movimientos no tienen moneda propia — la moneda es la del
+        // banco al que pertenecen (banks.currency, 0103). Sin banco visible
+        // por RLS caemos a ARS por consistencia con el default histórico.
+        currency: bank?.currency ?? "ARS",
+        kind: m.kind,
+        bankName: bank?.name ?? "—",
+        projectName: bank
+          ? bankProjectNameById.get(bank.project_id) ?? "—"
+          : "—",
+        description: m.description ?? "",
+      };
+    },
+  );
 
   const totalCount = invoices.length;
   const start = (page - 1) * PAGE_SIZE;
@@ -385,6 +534,7 @@ export default async function FacturasPage({
           totalCount={totalCount}
           projects={projectOptions}
           products={productOptions}
+          unconciledMovements={unconciledForDrawer}
           emptyTitle="No hay facturas cargadas todavía"
           emptyHint='Las facturas alimentan el ingreso de Kingrow (las clasificadas "Ingreso Kingrow"), el volumen del grupo, las cuentas por cobrar y el conteo de facturas pendientes. También se generan una por cuota al crear una venta (paso 4).'
         />
@@ -436,4 +586,13 @@ function parsePage(v: string | string[] | undefined): number {
   if (typeof v !== "string") return 1;
   const n = Number.parseInt(v, 10);
   return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+function ymdMonthsAgo(months: number): string {
+  const d = new Date();
+  d.setMonth(d.getMonth() - months);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }

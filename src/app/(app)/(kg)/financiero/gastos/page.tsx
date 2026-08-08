@@ -63,6 +63,7 @@ interface BankRow {
   readonly id: string;
   readonly name: string;
   readonly project_id: string;
+  readonly currency: "ARS" | "USD";
 }
 
 interface ProjectNameRow {
@@ -202,7 +203,7 @@ export default async function GastosPage({
     bankIds.length > 0
       ? supabase
           .from("banks")
-          .select("id, name, project_id")
+          .select("id, name, project_id, currency")
           .in("id", bankIds)
       : Promise.resolve({ data: [] as BankRow[] }),
   ]);
@@ -288,7 +289,10 @@ export default async function GastosPage({
       id: m.id,
       amount: Number(m.amount),
       occurredAt: m.occurred_at,
-      currency: "ARS",
+      // Moneda heredada de banks.currency (0103). Antes hardcodeábamos "ARS"
+      // y eso empujaba matches falsos: un gasto USD contra un movimiento de
+      // banco USD quedaba como currencyMismatch=true y no aparecía primero.
+      currency: bank?.currency ?? "ARS",
       kind: m.kind,
       bankName: bank?.name ?? "—",
       projectName: bank
