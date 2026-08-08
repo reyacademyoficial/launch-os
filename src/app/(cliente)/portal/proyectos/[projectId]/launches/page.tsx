@@ -2,18 +2,31 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { StatusBadge } from "@/components/dashboard/launches/status-badge";
-import { fmtLaunchWindow, fmtMoney, fmtMultiplier } from "@/lib/format";
+import { fmtLaunchWindow, fmtMultiplier } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import { listAggregatesForProject } from "@/lib/launch-daily/list";
-import { getKanbanSalesAggregatesForProject } from "@/lib/launch-sales/list";
+import {
+  getKanbanSalesAggregatesForProject,
+  getProjectRevenueUsdMap,
+} from "@/lib/launch-sales/list";
 import { listLaunchesForProject } from "@/lib/launches/list";
+import {
+  fmtUsd,
+  loadProjectFxRates,
+  resolveLaunchFallbackRate,
+} from "@/lib/money";
+import { createClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "Lanzamientos · Portal" };
 
 /**
  * Lista de lanzamientos para el cliente — vista plana de tabla.
  * Sin botones de crear/editar/borrar (cliente_role no tiene grant write).
- * Mismo cálculo de KPI por fila que la versión del equipo.
+ * Mismo cálculo de KPI por fila que la versión del equipo, con conversión FX
+ * a USD (launch rate → mensual `project_fx_rates` como fallback). `banks` y
+ * `payment_methods` van vacíos porque cliente_role no tiene grant sobre esas
+ * tablas (frontera org-scope de 0101); `sale.currency` + `payment.original_
+ * currency` alcanzan porque están backfilleados (0104/0106).
  */
 export default async function ClientLaunchesPage({
   params,
@@ -21,11 +34,35 @@ export default async function ClientLaunchesPage({
   readonly params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const [launches, adsAggregates, kanbanSalesAggregates] = await Promise.all([
-    listLaunchesForProject(projectId),
-    listAggregatesForProject(projectId),
-    getKanbanSalesAggregatesForProject(projectId),
-  ]);
+  const supabase = await createClient();
+  const [launches, adsAggregates, kanbanSalesAggregates, fxMap] =
+    await Promise.all([
+      listLaunchesForProject(projectId),
+      listAggregatesForProject(projectId),
+      getKanbanSalesAggregatesForProject(projectId),
+      loadProjectFxRates(supabase, projectId),
+    ]);
+
+  const launchesForFx = launches.map((l) => {
+    const row = l as unknown as {
+      ars_per_usd?: number | null;
+      date_start?: string | null;
+      date_end?: string | null;
+    };
+    return {
+      id: l.id,
+      ars_per_usd: row.ars_per_usd ?? null,
+      date_start: row.date_start ?? null,
+      date_end: row.date_end ?? null,
+    };
+  });
+  const revenueUsdMap = await getProjectRevenueUsdMap(
+    projectId,
+    launchesForFx,
+    fxMap,
+    [],
+    [],
+  );
 
   if (launches.length === 0) {
     return (
@@ -71,9 +108,24 @@ export default async function ClientLaunchesPage({
           </thead>
           <tbody>
             {launches.map((l) => {
+              const launchRow = l as unknown as {
+                ars_per_usd?: number | null;
+                ads_currency?: string;
+                date_start?: string | null;
+                date_end?: string | null;
+              };
+              const revenueRate = resolveLaunchFallbackRate(launchRow, fxMap);
+              const usdRevenue = revenueUsdMap.get(l.id);
               const kpi = calculateLaunchKPIs(l, {
                 adsAggregate: adsAggregates.get(l.id),
                 kanbanSalesAggregate: kanbanSalesAggregates.get(l.id),
+                adsRatePerUsd:
+                  launchRow.ads_currency === "ARS" && revenueRate
+                    ? revenueRate
+                    : null,
+                kanbanPledgedUsd: usdRevenue?.pledgedUsd ?? null,
+                kanbanCollectedUsd: usdRevenue?.collectedUsd ?? null,
+                revenueRatePerUsd: revenueRate,
               });
               const profitColor =
                 kpi.profitEstimated > 0
@@ -101,13 +153,13 @@ export default async function ClientLaunchesPage({
                     <StatusBadge status={l.status} />
                   </td>
                   <td className="px-4 py-3 text-right font-medium">
-                    {fmtMoney(kpi.revenueEstimated)}
+                    {fmtUsd(kpi.revenueEstimated)}
                   </td>
                   <td className="px-4 py-3 text-right">
                     {fmtMultiplier(kpi.roasEstimated)}
                   </td>
                   <td className={`px-4 py-3 text-right font-medium ${profitColor}`}>
-                    {fmtMoney(kpi.profitEstimated)}
+                    {fmtUsd(kpi.profitEstimated)}
                   </td>
                 </tr>
               );

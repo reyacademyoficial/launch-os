@@ -19,7 +19,7 @@ const MODEL_ID = "gpt-summary"; // placeholder hasta exponer el modelo real desd
 /**
  * Genera un resumen ejecutivo del launch y lo PERSISTE en `ai_runs` para
  * que quede en el historial. La RLS exige `can_edit_launches_in` para INSERT
- * → admin + operador disparan; analista/cliente no.
+ * → admin + operador disparan; coordinador/cliente no.
  *
  * Si la generación falla, persistimos `status='error'` + el error_detail
  * para debug. Esto cubre dos cosas: el historial muestra qué intentos hubo,

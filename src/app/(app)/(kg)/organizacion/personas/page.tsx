@@ -2,9 +2,14 @@ import type { Metadata } from "next";
 
 import { requireRole } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
+import { listAllUsers } from "@/lib/users/list";
 
 import { CreatePersonModal } from "./create-person-modal";
-import { PersonasTable, type PersonRow } from "./personas-table";
+import {
+  PersonasTable,
+  type AssignableUser,
+  type PersonRow,
+} from "./personas-table";
 
 export const metadata: Metadata = { title: "Personas" };
 
@@ -32,17 +37,32 @@ export default async function PersonasPage({
   const supabase = await createClient();
   // RLS de organization_people gatea por can_edit_organization — el listado
   // se limita solo por la etiqueta de estado, no hace falta filtrar por org.
-  const { data } = await supabase
-    .from("organization_people")
-    .select(
-      "id, full_name, national_id, email, phone, notes, active, created_at, monthly_salary, salary_currency",
-    )
-    .order("active", { ascending: false })
-    .order("full_name", { ascending: true });
+  const [{ data }, allUsers] = await Promise.all([
+    supabase
+      .from("organization_people")
+      .select(
+        "id, full_name, national_id, email, phone, notes, active, created_at, monthly_salary, salary_currency, auth_user_id",
+      )
+      .order("active", { ascending: false })
+      .order("full_name", { ascending: true }),
+    listAllUsers(),
+  ]);
 
   const rows = (data ?? []) as PersonRow[];
   const activeCount = rows.filter((p) => p.active).length;
   const inactiveCount = rows.length - activeCount;
+
+  // Usuarios asignables al dropdown de "Usuario Kingrow" en la edición.
+  // Excluimos cliente_role (portal externo, no operan) y soft-deleted.
+  // `listAllUsers` ya excluye rol dev. Dev con persona vinculada hay que
+  // hacerlo por Studio — es un caso edge que no justifica UI.
+  const assignableUsers: AssignableUser[] = allUsers
+    .filter((u) => u.role !== "cliente" && u.deletedAt == null)
+    .map((u) => ({
+      id: u.id,
+      email: u.email,
+      fullName: u.fullName,
+    }));
 
   const filtered =
     show === "all"
@@ -74,7 +94,11 @@ export default async function PersonasPage({
 
       <FilterTabs current={show} activeCount={activeCount} inactiveCount={inactiveCount} />
 
-      <PersonasTable rows={filtered} showingFilter={show} />
+      <PersonasTable
+        rows={filtered}
+        showingFilter={show}
+        assignableUsers={assignableUsers}
+      />
     </section>
   );
 }

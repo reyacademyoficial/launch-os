@@ -42,12 +42,17 @@ export type UpdateBankMovementState =
 
 export type DeleteBankMovementResult = { ok: true } | { error: string };
 
+export type BulkDeleteBankMovementsResult =
+  | { ok: true; deleted: number }
+  | { error: string };
+
 interface BankMovementPayload {
   readonly bankId: string;
   readonly kind: BankMovementKind;
   readonly amount: number;
   readonly occurredAt: string;
   readonly description: string | null;
+  readonly transactionNumber: string | null;
 }
 
 function parseFormData(
@@ -76,7 +81,10 @@ function parseFormData(
   const descriptionRaw = String(formData.get("description") ?? "").trim();
   const description = descriptionRaw.length === 0 ? null : descriptionRaw;
 
-  return { bankId, kind, amount, occurredAt, description };
+  const txRaw = String(formData.get("transaction_number") ?? "").trim();
+  const transactionNumber = txRaw.length === 0 ? null : txRaw;
+
+  return { bankId, kind, amount, occurredAt, description, transactionNumber };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -129,6 +137,7 @@ export async function createBankMovement(
     amount: parsed.amount,
     occurred_at: parsed.occurredAt,
     description: parsed.description,
+    transaction_number: parsed.transactionNumber,
     created_by: userData.user?.id ?? null,
   } as never;
 
@@ -170,6 +179,7 @@ export async function updateBankMovement(
     amount: parsed.amount,
     occurred_at: parsed.occurredAt,
     description: parsed.description,
+    transaction_number: parsed.transactionNumber,
   } as never;
 
   const { error } = await supabase
@@ -261,6 +271,91 @@ export async function deleteBankMovement(
   revalidatePath("/financiero/gastos");
   revalidatePath("/financiero");
   return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// bulkDeleteBankMovements — borrado masivo, rompe conciliaciones primero
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// A diferencia del delete individual (guardado por links), este action asume
+// que el operador quiere nuclearizar. Caso de uso: re-importar movimientos
+// desde cero. Antes de borrar los movimientos:
+//   - Vacía expense_bank_movements y invoice_bank_movements (bridges N:M).
+//     Los triggers recompute_*_paid_at limpian paid_at/bank_movement_id en
+//     los satélites afectados.
+//   - Pone bank_movement_id = NULL en payroll y client_transfers (FKs 1:1
+//     directas — no hay bridge intermedia).
+// Después borra los movimientos.
+//
+// Batched en chunks de 500 para no explotar el URL de PostgREST.
+
+const BULK_DELETE_BATCH_SIZE = 500;
+
+export async function bulkDeleteBankMovements(
+  movementIds: readonly string[],
+): Promise<BulkDeleteBankMovementsResult> {
+  await requireRole("superadmin");
+
+  const ids = Array.from(new Set(movementIds.filter((id) => id.length > 0)));
+  if (ids.length === 0) return { error: "No hay movimientos seleccionados." };
+
+  const supabase = await createClient();
+
+  let deleted = 0;
+  for (let i = 0; i < ids.length; i += BULK_DELETE_BATCH_SIZE) {
+    const slice = ids.slice(i, i + BULK_DELETE_BATCH_SIZE);
+
+    // 1. Romper bridges N:M (dispara recompute_*_paid_at)
+    const [expBridgeRes, invBridgeRes] = await Promise.all([
+      supabase
+        .from("expense_bank_movements")
+        .delete()
+        .in("bank_movement_id", slice),
+      supabase
+        .from("invoice_bank_movements")
+        .delete()
+        .in("bank_movement_id", slice),
+    ]);
+    if (expBridgeRes.error) {
+      return { error: translateBankMovementError(expBridgeRes.error) };
+    }
+    if (invBridgeRes.error) {
+      return { error: translateBankMovementError(invBridgeRes.error) };
+    }
+
+    // 2. Null-out en FKs 1:1
+    const [payRes, ctRes] = await Promise.all([
+      supabase
+        .from("payroll")
+        .update({ bank_movement_id: null } as never)
+        .in("bank_movement_id", slice),
+      supabase
+        .from("client_transfers")
+        .update({ bank_movement_id: null } as never)
+        .in("bank_movement_id", slice),
+    ]);
+    if (payRes.error) return { error: translateBankMovementError(payRes.error) };
+    if (ctRes.error) return { error: translateBankMovementError(ctRes.error) };
+
+    // 3. Borrar los movimientos
+    const { data, error } = await supabase
+      .from("bank_movements")
+      .delete()
+      .in("id", slice)
+      .select("id");
+
+    if (error) return { error: translateBankMovementError(error) };
+    deleted += (data as { id: string }[] | null)?.length ?? 0;
+  }
+
+  revalidatePath("/financiero/movimientos");
+  revalidatePath("/financiero/bancos");
+  revalidatePath("/financiero/gastos");
+  revalidatePath("/financiero/facturas");
+  revalidatePath("/financiero/nomina");
+  revalidatePath("/financiero/transferencias");
+  revalidatePath("/financiero");
+  return { ok: true, deleted };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

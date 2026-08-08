@@ -1,30 +1,20 @@
-import { requireSessionProfile } from "@/lib/supabase/auth";
+import { requireRole } from "@/lib/supabase/auth";
 import { KgTabsBar, type TabItem } from "@/components/kg/tabs-bar";
 
 /**
- * Layout del módulo Comercial. Envuelve las pestañas cross-proyecto que
- * antes vivían bajo `/proyectos/[id]/*` (productos, equipo, comisiones,
- * ranking). Cada tab acepta selector de proyecto para acotar.
+ * Layout del módulo Comercial (productos, equipo de ventas, comisiones, ranking).
  *
- * GATE DE ROL — no endurecer ni aflojar.
- * Igual criterio que `/financiero/layout.tsx`: el módulo depende del gate
- * ambient de `(app)/layout.tsx` (rechaza cliente). Los server actions de
- * escritura tienen su propio `requireRole("superadmin")` — ese gate NO se
- * afloja acá.
- *
- * Las pestañas se muestran a todos los roles no-cliente. Si un rol sin
- * permiso hace click en una acción de escritura, la server action lo rebota
- * a "/" via requireRole. Misma política que Financiero.
- *
- * En 6d-C1 arrancan Productos y Equipo (los simples). En 6d-C2 se suman
- * Comisiones y Ranking.
+ * Visible para superadmin / admin. Coordinador queda afuera (regla nueva:
+ * coordinador solo Clientes / Academia / Operaciones). Operadores y clientes
+ * son redirigidos a su módulo raíz vía requireRole. Los server actions de
+ * escritura tienen además su propio requireRole("superadmin").
  */
 export default async function ComercialLayout({
   children,
 }: {
   readonly children: React.ReactNode;
 }) {
-  await requireSessionProfile();
+  await requireRole("superadmin", "admin");
 
   const tabs: readonly TabItem[] = [
     { href: "/comercial/productos", label: "Productos" },

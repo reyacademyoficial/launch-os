@@ -18,7 +18,7 @@ export const metadata: Metadata = { title: "Alertas · Lanzamiento" };
  *
  * Quién puede tocar:
  *   - SELECT: cualquier miembro del proyecto (RLS por has_project_access).
- *     Analista y cliente (en el shell del equipo) ven la lista pero no
+ *     Coordinador y cliente (en el shell del equipo) ven la lista pero no
  *     pueden crear/editar/borrar — el form se oculta y los row actions
  *     también.
  *   - I/U/D: admin / operador / superadmin (can_edit_launches_in).

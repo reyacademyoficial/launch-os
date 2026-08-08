@@ -25,6 +25,8 @@ export interface PaymentMethodRowData {
   /** Currency del método (nullable en DB, usado al editar). */
   readonly currency: "ARS" | "USD" | null;
   readonly amountCollected: number;
+  /** Comisión pasarela acumulada — derivada del bridge factura↔movimiento (paso 5b). */
+  readonly gatewayFeeAccumulated: number;
   readonly active: boolean;
 }
 
@@ -39,7 +41,6 @@ export function MetodosPagoView({
   readonly projects: readonly ProjectOption[];
   readonly banks: readonly BankOption[];
 }) {
-  const [openCreate, setOpenCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const editingRow = editingId
     ? rows.find((r) => r.id === editingId) ?? null
@@ -79,6 +80,16 @@ export function MetodosPagoView({
       render: (r) => fmtNative(r.amountCollected, r.effectiveCurrency),
     },
     {
+      key: "gateway_fee",
+      label: "Comisión pasarela",
+      align: "right",
+      numeric: true,
+      render: (r) =>
+        r.gatewayFeeAccumulated > 0
+          ? fmtNative(r.gatewayFeeAccumulated, r.effectiveCurrency)
+          : "—",
+    },
+    {
       key: "state",
       label: "Estado",
       render: (r) => <ActivePill active={r.active} />,
@@ -95,40 +106,6 @@ export function MetodosPagoView({
 
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "flex-end",
-          padding: "10px 14px",
-          borderBottom: "1px solid var(--kg-border-subtle)",
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => setOpenCreate(true)}
-          disabled={projects.length === 0}
-          className="kg-focus"
-          style={{
-            padding: "6px 14px",
-            borderRadius: 999,
-            background: "var(--kg-accent-500)",
-            color: "#fff",
-            border: "none",
-            fontSize: 12,
-            fontWeight: 700,
-            cursor: projects.length === 0 ? "not-allowed" : "pointer",
-            opacity: projects.length === 0 ? 0.5 : 1,
-          }}
-          title={
-            projects.length === 0
-              ? "Necesitás al menos un proyecto para crear un método"
-              : "Crear un método de pago"
-          }
-        >
-          + Nuevo método
-        </button>
-      </div>
-
       <KgDataTable
         columns={columns}
         rows={rows}
@@ -136,14 +113,7 @@ export function MetodosPagoView({
         totalCount={totalCount}
         emptyTitle="No hay métodos de pago cargados"
         emptyHint="Cada proyecto configura sus métodos: transferencia, Stripe, Mercado Pago, efectivo… El banco elegido recibe los cobros que entran por ese método."
-      />
-
-      <PaymentMethodFormDrawer
-        mode="create"
-        open={openCreate}
-        onClose={() => setOpenCreate(false)}
-        projects={projects}
-        banks={banks}
+        maxBodyHeight="calc(100vh - 280px)"
       />
 
       {editingRow && (

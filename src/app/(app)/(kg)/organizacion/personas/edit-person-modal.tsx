@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 import { updatePerson, type UpdatePersonState } from "./actions";
+import type { AssignableUser } from "./personas-table";
 
 interface EditablePerson {
   readonly id: string;
@@ -18,9 +19,16 @@ interface EditablePerson {
   readonly notes: string | null;
   readonly monthly_salary: number;
   readonly salary_currency: "ARS" | "USD";
+  readonly auth_user_id: string | null;
 }
 
-export function EditPersonModal({ person }: { readonly person: EditablePerson }) {
+export function EditPersonModal({
+  person,
+  assignableUsers,
+}: {
+  readonly person: EditablePerson;
+  readonly assignableUsers: readonly AssignableUser[];
+}) {
   const [open, setOpen] = useState(false);
   const boundAction = updatePerson.bind(null, person.id);
   const [state, formAction, pending] = useActionState<UpdatePersonState, FormData>(
@@ -122,6 +130,30 @@ export function EditPersonModal({ person }: { readonly person: EditablePerson })
                   autoComplete="off"
                   defaultValue={person.email ?? ""}
                 />
+              </div>
+
+              <div>
+                <Label htmlFor="edit-auth_user_id">Usuario Kingrow</Label>
+                <select
+                  id="edit-auth_user_id"
+                  name="auth_user_id"
+                  defaultValue={person.auth_user_id ?? ""}
+                  className="w-full rounded-md border border-border bg-bg-elevated px-3 py-2 text-sm text-fg"
+                >
+                  <option value="">— Sin vincular —</option>
+                  {assignableUsers.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.email}
+                      {u.fullName ? ` · ${u.fullName}` : ""}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[10px] text-fg-subtle">
+                  Vincula esta persona con un usuario Kingrow. Cuando ese
+                  usuario entra a Operaciones, sus tareas asignadas
+                  aparecen en “Mis tareas”. Un usuario solo puede estar
+                  vinculado a una persona a la vez.
+                </p>
               </div>
 
               <div className="grid grid-cols-2 gap-4">

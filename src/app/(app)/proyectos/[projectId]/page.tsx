@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { LaunchFormModal } from "@/components/dashboard/launches/launch-form-modal";
 import { StatusBadge } from "@/components/dashboard/launches/status-badge";
@@ -27,7 +28,7 @@ import { listBanks } from "@/lib/banks/list";
 import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { aggregateProjectKPIs } from "@/lib/projects/aggregates";
 import { createClient } from "@/lib/supabase/server";
-import { userCanEditProject } from "@/lib/supabase/auth";
+import { requireSessionProfile, userCanEditLaunchesIn } from "@/lib/supabase/auth";
 
 import { createLaunch } from "./launches/actions";
 
@@ -41,6 +42,14 @@ export default async function OverviewPage({
   readonly params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
+
+  // Regla 2026-08-08: operador va directo al listado de launches — sin
+  // overview con KPIs agregados de revenue/profit del proyecto.
+  const profile = await requireSessionProfile();
+  if (profile.role === "operador") {
+    redirect(`/proyectos/${projectId}/launches`);
+  }
+
   const supabase = await createClient();
 
   const [
@@ -59,7 +68,7 @@ export default async function OverviewPage({
       .eq("id", projectId)
       .maybeSingle(),
     listLaunchesForProject(projectId),
-    userCanEditProject(projectId),
+    userCanEditLaunchesIn(projectId),
     listAggregatesForProject(projectId),
     getKanbanSalesAggregatesForProject(projectId),
     listPaymentMethods(projectId),

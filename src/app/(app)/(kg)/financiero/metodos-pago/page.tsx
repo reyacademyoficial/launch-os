@@ -11,14 +11,15 @@ import { listAllPaymentMethods } from "@/lib/payment-methods/list";
 import { listAccessibleProjects } from "@/lib/projects/list";
 import { createClient } from "@/lib/supabase/server";
 
-import type {
-  BankOption,
-  ProjectOption,
-} from "./payment-method-form-drawer";
 import {
   MetodosPagoView,
   type PaymentMethodRowData,
 } from "./metodos-pago-view";
+import { NewPaymentMethodButton } from "./new-method-button";
+import type {
+  BankOption,
+  ProjectOption,
+} from "./payment-method-form-drawer";
 
 export const metadata: Metadata = { title: "Métodos de pago · Financiero" };
 
@@ -35,6 +36,17 @@ const ACTIVE_OPTIONS: ReadonlyArray<{ value: ActiveParam; label: string }> = [
 interface PaymentRow {
   readonly amount: number;
   readonly payment_method_id: string | null;
+  readonly invoice_id: string | null;
+}
+
+interface InvoiceForFeeRow {
+  readonly id: string;
+  readonly amount_gross: number;
+}
+
+interface BridgePrincipalRow {
+  readonly invoice_id: string;
+  readonly bank_movements: { amount: number; kind: "in" | "out" } | null;
 }
 
 export default async function MetodosPagoPage({
@@ -55,12 +67,14 @@ export default async function MetodosPagoPage({
     listAllPaymentMethods(),
     listBanks(),
     listAccessibleProjects(),
-    // Cobros totales por método — para mostrar cuánto ingresó por cada uno.
-    supabase.from("payments").select("amount, payment_method_id"),
+    // Cobros por método (con link a factura si existe).
+    supabase
+      .from("payments")
+      .select("amount, payment_method_id, invoice_id"),
   ]);
   const payments = (paymentsRes.data ?? []) as unknown as PaymentRow[];
 
-  // Índice de agregación por método.
+  // Índice cobrado total por método.
   const collectedByMethod = new Map<string, number>();
   for (const p of payments) {
     if (!p.payment_method_id) continue;
@@ -68,6 +82,70 @@ export default async function MetodosPagoPage({
       p.payment_method_id,
       (collectedByMethod.get(p.payment_method_id) ?? 0) + Number(p.amount ?? 0),
     );
+  }
+
+  // ─── Comisión pasarela acumulada por método (paso 5b) ─────────────────
+  //
+  // Por factura: gateway_fee = amount_gross − Σ(bridge role='principal',
+  // kind='in'). Sólo cuenta cuando la suma es > 0 (factura ya conciliada).
+  // Atribución al método: el método del PRIMER payment linkeado a la
+  // factura. Modelo típico 1 factura ↔ 1 cobro; si aparece un caso raro
+  // (2 cobros con métodos distintos), atribuir al primero es suficiente y
+  // no doblamos la comisión.
+  const invoiceIds = Array.from(
+    new Set(
+      payments
+        .map((p) => p.invoice_id)
+        .filter((id): id is string => id != null),
+    ),
+  );
+  const gatewayFeeByMethod = new Map<string, number>();
+  if (invoiceIds.length > 0) {
+    const [invRes, bridgeRes] = await Promise.all([
+      supabase
+        .from("invoices")
+        .select("id, amount_gross")
+        .in("id", invoiceIds),
+      supabase
+        .from("invoice_bank_movements")
+        .select("invoice_id, bank_movements!inner(amount, kind)")
+        .eq("role", "principal")
+        .in("invoice_id", invoiceIds),
+    ]);
+    const invRows = (invRes.data ?? []) as unknown as InvoiceForFeeRow[];
+    const bridgeRows = (bridgeRes.data ?? []) as unknown as BridgePrincipalRow[];
+
+    const amountGrossByInvoice = new Map<string, number>();
+    for (const r of invRows) {
+      amountGrossByInvoice.set(r.id, Number(r.amount_gross));
+    }
+    const principalSumByInvoice = new Map<string, number>();
+    for (const b of bridgeRows) {
+      if (!b.bank_movements || b.bank_movements.kind !== "in") continue;
+      principalSumByInvoice.set(
+        b.invoice_id,
+        (principalSumByInvoice.get(b.invoice_id) ?? 0) +
+          Number(b.bank_movements.amount),
+      );
+    }
+    const methodByInvoice = new Map<string, string>();
+    for (const p of payments) {
+      if (!p.invoice_id || !p.payment_method_id) continue;
+      if (!methodByInvoice.has(p.invoice_id)) {
+        methodByInvoice.set(p.invoice_id, p.payment_method_id);
+      }
+    }
+    for (const [invoiceId, methodId] of methodByInvoice) {
+      const gross = amountGrossByInvoice.get(invoiceId);
+      const principal = principalSumByInvoice.get(invoiceId);
+      if (gross == null || principal == null || principal === 0) continue;
+      const fee = Math.max(gross - principal, 0);
+      if (fee === 0) continue;
+      gatewayFeeByMethod.set(
+        methodId,
+        (gatewayFeeByMethod.get(methodId) ?? 0) + fee,
+      );
+    }
   }
 
   const projectById = new Map(projects.map((p) => [p.id, p]));
@@ -95,6 +173,7 @@ export default async function MetodosPagoPage({
       effectiveCurrency: effectiveCurrency(m, bank),
       currency: m.currency,
       amountCollected: collectedByMethod.get(m.id) ?? 0,
+      gatewayFeeAccumulated: gatewayFeeByMethod.get(m.id) ?? 0,
       active: m.active,
     };
   });
@@ -173,7 +252,16 @@ export default async function MetodosPagoPage({
         )}
       </div>
 
-      <Panel title="Métodos de pago" pad={false}>
+      <Panel
+        title="Métodos de pago"
+        pad={false}
+        actions={
+          <NewPaymentMethodButton
+            projects={projectsForDrawer}
+            banks={banksForDrawer}
+          />
+        }
+      >
         <MetodosPagoView
           rows={rows}
           totalCount={totalCount}

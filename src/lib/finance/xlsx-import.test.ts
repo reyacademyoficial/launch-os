@@ -71,8 +71,8 @@ describe("parseMovementsWorkbook", () => {
     const result = await parseMovementsWorkbook(buffer, banksByName);
     expect(result.headerError).toBeUndefined();
     expect(result.rows).toHaveLength(1);
-    expect(result.rows[0].amount).toBe(5000);
-    expect(result.rows[0].kind).toBe("in");
+    expect(result.rows[0]!.amount).toBe(5000);
+    expect(result.rows[0]!.kind).toBe("in");
   });
 
   it("devuelve headerError cuando falta una columna requerida", async () => {
@@ -99,7 +99,7 @@ describe("parseMovementsWorkbook", () => {
     const result = await parseMovementsWorkbook(buffer, banksByName);
     expect(result.rows).toEqual([]);
     expect(result.errors).toHaveLength(1);
-    const reason = result.errors[0].reason;
+    const reason = result.errors[0]!.reason;
     expect(reason).toContain("Banco");
     expect(reason).toContain("Tipo");
     expect(reason).toContain("Monto");

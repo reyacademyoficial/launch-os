@@ -18,7 +18,7 @@ import { requireCanEditLaunchesIn } from "@/lib/supabase/auth";
  *
  * Verificaciones:
  *  1. `requireCanEditLaunchesIn(projectId)`: admin / operador / superadmin.
- *     Cliente y analista quedan fuera (consistente con el resto del CRM).
+ *     Cliente y coordinador quedan fuera (consistente con el resto del CRM).
  *  2. El launch existe y `launch.project_id` matchea el `projectId` del path.
  *     Defensa contra URL tampering — el gate de permisos es sobre projectId,
  *     necesitamos confirmar que el launch realmente pertenezca a ese proyecto.

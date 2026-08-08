@@ -1,28 +1,21 @@
-import { requireSessionProfile } from "@/lib/supabase/auth";
+import { requireRole } from "@/lib/supabase/auth";
 import { KgTabsBar, type TabItem } from "@/components/kg/tabs-bar";
 
 /**
- * Layout del módulo Financiero. Envuelve el dashboard + las 8 pestañas con
- * la barra de navegación intra-módulo.
+ * Layout del módulo Financiero.
  *
- * GATE DE ROL — no endurecer ni aflojar respecto a lo actual.
- * El dashboard de Financiero hoy solo depende del gate ambiente de
- * `(app)/layout.tsx` (rechaza a cliente). Los server actions de escritura
- * viven en la ruta de liquidaciones y tienen su propio `requireRole("superadmin")`
- * — ese gate NO se afloja acá.
- *
- * La pestaña "Liquidaciones" se muestra a todos los roles no-cliente en el
- * TabsBar; si un rol sin permiso (analista/operador) hace click, la page
- * de liquidaciones lo rebota a "/" via requireRole. Es defensa duplicada:
- * la UI no la esconde, pero la ruta no la deja pasar. Es la misma política
- * que tiene el sidebar con Organización/Sistema.
+ * Visible para superadmin / admin. Coordinador queda afuera (regla nueva:
+ * coordinador solo Clientes / Academia / Operaciones). Operadores y clientes
+ * son redirigidos a su módulo raíz vía requireRole (operador→/operaciones,
+ * cliente→/lanzamientos). Los server actions de escritura tienen además
+ * su propio requireRole("superadmin") — ese gate NO se afloja acá.
  */
 export default async function FinancieroLayout({
   children,
 }: {
   readonly children: React.ReactNode;
 }) {
-  await requireSessionProfile();
+  await requireRole("superadmin", "admin");
 
   const tabs: readonly TabItem[] = [
     { href: "/financiero", label: "Dashboard" },
@@ -37,6 +30,7 @@ export default async function FinancieroLayout({
     { href: "/financiero/activos", label: "Activos" },
     { href: "/financiero/pasivos", label: "Pasivos" },
     { href: "/financiero/tasas", label: "Tasas FX" },
+    { href: "/financiero/reportes/bancos", label: "Reportes" },
   ];
 
   return (

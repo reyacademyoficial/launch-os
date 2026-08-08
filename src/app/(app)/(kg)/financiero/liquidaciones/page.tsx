@@ -59,7 +59,7 @@ interface ActiveRuleDbRow {
 export default async function LiquidacionesPage() {
   // Gate duro: mismo criterio que /organizacion/reglas-split. Un cliente ni
   // llega a este layout (el filtro está en `(app)/layout.tsx`); un operador
-  // o analista se cae al home. RLS es el último guard — si esto se saltea,
+  // o coordinador se cae al home. RLS es el último guard — si esto se saltea,
   // las policies org-scope devuelven arrays vacíos igual.
   await requireRole("superadmin");
 

@@ -31,7 +31,12 @@ export type ColumnAlign = "left" | "right" | "center";
 
 export interface Column<Row> {
   readonly key: string;
-  readonly label: string;
+  /**
+   * Texto o nodo del header. Se acepta ReactNode para poder embeder controles
+   * (ej. checkbox "Seleccionar visibles") en la cabecera de la columna, sin
+   * tener que abrir un toolbar aparte encima de la tabla.
+   */
+  readonly label: ReactNode;
   /** Cómo alinear cabecera Y celda. Default: 'left'. Números → 'right'. */
   readonly align?: ColumnAlign;
   /** Ancho fijo (CSS width). Opcional — sin esto la columna es fluida. */
@@ -61,6 +66,17 @@ export interface DataTableProps<Row> {
   /** Contenido a mostrar cuando `rows.length === 0`. Requerido. */
   readonly emptyTitle: string;
   readonly emptyHint?: string;
+  /**
+   * Cuando se seta, el <tbody> scrollea internamente con este max-height
+   * (ej. `"calc(100vh - 340px)"` o `"60vh"`) y el <thead> queda sticky. Sin
+   * esto la tabla crece a lo alto y el scroll queda a nivel de página.
+   */
+  readonly maxBodyHeight?: string;
+  /**
+   * Slot opcional en la MISMA fila del footer "X de Y registros" — para
+   * inyectar el paginador y evitar que ocupe una franja aparte.
+   */
+  readonly footerActions?: ReactNode;
 }
 
 export function KgDataTable<Row>({
@@ -70,6 +86,8 @@ export function KgDataTable<Row>({
   totalCount,
   emptyTitle,
   emptyHint,
+  maxBodyHeight,
+  footerActions,
 }: DataTableProps<Row>) {
   if (rows.length === 0) {
     return <EmptyState title={emptyTitle} hint={emptyHint} />;
@@ -81,9 +99,22 @@ export function KgDataTable<Row>({
       ? `${fCount(total)} ${total === 1 ? "registro" : "registros"}`
       : `${fCount(rows.length)} de ${fCount(total)} registros`;
 
+  const scrollStyle = maxBodyHeight
+    ? { overflow: "auto" as const, maxHeight: maxBodyHeight }
+    : { overflowX: "auto" as const };
+
+  const stickyThStyle: React.CSSProperties | undefined = maxBodyHeight
+    ? {
+        position: "sticky",
+        top: 0,
+        zIndex: 1,
+        background: "var(--kg-surface-1-solid)",
+      }
+    : undefined;
+
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
-      <div style={{ overflowX: "auto" }}>
+      <div style={scrollStyle}>
         <table
           style={{
             width: "100%",
@@ -108,6 +139,7 @@ export function KgDataTable<Row>({
                     textTransform: "uppercase",
                     width: c.width,
                     whiteSpace: "nowrap",
+                    ...stickyThStyle,
                   }}
                 >
                   {c.label}
@@ -151,9 +183,14 @@ export function KgDataTable<Row>({
           color: "var(--kg-text-3)",
           fontSize: 11,
           fontVariantNumeric: "tabular-nums",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
         }}
       >
-        {showingRange}
+        <span>{showingRange}</span>
+        {footerActions}
       </div>
     </div>
   );

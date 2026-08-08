@@ -28,7 +28,13 @@ export type LinkPaymentResult =
   | { ok: true }
   | { error: string };
 
+export type ExpenseMovementRole = "principal" | "comision" | "otro";
+
 export type DeleteExpenseResult = { ok: true } | { error: string };
+
+export type BulkDeleteExpensesResult =
+  | { ok: true; deleted: number }
+  | { error: string };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Payload compartido create/update — mismos campos, dos actions distintas
@@ -43,6 +49,7 @@ interface ExpensePayload {
   readonly expenseDate: string;
   readonly dueDate: string | null;
   readonly notes: string | null;
+  readonly transactionNumber: string | null;
 }
 
 function parseExpenseFormData(formData: FormData): ExpensePayload | string {
@@ -89,6 +96,9 @@ function parseExpenseFormData(formData: FormData): ExpensePayload | string {
   const notesRaw = String(formData.get("notes") ?? "").trim();
   const notes = notesRaw.length === 0 ? null : notesRaw;
 
+  const txRaw = String(formData.get("transaction_number") ?? "").trim();
+  const transactionNumber = txRaw.length === 0 ? null : txRaw;
+
   return {
     description,
     category,
@@ -98,6 +108,7 @@ function parseExpenseFormData(formData: FormData): ExpensePayload | string {
     expenseDate,
     dueDate,
     notes,
+    transactionNumber,
   };
 }
 
@@ -151,6 +162,7 @@ export async function createExpense(
     paid_at: null,
     bank_movement_id: null,
     notes: parsed.notes,
+    transaction_number: parsed.transactionNumber,
   } as never;
 
   const { data, error } = await supabase
@@ -193,6 +205,7 @@ export async function updateExpense(
     expense_date: parsed.expenseDate,
     due_date: parsed.dueDate,
     notes: parsed.notes,
+    transaction_number: parsed.transactionNumber,
     // NO tocamos paid_at ni bank_movement_id. Ese flujo va por
     // linkExpenseToPayment / unlinkExpensePayment.
   } as never;
@@ -210,64 +223,102 @@ export async function updateExpense(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// linkExpenseToPayment — vincula un expense a un bank_movement existente
+// linkExpenseToMovement — inserta fila en expense_bank_movements (paso 6)
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// La operación conceptual clave del bloque. NO crea el bank_movement — usa
-// uno ya existente (feedback 6c-write.A: si crea, produce el duplicado que
-// este flujo viene a evitar).
+// Post 0119 el gasto puede tener N movimientos: principal (la salida en sí)
+// + comision (fee bancario/pasarela) + otro (ajustes). El trigger
+// recompute_expense_paid_at setea paid_at = MAX(occurred_at) de los
+// principales linkeados.
 //
-// El bank_movement puede tener OTROS expenses ya linkeados (por ej. una
-// transferencia que pagó dos SaaS). No forzamos 1-a-1 — el schema tampoco.
-// Al vincular:
-//   - paid_at ← bank_movement.occurred_at
-//   - bank_movement_id ← input
-//   - status implícito → 'pagado' (derivable de paid_at)
+// Guards:
+//   - Misma organización (RLS también lo bloquearía).
+//   - role='principal' requiere kind='out'.
+//   - role='comision' u 'otro' aceptan cualquier kind.
 
-export async function linkExpenseToPayment(
+export async function linkExpenseToMovement(
+  expenseId: string,
+  bankMovementId: string,
+  role: ExpenseMovementRole = "principal",
+): Promise<LinkPaymentResult> {
+  await requireRole("superadmin");
+
+  if (!expenseId || !bankMovementId) {
+    return { error: "Falta expense_id o bank_movement_id." };
+  }
+
+  const supabase = await createClient();
+
+  const [{ data: expRow }, { data: bmRow }] = await Promise.all([
+    supabase
+      .from("expenses")
+      .select("id, organization_id")
+      .eq("id", expenseId)
+      .maybeSingle(),
+    supabase
+      .from("bank_movements")
+      .select("id, kind, organization_id")
+      .eq("id", bankMovementId)
+      .maybeSingle(),
+  ]);
+  const exp = expRow as { id: string; organization_id: string } | null;
+  const bm = bmRow as
+    | { id: string; kind: "in" | "out"; organization_id: string }
+    | null;
+  if (!exp) return { error: "El gasto ya no existe o no tenés acceso." };
+  if (!bm) return { error: "El movimiento ya no existe o no tenés acceso." };
+  if (exp.organization_id !== bm.organization_id) {
+    return { error: "Gasto y movimiento son de organizaciones distintas." };
+  }
+  if (role === "principal" && bm.kind !== "out") {
+    return {
+      error:
+        "El movimiento 'principal' de un gasto tiene que ser una SALIDA. Elegí role='comision' u 'otro' para entradas (reembolsos).",
+    };
+  }
+
+  const { error } = await supabase
+    .from("expense_bank_movements")
+    .insert({
+      expense_id: expenseId,
+      bank_movement_id: bankMovementId,
+      role,
+    } as never);
+
+  if (error) {
+    if (error.code === "23505") {
+      return { error: "Ese movimiento ya está vinculado a este gasto." };
+    }
+    return { error: translateExpenseError(error) };
+  }
+
+  revalidatePath("/financiero/gastos");
+  revalidatePath("/financiero/movimientos");
+  revalidatePath("/financiero");
+  return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// unlinkExpenseFromMovement — borra fila del bridge; trigger recomputa paid_at
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function unlinkExpenseFromMovement(
   expenseId: string,
   bankMovementId: string,
 ): Promise<LinkPaymentResult> {
   await requireRole("superadmin");
 
+  if (!expenseId || !bankMovementId) {
+    return { error: "Falta expense_id o bank_movement_id." };
+  }
+
   const supabase = await createClient();
 
-  // Leer occurred_at del bank_movement para setear paid_at coherentemente.
-  // Sin esto, tendríamos que asumir "hoy" y perderíamos la fecha real del pago.
-  const bmRes = await supabase
-    .from("bank_movements")
-    .select("id, occurred_at, kind")
-    .eq("id", bankMovementId)
-    .maybeSingle();
-
-  if (bmRes.error) return { error: bmRes.error.message };
-  const bm = bmRes.data as
-    | { id: string; occurred_at: string; kind: "in" | "out" }
-    | null;
-  if (!bm) {
-    return {
-      error:
-        "El movimiento bancario ya no existe. Recargá y volvé a intentar.",
-    };
-  }
-  // Guard: un ingreso no puede pagar un gasto. La UI lo penaliza en el
-  // scoring pero permite verlo — este guard es la defensa final.
-  if (bm.kind === "in") {
-    return {
-      error:
-        "El movimiento elegido es una ENTRADA. Solo las salidas pueden pagar un gasto.",
-    };
-  }
-
-  const payload = {
-    paid_at: bm.occurred_at,
-    bank_movement_id: bm.id,
-  } as never;
-
   const { error } = await supabase
-    .from("expenses")
-    .update(payload)
-    .eq("id", expenseId);
+    .from("expense_bank_movements")
+    .delete()
+    .eq("expense_id", expenseId)
+    .eq("bank_movement_id", bankMovementId);
 
   if (error) return { error: translateExpenseError(error) };
 
@@ -278,29 +329,33 @@ export async function linkExpenseToPayment(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// unlinkExpensePayment — deshace la vinculación (sin borrar el expense)
+// Compat shims — mantienen la firma vieja mientras la UI del drawer migra.
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Único camino de corrección para una conciliación equivocada — el bloque
-// no expone borrado. Marca el gasto como impago (paid_at=null) y suelta el
-// link al movimiento (bank_movement_id=null). El bank_movement queda intacto
-// — puede vincularse a otro expense.
+// La UI actual (link-payment-drawer.tsx) es 1:1 (un gasto, un movimiento).
+// Se reescribe en el paso 6 para usar link/unlink del bridge. Estos wrappers
+// delegan al nuevo modelo para no romper nada en la transición.
+
+export async function linkExpenseToPayment(
+  expenseId: string,
+  bankMovementId: string,
+): Promise<LinkPaymentResult> {
+  return linkExpenseToMovement(expenseId, bankMovementId, "principal");
+}
 
 export async function unlinkExpensePayment(
   expenseId: string,
 ): Promise<LinkPaymentResult> {
   await requireRole("superadmin");
-
   const supabase = await createClient();
-  const payload = {
-    paid_at: null,
-    bank_movement_id: null,
-  } as never;
 
+  // Compat: la firma vieja no toma movementId. Borramos todas las filas del
+  // bridge para el gasto (típicamente sólo una, pre-migración). Trigger
+  // limpia paid_at al quedar el bridge vacío.
   const { error } = await supabase
-    .from("expenses")
-    .update(payload)
-    .eq("id", expenseId);
+    .from("expense_bank_movements")
+    .delete()
+    .eq("expense_id", expenseId);
 
   if (error) return { error: translateExpenseError(error) };
 
@@ -342,7 +397,19 @@ export async function deleteExpense(
     paid_at: string | null;
     bank_movement_id: string | null;
   };
-  if (row.paid_at != null || row.bank_movement_id != null) {
+
+  // Post 0119: el guard también mira el bridge — un gasto con sólo comisión
+  // linkeada (sin principal) puede tener paid_at=null pero seguir vinculado.
+  const { count: bridgeCount } = await supabase
+    .from("expense_bank_movements")
+    .select("expense_id", { count: "exact", head: true })
+    .eq("expense_id", expenseId);
+
+  if (
+    row.paid_at != null ||
+    row.bank_movement_id != null ||
+    (bridgeCount ?? 0) > 0
+  ) {
     return {
       error:
         "No se puede eliminar: el gasto está vinculado a un movimiento bancario. " +
@@ -360,6 +427,61 @@ export async function deleteExpense(
   revalidatePath("/financiero/gastos");
   revalidatePath("/financiero");
   return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// bulkDeleteExpenses — borrado masivo con quiebre previo de vínculos
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// A diferencia de deleteExpense (bloquea si hay pago vinculado), este action
+// asume nuclearización. Caso de uso: re-importar gastos desde cero. Vacía
+// primero el bridge expense_bank_movements para todos los ids — el trigger
+// recompute_expense_paid_at deja el gasto con paid_at=null — y después
+// borra los gastos.
+//
+// Los bank_movements NO se tocan: siguen existiendo como movimientos sin
+// conciliar en la tabla de movimientos, que es lo que se espera si el
+// operador está limpiando gastos para volver a cargarlos.
+
+const BULK_DELETE_BATCH_SIZE = 500;
+
+export async function bulkDeleteExpenses(
+  expenseIds: readonly string[],
+): Promise<BulkDeleteExpensesResult> {
+  await requireRole("superadmin");
+
+  const ids = Array.from(new Set(expenseIds.filter((id) => id.length > 0)));
+  if (ids.length === 0) return { error: "No hay gastos seleccionados." };
+
+  const supabase = await createClient();
+
+  let deleted = 0;
+  for (let i = 0; i < ids.length; i += BULK_DELETE_BATCH_SIZE) {
+    const slice = ids.slice(i, i + BULK_DELETE_BATCH_SIZE);
+
+    // 1. Vaciar bridge — dispara recompute_expense_paid_at
+    const bridgeRes = await supabase
+      .from("expense_bank_movements")
+      .delete()
+      .in("expense_id", slice);
+    if (bridgeRes.error) {
+      return { error: translateExpenseError(bridgeRes.error) };
+    }
+
+    // 2. Borrar los gastos
+    const { data, error } = await supabase
+      .from("expenses")
+      .delete()
+      .in("id", slice)
+      .select("id");
+    if (error) return { error: translateExpenseError(error) };
+    deleted += (data as { id: string }[] | null)?.length ?? 0;
+  }
+
+  revalidatePath("/financiero/gastos");
+  revalidatePath("/financiero/movimientos");
+  revalidatePath("/financiero");
+  return { ok: true, deleted };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

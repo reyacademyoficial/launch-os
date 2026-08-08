@@ -211,6 +211,212 @@ export async function buildExpensesWorkbook(
   return finalize(workbook);
 }
 
+// ─── Bank report (paso 9) ────────────────────────────────────────────────
+
+export interface BankReportBucketRow {
+  readonly bankName: string;
+  readonly currency: "ARS" | "USD";
+  readonly opening: number;
+  readonly movementsIn: number;
+  readonly movementsOut: number;
+  readonly net: number;
+  readonly closing: number;
+  readonly movementCount: number;
+  readonly linkedCount: number;
+  readonly unconciledCount: number;
+}
+
+export interface BankReportConsolidatedRow {
+  readonly currency: "ARS" | "USD";
+  readonly opening: number;
+  readonly movementsIn: number;
+  readonly movementsOut: number;
+  readonly net: number;
+  readonly closing: number;
+  readonly movementCount: number;
+  readonly linkedCount: number;
+}
+
+export async function buildBankReportWorkbook(
+  byBank: ReadonlyArray<BankReportBucketRow>,
+  consolidated: ReadonlyArray<BankReportConsolidatedRow>,
+  periodLabel: string,
+): Promise<Uint8Array> {
+  const workbook = newWorkbook();
+
+  const summary = workbook.addWorksheet("Resumen");
+  summary.columns = [
+    { header: "Concepto", key: "concept", width: 34 },
+    { header: "Valor", key: "value", width: 24 },
+  ];
+  summary.addRow({ concept: "Rango", value: periodLabel });
+  summary.addRow({ concept: "Bancos", value: byBank.length });
+  summary.addRow({
+    concept: "Total movimientos",
+    value: byBank.reduce((a, b) => a + b.movementCount, 0),
+  });
+  summary.addRow({
+    concept: "Sin conciliar",
+    value: byBank.reduce((a, b) => a + b.unconciledCount, 0),
+  });
+  boldHeader(summary);
+
+  const detail = workbook.addWorksheet("Por banco");
+  detail.columns = [
+    { header: "Banco", key: "bank", width: 24 },
+    { header: "Moneda", key: "currency", width: 8 },
+    { header: "Saldo apertura", key: "opening", width: 16, style: MONEY_STYLE },
+    { header: "Ingresos", key: "in", width: 16, style: MONEY_STYLE },
+    { header: "Egresos", key: "out", width: 16, style: MONEY_STYLE },
+    { header: "Neto", key: "net", width: 16, style: MONEY_STYLE },
+    { header: "Saldo cierre", key: "closing", width: 16, style: MONEY_STYLE },
+    { header: "# movimientos", key: "count", width: 14 },
+    { header: "Conciliados", key: "linked", width: 12 },
+    { header: "Sin conciliar", key: "unconciled", width: 14 },
+  ];
+  for (const r of byBank) {
+    detail.addRow({
+      bank: r.bankName,
+      currency: r.currency,
+      opening: r.opening,
+      in: r.movementsIn,
+      out: -r.movementsOut,
+      net: r.net,
+      closing: r.closing,
+      count: r.movementCount,
+      linked: r.linkedCount,
+      unconciled: r.unconciledCount,
+    });
+  }
+  boldHeader(detail);
+
+  const cons = workbook.addWorksheet("Consolidado");
+  cons.columns = [
+    { header: "Moneda", key: "currency", width: 10 },
+    { header: "Saldo apertura", key: "opening", width: 16, style: MONEY_STYLE },
+    { header: "Ingresos", key: "in", width: 16, style: MONEY_STYLE },
+    { header: "Egresos", key: "out", width: 16, style: MONEY_STYLE },
+    { header: "Neto", key: "net", width: 16, style: MONEY_STYLE },
+    { header: "Saldo cierre", key: "closing", width: 16, style: MONEY_STYLE },
+    { header: "# movimientos", key: "count", width: 14 },
+    { header: "Conciliados", key: "linked", width: 12 },
+  ];
+  for (const c of consolidated) {
+    cons.addRow({
+      currency: c.currency,
+      opening: c.opening,
+      in: c.movementsIn,
+      out: -c.movementsOut,
+      net: c.net,
+      closing: c.closing,
+      count: c.movementCount,
+      linked: c.linkedCount,
+    });
+  }
+  boldHeader(cons);
+
+  return finalize(workbook);
+}
+
+// ─── Invoice report (paso 10) ────────────────────────────────────────────
+
+export interface InvoiceReportBucketRow {
+  readonly status: "emitida" | "cobrada" | "vencida" | "anulada";
+  readonly currency: string;
+  readonly count: number;
+  readonly amountGross: number;
+  readonly gatewayFee: number;
+}
+
+export interface InvoiceReportDetailExportRow {
+  readonly invoiceNumber: string | null;
+  readonly issueDate: string;
+  readonly dueDate: string | null;
+  readonly status: "emitida" | "cobrada" | "vencida" | "anulada";
+  readonly currency: string;
+  readonly amountGross: number;
+  readonly gatewayFee: number | null;
+  readonly projectName: string;
+  readonly buyerName: string | null;
+  readonly description: string;
+}
+
+export async function buildInvoiceReportWorkbook(
+  buckets: ReadonlyArray<InvoiceReportBucketRow>,
+  detail: ReadonlyArray<InvoiceReportDetailExportRow>,
+  periodLabel: string,
+): Promise<Uint8Array> {
+  const workbook = newWorkbook();
+
+  const summary = workbook.addWorksheet("Resumen");
+  summary.columns = [
+    { header: "Concepto", key: "concept", width: 30 },
+    { header: "Valor", key: "value", width: 24 },
+  ];
+  summary.addRow({ concept: "Rango", value: periodLabel });
+  summary.addRow({ concept: "Total facturas", value: detail.length });
+  boldHeader(summary);
+
+  const bucketSheet = workbook.addWorksheet("Por estado");
+  bucketSheet.columns = [
+    { header: "Estado", key: "status", width: 14 },
+    { header: "Moneda", key: "currency", width: 10 },
+    { header: "# facturas", key: "count", width: 12 },
+    { header: "Monto bruto", key: "gross", width: 16, style: MONEY_STYLE },
+    { header: "Comisión pasarela", key: "fee", width: 18, style: MONEY_STYLE },
+  ];
+  for (const b of buckets) {
+    bucketSheet.addRow({
+      status: statusLabelInvoice(b.status),
+      currency: b.currency,
+      count: b.count,
+      gross: b.amountGross,
+      fee: b.gatewayFee,
+    });
+  }
+  boldHeader(bucketSheet);
+
+  const detailSheet = workbook.addWorksheet("Detalle");
+  detailSheet.columns = [
+    { header: "Nº", key: "number", width: 14 },
+    { header: "Emisión", key: "issue", width: 12 },
+    { header: "Vencimiento", key: "due", width: 12 },
+    { header: "Estado", key: "status", width: 12 },
+    { header: "Moneda", key: "currency", width: 8 },
+    { header: "Monto", key: "amount", width: 16, style: MONEY_STYLE },
+    { header: "Comisión pasarela", key: "fee", width: 18, style: MONEY_STYLE },
+    { header: "Proyecto", key: "project", width: 22 },
+    { header: "Comprador", key: "buyer", width: 26 },
+    { header: "Descripción", key: "description", width: 40 },
+  ];
+  for (const r of detail) {
+    detailSheet.addRow({
+      number: r.invoiceNumber ?? "",
+      issue: ymdToDate(r.issueDate),
+      due: r.dueDate ? ymdToDate(r.dueDate) : "",
+      status: statusLabelInvoice(r.status),
+      currency: r.currency,
+      amount: r.amountGross,
+      fee: r.gatewayFee ?? "",
+      project: r.projectName,
+      buyer: r.buyerName ?? "",
+      description: r.description,
+    });
+  }
+  boldHeader(detailSheet);
+
+  return finalize(workbook);
+}
+
+function statusLabelInvoice(
+  s: "emitida" | "cobrada" | "vencida" | "anulada",
+): string {
+  if (s === "cobrada") return "Cobrada";
+  if (s === "vencida") return "Vencida";
+  if (s === "anulada") return "Anulada";
+  return "Emitida";
+}
+
 // ─── internals ───────────────────────────────────────────────────────────
 
 const MONEY_STYLE = {

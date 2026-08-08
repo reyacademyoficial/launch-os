@@ -10,11 +10,17 @@ import { NavLink } from "../dashboard/nav-link";
  * al scope de proyecto: Calculadora y Admin viven en el KingrowShell (fuera
  * del proyecto), acá quedan solo las rutas que operan sobre `/proyectos/[id]`.
  *
- * Regla dura: cliente NO llega acá — el gate de (app)/layout.tsx redirige a
- * /portal. Por eso no defiendo con `showCrm` como lo hacía el sidebar viejo:
- * en este shell no hay clientes por construcción.
+ * Filtro por rol (2026-08-08):
+ *   - operador  → oculto Overview y grupo Ventas. Va directo a Lanzamientos
+ *     y solo ve ejecución (sin plata pactada/cobrada). Consistente con los
+ *     redirects server-side en /page.tsx, /ventas y /cobros.
+ *   - cliente   → ve Overview + Lanzamientos + Analítica + Ventas/Cobros
+ *     (readonly, canEdit=false vía RLS). Regla nueva: cliente puede ver
+ *     ventas y cobros sin editar.
+ *   - resto (admin / coordinador / superadmin / dev) → ve todo.
  */
-export function ProjectSidebar({ profile: _profile }: { readonly profile: SessionProfile }) {
+export function ProjectSidebar({ profile }: { readonly profile: SessionProfile }) {
+  const isOperador = profile.role === "operador";
   return (
     <aside
       className="flex w-60 shrink-0 flex-col overflow-y-auto border-r border-border bg-bg-elevated px-4 py-6"
@@ -27,9 +33,11 @@ export function ProjectSidebar({ profile: _profile }: { readonly profile: Sessio
       </div>
 
       <nav className="space-y-1">
-        <NavLink scopedSuffix="" exact>
-          Overview
-        </NavLink>
+        {!isOperador && (
+          <NavLink scopedSuffix="" exact>
+            Overview
+          </NavLink>
+        )}
         <NavLink scopedSuffix="/launches">Lanzamientos</NavLink>
         <NavLink scopedSuffix="/analitica">Analítica</NavLink>
         {/*
@@ -38,10 +46,14 @@ export function ProjectSidebar({ profile: _profile }: { readonly profile: Sessio
           configuración/administración (Equipo, Ranking, Comisiones,
           Productos, Métodos de pago, Bancos) vive en Kingrow.
         */}
-        <NavGroup label="Ventas" scopedSuffixes={["/ventas", "/cobros"]}>
-          <NavLink scopedSuffix="/ventas">Ventas</NavLink>
-          <NavLink scopedSuffix="/cobros">Cobros</NavLink>
-        </NavGroup>
+        {!isOperador && (
+          <NavGroup label="Ventas" scopedSuffixes={["/ventas", "/cobros"]}>
+            <NavLink scopedSuffix="/ventas">Ventas</NavLink>
+            <NavLink scopedSuffix="/cobros">Cobros</NavLink>
+          </NavGroup>
+        )}
+        {/* Calculadora — herramienta transversal, accede desde el contexto de proyecto */}
+        <NavLink href="/calculadora">Calculadora</NavLink>
       </nav>
     </aside>
   );

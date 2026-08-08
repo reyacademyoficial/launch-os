@@ -8,12 +8,15 @@ import { fmtNative, fmtUsd } from "@/lib/money";
 import { setBankActive } from "./actions";
 import { BankFormDrawer } from "./bank-form-drawer";
 
+// GastosView / FacturasView pattern: la vista se encarga del edit drawer y
+// de la tabla; el "+ Nuevo banco" vive en el header del Panel via `actions`
+// (ver ./new-bank-button + ./page.tsx).
+
 export interface BankRowData {
   readonly id: string;
   readonly name: string;
   readonly currency: "ARS" | "USD";
   readonly openingBalance: number;
-  readonly fromPayments: number;
   readonly movementsIn: number;
   readonly movementsOut: number;
   readonly total: number;
@@ -29,7 +32,6 @@ export function BancosView({
   readonly rows: readonly BankRowData[];
   readonly totalCount: number;
 }) {
-  const [openCreate, setOpenCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const editingRow = editingId
     ? rows.find((r) => r.id === editingId) ?? null
@@ -48,13 +50,6 @@ export function BancosView({
       align: "right",
       numeric: true,
       render: (r) => fmtNative(r.openingBalance, r.currency),
-    },
-    {
-      key: "in",
-      label: "Cobros",
-      align: "right",
-      numeric: true,
-      render: (r) => fmtNative(r.fromPayments, r.currency),
     },
     {
       key: "mvIn",
@@ -106,46 +101,14 @@ export function BancosView({
 
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "flex-end",
-          padding: "10px 14px",
-          borderBottom: "1px solid var(--kg-border-subtle)",
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => setOpenCreate(true)}
-          className="kg-focus"
-          style={{
-            padding: "6px 14px",
-            borderRadius: 999,
-            background: "var(--kg-accent-500)",
-            color: "#fff",
-            border: "none",
-            fontSize: 12,
-            fontWeight: 700,
-            cursor: "pointer",
-          }}
-        >
-          + Nuevo banco
-        </button>
-      </div>
-
       <KgDataTable
         columns={columns}
         rows={rows}
         rowKey={(r) => r.id}
         totalCount={totalCount}
         emptyTitle="No hay bancos registrados"
-        emptyHint="Los bancos son las cuentas donde Kingrow deposita cobros. Cada método de pago se enlaza a un banco desde Métodos de pago. El saldo se calcula: saldo inicial + cobros vía métodos + movimientos manuales de entrada − movimientos manuales de salida."
-      />
-
-      <BankFormDrawer
-        mode="create"
-        open={openCreate}
-        onClose={() => setOpenCreate(false)}
+        emptyHint="Los bancos son las cuentas donde Kingrow opera. El saldo se calcula: saldo inicial + movimientos de entrada − movimientos de salida. Los cobros de ventas NO alimentan el saldo — para que un cobro impacte el banco hay que cargar el movimiento correspondiente y vincular la factura por Nº de transacción."
+        maxBodyHeight="calc(100vh - 280px)"
       />
 
       {editingRow && (

@@ -4,20 +4,13 @@ import { requireSessionProfile } from "@/lib/supabase/auth";
 
 import { PasswordForm, ProfileForm } from "./forms";
 
-export const metadata: Metadata = { title: "Configuración" };
+export const metadata: Metadata = { title: "Mi cuenta · Configuración" };
 
-export default async function ConfigurationPage() {
+export default async function ConfiguracionPage() {
   const profile = await requireSessionProfile();
 
   return (
     <section className="max-w-xl space-y-10">
-      <header>
-        <h1 className="text-2xl font-bold">Configuración</h1>
-        <p className="mt-1 text-sm text-fg-muted">
-          Actualizá tus datos personales y cambiá tu contraseña.
-        </p>
-      </header>
-
       <div className="space-y-3">
         <h2 className="text-base font-semibold text-fg">Mi información</h2>
         <ProfileForm initialFullName={profile.fullName} email={profile.email} />

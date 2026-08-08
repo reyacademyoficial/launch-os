@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import type { ReactNode } from "react";
+import { useMemo, useState, useTransition } from "react";
 
 import { KgDataTable, type Column } from "@/components/kg/data-table";
 import {
@@ -9,9 +10,8 @@ import {
 } from "@/lib/finance/expense-categories";
 import { fMoney } from "@/lib/finance/format";
 
-import { deleteExpense } from "./actions";
+import { bulkDeleteExpenses, deleteExpense } from "./actions";
 import { ExpenseFormDrawer } from "./expense-form-drawer";
-import { ImportExpensesButton } from "./import-drawer";
 import {
   LinkPaymentDrawer,
   type UnconciledMovement,
@@ -35,6 +35,16 @@ export interface ExpenseRowData {
   readonly paidAt: string | null;
   readonly bankMovementId: string | null;
   readonly notes: string | null;
+  readonly transactionNumber: string | null;
+  readonly linkedMovements: ReadonlyArray<{
+    readonly movementId: string;
+    readonly role: "principal" | "comision" | "otro";
+    readonly amount: number;
+    readonly kind: "in" | "out";
+    readonly occurredAt: string;
+    readonly description: string | null;
+    readonly bankName: string;
+  }>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -45,16 +55,21 @@ export function GastosView({
   rows,
   totalCount,
   unconciledMovements,
-  exportHref,
+  footerActions,
 }: {
   readonly rows: readonly ExpenseRowData[];
   readonly totalCount: number;
   readonly unconciledMovements: readonly UnconciledMovement[];
-  readonly exportHref: string;
+  /** Slot para el paginador — va en la misma fila que "X de Y registros". */
+  readonly footerActions?: ReactNode;
 }) {
-  const [openCreate, setOpenCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [linkingId, setLinkingId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkPending, startBulk] = useTransition();
 
   const editingRow = editingId
     ? rows.find((r) => r.id === editingId) ?? null
@@ -63,7 +78,81 @@ export function GastosView({
     ? rows.find((r) => r.id === linkingId) ?? null
     : null;
 
+  const visibleIds = useMemo(() => rows.map((r) => r.id), [rows]);
+  const allVisibleSelected =
+    visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+  const someVisibleSelected =
+    !allVisibleSelected && visibleIds.some((id) => selected.has(id));
+  const selectedCount = selected.size;
+
+  function toggleRow(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function toggleAllVisible() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        for (const id of visibleIds) next.delete(id);
+      } else {
+        for (const id of visibleIds) next.add(id);
+      }
+      return next;
+    });
+  }
+  function clearSelection() {
+    setSelected(new Set<string>());
+  }
+  function handleBulkDelete() {
+    if (selectedCount === 0) return;
+    const msg =
+      `¿Eliminar ${selectedCount} gasto(s)?\n\n` +
+      `Si alguno tiene un pago vinculado, se va a romper el vínculo — el ` +
+      `movimiento bancario queda intacto pero sin gasto que lo justifique.\n\n` +
+      `Esta acción es IRREVERSIBLE.`;
+    if (!confirm(msg)) return;
+    const ids = Array.from(selected);
+    setBulkError(null);
+    startBulk(async () => {
+      const r = await bulkDeleteExpenses(ids);
+      if ("error" in r) {
+        setBulkError(r.error);
+      } else {
+        clearSelection();
+      }
+    });
+  }
+
   const columns: Column<ExpenseRowData>[] = [
+    {
+      key: "select",
+      label: (
+        <input
+          type="checkbox"
+          checked={allVisibleSelected}
+          ref={(el) => {
+            if (el) el.indeterminate = someVisibleSelected;
+          }}
+          disabled={rows.length === 0}
+          onChange={toggleAllVisible}
+          aria-label="Seleccionar gastos visibles"
+          title="Seleccionar todos los gastos visibles en esta página"
+        />
+      ),
+      width: "36px",
+      render: (r) => (
+        <input
+          type="checkbox"
+          checked={selected.has(r.id)}
+          onChange={() => toggleRow(r.id)}
+          aria-label={`Seleccionar gasto ${r.description}`}
+        />
+      ),
+    },
     { key: "date", label: "Fecha", render: (r) => fmtDate(r.expenseDate) },
     {
       key: "description",
@@ -117,6 +206,18 @@ export function GastosView({
       render: (r) => <PaidPill paidAt={r.paidAt} />,
     },
     {
+      key: "transaction_number",
+      label: "Nº transacción",
+      render: (r) =>
+        r.transactionNumber ? (
+          <span title={r.transactionNumber} style={ellipsis}>
+            {r.transactionNumber}
+          </span>
+        ) : (
+          "—"
+        ),
+    },
+    {
       key: "actions",
       label: "",
       align: "right",
@@ -130,44 +231,71 @@ export function GastosView({
     },
   ];
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
+  // Bar de selección: sólo aparece cuando hay filas marcadas. La checkbox
+  // "seleccionar visibles" vive en el toolbar mínimo del panel (arriba a la
+  // izquierda) para no ocupar una franja permanente cuando no se usa.
+  const selectionBar =
+    selectedCount > 0 ? (
       <div
         style={{
           display: "flex",
-          justifyContent: "flex-end",
-          gap: 8,
-          padding: "10px 14px",
+          alignItems: "center",
+          gap: 10,
+          padding: "8px 14px",
           borderBottom: "1px solid var(--kg-border-subtle)",
+          fontSize: 12,
+          color: "var(--kg-text-2)",
+          flexWrap: "wrap",
         }}
       >
-        <a
-          href={exportHref}
-          className="kg-focus"
-          style={ghostBtnLg}
-          title="Exportar la vista actual a Excel"
-        >
-          Exportar Excel
-        </a>
-        <ImportExpensesButton />
+        <span style={{ color: "var(--kg-text-3)" }}>
+          {selectedCount} seleccionado(s)
+        </span>
         <button
           type="button"
-          onClick={() => setOpenCreate(true)}
+          onClick={clearSelection}
+          className="kg-focus"
+          style={ghostBtn}
+          title="Deseleccionar todos"
+        >
+          Limpiar
+        </button>
+        <button
+          type="button"
+          onClick={handleBulkDelete}
+          disabled={bulkPending}
           className="kg-focus"
           style={{
             padding: "6px 14px",
             borderRadius: 999,
-            background: "var(--kg-accent-500)",
+            background: "#EF4444",
             color: "#fff",
             border: "none",
             fontSize: 12,
             fontWeight: 700,
-            cursor: "pointer",
+            cursor: bulkPending ? "wait" : "pointer",
+            opacity: bulkPending ? 0.6 : 1,
           }}
+          title="Borrar los gastos seleccionados. Rompe cualquier vínculo con movimientos bancarios."
         >
-          + Nuevo gasto
+          {bulkPending
+            ? "Borrando…"
+            : `Borrar ${selectedCount} seleccionado(s)`}
         </button>
+        {bulkError && (
+          <span
+            style={{ color: "#EF4444", fontSize: 11 }}
+            title={bulkError}
+          >
+            ⚠ {bulkError}
+          </span>
+        )}
       </div>
+    ) : null;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column" }}>
+      {selectionBar}
 
       <KgDataTable
         columns={columns}
@@ -176,12 +304,11 @@ export function GastosView({
         totalCount={totalCount}
         emptyTitle="No hay gastos cargados"
         emptyHint="Sin gastos cargados, los KPIs Gastos operativos, Utilidad neta y Burn del dashboard financiero quedan en cero. Los movimientos bancarios de salida (pestaña Movimientos) NO alimentan estos KPIs — cargar el gasto acá es lo que los hace visibles."
-      />
-
-      <ExpenseFormDrawer
-        mode="create"
-        open={openCreate}
-        onClose={() => setOpenCreate(false)}
+        // Igual criterio que Facturas: la tabla scrollea internamente y evita
+        // el scroll de página. Offset compensa ContextBar + filtros + header
+        // del Panel + footer/paginador embebido.
+        maxBodyHeight="calc(100vh - 280px)"
+        footerActions={footerActions}
       />
 
       {editingRow && (
@@ -199,6 +326,7 @@ export function GastosView({
             expenseDate: editingRow.expenseDate,
             dueDate: editingRow.dueDate,
             notes: editingRow.notes,
+            transactionNumber: editingRow.transactionNumber,
           }}
         />
       )}
@@ -213,6 +341,7 @@ export function GastosView({
             expenseDate: linkingRow.expenseDate,
             paidAt: linkingRow.paidAt,
             bankMovementId: linkingRow.bankMovementId,
+            linkedMovements: linkingRow.linkedMovements,
           }}
           unconciledMovements={unconciledMovements}
           onClose={() => setLinkingId(null)}
@@ -314,20 +443,6 @@ const ghostBtn: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
   cursor: "pointer",
-};
-
-const ghostBtnLg: React.CSSProperties = {
-  padding: "6px 14px",
-  borderRadius: 999,
-  background: "transparent",
-  border: "1px solid var(--kg-border-subtle)",
-  color: "var(--kg-text-2)",
-  fontSize: 12,
-  fontWeight: 700,
-  cursor: "pointer",
-  textDecoration: "none",
-  display: "inline-flex",
-  alignItems: "center",
 };
 
 const ellipsis: React.CSSProperties = {

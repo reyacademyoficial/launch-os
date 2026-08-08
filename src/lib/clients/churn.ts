@@ -2,9 +2,9 @@
  * CHURN de clientes gestionados — Bloque 3 · Kingrow.
  *
  * DEFINICIÓN ADOPTADA (churn confirmado):
- *   Un project cuenta como CHURNED si al menos una de las dos cosas:
+ *   Un cliente cuenta como CHURNED si al menos una de las dos cosas:
  *     a) project_health.relationship_status = 'perdida'
- *     b) La renewal más reciente del project tiene status = 'perdida'
+ *     b) La renewal más reciente del cliente tiene status = 'perdida'
  *
  * Es un OR — la fuente de verdad más rica gana. Un operador puede marcar
  * un cliente como perdido antes de que expire su renewal (churn temprano),
@@ -18,12 +18,12 @@
  * FÓRMULAS
  *
  *   churnRate(cohort) = churned / total
- *   Solo cohorts >= 1 project para evitar división por cero (devolvemos
+ *   Solo cohorts >= 1 cliente para evitar división por cero (devolvemos
  *   null en ese caso — el consumer decide cómo renderizarlo).
  *
  * NO HAY ROLLING WINDOW: churnRate lifetime = churned al día de hoy sobre
  * total histórico del cohort que pasás. Si querés churn del último año,
- * filtrá el cohort antes (project_health.created_at > cutoff).
+ * filtrá el cohort antes (clients.created_at > cutoff).
  *
  * // REVISAR CON NEGOCIO: la definición de churn en SaaS suele ser
  * "cliente no renovó en ventana de X días desde vencimiento". Nuestra
@@ -34,14 +34,14 @@
 import type { ProjectHealthRow, RenewalRow } from "./types";
 
 export interface ChurnInput {
-  /** project_health de UN project. Determina churn por relationship_status. */
-  health: Pick<ProjectHealthRow, "project_id" | "relationship_status"> | null;
-  /** Renewals del project. Solo la más reciente entra al chequeo. */
+  /** project_health del cliente. Determina churn por relationship_status. */
+  health: Pick<ProjectHealthRow, "client_id" | "relationship_status"> | null;
+  /** Renewals del cliente. Solo la más reciente entra al chequeo. */
   renewals: RenewalRow[];
 }
 
 /**
- * Devuelve `true` si el project cuenta como churned confirmado.
+ * Devuelve `true` si el cliente cuenta como churned confirmado.
  * Ver docstring del módulo para la definición completa.
  */
 export function isChurned(input: ChurnInput): boolean {
@@ -51,7 +51,7 @@ export function isChurned(input: ChurnInput): boolean {
 }
 
 /**
- * Devuelve `true` si el project está en riesgo (churn probable, no
+ * Devuelve `true` si el cliente está en riesgo (churn probable, no
  * confirmado). Excluyente con isChurned (perdida NO es en_riesgo).
  */
 export function isAtRisk(
@@ -75,46 +75,46 @@ function latestRenewal(renewals: RenewalRow[]): RenewalRow | null {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export interface ChurnCohortEntry {
-  projectId: string;
+  clientId: string;
   input: ChurnInput;
 }
 
 export interface ChurnRateBreakdown {
-  totalProjects: number;
-  churnedProjects: number;
-  atRiskProjects: number;
-  /** [0..1]. `null` si totalProjects=0 (evita división por cero). */
+  totalClients: number;
+  churnedClients: number;
+  atRiskClients: number;
+  /** [0..1]. `null` si totalClients=0 (evita división por cero). */
   churnRate: number | null;
-  /** [0..1]. `null` si totalProjects=0. */
+  /** [0..1]. `null` si totalClients=0. */
   atRiskRate: number | null;
 }
 
 export function computeChurnRate(
   cohort: ChurnCohortEntry[],
 ): ChurnRateBreakdown {
-  const totalProjects = cohort.length;
-  if (totalProjects === 0) {
+  const totalClients = cohort.length;
+  if (totalClients === 0) {
     return {
-      totalProjects: 0,
-      churnedProjects: 0,
-      atRiskProjects: 0,
+      totalClients: 0,
+      churnedClients: 0,
+      atRiskClients: 0,
       churnRate: null,
       atRiskRate: null,
     };
   }
 
-  let churnedProjects = 0;
-  let atRiskProjects = 0;
+  let churnedClients = 0;
+  let atRiskClients = 0;
   for (const { input } of cohort) {
-    if (isChurned(input)) churnedProjects++;
-    else if (isAtRisk(input.health)) atRiskProjects++;
+    if (isChurned(input)) churnedClients++;
+    else if (isAtRisk(input.health)) atRiskClients++;
   }
 
   return {
-    totalProjects,
-    churnedProjects,
-    atRiskProjects,
-    churnRate: churnedProjects / totalProjects,
-    atRiskRate: atRiskProjects / totalProjects,
+    totalClients,
+    churnedClients,
+    atRiskClients,
+    churnRate: churnedClients / totalClients,
+    atRiskRate: atRiskClients / totalClients,
   };
 }

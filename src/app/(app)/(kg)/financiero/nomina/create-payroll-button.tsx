@@ -25,7 +25,7 @@ export function CreatePayrollButton({
         onClick={() => setOpen(true)}
         className="kg-focus"
         style={{
-          padding: "8px 16px",
+          padding: "6px 14px",
           borderRadius: 999,
           background: "var(--kg-accent-500)",
           border: "none",

@@ -8,11 +8,12 @@ import { fCount, fMoney } from "@/lib/finance/format";
 import { overlapsPeriodDate, resolvePeriod, type Period } from "@/lib/finance/period";
 import { createClient } from "@/lib/supabase/server";
 
+import { CreatePayrollButton } from "./create-payroll-button";
+import type { UnconciledMovement } from "./link-payment-drawer";
 import {
   NominaView,
   type PayrollRowData,
 } from "./nomina-view";
-import type { UnconciledMovement } from "./link-payment-drawer";
 import type { PersonOption } from "./payroll-form-drawer";
 
 export const metadata: Metadata = { title: "Nómina · Financiero" };
@@ -255,7 +256,11 @@ export default async function NominaPage({
         />
       </div>
 
-      <Panel title="Nómina" pad={false}>
+      <Panel
+        title="Nómina"
+        pad={false}
+        actions={<CreatePayrollButton people={activePeopleForForm} />}
+      >
         <NominaView
           rows={rows}
           totalCount={totalCount}

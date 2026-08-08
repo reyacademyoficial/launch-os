@@ -13,9 +13,17 @@ import { listSendflowDailyForLaunch } from "@/lib/launch-community/daily";
 import { aggregateMergedDaily } from "@/lib/launch-daily/aggregate";
 import { listAdsForLaunch, listDailyForLaunch } from "@/lib/launch-daily/list";
 import { mergeDailyData } from "@/lib/launch-daily/merge";
-import { getKanbanSalesAggregateForLaunch } from "@/lib/launch-sales/list";
+import {
+  getKanbanSalesAggregateForLaunch,
+  getProjectRevenueUsdMap,
+} from "@/lib/launch-sales/list";
 import { getLaunch } from "@/lib/launches/get";
 import { listMessagesDailyForLaunch } from "@/lib/launch-messages/list";
+import {
+  loadProjectFxRates,
+  resolveLaunchFallbackRate,
+} from "@/lib/money";
+import { createClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "Lanzamiento · Portal" };
 
@@ -25,6 +33,11 @@ export const metadata: Metadata = { title: "Lanzamiento · Portal" };
  * Plano: KPIs + chart de leads por día. Sin tabs de integraciones, IA,
  * calendario o equipo. La carga de datos diarios y la edición tampoco
  * aparecen — el cliente solo mira.
+ *
+ * Revenue en USD: convertimos con tasa del launch → tasa mensual del mes de
+ * `closed_at`/`paid_at` como fallback. `banks` y `payment_methods` van vacíos
+ * porque cliente_role no tiene grant sobre esas tablas (frontera org-scope de
+ * 0101); `sales.currency` + `payments.original_currency` alcanzan (0104/0106).
  */
 export default async function ClientLaunchPage({
   params,
@@ -33,22 +46,63 @@ export default async function ClientLaunchPage({
 }) {
   const { projectId, launchId } = await params;
 
-  const [launch, daily, ads, kanbanSalesAggregate, sendflowDaily, messagesDaily] =
-    await Promise.all([
-      getLaunch(launchId),
-      listDailyForLaunch(launchId),
-      listAdsForLaunch(launchId),
-      getKanbanSalesAggregateForLaunch(projectId, launchId),
-      listSendflowDailyForLaunch(launchId),
-      listMessagesDailyForLaunch(launchId),
-    ]);
+  const supabase = await createClient();
+  const [
+    launch,
+    daily,
+    ads,
+    kanbanSalesAggregate,
+    sendflowDaily,
+    messagesDaily,
+    fxMap,
+  ] = await Promise.all([
+    getLaunch(launchId),
+    listDailyForLaunch(launchId),
+    listAdsForLaunch(launchId),
+    getKanbanSalesAggregateForLaunch(projectId, launchId),
+    listSendflowDailyForLaunch(launchId),
+    listMessagesDailyForLaunch(launchId),
+    loadProjectFxRates(supabase, projectId),
+  ]);
 
   if (!launch || launch.project_id !== projectId) notFound();
 
   const mergedDaily = mergeDailyData(daily, ads);
   const adsAggregate =
     mergedDaily.length > 0 ? aggregateMergedDaily(mergedDaily) : undefined;
-  const kpi = calculateLaunchKPIs(launch, { adsAggregate, kanbanSalesAggregate });
+
+  const launchRow = launch as unknown as {
+    ars_per_usd?: number | null;
+    ads_currency?: string;
+    date_start?: string | null;
+    date_end?: string | null;
+  };
+  const revenueRate = resolveLaunchFallbackRate(launchRow, fxMap);
+  const usdMap = await getProjectRevenueUsdMap(
+    projectId,
+    [
+      {
+        id: launch.id,
+        ars_per_usd: launchRow.ars_per_usd ?? null,
+        date_start: launchRow.date_start ?? null,
+        date_end: launchRow.date_end ?? null,
+      },
+    ],
+    fxMap,
+    [],
+    [],
+  );
+  const usdRevenue = usdMap.get(launch.id);
+
+  const kpi = calculateLaunchKPIs(launch, {
+    adsAggregate,
+    kanbanSalesAggregate,
+    adsRatePerUsd:
+      launchRow.ads_currency === "ARS" && revenueRate ? revenueRate : null,
+    kanbanPledgedUsd: usdRevenue?.pledgedUsd ?? null,
+    kanbanCollectedUsd: usdRevenue?.collectedUsd ?? null,
+    revenueRatePerUsd: revenueRate,
+  });
 
   // Portal cliente: misma overlay del chart que el dashboard interno (Fase B).
   // No mostramos `overlayPartialNote` porque el cliente no necesita saber del
@@ -89,10 +143,8 @@ export default async function ClientLaunchPage({
 
       <KpiGrid
         kpi={kpi}
-        launchArsPerUsd={
-          (launch as unknown as { ars_per_usd?: number | null }).ars_per_usd ??
-          null
-        }
+        launchArsPerUsd={launchRow.ars_per_usd ?? null}
+        kpisInUsd={revenueRate !== null}
       />
 
       {chartRows.length > 0 && (

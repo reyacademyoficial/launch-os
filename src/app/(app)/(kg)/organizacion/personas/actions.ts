@@ -132,6 +132,12 @@ export async function updatePerson(
   const monthlySalary = parseSalary(formData.get("monthly_salary"));
   const salaryCurrency = parseSalaryCurrency(formData.get("salary_currency"));
 
+  // auth_user_id (migración 0111). Vincula esta persona con un usuario Kingrow.
+  // Vacío = desvincular. El unique de la columna rechaza si el user ya está
+  // vinculado a otra persona → traducimos a mensaje amable.
+  const authUserIdRaw = nullIfEmpty(formData.get("auth_user_id"));
+  const authUserId = authUserIdRaw;
+
   const supabase = await createClient();
   const payload = {
     full_name: fullName,
@@ -141,6 +147,7 @@ export async function updatePerson(
     notes,
     monthly_salary: monthlySalary,
     salary_currency: salaryCurrency,
+    auth_user_id: authUserId,
   } as never;
 
   const { error } = await supabase
@@ -150,8 +157,13 @@ export async function updatePerson(
 
   if (error) {
     if (error.code === "23505") {
+      // El unique puede rebotar por (org, national_id) — persona duplicada
+      // — o por auth_user_id — usuario ya vinculado a otra persona. El
+      // mensaje detalla ambas.
       return {
-        error: "Ya existe una persona con ese documento en la organización.",
+        error:
+          "Ya existe otra persona con ese documento en la organización, o " +
+          "el usuario Kingrow seleccionado ya está vinculado a otra persona.",
       };
     }
     return { error: error.message };

@@ -33,7 +33,7 @@ function invoice(
 
 function renewal(overrides: Partial<RenewalRow> = {}): RenewalRow {
   return {
-    project_id: "proj-a",
+    client_id: "cli-a",
     period_start: "2026-01-01",
     period_end: "2026-01-31",
     amount: 0,
@@ -45,7 +45,7 @@ function renewal(overrides: Partial<RenewalRow> = {}): RenewalRow {
 
 function upsell(overrides: Partial<UpsellRow> = {}): UpsellRow {
   return {
-    project_id: "proj-a",
+    client_id: "cli-a",
     amount: 0,
     status: "cobrada",
     closed_at: "2026-02-01",

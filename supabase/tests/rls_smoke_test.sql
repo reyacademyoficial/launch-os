@@ -20,7 +20,7 @@ set local search_path = pg_temp, extensions, public;
 -- Helper: "loguearse" como un usuario autenticado (rol + claim sub del JWT).
 --
 -- Post-0023 hay dos roles PostgREST: `authenticated` (super/admin/operador/
--- analista) y `cliente_role` (cliente). El access_token_hook reescribe
+-- coordinador) y `cliente_role` (cliente). El access_token_hook reescribe
 -- claims.role según profiles.role; replicamos ese mapping acá para que los
 -- tests reflejen el comportamiento real en runtime.
 --
@@ -114,7 +114,7 @@ grant usage on schema extensions to cliente_role;
 --   admin1:   22222222-... (admin, miembro de Proyecto A)
 --   cliente1: 33333333-... (cliente, miembro de Proyecto A)
 --   operador: 44444444-... (operador, miembro de Proyecto A)
---   analista: 55555555-... (analista, miembro de Proyecto A)
+--   coordinador: 55555555-... (coordinador, miembro de Proyecto A)
 --   proj_a:   aaaaaaaa-...
 --   proj_b:   bbbbbbbb-... (sin miembros)
 --   launch1:  cccccccc-... (proj_a)
@@ -140,8 +140,8 @@ values
    'authenticated','authenticated','operador@test.local','', now(), now(), now(),
    '{}'::jsonb, '{"full_name":"Operador Uno"}'::jsonb),
   ('00000000-0000-0000-0000-000000000000','55555555-5555-5555-5555-555555555555',
-   'authenticated','authenticated','analista@test.local','', now(), now(), now(),
-   '{}'::jsonb, '{"full_name":"Analista Uno"}'::jsonb)
+   'authenticated','authenticated','coordinador@test.local','', now(), now(), now(),
+   '{}'::jsonb, '{"full_name":"Coordinador Uno"}'::jsonb)
 on conflict (id) do nothing;
 
 insert into public.profiles (id, full_name, role) values
@@ -149,7 +149,7 @@ insert into public.profiles (id, full_name, role) values
   ('22222222-2222-2222-2222-222222222222','Admin Uno','admin'),
   ('33333333-3333-3333-3333-333333333333','Cliente Uno','cliente'),
   ('44444444-4444-4444-4444-444444444444','Operador Uno','operador'),
-  ('55555555-5555-5555-5555-555555555555','Analista Uno','analista')
+  ('55555555-5555-5555-5555-555555555555','Coordinador Uno','coordinador')
 on conflict (id) do update
   set role = excluded.role, full_name = excluded.full_name;
 
@@ -190,7 +190,7 @@ on conflict (project_id, name) do nothing;
 -- - UPDATE/DELETE bloqueado por USING → fila se filtra silencioso, 0 filas.
 --   Lo testeamos con `is_empty(WITH ... RETURNING 1)`.
 --
-insert into _smoke_results(result) values (plan(186));
+insert into _smoke_results(result) values (plan(187));
 
 -- 1) cliente NO puede insertar launches (WITH CHECK falla) → 42501
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
@@ -275,38 +275,40 @@ insert into _smoke_results(result) values (lives_ok(
   'operador edita launch2 sin asignación per-launch'
 ));
 
--- 11) operador NO puede crear launches (WITH CHECK falla) → 42501
-insert into _smoke_results(result) values (pg_temp.throws_ok(
+-- 11) operador SÍ puede crear launches (regla nueva 2026-08-08: launches_insert
+-- ahora gatea por can_edit_launches_in, que incluye operador miembro).
+insert into _smoke_results(result) values (lives_ok(
   format('insert into public.launches (project_id, name) values (%L, %L)',
          'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'launch del operador'),
-  '42501'::text, null::text,
-  'operador NO puede crear launches'::text
+  'operador SÍ puede crear launches (regla 2026-08-08)'::text
 ));
 
--- 12) operador NO puede borrar launches (USING filtra → 0 filas)
-insert into _smoke_results(result) values (is_empty(
+-- 12) operador SÍ puede borrar launches (mismo cambio: launches_delete gatea
+-- por can_edit_launches_in). Borramos el que acabamos de insertar para no
+-- afectar los conteos posteriores.
+insert into _smoke_results(result) values (lives_ok(
   format(
-    'with d as (delete from public.launches where id = %L returning 1) select * from d',
-    'cccccccc-cccc-cccc-cccc-cccccccccccc'
+    'delete from public.launches where project_id = %L and name = %L',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'launch del operador'
   ),
-  'operador NO borra launches'
+  'operador SÍ borra launches (regla 2026-08-08)'
 ));
 
--- 13) analista LEE launches de su proyecto
+-- 13) coordinador LEE launches de su proyecto
 select pg_temp.login_as('55555555-5555-5555-5555-555555555555');
 insert into _smoke_results(result) values (isnt_empty(
   format('select 1 from public.launches where project_id = %L',
          'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
-  'analista SÍ lee launches de su proyecto'
+  'coordinador SÍ lee launches de su proyecto'
 ));
 
--- 14) analista NO escribe launches (USING filtra UPDATE → 0 filas)
+-- 14) coordinador NO escribe launches (USING filtra UPDATE → 0 filas)
 insert into _smoke_results(result) values (is_empty(
   format(
     'with u as (update public.launches set name = ''hack'' where id = %L returning 1) select * from u',
     'cccccccc-cccc-cccc-cccc-cccccccccccc'
   ),
-  'analista NO edita launches'
+  'coordinador NO edita launches'
 ));
 
 -- 15) cliente NO escribe launches. Post-0023 entra con cliente_role que NO
@@ -330,14 +332,21 @@ insert into _smoke_results(result) values (pg_temp.throws_ok(
 -- Insertamos un launch dedicado con la fecha del ejemplo. RLS está activa
 -- (estamos como cliente todavía del test 15) así que volvemos a superadmin
 -- por la operación de seed y los queries de lectura.
+--
+-- DELETE + INSERT (no upsert): `date_start` y `date_end` son columnas
+-- GENERATED STORED calculadas al INSERT. Un `on conflict do nothing` deja
+-- vivo un row viejo con duraciones desactualizadas (past runs con otro
+-- default de dur_captacion daban date_start incorrecto). El delete garantiza
+-- row limpio con los defaults actuales.
 select pg_temp.login_as('11111111-1111-1111-1111-111111111111');
+
+delete from public.launches where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
 
 insert into public.launches (id, project_id, name, launch_date) values
   ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
    'Launch ejemplo roadmap',
-   '2026-07-10')
-on conflict (id) do nothing;
+   '2026-07-10');
 
 -- 16) date_start derivado correctamente: 2026-07-10 − 21 = 2026-06-19
 insert into _smoke_results(result) values (is(
@@ -421,7 +430,7 @@ insert into _smoke_results(result) values (pg_temp.throws_ok(
 
 -- ── Tests de CRM (post-0013): team_members + leads ────────────────────────
 -- Validan project-scope sobre las 2 tablas nuevas:
---   - team_members  → read miembro, write admin+operador, NO analista/cliente
+--   - team_members  → read miembro, write admin+operador, NO coordinador/cliente
 --   - leads         → mismo gate; FK opcional a launches y a team_members
 -- Pre-condición: team_members vacía para Proyecto A. Si una corrida anterior
 -- dejó datos, los limpiamos como postgres (sin RLS) para que el conteo sea
@@ -457,7 +466,7 @@ insert into _smoke_results(result) values (lives_ok(
   'operador inserta team_member en su proyecto'
 ));
 
--- 24) analista NO inserta team_members (gate = can_edit_launches_in)
+-- 24) coordinador NO inserta team_members (gate = can_edit_launches_in)
 select pg_temp.login_as('55555555-5555-5555-5555-555555555555');
 insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
@@ -465,7 +474,7 @@ insert into _smoke_results(result) values (pg_temp.throws_ok(
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Hack', 'setter'
   ),
   '42501'::text, null::text,
-  'analista NO inserta team_members'::text
+  'coordinador NO inserta team_members'::text
 ));
 
 -- 25) cliente NO inserta team_members
@@ -517,14 +526,14 @@ insert into _smoke_results(result) values (lives_ok(
   'operador inserta lead manual en su proyecto'
 ));
 
--- 29) analista NO edita leads (USING filtra UPDATE → 0 filas)
+-- 29) coordinador NO edita leads (USING filtra UPDATE → 0 filas)
 select pg_temp.login_as('55555555-5555-5555-5555-555555555555');
 insert into _smoke_results(result) values (is_empty(
   format(
     'with u as (update public.leads set status = ''cerrado'' where project_id = %L returning 1) select * from u',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
   ),
-  'analista NO edita leads (USING filtra)'
+  'coordinador NO edita leads (USING filtra)'
 ));
 
 -- ── Tests de ventas/comisiones (post-0014) ────────────────────────────────
@@ -650,7 +659,7 @@ insert into _smoke_results(result) values (lives_ok(
   'operador inserta sale en su proyecto'
 ));
 
--- 36) analista NO inserta sale
+-- 36) coordinador NO inserta sale
 select pg_temp.login_as('55555555-5555-5555-5555-555555555555');
 insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
@@ -666,7 +675,7 @@ insert into _smoke_results(result) values (pg_temp.throws_ok(
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
   ),
   '42501'::text, null::text,
-  'analista NO inserta sale'::text
+  'coordinador NO inserta sale'::text
 ));
 
 -- 37) operador SÍ inserta payment (carga cobros día a día)
@@ -760,7 +769,7 @@ insert into _smoke_results(result) values (lives_ok(
   'operador inserta ai_run'
 ));
 
--- 43) analista NO inserta ai_run (no es can_edit_launches_in)
+-- 43) coordinador NO inserta ai_run (no es can_edit_launches_in)
 select pg_temp.login_as('55555555-5555-5555-5555-555555555555');
 insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
@@ -770,7 +779,7 @@ insert into _smoke_results(result) values (pg_temp.throws_ok(
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
   ),
   '42501'::text, null::text,
-  'analista NO inserta ai_run'::text
+  'coordinador NO inserta ai_run'::text
 ));
 
 -- 44) cliente lee ai_runs de su proyecto
@@ -1041,7 +1050,7 @@ insert into _smoke_results(result) values (lives_ok(
   'operador inserta alert_rule'
 ));
 
--- 65) analista NO inserta alert_rule — can_edit_launches_in es false.
+-- 65) coordinador NO inserta alert_rule — can_edit_launches_in es false.
 select pg_temp.login_as('55555555-5555-5555-5555-555555555555');
 insert into _smoke_results(result) values (pg_temp.throws_ok(
   format(
@@ -1050,14 +1059,14 @@ insert into _smoke_results(result) values (pg_temp.throws_ok(
     'cccccccc-cccc-cccc-cccc-cccccccccccc'
   ),
   '42501'::text, null::text,
-  'analista NO inserta alert_rule (RLS WITH CHECK)'::text
+  'coordinador NO inserta alert_rule (RLS WITH CHECK)'::text
 ));
 
--- 66) analista SÍ lee alert_rules de su proyecto (has_project_access).
+-- 66) coordinador SÍ lee alert_rules de su proyecto (has_project_access).
 insert into _smoke_results(result) values (isnt_empty(
   format('select 1 from public.alert_rules where launch_id = %L',
          'cccccccc-cccc-cccc-cccc-cccccccccccc'),
-  'analista lee alert_rules de su proyecto'
+  'coordinador lee alert_rules de su proyecto'
 ));
 
 -- 67) UNIQUE (launch_id, metric, operator, threshold) bloquea duplicado.

@@ -8,6 +8,7 @@ import {
   ORGANIZATION_MODULES,
   SYSTEM_MODULES,
   UTILITY_MODULES,
+  visibleModulesForRole,
 } from "./layers";
 import { KgNavItem } from "./nav-item";
 import { KgUserBlock } from "./user-block";
@@ -30,6 +31,9 @@ import { KgUserBlock } from "./user-block";
 export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
   const showSystem = canSeeSystem(profile.role);
   const showOrganization = canSeeOrganization(profile.role);
+  // cliente y operador ven un subconjunto de módulos; el resto ve todo.
+  const isRestricted =
+    profile.role === "cliente" || profile.role === "operador";
 
   return (
     <aside
@@ -44,9 +48,26 @@ export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
       </div>
 
       <nav className="flex-1 space-y-4 px-3 pb-4">
-        {LAYERS.map((layer) => (
-          <LayerGroup key={layer.id} label={layer.label}>
-            {layer.modules.map((m) => (
+        {LAYERS.map((layer) => {
+          const modules = visibleModulesForRole(layer.modules, profile.role);
+          if (modules.length === 0) return null;
+          return (
+            <LayerGroup key={layer.id} label={layer.label}>
+              {modules.map((m) => (
+                <KgNavItem
+                  key={m.id}
+                  href={m.href}
+                  label={m.label}
+                  icon={<m.icon size={18} />}
+                />
+              ))}
+            </LayerGroup>
+          );
+        })}
+
+        {!isRestricted && UTILITY_MODULES.length > 0 && (
+          <LayerGroup label="Utilidades">
+            {UTILITY_MODULES.map((m) => (
               <KgNavItem
                 key={m.id}
                 href={m.href}
@@ -55,20 +76,9 @@ export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
               />
             ))}
           </LayerGroup>
-        ))}
+        )}
 
-        <LayerGroup label="Utilidades">
-          {UTILITY_MODULES.map((m) => (
-            <KgNavItem
-              key={m.id}
-              href={m.href}
-              label={m.label}
-              icon={<m.icon size={18} />}
-            />
-          ))}
-        </LayerGroup>
-
-        {showOrganization && (
+        {!isRestricted && showOrganization && ORGANIZATION_MODULES.length > 0 && (
           <LayerGroup label="Organización">
             {ORGANIZATION_MODULES.map((m) => (
               <KgNavItem
@@ -81,7 +91,7 @@ export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
           </LayerGroup>
         )}
 
-        {showSystem && (
+        {!isRestricted && showSystem && SYSTEM_MODULES.length > 0 && (
           <LayerGroup label="Sistema">
             {SYSTEM_MODULES.map((m) => (
               <KgNavItem

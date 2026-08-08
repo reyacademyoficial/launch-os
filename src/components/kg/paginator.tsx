@@ -14,6 +14,7 @@ export function KgPaginator({
   pageSize,
   totalCount,
   hrefFor,
+  compact = false,
 }: {
   /** Página actual, 1-indexed. */
   readonly page: number;
@@ -21,6 +22,11 @@ export function KgPaginator({
   readonly totalCount: number;
   /** hrefFor(2) devuelve el href a la página 2 preservando otros params. */
   readonly hrefFor: (page: number) => string;
+  /**
+   * `true` cuando se embebe dentro de otro footer (ej. KgDataTable.footerActions)
+   * — quita el padding propio para no duplicar el del contenedor.
+   */
+  readonly compact?: boolean;
 }) {
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
   const canPrev = page > 1;
@@ -35,7 +41,7 @@ export function KgPaginator({
         justifyContent: "flex-end",
         alignItems: "center",
         gap: 12,
-        padding: "10px 14px",
+        padding: compact ? 0 : "10px 14px",
         fontSize: 12,
         color: "var(--kg-text-3)",
       }}

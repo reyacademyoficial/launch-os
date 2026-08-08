@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { RecalculateBulkModal } from "@/components/dashboard/commissions/recalculate-bulk-modal";
 import { CobrosView } from "@/components/dashboard/sales/cobros-view";
 import { listBanks } from "@/lib/banks/list";
+import { listInvoicesForSales } from "@/lib/invoices/list-by-sale";
 import {
   listCommissionRules,
   listPaymentModalities,
@@ -59,7 +60,9 @@ export default async function ProjectCobrosPage({
   const { projectId } = await params;
 
   const profile = await requireSessionProfile();
-  if (profile.role === "cliente") redirect(`/proyectos/${projectId}`);
+  // Regla 2026-08-08: operador no ve el módulo ventas/cobros. Cliente sí lee,
+  // readonly a través de canEdit=false (userCanEditLaunchesIn).
+  if (profile.role === "operador") redirect(`/proyectos/${projectId}/launches`);
 
   const supabase = await createClient();
   const [
@@ -105,6 +108,11 @@ export default async function ProjectCobrosPage({
   const closedSaleLeadIds = new Set(closedSales.map((s) => s.lead_id));
   const closedLeads = salesData.leads.filter((l) =>
     closedSaleLeadIds.has(l.id),
+  );
+
+  // Facturas emitidas de las ventas cerradas — para auto-atar al cobro (paso 5).
+  const invoicesForSales = await listInvoicesForSales(
+    Array.from(closedSaleIds),
   );
 
   // ─── Agregado project-wide en USD ─────────────────────────────────────
@@ -239,6 +247,7 @@ export default async function ProjectCobrosPage({
         sales={closedSales}
         payments={closedPayments}
         installments={closedInstallments}
+        invoices={invoicesForSales}
         leads={closedLeads}
         launches={launches.map((l) => ({ id: l.id, name: l.name }))}
         modalities={modalities}

@@ -189,6 +189,15 @@ export async function createSale(
       await supabase.from("sales").delete().eq("id", saleId);
       return { error: `No se pudieron generar las cuotas: ${genError.message}` };
     }
+
+    // Auto-generar facturas (una por cuota). Fallo NO revierte la venta —
+    // la venta y sus cuotas quedan intactas; el operador puede volver a
+    // regenerar desde /financiero/facturas o al editar la venta. Preferimos
+    // que la venta se cree con facturas faltantes que perderla entera.
+    await supabase.rpc(
+      "generate_invoices_for_sale" as never,
+      { p_sale_id: saleId } as never,
+    );
   }
 
   // Marcar lead cerrado (puede que ya lo esté; es idempotente).
@@ -332,6 +341,12 @@ export async function createSaleWithLead(
         error: `No se pudieron generar las cuotas: ${genErr.message}`,
       };
     }
+
+    // Auto-generar facturas — ver comentario en createSale. Fallo no revierte.
+    await supabase.rpc(
+      "generate_invoices_for_sale" as never,
+      { p_sale_id: saleId } as never,
+    );
   }
 
   revalidateSalesImpact(projectId, launch_id);
@@ -478,6 +493,14 @@ export async function updateSale(
     if (genError) {
       return { error: `No se pudieron regenerar las cuotas: ${genError.message}` };
     }
+
+    // Regenerar facturas junto con las cuotas. La RPC preserva las cobradas
+    // y anuladas; sólo regenera las emitidas sin paid_at. Fallo no revierte
+    // las cuotas — el operador puede reintentar desde /financiero/facturas.
+    await supabase.rpc(
+      "generate_invoices_for_sale" as never,
+      { p_sale_id: saleId } as never,
+    );
   }
 
   await revalidateForSale(projectId, saleId);
@@ -730,6 +753,9 @@ export async function addPayment(
     originalCurrencyRaw === "ARS" || originalCurrencyRaw === "USD"
       ? originalCurrencyRaw
       : null;
+  const transaction_number = nullable(str(formData, "transaction_number"));
+  const invoiceIdRaw = str(formData, "invoice_id");
+  const invoice_id = invoiceIdRaw === "" ? null : invoiceIdRaw;
 
   if (!installment_id) {
     return { error: "Elegí a qué cuota se aplica el cobro." };
@@ -753,6 +779,37 @@ export async function addPayment(
     return { error: "La cuota seleccionada no pertenece a esta venta." };
   }
 
+  // Guard: si el operador eligió factura, tiene que pertenecer a esta venta
+  // y estar emitida (no cobrada ni anulada). El status pasa a 'cobrada' recién
+  // en el paso 5b cuando se linkea al movimiento del banco.
+  let invoiceNeedsTxNumber = false;
+  if (invoice_id) {
+    const { data: invRow } = await supabase
+      .from("invoices")
+      .select("id, sale_id, status, transaction_number")
+      .eq("id", invoice_id)
+      .maybeSingle();
+    const inv = invRow as
+      | {
+          id: string;
+          sale_id: string | null;
+          status: string;
+          transaction_number: string | null;
+        }
+      | null;
+    if (!inv || inv.sale_id !== saleId) {
+      return { error: "La factura elegida no pertenece a esta venta." };
+    }
+    if (inv.status !== "emitida") {
+      return {
+        error:
+          "La factura elegida no está emitida (puede estar cobrada o anulada).",
+      };
+    }
+    invoiceNeedsTxNumber =
+      transaction_number !== null && inv.transaction_number === null;
+  }
+
   const payload = {
     sale_id: saleId,
     amount,
@@ -761,10 +818,22 @@ export async function addPayment(
     installment_id,
     payment_method_id,
     ...(original_currency && { original_currency }),
+    ...(transaction_number !== null && { transaction_number }),
+    ...(invoice_id && { invoice_id }),
   } as never;
 
   const { error } = await supabase.from("payments").insert(payload);
   if (error) return { error: error.message };
+
+  // Propagar transaction_number del cobro a la factura si ésta no lo tenía.
+  // Sirve para que el match factura ↔ movimiento del banco (paso 5b) tenga
+  // por dónde arrancar aunque el operador nunca haya tocado la factura.
+  if (invoice_id && invoiceNeedsTxNumber) {
+    await supabase
+      .from("invoices")
+      .update({ transaction_number } as never)
+      .eq("id", invoice_id);
+  }
 
   await revalidateForSale(projectId, saleId);
   return { ok: true };

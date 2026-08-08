@@ -5,7 +5,6 @@ import type { Role } from "@/lib/supabase/auth";
 import {
   IconAca,
   IconAdmin,
-  IconCalc,
   IconCli,
   IconExec,
   IconFin,
@@ -73,12 +72,11 @@ export const LAYERS: readonly KgLayer[] = [
 
 /**
  * Sección "Utilidades" — no es una capa, va debajo de las capas. Herramientas
- * transversales sin scope de módulo. Calculadora hoy es la única — la
- * permisología fina (canUseCalculator) sigue viviendo en la page.
+ * transversales sin scope de módulo.
+ * Calculadora se movió a la sidebar del ProjectShell (LaunchOS) — desde ahí
+ * tiene contexto de proyecto y es donde el operador la usa realmente.
  */
-export const UTILITY_MODULES: readonly KgModule[] = [
-  { id: "calculadora", label: "Calculadora", href: "/calculadora", icon: IconCalc },
-];
+export const UTILITY_MODULES: readonly KgModule[] = [];
 
 /**
  * Sección "Organización" — configuración a nivel org (Kingrow). Personas
@@ -89,30 +87,27 @@ export const UTILITY_MODULES: readonly KgModule[] = [
  * El prefijo `/organizacion` nombra exactamente el scope del gate SQL, así
  * el vocabulario del código, la URL y la RLS coinciden.
  */
-export const ORGANIZATION_MODULES: readonly KgModule[] = [
-  { id: "org-personas", label: "Personas", href: "/organizacion/personas", icon: IconOrg },
-  { id: "org-reglas-split", label: "Reglas de split", href: "/organizacion/reglas-split", icon: IconOrg },
-];
-
 /**
- * Sección "Sistema" — separada de las capas, sólo visible para roles con
- * capacidad de administrar la plataforma. El artefacto no la define, la
- * agregamos porque LaunchOS ya tiene /admin/proyectos y /admin/usuarios y
- * necesitan entrada visible.
+ * Organización y Sistema se vaciaron: las rutas se administran desde
+ * /configuracion (pestaña Personas, Proyectos, Usuarios, Distribución).
+ * Los arrays se exportan vacíos para no romper imports externos; el sidebar
+ * los ignorará al renderizar.
  */
-export const SYSTEM_MODULES: readonly KgModule[] = [
-  { id: "admin-proyectos", label: "Proyectos", href: "/admin/proyectos", icon: IconAdmin },
-  { id: "admin-usuarios", label: "Usuarios", href: "/admin/usuarios", icon: IconAdmin },
-];
+export const ORGANIZATION_MODULES: readonly KgModule[] = [];
+export const SYSTEM_MODULES: readonly KgModule[] = [];
 
 /**
- * Páginas que existen pero no aparecen en la sidebar (destinos accesibles
- * desde otras superficies: user-block link a Configuración, ruta directa a
- * Auditoría). El topbar las usa para resolver el título del módulo activo.
+ * Páginas ocultas en la sidebar pero visibles para el topbar.
+ * Incluye las rutas que antes vivían en Organización/Sistema (ahora en
+ * Configuración) para que el topbar resuelva el título al editar/crear.
  */
 const HIDDEN_MODULES: readonly KgModule[] = [
   { id: "configuracion", label: "Configuración", href: "/configuracion", icon: IconAdmin },
   { id: "auditoria", label: "Auditoría", href: "/dev/auditoria", icon: IconAdmin },
+  { id: "org-personas", label: "Personas", href: "/organizacion/personas", icon: IconOrg },
+  { id: "org-reglas-split", label: "Distribución de ingresos", href: "/organizacion/reglas-split", icon: IconOrg },
+  { id: "admin-proyectos", label: "Proyectos", href: "/admin/proyectos", icon: IconAdmin },
+  { id: "admin-usuarios", label: "Usuarios", href: "/admin/usuarios", icon: IconAdmin },
 ];
 
 export function canSeeSystem(role: Role): boolean {
@@ -121,6 +116,35 @@ export function canSeeSystem(role: Role): boolean {
 
 export function canSeeOrganization(role: Role): boolean {
   return role === "superadmin" || role === "dev";
+}
+
+/**
+ * IDs de módulos KG visibles según rol.
+ *
+ *   cliente     → solo lanzamientos (acceden a LaunchOS read-only, nada más de KG)
+ *   operador    → lanzamientos + operaciones (sus tareas + el ProjectShell)
+ *   coordinador → clientes + academia + operaciones + lanzamientos
+ *                 (regla 2026-08-08 — sin Ejecutivo, Financiero, Comercial)
+ *   otros       → todos (sin filtro adicional más allá de canSeeSystem/Org)
+ */
+const ROLE_MODULE_ALLOWLIST: Partial<Record<Role, ReadonlySet<string>>> = {
+  cliente: new Set(["lanzamientos"]),
+  operador: new Set(["lanzamientos", "operaciones"]),
+  coordinador: new Set([
+    "lanzamientos",
+    "clientes",
+    "academia",
+    "operaciones",
+  ]),
+};
+
+export function visibleModulesForRole(
+  modules: readonly KgModule[],
+  role: Role,
+): readonly KgModule[] {
+  const allowlist = ROLE_MODULE_ALLOWLIST[role];
+  if (!allowlist) return modules;
+  return modules.filter((m) => allowlist.has(m.id));
 }
 
 /**

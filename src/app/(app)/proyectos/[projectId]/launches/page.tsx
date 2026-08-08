@@ -18,7 +18,7 @@ import {
 } from "@/lib/money";
 import { listBanks } from "@/lib/banks/list";
 import { listPaymentMethods } from "@/lib/payment-methods/list";
-import { userCanEditProject } from "@/lib/supabase/auth";
+import { requireSessionProfile, userCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
 import { createLaunch } from "./actions";
@@ -33,6 +33,7 @@ export default async function LaunchesPage({
   const { projectId } = await params;
   const supabase = await createClient();
   const [
+    profile,
     launches,
     canEdit,
     adsAggregates,
@@ -41,14 +42,17 @@ export default async function LaunchesPage({
     banks,
     fxMap,
   ] = await Promise.all([
+    requireSessionProfile(),
     listLaunchesForProject(projectId),
-    userCanEditProject(projectId),
+    userCanEditLaunchesIn(projectId),
     listAggregatesForProject(projectId),
     getKanbanSalesAggregatesForProject(projectId),
     listPaymentMethods(projectId),
     listBanks(),
     loadProjectFxRates(supabase, projectId),
   ]);
+
+  const hideRevenue = profile.role === "operador";
 
   const launchesForFx = launches.map((l) => {
     const row = l as unknown as {
@@ -132,18 +136,22 @@ export default async function LaunchesPage({
               <th scope="col" className="px-4 py-3 font-medium">
                 Status
               </th>
-              <th scope="col" className="px-4 py-3 text-right font-medium">
-                Revenue est.
-              </th>
-              <th scope="col" className="px-4 py-3 text-right font-medium">
-                Revenue cobr.
-              </th>
-              <th scope="col" className="px-4 py-3 text-right font-medium">
-                ROAS est.
-              </th>
-              <th scope="col" className="px-4 py-3 text-right font-medium">
-                Profit est.
-              </th>
+              {!hideRevenue && (
+                <>
+                  <th scope="col" className="px-4 py-3 text-right font-medium">
+                    Revenue est.
+                  </th>
+                  <th scope="col" className="px-4 py-3 text-right font-medium">
+                    Revenue cobr.
+                  </th>
+                  <th scope="col" className="px-4 py-3 text-right font-medium">
+                    ROAS est.
+                  </th>
+                  <th scope="col" className="px-4 py-3 text-right font-medium">
+                    Profit est.
+                  </th>
+                </>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -206,18 +214,22 @@ export default async function LaunchesPage({
                   <td className="px-4 py-3">
                     <StatusBadge status={l.status} />
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums text-fg">
-                    {fMoney(kpi.revenueEstimated)}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums text-fg">
-                    {fMoney(kpi.revenueCollected)}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums text-fg-muted">
-                    {fmtMultiplier(kpi.roasEstimated)}
-                  </td>
-                  <td className={`px-4 py-3 text-right tabular-nums ${profitColor}`}>
-                    {fMoney(kpi.profitEstimated)}
-                  </td>
+                  {!hideRevenue && (
+                    <>
+                      <td className="px-4 py-3 text-right tabular-nums text-fg">
+                        {fMoney(kpi.revenueEstimated)}
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums text-fg">
+                        {fMoney(kpi.revenueCollected)}
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums text-fg-muted">
+                        {fmtMultiplier(kpi.roasEstimated)}
+                      </td>
+                      <td className={`px-4 py-3 text-right tabular-nums ${profitColor}`}>
+                        {fMoney(kpi.profitEstimated)}
+                      </td>
+                    </>
+                  )}
                 </tr>
               );
             })}
