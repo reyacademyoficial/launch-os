@@ -190,7 +190,7 @@ on conflict (project_id, name) do nothing;
 -- - UPDATE/DELETE bloqueado por USING → fila se filtra silencioso, 0 filas.
 --   Lo testeamos con `is_empty(WITH ... RETURNING 1)`.
 --
-insert into _smoke_results(result) values (plan(186));
+insert into _smoke_results(result) values (plan(187));
 
 -- 1) cliente NO puede insertar launches (WITH CHECK falla) → 42501
 select pg_temp.login_as('33333333-3333-3333-3333-333333333333');
@@ -332,14 +332,21 @@ insert into _smoke_results(result) values (pg_temp.throws_ok(
 -- Insertamos un launch dedicado con la fecha del ejemplo. RLS está activa
 -- (estamos como cliente todavía del test 15) así que volvemos a superadmin
 -- por la operación de seed y los queries de lectura.
+--
+-- DELETE + INSERT (no upsert): `date_start` y `date_end` son columnas
+-- GENERATED STORED calculadas al INSERT. Un `on conflict do nothing` deja
+-- vivo un row viejo con duraciones desactualizadas (past runs con otro
+-- default de dur_captacion daban date_start incorrecto). El delete garantiza
+-- row limpio con los defaults actuales.
 select pg_temp.login_as('11111111-1111-1111-1111-111111111111');
+
+delete from public.launches where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
 
 insert into public.launches (id, project_id, name, launch_date) values
   ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
    'Launch ejemplo roadmap',
-   '2026-07-10')
-on conflict (id) do nothing;
+   '2026-07-10');
 
 -- 16) date_start derivado correctamente: 2026-07-10 − 21 = 2026-06-19
 insert into _smoke_results(result) values (is(
