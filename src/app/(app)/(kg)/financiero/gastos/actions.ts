@@ -32,6 +32,10 @@ export type ExpenseMovementRole = "principal" | "comision" | "otro";
 
 export type DeleteExpenseResult = { ok: true } | { error: string };
 
+export type BulkDeleteExpensesResult =
+  | { ok: true; deleted: number }
+  | { error: string };
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Payload compartido create/update — mismos campos, dos actions distintas
 // ═══════════════════════════════════════════════════════════════════════════
@@ -423,6 +427,61 @@ export async function deleteExpense(
   revalidatePath("/financiero/gastos");
   revalidatePath("/financiero");
   return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// bulkDeleteExpenses — borrado masivo con quiebre previo de vínculos
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// A diferencia de deleteExpense (bloquea si hay pago vinculado), este action
+// asume nuclearización. Caso de uso: re-importar gastos desde cero. Vacía
+// primero el bridge expense_bank_movements para todos los ids — el trigger
+// recompute_expense_paid_at deja el gasto con paid_at=null — y después
+// borra los gastos.
+//
+// Los bank_movements NO se tocan: siguen existiendo como movimientos sin
+// conciliar en la tabla de movimientos, que es lo que se espera si el
+// operador está limpiando gastos para volver a cargarlos.
+
+const BULK_DELETE_BATCH_SIZE = 500;
+
+export async function bulkDeleteExpenses(
+  expenseIds: readonly string[],
+): Promise<BulkDeleteExpensesResult> {
+  await requireRole("superadmin");
+
+  const ids = Array.from(new Set(expenseIds.filter((id) => id.length > 0)));
+  if (ids.length === 0) return { error: "No hay gastos seleccionados." };
+
+  const supabase = await createClient();
+
+  let deleted = 0;
+  for (let i = 0; i < ids.length; i += BULK_DELETE_BATCH_SIZE) {
+    const slice = ids.slice(i, i + BULK_DELETE_BATCH_SIZE);
+
+    // 1. Vaciar bridge — dispara recompute_expense_paid_at
+    const bridgeRes = await supabase
+      .from("expense_bank_movements")
+      .delete()
+      .in("expense_id", slice);
+    if (bridgeRes.error) {
+      return { error: translateExpenseError(bridgeRes.error) };
+    }
+
+    // 2. Borrar los gastos
+    const { data, error } = await supabase
+      .from("expenses")
+      .delete()
+      .in("id", slice)
+      .select("id");
+    if (error) return { error: translateExpenseError(error) };
+    deleted += (data as { id: string }[] | null)?.length ?? 0;
+  }
+
+  revalidatePath("/financiero/gastos");
+  revalidatePath("/financiero/movimientos");
+  revalidatePath("/financiero");
+  return { ok: true, deleted };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

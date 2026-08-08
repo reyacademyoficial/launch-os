@@ -107,10 +107,10 @@ Salieron de lo que funcionó en los bloques 0-2. No son sugerencias.
 
 ```
 GATE 0 (auditoría global) ✓ CERRADO
-   └─→ 1. Clientes
-       2. Operaciones     (paralelos entre sí, mismo orden razonable)
-       3. Academia
-                └─→ 4. Ejecutivo
+   └─→ 1. Clientes        ✓ CERRADO
+       2. Operaciones      ✓ CERRADO     (paralelos entre sí, mismo orden razonable)
+       3. Academia         ✓ CERRADO
+                └─→ 4. Ejecutivo        ✓ CERRADO
 
    [Postergados con memo: Anexo A "Mi Jornada", Anexo B "Marketing"]
 ```
@@ -159,40 +159,40 @@ tiene N projects`. Migración destructiva segura porque las 5 tablas estaban vac
 
 Cada uno con: form en `Drawer`, server action, validación manual, RLS org-scope.
 
-- [ ] **clients** (nuevo — bloque 3.5): crear/editar cliente (name, business_name,
+- [x] **clients** (nuevo — bloque 3.5): crear/editar cliente (name, business_name,
       industry, notes, active). **Primero del módulo** — sin al menos un cliente no
       hay dónde colgar el resto.
-- [ ] **project_health**: setear health inicial del cliente (relationship_status,
+- [x] **project_health**: setear health inicial del cliente (relationship_status,
       health_score override manual opcional, last_contact_at, notes). 1 fila por
       cliente (unique client_id).
-- [ ] **projects.client_id (edición)**: desde la ficha del cliente, atar/desatar
+- [x] **projects.client_id (edición)**: desde la ficha del cliente, atar/desatar
       projects existentes. Es un update de projects, no un CRUD de projects.
-- [ ] **nps_responses**: cargar respuesta del cliente (respondent, score 0-10,
+- [x] **nps_responses**: cargar respuesta del cliente (respondent, score 0-10,
       comment, channel).
-- [ ] **tickets**: crear ticket del cliente (title, description, priority, category,
+- [x] **tickets**: crear ticket del cliente (title, description, priority, category,
       due_date, assignee_person_id opcional, project_id OPCIONAL — solo si el
       ticket es específico de un launch del cliente).
-- [ ] **renewals**: registrar renovación del contrato de gestión (period_start/end,
+- [x] **renewals**: registrar renovación del contrato de gestión (period_start/end,
       amount, currency, status).
-- [ ] **upsells**: registrar upsell al cliente (title, description, amount,
+- [x] **upsells**: registrar upsell al cliente (title, description, amount,
       currency, status).
 
 Reglas transversales:
-- [ ] Sin borrado. Se cambia status a `perdida` o se marca `active=false`.
-- [ ] Los enums de status siguen el modelo del backend — no inventar valores.
-- [ ] Reusar `Drawer`, `EmptyState`, `StatusPill`, `Delta`, `KgDataTable`, `Paginator`.
+- [x] Sin borrado. Se cambia status a `perdida` o se marca `active=false`.
+- [x] Los enums de status siguen el modelo del backend — no inventar valores.
+- [x] Reusar `Drawer`, `EmptyState`, `StatusPill`, `Delta`, `KgDataTable`, `Paginator`.
 
 ### 1.3 Lectura (después del CRUD)
 
-- [ ] Listado de clientes en `/clientes` con estado, responsable y health score
+- [x] Listado de clientes en `/clientes` con estado, responsable y health score
       calculado. `active=false` van al final o se ocultan por filtro.
-- [ ] Ficha `/clientes/[clientId]` con sub-tabs internos: overview, tickets,
+- [x] Ficha `/clientes/[clientId]` con sub-tabs internos: overview, tickets,
       renovaciones, upsells, NPS, projects atados.
-- [ ] **LTV por cliente.** Sumar `launch_settlements.kingrow_retained` de los projects
+- [x] **LTV por cliente.** Sumar `launch_settlements.kingrow_retained` de los projects
       atados al cliente + invoices cobradas de esos projects + renewals cobradas del
       cliente + upsells cobrados del cliente. Reusar `src/lib/clients/ltv.ts` (el
       selector no cambia; el caller filtra por client_id vía projects).
-- [ ] Dashboard del módulo: clientes activos, en riesgo, NPS promedio, LTV promedio.
+- [x] Dashboard del módulo: clientes activos, en riesgo, NPS promedio, LTV promedio.
 
 ### 1.4 Fórmula de health_score (decisión cerrada, opción A)
 
@@ -299,28 +299,30 @@ Ajustes acordados antes de arrancar el CRUD:
 
 Con las decisiones de §2.0. Los ítems marcan commits atómicos, no filas de tabla.
 
-- [ ] **Andamio + plan MD update** (este commit).
-- [ ] **Migración `organization_people.auth_user_id`** + backfill por email + UI en
+- [x] **Andamio + plan MD update**.
+- [x] **Migración `organization_people.auth_user_id`** + backfill por email + UI en
       `/organizacion/personas` para asignar/desasignar usuario. Helper server-only
       `resolveCurrentPersonId(): Promise<string | null>` en `src/lib/ops/`.
-- [ ] **CRUD `internal_projects`** + ficha `/operaciones/proyectos/[id]` con
+- [x] **CRUD `internal_projects`** + ficha `/operaciones/proyectos/[id]` con
       placeholders para sub-secciones (tasks/blockers/checklists/time del proyecto).
-- [ ] **CRUD `tasks`** con:
+- [x] **CRUD `tasks`** con:
   - Vista global `/operaciones/tareas`.
   - Filtro "mis tareas" default (server-scoped por auth_user_id → person_id).
   - Toggle "Todas" — para operador/analista el toggle NO aparece; para superadmin/
     dev es visible y default a "Todas".
   - Marcado visual de vencidas (dot rojo + badge "Vencida").
   - Integración inline en ficha de proyecto.
-- [ ] **CRUD `blockers`** + integración inline en tasks/projects. XOR duro.
-- [ ] **CRUD `checklists + checklist_items`** inline en tasks/projects (sin vista
+- [x] **CRUD `blockers`** + integración inline en tasks/projects. XOR duro.
+- [x] **CRUD `checklists + checklist_items`** inline en tasks/projects (sin vista
       global — un checklist suelto no aporta). XOR duro.
-- [ ] **CRUD `time_entries`** vista global filtrable por persona/proyecto/tarea/
+- [x] **CRUD `time_entries`** vista global filtrable por persona/proyecto/tarea/
       período. Blocked delete on person con historial (already RESTRICT en DB).
-- [ ] **CRUD `teams + team_membership`** en `/organizacion/equipos` (fuera del
-      layout de Operaciones — nueva entrada en `ORGANIZATION_MODULES`).
-- [ ] **CRUD `processes`** — SOPs Markdown. Vista global + ficha con content_md.
-- [ ] **Dashboard `/operaciones`** consumiendo `computeLoadByPerson`,
+- ~~[ ] **CRUD `teams + team_membership`** en `/organizacion/equipos`~~ — **DESCARTADO
+      2026-08-07**: el módulo Equipos fue eliminado por redundante; grep confirmó que
+      `teams`/`team_membership` solo eran referenciadas dentro de sus propios archivos,
+      sin cruce con tasks ni projects de ops. No requería migración de baja.
+- [x] **CRUD `processes`** — SOPs Markdown. Vista global + ficha con content_md.
+- [x] **Dashboard `/operaciones`** consumiendo `computeLoadByPerson`,
       `computeThroughput`, `sumMinutesByPerson`, `filterOverdueTasks`. Ranking de
       productividad por persona con período configurable.
 
@@ -398,30 +400,30 @@ Backend: bloque 4 (0070-0078) + guard 0079. Cero filas en las 8 tablas.
 Aditiva, sin backfill (todo cero). Se corre **dentro del sub-bloque academia**, no
 antes.
 
-- [ ] Agregar `enrollments.sale_id uuid nullable references sales(id) on delete set
+- [x] Agregar `enrollments.sale_id uuid nullable references sales(id) on delete set
       null`.
-- [ ] Índice `enrollments_sale_idx on (sale_id) where sale_id is not null`.
-- [ ] Trigger de consistencia: si `sale_id is not null`, validar que la venta
+- [x] Índice `enrollments_sale_idx on (sale_id) where sale_id is not null`.
+- [x] Trigger de consistencia: si `sale_id is not null`, validar que la venta
       apunta al mismo producto que el `course` de la `cohort` del `enrollment`. Es
       decir: `sales.product_id = courses.product_id where courses.id =
       cohorts.course_id where cohorts.id = enrollments.cohort_id`. Si la cohort
       no tiene `course_id`, rebota — no se puede validar coherencia.
-- [ ] Sin cambios en `students` — el atado del alumno al comprador vive en
+- [x] Sin cambios en `students` — el atado del alumno al comprador vive en
       `enrollments.sale_id` porque un alumno puede inscribirse a varios cursos vía
       varias ventas.
 
 ### 3.3 CRUD (primero — todo en cero)
 
-- [ ] **courses**: crear curso sobre un producto existente (product_id UNIQUE, no
+- [x] **courses**: crear curso sobre un producto existente (product_id UNIQUE, no
       todos los productos son cursos). Metadatos: duration_hours, modules_count,
       syllabus.
-- [ ] **cohorts**: crear cohorte (project_id, course_id opcional, name, fechas,
+- [x] **cohorts**: crear cohorte (project_id, course_id opcional, name, fechas,
       status). Unique por (project_id, name).
 - [x] **classes**: crear clase dentro de cohorte (scheduled_at, topic, notes).
       Inline en la ficha de la generación con Drawer create/edit + delete rojo.
-- [ ] **students**: crear alumno (project_id, name, email, phone, status). Unique
+- [x] **students**: crear alumno (project_id, name, email, phone, status). Unique
       parcial por (project_id, phone_normalized) y (project_id, email).
-- [ ] **enrollments**: inscribir alumno a cohorte. **Con dropdown "Origen":**
+- [x] **enrollments**: inscribir alumno a cohorte. **Con dropdown "Origen":**
   - _Venta LaunchOS_: picker de `sales` del proyecto filtradas por producto que
     tenga curso asociado. Muestra "cliente / producto / fecha". Auto-completa
     `sale_id` y valida contra el trigger de consistencia. Badge en listado: "Auto".
@@ -498,8 +500,8 @@ todo sin entrar a ningún módulo.
 - [x] KPIs de cabecera: ingreso Kingrow, utilidad neta, caja, runway (todos vía
       selectores existentes). ContextBar + 8 KpiCards en el grid con AR, AP,
       clientes activos, generaciones activas, aprobación/asistencia, ops abiertas.
-- [ ] Tendencia de ingreso (últimos N meses). _(sparkline no incluido en v1
-      del ejecutivo — el detalle vive en /financiero, acá solo el número del período)._
+- [ ] Tendencia de ingreso (últimos N meses). _(Postergado explícitamente para v1 —
+      el detalle vive en /financiero; acá solo el número del período actual)._
 - [x] Salud de clientes: score promedio en el header + panel "Clientes en riesgo"
       con top 5 ordenados por score ascendente, link a ficha del cliente.
 - [x] Resumen de operaciones: panel "Ops crítico" con bloqueadores 7d+, tareas
@@ -535,6 +537,80 @@ el umbral de vencido a 3 días"). Estimación cuando se retome: 8-15h.
 
 > Notas del bloque Ejecutivo:
 > _(completar durante el trabajo)_
+
+---
+
+## 5. Control de acceso por rol (2026-08-07)
+
+Bloque transversal cerrado en la misma sesión que los 4 módulos anteriores.
+
+### 5.1 Problema
+
+`(app)/layout.tsx` tenía un bloque `if role === "cliente" → redirect("/portal")` que
+cubría todos los módulos. Al mover el redirect a `/lanzamientos`, el layout se ejecuta
+recursivamente sobre su propia ruta destino → loop infinito.
+
+### 5.2 Solución adoptada
+
+- `(app)/layout.tsx` solo hace `requireSessionProfile()` (autenticación sin rol).
+- `requireRole(...allowed)` en `src/lib/supabase/auth.ts` redirecciona por rol:
+  - `cliente` → `/lanzamientos`
+  - `operador` → `/operaciones`
+  - otros no autorizados → `/`
+- Cada layout de módulo llama `requireRole(...)` explícitamente. Defense-in-depth.
+- RLS es la última línea.
+
+### 5.3 Módulos gatekeados
+
+- `financiero/layout.tsx` → `requireRole("superadmin", "admin", "analista")`
+- `comercial/layout.tsx` → `requireRole("superadmin", "admin", "analista")`
+- `academia/layout.tsx` → `requireRole("superadmin", "admin", "analista")`
+- `clientes/layout.tsx` → `requireRole("superadmin", "admin", "analista")`
+- `operaciones/layout.tsx` → `requireRole("superadmin", "admin", "analista", "operador")`
+
+### 5.4 Sidebar filtrada por rol
+
+`visibleModulesForRole(modules, role)` en `src/components/kg/layers.ts`:
+- `cliente` → solo `lanzamientos`
+- `operador` → `lanzamientos + operaciones`
+- resto → todos los módulos
+
+Secciones Utilidades / Organización / Sistema gateadas con `!isRestricted &&
+ARRAY.length > 0`.
+
+---
+
+## 6. Módulo Configuración (2026-08-07)
+
+Nueva sección `(kg)/configuracion/` con tabs según rol:
+
+| Tab | Roles | Ruta |
+|-----|-------|------|
+| Mi cuenta | todos | `/configuracion` |
+| Proyectos | superadmin | `/configuracion/proyectos` |
+| Usuarios | superadmin | `/configuracion/usuarios` |
+| Personas | superadmin | `/configuracion/personas` |
+| Distribución de ingresos | superadmin | `/configuracion/distribucion` |
+
+- Layout `configuracion/layout.tsx` construye los tabs condicionalmente según
+  `profile.role === "superadmin" || "dev"`.
+- "Distribución de ingresos" renombra "Reglas de split" — mismo backend
+  (`settlement_rules`), links de edición apuntan a `/organizacion/reglas-split/[id]/edit`.
+- Proyectos, Usuarios, Personas reusan los componentes de `(admin)/` y
+  `(kg)/organizacion/` importados por ruta absoluta `@/app/...`.
+- `ORGANIZATION_MODULES` y `SYSTEM_MODULES` vaciados en `layers.ts`. Ítems movidos a
+  `HIDDEN_MODULES` para que el topbar resuelva títulos al navegar a rutas de edición.
+
+---
+
+## 7. Calculadora + Equipos (2026-08-07)
+
+- **Calculadora** movida del sidebar KG al sidebar del ProjectShell
+  (`src/components/project/sidebar.tsx`). Ahora tiene contexto de proyecto — que es
+  donde el operador la usa realmente.
+- **Módulo Equipos** (`/organizacion/equipos/`) eliminado. Grep confirmó que
+  `teams`/`team_membership` solo eran referenciadas dentro de sus propios archivos —
+  ningún módulo de ops cruzaba con `team_id`. No requirió migración de baja.
 
 ---
 
@@ -720,5 +796,8 @@ No pertenecen a estos módulos pero conviene no perderlas de vista:
 - [ ] `created_by` en `settlement_rules`.
 - [ ] `expenses` es org-scope: hoy no se puede saber cuánto cuesta operar cada proyecto.
 - [ ] Fórmulas marcadas `// REVISAR CON CONTADOR`.
-- [ ] Gating de sidebar por rol para `/financiero`, `/organizacion` y `/comercial`.
+- [x] Gating de sidebar por rol para `/financiero`, `/organizacion` y `/comercial`.
+      _(Cerrado 2026-08-07: cada módulo llama `requireRole` en su layout; sidebar
+      filtrada por `visibleModulesForRole`; cliente va a `/lanzamientos`, operador
+      a `/operaciones`.)_
 - [ ] Segunda cuenta superadmin como respaldo.

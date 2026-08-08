@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 
 import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { fMoney } from "@/lib/finance/format";
 
 import { linkInvoiceToMovement } from "../facturas/actions";
+import { bulkDeleteBankMovements } from "./actions";
 import { ImportMovementsButton } from "./import-drawer";
 import {
   MovementDetailDrawer,
@@ -91,11 +92,83 @@ export function MovimientosView({
 }) {
   const [openCreate, setOpenCreate] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkPending, startBulk] = useTransition();
+
   const detailRow = detailId
     ? rows.find((r) => r.id === detailId) ?? null
     : null;
 
+  const visibleIds = useMemo(() => rows.map((r) => r.id), [rows]);
+  const allVisibleSelected =
+    visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+  const someVisibleSelected =
+    !allVisibleSelected && visibleIds.some((id) => selected.has(id));
+  const selectedCount = selected.size;
+
+  function toggleRow(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllVisible() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        for (const id of visibleIds) next.delete(id);
+      } else {
+        for (const id of visibleIds) next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function clearSelection() {
+    setSelected(new Set<string>());
+  }
+
+  function handleBulkDelete() {
+    if (selectedCount === 0) return;
+    const msg =
+      `¿Eliminar ${selectedCount} movimiento(s) bancarios?\n\n` +
+      `Se van a romper todas sus conciliaciones: facturas y gastos linkeados ` +
+      `quedarán marcados como IMPAGOS; nóminas y transferencias a cliente ` +
+      `perderán la referencia al pago.\n\n` +
+      `Esta acción es IRREVERSIBLE.`;
+    if (!confirm(msg)) return;
+    const ids = Array.from(selected);
+    setBulkError(null);
+    startBulk(async () => {
+      const r = await bulkDeleteBankMovements(ids);
+      if ("error" in r) {
+        setBulkError(r.error);
+      } else {
+        clearSelection();
+      }
+    });
+  }
+
   const columns: Column<MovementRowData>[] = [
+    {
+      key: "select",
+      label: "",
+      width: "36px",
+      render: (r) => (
+        <input
+          type="checkbox"
+          checked={selected.has(r.id)}
+          onChange={() => toggleRow(r.id)}
+          aria-label={`Seleccionar movimiento del ${fmtDate(r.occurredAt)}`}
+        />
+      ),
+    },
     { key: "date", label: "Fecha", render: (r) => fmtDate(r.occurredAt) },
     { key: "bank", label: "Banco", render: (r) => r.bankName },
     { key: "project", label: "Proyecto", render: (r) => r.projectName },
@@ -152,45 +225,126 @@ export function MovimientosView({
       <div
         style={{
           display: "flex",
-          justifyContent: "flex-end",
+          justifyContent: "space-between",
+          alignItems: "center",
           gap: 8,
           padding: "10px 14px",
           borderBottom: "1px solid var(--kg-border-subtle)",
+          flexWrap: "wrap",
         }}
       >
-        <a
-          href={exportHref}
-          className="kg-focus"
-          style={ghostBtnLg}
-          title="Exportar la vista actual a Excel"
-        >
-          Exportar Excel
-        </a>
-        <ImportMovementsButton banks={banks} />
-        <button
-          type="button"
-          onClick={() => setOpenCreate(true)}
-          disabled={banks.length === 0}
-          className="kg-focus"
+        <div
           style={{
-            padding: "6px 14px",
-            borderRadius: 999,
-            background: "var(--kg-accent-500)",
-            color: "#fff",
-            border: "none",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
             fontSize: 12,
-            fontWeight: 700,
-            cursor: banks.length === 0 ? "not-allowed" : "pointer",
-            opacity: banks.length === 0 ? 0.5 : 1,
+            color: "var(--kg-text-2)",
           }}
-          title={
-            banks.length === 0
-              ? "Necesitás al menos un banco activo para cargar movimientos"
-              : "Crear un movimiento"
-          }
         >
-          + Nuevo movimiento
-        </button>
+          <label
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              cursor: rows.length === 0 ? "not-allowed" : "pointer",
+              opacity: rows.length === 0 ? 0.5 : 1,
+            }}
+            title="Seleccionar todos los movimientos visibles en esta página"
+          >
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              ref={(el) => {
+                if (el) el.indeterminate = someVisibleSelected;
+              }}
+              disabled={rows.length === 0}
+              onChange={toggleAllVisible}
+            />
+            <span>Seleccionar visibles</span>
+          </label>
+          {selectedCount > 0 && (
+            <>
+              <span style={{ color: "var(--kg-text-3)" }}>
+                {selectedCount} seleccionado(s)
+              </span>
+              <button
+                type="button"
+                onClick={clearSelection}
+                className="kg-focus"
+                style={ghostBtn}
+                title="Deseleccionar todos"
+              >
+                Limpiar
+              </button>
+              <button
+                type="button"
+                onClick={handleBulkDelete}
+                disabled={bulkPending}
+                className="kg-focus"
+                style={{
+                  padding: "6px 14px",
+                  borderRadius: 999,
+                  background: "#EF4444",
+                  color: "#fff",
+                  border: "none",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: bulkPending ? "wait" : "pointer",
+                  opacity: bulkPending ? 0.6 : 1,
+                }}
+                title="Borrar los movimientos seleccionados. Rompe todas sus conciliaciones."
+              >
+                {bulkPending
+                  ? "Borrando…"
+                  : `Borrar ${selectedCount} seleccionado(s)`}
+              </button>
+              {bulkError && (
+                <span
+                  style={{ color: "#EF4444", fontSize: 11 }}
+                  title={bulkError}
+                >
+                  ⚠ {bulkError}
+                </span>
+              )}
+            </>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <a
+            href={exportHref}
+            className="kg-focus"
+            style={ghostBtnLg}
+            title="Exportar la vista actual a Excel"
+          >
+            Exportar Excel
+          </a>
+          <ImportMovementsButton banks={banks} />
+          <button
+            type="button"
+            onClick={() => setOpenCreate(true)}
+            disabled={banks.length === 0}
+            className="kg-focus"
+            style={{
+              padding: "6px 14px",
+              borderRadius: 999,
+              background: "var(--kg-accent-500)",
+              color: "#fff",
+              border: "none",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: banks.length === 0 ? "not-allowed" : "pointer",
+              opacity: banks.length === 0 ? 0.5 : 1,
+            }}
+            title={
+              banks.length === 0
+                ? "Necesitás al menos un banco activo para cargar movimientos"
+                : "Crear un movimiento"
+            }
+          >
+            + Nuevo movimiento
+          </button>
+        </div>
       </div>
 
       <KgDataTable
