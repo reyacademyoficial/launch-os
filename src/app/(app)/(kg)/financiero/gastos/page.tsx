@@ -12,8 +12,10 @@ import { createClient } from "@/lib/supabase/server";
 
 import { RangePills, type PresetOption } from "../range-pills";
 
-import type { UnconciledMovement } from "./link-payment-drawer";
 import { GastosView, type ExpenseRowData } from "./gastos-view";
+import { ImportExpensesButton } from "./import-drawer";
+import type { UnconciledMovement } from "./link-payment-drawer";
+import { NewExpenseButton } from "./new-expense-button";
 
 export const metadata: Metadata = { title: "Gastos · Financiero" };
 
@@ -357,18 +359,49 @@ export default async function GastosPage({
         />
       </div>
 
-      <Panel title="Gastos" pad={false}>
+      <Panel
+        title="Gastos"
+        pad={false}
+        actions={
+          <div style={{ display: "inline-flex", gap: 8 }}>
+            <a
+              href={buildExportHref(paidParam, rangeParam, fromParam, toParam)}
+              className="kg-focus"
+              style={{
+                padding: "6px 14px",
+                borderRadius: 999,
+                background: "transparent",
+                border: "1px solid var(--kg-border-subtle)",
+                color: "var(--kg-text-2)",
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+              }}
+              title="Exportar la vista actual a Excel"
+            >
+              Exportar Excel
+            </a>
+            <ImportExpensesButton />
+            <NewExpenseButton />
+          </div>
+        }
+      >
         <GastosView
           rows={rows}
           totalCount={totalCount}
           unconciledMovements={unconciledForDrawer}
-          exportHref={buildExportHref(paidParam, rangeParam, fromParam, toParam)}
-        />
-        <KgPaginator
-          page={page}
-          pageSize={PAGE_SIZE}
-          totalCount={totalCount}
-          hrefFor={(n) => buildHref({ page: n })}
+          footerActions={
+            <KgPaginator
+              page={page}
+              pageSize={PAGE_SIZE}
+              totalCount={totalCount}
+              hrefFor={(n) => buildHref({ page: n })}
+              compact
+            />
+          }
         />
       </Panel>
     </div>

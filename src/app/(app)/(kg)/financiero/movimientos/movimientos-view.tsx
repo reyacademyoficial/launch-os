@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useMemo, useState, useTransition } from "react";
 
 import { KgDataTable, type Column } from "@/components/kg/data-table";
@@ -7,14 +8,10 @@ import { fMoney } from "@/lib/finance/format";
 
 import { linkInvoiceToMovement } from "../facturas/actions";
 import { bulkDeleteBankMovements } from "./actions";
-import { ImportMovementsButton } from "./import-drawer";
 import {
   MovementDetailDrawer,
 } from "./movement-detail-drawer";
-import {
-  MovementFormDrawer,
-  type BankOption,
-} from "./movement-form-drawer";
+import type { BankOption } from "./movement-form-drawer";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Modelo serializable para la fila.
@@ -85,14 +82,14 @@ export function MovimientosView({
   rows,
   totalCount,
   banks,
-  exportHref,
+  footerActions,
 }: {
   readonly rows: readonly MovementRowData[];
   readonly totalCount: number;
   readonly banks: readonly BankOption[];
-  readonly exportHref: string;
+  /** Slot para el paginador — va en la misma fila que "X de Y registros". */
+  readonly footerActions?: ReactNode;
 }) {
-  const [openCreate, setOpenCreate] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<string>>(
     () => new Set<string>(),
@@ -160,7 +157,19 @@ export function MovimientosView({
   const columns: Column<MovementRowData>[] = [
     {
       key: "select",
-      label: "",
+      label: (
+        <input
+          type="checkbox"
+          checked={allVisibleSelected}
+          ref={(el) => {
+            if (el) el.indeterminate = someVisibleSelected;
+          }}
+          disabled={rows.length === 0}
+          onChange={toggleAllVisible}
+          aria-label="Seleccionar movimientos visibles"
+          title="Seleccionar todos los movimientos visibles en esta página"
+        />
+      ),
       width: "36px",
       render: (r) => (
         <input
@@ -263,132 +272,71 @@ export function MovimientosView({
     },
   ];
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
+  // Bar de selección: sólo aparece cuando hay filas marcadas. La checkbox
+  // "seleccionar visibles" vive en el header de la columna de check, evitando
+  // ocupar una franja permanente cuando no se usa.
+  const selectionBar =
+    selectedCount > 0 ? (
       <div
         style={{
           display: "flex",
-          justifyContent: "space-between",
           alignItems: "center",
-          gap: 8,
-          padding: "10px 14px",
+          gap: 10,
+          padding: "8px 14px",
           borderBottom: "1px solid var(--kg-border-subtle)",
+          fontSize: 12,
+          color: "var(--kg-text-2)",
           flexWrap: "wrap",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            fontSize: 12,
-            color: "var(--kg-text-2)",
-          }}
+        <span style={{ color: "var(--kg-text-3)" }}>
+          {selectedCount} seleccionado(s)
+        </span>
+        <button
+          type="button"
+          onClick={clearSelection}
+          className="kg-focus"
+          style={ghostBtn}
+          title="Deseleccionar todos"
         >
-          <label
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              cursor: rows.length === 0 ? "not-allowed" : "pointer",
-              opacity: rows.length === 0 ? 0.5 : 1,
-            }}
-            title="Seleccionar todos los movimientos visibles en esta página"
+          Limpiar
+        </button>
+        <button
+          type="button"
+          onClick={handleBulkDelete}
+          disabled={bulkPending}
+          className="kg-focus"
+          style={{
+            padding: "6px 14px",
+            borderRadius: 999,
+            background: "#EF4444",
+            color: "#fff",
+            border: "none",
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: bulkPending ? "wait" : "pointer",
+            opacity: bulkPending ? 0.6 : 1,
+          }}
+          title="Borrar los movimientos seleccionados. Rompe todas sus conciliaciones."
+        >
+          {bulkPending
+            ? "Borrando…"
+            : `Borrar ${selectedCount} seleccionado(s)`}
+        </button>
+        {bulkError && (
+          <span
+            style={{ color: "#EF4444", fontSize: 11 }}
+            title={bulkError}
           >
-            <input
-              type="checkbox"
-              checked={allVisibleSelected}
-              ref={(el) => {
-                if (el) el.indeterminate = someVisibleSelected;
-              }}
-              disabled={rows.length === 0}
-              onChange={toggleAllVisible}
-            />
-            <span>Seleccionar visibles</span>
-          </label>
-          {selectedCount > 0 && (
-            <>
-              <span style={{ color: "var(--kg-text-3)" }}>
-                {selectedCount} seleccionado(s)
-              </span>
-              <button
-                type="button"
-                onClick={clearSelection}
-                className="kg-focus"
-                style={ghostBtn}
-                title="Deseleccionar todos"
-              >
-                Limpiar
-              </button>
-              <button
-                type="button"
-                onClick={handleBulkDelete}
-                disabled={bulkPending}
-                className="kg-focus"
-                style={{
-                  padding: "6px 14px",
-                  borderRadius: 999,
-                  background: "#EF4444",
-                  color: "#fff",
-                  border: "none",
-                  fontSize: 12,
-                  fontWeight: 700,
-                  cursor: bulkPending ? "wait" : "pointer",
-                  opacity: bulkPending ? 0.6 : 1,
-                }}
-                title="Borrar los movimientos seleccionados. Rompe todas sus conciliaciones."
-              >
-                {bulkPending
-                  ? "Borrando…"
-                  : `Borrar ${selectedCount} seleccionado(s)`}
-              </button>
-              {bulkError && (
-                <span
-                  style={{ color: "#EF4444", fontSize: 11 }}
-                  title={bulkError}
-                >
-                  ⚠ {bulkError}
-                </span>
-              )}
-            </>
-          )}
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <a
-            href={exportHref}
-            className="kg-focus"
-            style={ghostBtnLg}
-            title="Exportar la vista actual a Excel"
-          >
-            Exportar Excel
-          </a>
-          <ImportMovementsButton banks={banks} />
-          <button
-            type="button"
-            onClick={() => setOpenCreate(true)}
-            disabled={banks.length === 0}
-            className="kg-focus"
-            style={{
-              padding: "6px 14px",
-              borderRadius: 999,
-              background: "var(--kg-accent-500)",
-              color: "#fff",
-              border: "none",
-              fontSize: 12,
-              fontWeight: 700,
-              cursor: banks.length === 0 ? "not-allowed" : "pointer",
-              opacity: banks.length === 0 ? 0.5 : 1,
-            }}
-            title={
-              banks.length === 0
-                ? "Necesitás al menos un banco activo para cargar movimientos"
-                : "Crear un movimiento"
-            }
-          >
-            + Nuevo movimiento
-          </button>
-        </div>
+            ⚠ {bulkError}
+          </span>
+        )}
       </div>
+    ) : null;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column" }}>
+      {selectionBar}
 
       <KgDataTable
         columns={columns}
@@ -397,13 +345,8 @@ export function MovimientosView({
         totalCount={totalCount}
         emptyTitle="No hay movimientos bancarios cargados"
         emptyHint="Los movimientos alimentan el KPI Flujo de caja del dashboard. Cobros de ventas NO se duplican acá — viven en payments; esta tabla es para ingresos/egresos manuales (gastos, retiros, transferencias, ajustes)."
-      />
-
-      <MovementFormDrawer
-        mode="create"
-        open={openCreate}
-        onClose={() => setOpenCreate(false)}
-        banks={banks}
+        maxBodyHeight="calc(100vh - 280px)"
+        footerActions={footerActions}
       />
 
       {detailRow && (
@@ -654,20 +597,6 @@ const ghostBtn: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
   cursor: "pointer",
-};
-
-const ghostBtnLg: React.CSSProperties = {
-  padding: "6px 14px",
-  borderRadius: 999,
-  background: "transparent",
-  border: "1px solid var(--kg-border-subtle)",
-  color: "var(--kg-text-2)",
-  fontSize: 12,
-  fontWeight: 700,
-  cursor: "pointer",
-  textDecoration: "none",
-  display: "inline-flex",
-  alignItems: "center",
 };
 
 function fmtDate(iso: string): string {

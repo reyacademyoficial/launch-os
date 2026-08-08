@@ -11,6 +11,7 @@ import { fmtArs, fmtUsd, loadLatestOrgFxRate } from "@/lib/money";
 import { createClient } from "@/lib/supabase/server";
 
 import { BancosView, type BankRowData } from "./bancos-view";
+import { NewBankButton } from "./new-bank-button";
 
 export const metadata: Metadata = { title: "Bancos · Financiero" };
 
@@ -129,7 +130,11 @@ export default async function BancosPage({
         />
       </div>
 
-      <Panel title="Bancos de Kingrow" pad={false}>
+      <Panel
+        title="Bancos de Kingrow"
+        pad={false}
+        actions={<NewBankButton />}
+      >
         <BancosView rows={rows} totalCount={totalCount} />
       </Panel>
     </div>

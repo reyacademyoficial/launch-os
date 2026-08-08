@@ -6,7 +6,6 @@ import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { fMoney } from "@/lib/finance/format";
 
 import { deletePayroll } from "./actions";
-import { CreatePayrollButton } from "./create-payroll-button";
 import {
   LinkPaymentDrawer,
   type UnconciledMovement,
@@ -107,18 +106,6 @@ export function NominaView({
 
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "flex-end",
-          gap: 8,
-          padding: "10px 14px",
-          borderBottom: "1px solid var(--kg-border-subtle)",
-        }}
-      >
-        <CreatePayrollButton people={people} />
-      </div>
-
       <KgDataTable
         columns={columns}
         rows={rows}
@@ -126,6 +113,7 @@ export function NominaView({
         totalCount={totalCount}
         emptyTitle="No hay nómina cargada"
         emptyHint="Sin nómina cargada, el KPI Nómina del período queda en cero y el Burn mensual se subestima — el runway del dashboard sale inflado."
+        maxBodyHeight="calc(100vh - 280px)"
       />
 
       {linkingRow && (

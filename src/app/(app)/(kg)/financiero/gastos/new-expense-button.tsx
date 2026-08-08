@@ -2,21 +2,12 @@
 
 import { useState } from "react";
 
-import {
-  PayrollFormDrawer,
-  type PersonOption,
-} from "./payroll-form-drawer";
+import { ExpenseFormDrawer } from "./expense-form-drawer";
 
-/**
- * Botón + drawer para cargar una nueva liquidación de nómina. La lista de
- * personas se pasa desde la page (server-side) para que RLS filtre antes de
- * llegar al cliente y no se filtren personas de otras orgs.
- */
-export function CreatePayrollButton({
-  people,
-}: {
-  readonly people: ReadonlyArray<PersonOption>;
-}) {
+// Botón "+ Nuevo gasto" + drawer de creación. Vive suelto para poder pasarse
+// como `actions` del Panel (junto al título) y no ocupar una franja aparte
+// dentro de GastosView — mismo criterio que NewInvoiceButton.
+export function NewExpenseButton() {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -28,20 +19,19 @@ export function CreatePayrollButton({
           padding: "6px 14px",
           borderRadius: 999,
           background: "var(--kg-accent-500)",
-          border: "none",
           color: "#fff",
+          border: "none",
           fontSize: 12,
           fontWeight: 700,
           cursor: "pointer",
         }}
       >
-        + Nueva liquidación
+        + Nuevo gasto
       </button>
-      <PayrollFormDrawer
+      <ExpenseFormDrawer
         mode="create"
         open={open}
         onClose={() => setOpen(false)}
-        people={people}
       />
     </>
   );

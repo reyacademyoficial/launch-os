@@ -2,21 +2,11 @@
 
 import { useState } from "react";
 
-import {
-  PayrollFormDrawer,
-  type PersonOption,
-} from "./payroll-form-drawer";
+import { LiabilityFormDrawer } from "./liability-form-drawer";
 
-/**
- * Botón + drawer para cargar una nueva liquidación de nómina. La lista de
- * personas se pasa desde la page (server-side) para que RLS filtre antes de
- * llegar al cliente y no se filtren personas de otras orgs.
- */
-export function CreatePayrollButton({
-  people,
-}: {
-  readonly people: ReadonlyArray<PersonOption>;
-}) {
+// Botón "+ Nuevo pasivo" + drawer. Vive como `actions` del Panel para
+// alinear con la pestaña de Facturas.
+export function NewLiabilityButton() {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -28,20 +18,19 @@ export function CreatePayrollButton({
           padding: "6px 14px",
           borderRadius: 999,
           background: "var(--kg-accent-500)",
-          border: "none",
           color: "#fff",
+          border: "none",
           fontSize: 12,
           fontWeight: 700,
           cursor: "pointer",
         }}
       >
-        + Nueva liquidación
+        + Nuevo pasivo
       </button>
-      <PayrollFormDrawer
+      <LiabilityFormDrawer
         mode="create"
         open={open}
         onClose={() => setOpen(false)}
-        people={people}
       />
     </>
   );

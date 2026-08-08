@@ -31,7 +31,12 @@ export type ColumnAlign = "left" | "right" | "center";
 
 export interface Column<Row> {
   readonly key: string;
-  readonly label: string;
+  /**
+   * Texto o nodo del header. Se acepta ReactNode para poder embeder controles
+   * (ej. checkbox "Seleccionar visibles") en la cabecera de la columna, sin
+   * tener que abrir un toolbar aparte encima de la tabla.
+   */
+  readonly label: ReactNode;
   /** Cómo alinear cabecera Y celda. Default: 'left'. Números → 'right'. */
   readonly align?: ColumnAlign;
   /** Ancho fijo (CSS width). Opcional — sin esto la columna es fluida. */

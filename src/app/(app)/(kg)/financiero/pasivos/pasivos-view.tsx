@@ -33,7 +33,6 @@ export function PasivosView({
   readonly rows: readonly LiabilityRowData[];
   readonly totalCount: number;
 }) {
-  const [openCreate, setOpenCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const editingRow = editingId
     ? rows.find((r) => r.id === editingId) ?? null
@@ -81,33 +80,6 @@ export function PasivosView({
 
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "flex-end",
-          padding: "10px 14px",
-          borderBottom: "1px solid var(--kg-border-subtle)",
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => setOpenCreate(true)}
-          className="kg-focus"
-          style={{
-            padding: "6px 14px",
-            borderRadius: 999,
-            background: "var(--kg-accent-500)",
-            color: "#fff",
-            border: "none",
-            fontSize: 12,
-            fontWeight: 700,
-            cursor: "pointer",
-          }}
-        >
-          + Nuevo pasivo
-        </button>
-      </div>
-
       <KgDataTable
         columns={columns}
         rows={rows}
@@ -115,12 +87,7 @@ export function PasivosView({
         totalCount={totalCount}
         emptyTitle="No hay pasivos registrados"
         emptyHint="Los pasivos vigentes (active=true AND settled_at IS NULL) restan del Patrimonio neto del dashboard. Sin pasivos cargados, el patrimonio se estima solo por activos + AP corriente."
-      />
-
-      <LiabilityFormDrawer
-        mode="create"
-        open={openCreate}
-        onClose={() => setOpenCreate(false)}
+        maxBodyHeight="calc(100vh - 280px)"
       />
 
       {editingRow && (

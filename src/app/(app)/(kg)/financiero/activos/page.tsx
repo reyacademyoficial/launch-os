@@ -8,6 +8,7 @@ import { fCount, fMoney } from "@/lib/finance/format";
 import { createClient } from "@/lib/supabase/server";
 
 import { ActivosView, type AssetRowData } from "./activos-view";
+import { NewAssetButton } from "./new-asset-button";
 
 export const metadata: Metadata = { title: "Activos · Financiero" };
 
@@ -113,7 +114,11 @@ export default async function ActivosPage({
         />
       </div>
 
-      <Panel title="Activos" pad={false}>
+      <Panel
+        title="Activos"
+        pad={false}
+        actions={<NewAssetButton />}
+      >
         <ActivosView rows={rows} totalCount={totalCount} />
       </Panel>
     </div>

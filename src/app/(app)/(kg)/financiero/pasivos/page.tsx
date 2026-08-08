@@ -7,6 +7,7 @@ import { Panel } from "@/components/kg/panel";
 import { fCount, fMoney } from "@/lib/finance/format";
 import { createClient } from "@/lib/supabase/server";
 
+import { NewLiabilityButton } from "./new-liability-button";
 import { PasivosView, type LiabilityRowData } from "./pasivos-view";
 
 export const metadata: Metadata = { title: "Pasivos · Financiero" };
@@ -107,7 +108,11 @@ export default async function PasivosPage({
         />
       </div>
 
-      <Panel title="Pasivos" pad={false}>
+      <Panel
+        title="Pasivos"
+        pad={false}
+        actions={<NewLiabilityButton />}
+      >
         <PasivosView rows={rows} totalCount={totalCount} />
       </Panel>
     </div>

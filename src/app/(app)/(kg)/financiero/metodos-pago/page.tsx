@@ -11,14 +11,15 @@ import { listAllPaymentMethods } from "@/lib/payment-methods/list";
 import { listAccessibleProjects } from "@/lib/projects/list";
 import { createClient } from "@/lib/supabase/server";
 
-import type {
-  BankOption,
-  ProjectOption,
-} from "./payment-method-form-drawer";
 import {
   MetodosPagoView,
   type PaymentMethodRowData,
 } from "./metodos-pago-view";
+import { NewPaymentMethodButton } from "./new-method-button";
+import type {
+  BankOption,
+  ProjectOption,
+} from "./payment-method-form-drawer";
 
 export const metadata: Metadata = { title: "Métodos de pago · Financiero" };
 
@@ -251,7 +252,16 @@ export default async function MetodosPagoPage({
         )}
       </div>
 
-      <Panel title="Métodos de pago" pad={false}>
+      <Panel
+        title="Métodos de pago"
+        pad={false}
+        actions={
+          <NewPaymentMethodButton
+            projects={projectsForDrawer}
+            banks={banksForDrawer}
+          />
+        }
+      >
         <MetodosPagoView
           rows={rows}
           totalCount={totalCount}

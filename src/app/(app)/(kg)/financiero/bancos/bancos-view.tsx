@@ -8,6 +8,10 @@ import { fmtNative, fmtUsd } from "@/lib/money";
 import { setBankActive } from "./actions";
 import { BankFormDrawer } from "./bank-form-drawer";
 
+// GastosView / FacturasView pattern: la vista se encarga del edit drawer y
+// de la tabla; el "+ Nuevo banco" vive en el header del Panel via `actions`
+// (ver ./new-bank-button + ./page.tsx).
+
 export interface BankRowData {
   readonly id: string;
   readonly name: string;
@@ -28,7 +32,6 @@ export function BancosView({
   readonly rows: readonly BankRowData[];
   readonly totalCount: number;
 }) {
-  const [openCreate, setOpenCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const editingRow = editingId
     ? rows.find((r) => r.id === editingId) ?? null
@@ -98,33 +101,6 @@ export function BancosView({
 
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "flex-end",
-          padding: "10px 14px",
-          borderBottom: "1px solid var(--kg-border-subtle)",
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => setOpenCreate(true)}
-          className="kg-focus"
-          style={{
-            padding: "6px 14px",
-            borderRadius: 999,
-            background: "var(--kg-accent-500)",
-            color: "#fff",
-            border: "none",
-            fontSize: 12,
-            fontWeight: 700,
-            cursor: "pointer",
-          }}
-        >
-          + Nuevo banco
-        </button>
-      </div>
-
       <KgDataTable
         columns={columns}
         rows={rows}
@@ -132,12 +108,7 @@ export function BancosView({
         totalCount={totalCount}
         emptyTitle="No hay bancos registrados"
         emptyHint="Los bancos son las cuentas donde Kingrow opera. El saldo se calcula: saldo inicial + movimientos de entrada − movimientos de salida. Los cobros de ventas NO alimentan el saldo — para que un cobro impacte el banco hay que cargar el movimiento correspondiente y vincular la factura por Nº de transacción."
-      />
-
-      <BankFormDrawer
-        mode="create"
-        open={openCreate}
-        onClose={() => setOpenCreate(false)}
+        maxBodyHeight="calc(100vh - 280px)"
       />
 
       {editingRow && (
