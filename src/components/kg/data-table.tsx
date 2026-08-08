@@ -67,6 +67,11 @@ export interface DataTableProps<Row> {
    * esto la tabla crece a lo alto y el scroll queda a nivel de página.
    */
   readonly maxBodyHeight?: string;
+  /**
+   * Slot opcional en la MISMA fila del footer "X de Y registros" — para
+   * inyectar el paginador y evitar que ocupe una franja aparte.
+   */
+  readonly footerActions?: ReactNode;
 }
 
 export function KgDataTable<Row>({
@@ -77,6 +82,7 @@ export function KgDataTable<Row>({
   emptyTitle,
   emptyHint,
   maxBodyHeight,
+  footerActions,
 }: DataTableProps<Row>) {
   if (rows.length === 0) {
     return <EmptyState title={emptyTitle} hint={emptyHint} />;
@@ -172,9 +178,14 @@ export function KgDataTable<Row>({
           color: "var(--kg-text-3)",
           fontSize: 11,
           fontVariantNumeric: "tabular-nums",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
         }}
       >
-        {showingRange}
+        <span>{showingRange}</span>
+        {footerActions}
       </div>
     </div>
   );

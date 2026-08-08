@@ -121,13 +121,21 @@ export function canSeeOrganization(role: Role): boolean {
 /**
  * IDs de módulos KG visibles según rol.
  *
- *   cliente   → solo lanzamientos (acceden a LaunchOS read-only, nada más de KG)
- *   operador  → lanzamientos + operaciones (sus tareas + el ProjectShell)
- *   otros     → todos (sin filtro adicional más allá de canSeeSystem/Org)
+ *   cliente     → solo lanzamientos (acceden a LaunchOS read-only, nada más de KG)
+ *   operador    → lanzamientos + operaciones (sus tareas + el ProjectShell)
+ *   coordinador → clientes + academia + operaciones + lanzamientos
+ *                 (regla 2026-08-08 — sin Ejecutivo, Financiero, Comercial)
+ *   otros       → todos (sin filtro adicional más allá de canSeeSystem/Org)
  */
 const ROLE_MODULE_ALLOWLIST: Partial<Record<Role, ReadonlySet<string>>> = {
   cliente: new Set(["lanzamientos"]),
   operador: new Set(["lanzamientos", "operaciones"]),
+  coordinador: new Set([
+    "lanzamientos",
+    "clientes",
+    "academia",
+    "operaciones",
+  ]),
 };
 
 export function visibleModulesForRole(

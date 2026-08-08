@@ -30,7 +30,7 @@ export default async function LaunchIntegrationsPage({
 
   const isClosed = launch.closed_at !== null;
 
-  // Cliente y analista no editan integraciones — la sección no tiene sentido
+  // Cliente y coordinador no editan integraciones — la sección no tiene sentido
   // de mostrar. Le damos un mensaje minimal en vez de un layout vacío.
   if (!canEditLaunchValue) {
     return (

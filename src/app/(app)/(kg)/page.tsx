@@ -81,7 +81,7 @@ const RANGE_PRESETS: readonly PresetOption[] = [
   { value: "90d", label: "90D" },
 ];
 
-const ROLES_WITH_ACCESS = ["superadmin", "admin", "analista"] as const;
+const ROLES_WITH_ACCESS = ["superadmin", "admin"] as const;
 
 type OwnershipVal = "propia" | "externa";
 
@@ -195,7 +195,9 @@ export default async function EjecutivoDashboardPage({
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   // Gate de rol: dev pasa por bypass interno; los demás roles válidos son
-  // explícitos. `cliente_role` y `operador` caen a "/".
+  // explícitos. Coordinador/operador/cliente son redirigidos por requireRole:
+  // coordinador → "/" (que a su vez lo bota — evitamos ciclo pasando por el
+  // gate anterior de layouts), operador → /operaciones, cliente → /lanzamientos.
   await requireRole(...ROLES_WITH_ACCESS);
 
   const sp = await searchParams;

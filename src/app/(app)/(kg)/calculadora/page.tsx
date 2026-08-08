@@ -16,7 +16,7 @@ export default async function CalculatorPage() {
   // Cliente queda fuera del simulador en Fase 2 (vista ejecutiva reducida,
   // sin costos internos). Toggleable en src/lib/auth/permissions.ts.
   if (!canUseCalculator(profile)) redirect("/");
-  // Save (= insert into `projections`) needs project-scope write, so analista
+  // Save (= insert into `projections`) needs project-scope write, so coordinador
   // and operador can use the simulator but no save UI for them either.
   const canSave = profile.role === "admin" || profile.role === "superadmin";
   const [projections, editableProjects] = await Promise.all([

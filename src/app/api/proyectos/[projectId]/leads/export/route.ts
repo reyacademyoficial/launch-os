@@ -31,7 +31,7 @@ import { requireCanEditLaunchesIn } from "@/lib/supabase/auth";
  * `X-Leads-Export-Total`.
  *
  * Permisos: `requireCanEditLaunchesIn` — admin / operador / superadmin. Cliente
- * y analista no exportan (decisión consistente con el resto del CRM).
+ * y coordinador no exportan (decisión consistente con el resto del CRM).
  */
 export async function GET(
   request: Request,

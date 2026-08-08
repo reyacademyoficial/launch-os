@@ -22,7 +22,7 @@ import { requireCanEditLaunchesIn } from "@/lib/supabase/auth";
  *
  * Devuelve el PDF "resumen ejecutivo" del launch — el output cara-al-cliente.
  *
- * Permisos: `requireCanEditLaunchesIn`. Cliente y analista no descargan el PDF.
+ * Permisos: `requireCanEditLaunchesIn`. Cliente y coordinador no descargan el PDF.
  * (Si en el futuro queremos que el cliente lo baje desde su portal, se baja
  * el gate sólo para `cliente` member del proyecto.)
  *

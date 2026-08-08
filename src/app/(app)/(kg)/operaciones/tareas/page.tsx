@@ -24,7 +24,7 @@ export const metadata: Metadata = { title: "Tareas · Operaciones" };
 //
 // SCOPE (§2.0 del plan):
 //   - superadmin / dev  → default "todas", toggle "mis tareas" disponible.
-//   - resto (operador/analista/admin) → default "mis tareas", toggle NO
+//   - resto (operador/coordinador/admin) → default "mis tareas", toggle NO
 //     visible. Si fuerza ?scope=all por URL, se ignora silenciosamente.
 //
 // Filtros extras:

@@ -14,7 +14,7 @@ import { createServiceClient } from "@/lib/supabase/service";
  * Server Actions de integraciones para un launch puntual.
  *
  * Permission gate común: `requireCanEditLaunchesIn(projectId)` — admin /
- * operador / superadmin del proyecto pasan. Analista y cliente no.
+ * operador / superadmin del proyecto pasan. Coordinador y cliente no.
  *
  * Por qué todos pasan por service-role: leen/escriben `launch_secrets` (RLS
  * sin policies) o `launches.integration_config` (RLS escritura por launch).

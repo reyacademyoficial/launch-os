@@ -190,12 +190,13 @@ function parseFxRate(raw: string): number | null {
  * The caller must be able to edit the project — re-checked here even though
  * the page already gated, because Server Actions are URL-invocable.
  */
+// Regla 2026-08-08: operador puede crear launches además de editarlos.
 export async function createLaunch(
   projectId: string,
   _prev: LaunchActionState,
   formData: FormData,
 ): Promise<LaunchActionState> {
-  await requireCanEditProject(projectId);
+  await requireCanEditLaunchesIn(projectId);
 
   const parsed = parseLaunchFromForm(formData);
   if (!parsed.ok) return { error: parsed.error };
@@ -276,7 +277,7 @@ async function copyConnectionsInline(
 /**
  * Updates an existing launch. Gate is launch-scope: admin/superadmin on the
  * project pass, and operadores assigned to this launch with `can_edit = true`
- * pass too. Analista and cliente never pass. The `eq("project_id", projectId)`
+ * pass too. Coordinador and cliente never pass. The `eq("project_id", projectId)`
  * below is the URL-tampering guard (launch must belong to the URL's project).
  */
 export async function updateLaunch(
@@ -312,7 +313,8 @@ export async function updateLaunch(
  * Deletes a launch. Triggered by the DeleteButton's form action.
  */
 export async function deleteLaunch(projectId: string, launchId: string): Promise<void> {
-  await requireCanEditProject(projectId);
+  // Regla 2026-08-08: operador puede borrar launches además de editarlos.
+  await requireCanEditLaunchesIn(projectId);
 
   const supabase = await createClient();
   await supabase
@@ -334,7 +336,8 @@ export async function duplicateLaunch(
   projectId: string,
   launchId: string,
 ): Promise<void> {
-  await requireCanEditProject(projectId);
+  // Regla 2026-08-08: duplicar sigue a crear — operador incluido.
+  await requireCanEditLaunchesIn(projectId);
 
   const supabase = await createClient();
   const { data, error } = await supabase

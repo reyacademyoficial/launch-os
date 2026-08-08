@@ -12,7 +12,7 @@ import { KgTabsBar, type TabItem } from "@/components/kg/tabs-bar";
  * volver al listado.
  *
  * Gate de rol: hereda de `(app)/layout.tsx` (rechaza cliente_role). Sin
- * requireRole más estricto acá — todo dev/superadmin/analista/operador
+ * requireRole más estricto acá — todo dev/superadmin/admin/coordinador/operador
  * tiene lectura sobre Operaciones (con filtro "mis tareas" por default,
  * que se maneja en `/operaciones/tareas`).
  */
@@ -22,7 +22,7 @@ export default async function OperacionesLayout({
   readonly children: React.ReactNode;
 }) {
   // Operadores pueden acceder; clientes son redirigidos a /lanzamientos.
-  await requireRole("superadmin", "admin", "analista", "operador");
+  await requireRole("superadmin", "admin", "coordinador", "operador");
 
   const tabs: readonly TabItem[] = [
     { href: "/operaciones", label: "Dashboard" },

@@ -9,7 +9,7 @@ export type Role =
   | "superadmin"
   | "admin"
   | "operador"
-  | "analista"
+  | "coordinador"
   | "cliente";
 
 export interface SessionProfile {
@@ -120,7 +120,7 @@ export async function requireRole(
 
 /**
  * Project-wide write check. Mirror del SQL `can_edit_project`: superadmin O
- * (admin miembro). Operador, analista, cliente: false. Gate de CREATE/DELETE
+ * (admin miembro). Operador, coordinador, cliente: false. Gate de CREATE/DELETE
  * de launches + edits del proyecto + edits de integraciones.
  */
 export async function userCanEditProject(projectId: string): Promise<boolean> {
@@ -135,7 +135,7 @@ export async function userCanEditProject(projectId: string): Promise<boolean> {
 /**
  * Write check para launches/launch_daily a nivel proyecto. Mirror del SQL
  * `can_edit_launches_in`: superadmin O (miembro con rol admin|operador).
- * Analista y cliente: false.
+ * Coordinador y cliente: false.
  */
 export async function userCanEditLaunchesIn(projectId: string): Promise<boolean> {
   const supabase = await createClient();
@@ -161,7 +161,7 @@ export async function requireCanEditProject(
 
 /**
  * Defense-in-depth layer 2 para UPDATE de launches y operaciones de
- * launch_daily. Operadores miembros del proyecto pasan; analista y cliente
+ * launch_daily. Operadores miembros del proyecto pasan; coordinador y cliente
  * caen al overview.
  */
 export async function requireCanEditLaunchesIn(

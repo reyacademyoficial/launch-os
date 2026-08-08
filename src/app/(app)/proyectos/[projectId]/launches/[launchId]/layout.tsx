@@ -180,7 +180,7 @@ export default async function LaunchLayout({
                 recycleTargetOptions={recycleTargetOptions}
               />
             )}
-            {canEditProjectValue && (
+            {canEditLaunchValue && (
               <form action={duplicateAction}>
                 <button
                   type="submit"
@@ -210,7 +210,7 @@ export default async function LaunchLayout({
                   </button>
                 </form>
               ))}
-            {canEditProjectValue && (
+            {canEditLaunchValue && (
               <DeleteButton launchName={launch.name} onConfirm={deleteAction} />
             )}
           </div>

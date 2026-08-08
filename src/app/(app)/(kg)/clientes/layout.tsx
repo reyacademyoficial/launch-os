@@ -4,7 +4,7 @@ import { KgTabsBar, type TabItem } from "@/components/kg/tabs-bar";
 /**
  * Layout del módulo Clientes (CRM: tickets, renovaciones, upsells, NPS).
  *
- * Visible para superadmin / admin / analista. Operadores y clientes son
+ * Visible para superadmin / admin / coordinador. Operadores y clientes son
  * redirigidos a su módulo raíz vía requireRole.
  */
 export default async function ClientesLayout({
@@ -12,7 +12,7 @@ export default async function ClientesLayout({
 }: {
   readonly children: React.ReactNode;
 }) {
-  await requireRole("superadmin", "admin", "analista");
+  await requireRole("superadmin", "admin", "coordinador");
 
   const tabs: readonly TabItem[] = [
     { href: "/clientes", label: "Dashboard" },

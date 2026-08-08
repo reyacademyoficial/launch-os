@@ -26,7 +26,7 @@ export const metadata: Metadata = { title: "Presupuesto · Lanzamiento" };
  *
  * Permisos:
  *   - SELECT: has_project_access (todos los miembros ven).
- *   - I/U/D: can_edit_launches_in (admin/operador). Cliente y analista lo
+ *   - I/U/D: can_edit_launches_in (admin/operador). Cliente y coordinador lo
  *     ven read-only.
  */
 export default async function LaunchPresupuestoPage({

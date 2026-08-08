@@ -28,6 +28,7 @@ import type {
   ProjectOption,
 } from "./invoice-form-drawer";
 import type { UnconciledMovementForInvoice } from "./link-invoice-movement-drawer";
+import { NewInvoiceButton } from "./new-invoice-button";
 
 export const metadata: Metadata = { title: "Facturas · Financiero" };
 
@@ -528,7 +529,16 @@ export default async function FacturasPage({
         />
       </div>
 
-      <Panel title="Facturas emitidas" pad={false}>
+      <Panel
+        title="Facturas emitidas"
+        pad={false}
+        actions={
+          <NewInvoiceButton
+            projects={projectOptions}
+            products={productOptions}
+          />
+        }
+      >
         <FacturasView
           rows={rows}
           totalCount={totalCount}
@@ -537,12 +547,15 @@ export default async function FacturasPage({
           unconciledMovements={unconciledForDrawer}
           emptyTitle="No hay facturas cargadas todavía"
           emptyHint='Las facturas alimentan el ingreso de Kingrow (las clasificadas "Ingreso Kingrow"), el volumen del grupo, las cuentas por cobrar y el conteo de facturas pendientes. También se generan una por cuota al crear una venta (paso 4).'
-        />
-        <KgPaginator
-          page={page}
-          pageSize={PAGE_SIZE}
-          totalCount={totalCount}
-          hrefFor={(n) => buildHref({ page: n })}
+          footerActions={
+            <KgPaginator
+              page={page}
+              pageSize={PAGE_SIZE}
+              totalCount={totalCount}
+              hrefFor={(n) => buildHref({ page: n })}
+              compact
+            />
+          }
         />
       </Panel>
     </div>

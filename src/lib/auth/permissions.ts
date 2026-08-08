@@ -18,7 +18,7 @@ export type Role =
   | "superadmin"
   | "admin"
   | "operador"
-  | "analista"
+  | "coordinador"
   | "cliente";
 
 /**
@@ -47,8 +47,8 @@ export function isOperador(ctx: SessionContext): boolean {
   return ctx.role === "operador";
 }
 
-export function isAnalista(ctx: SessionContext): boolean {
-  return ctx.role === "analista";
+export function isCoordinador(ctx: SessionContext): boolean {
+  return ctx.role === "coordinador";
 }
 
 export function isCliente(ctx: SessionContext): boolean {
@@ -73,7 +73,7 @@ export function canEditProject(ctx: SessionContext, projectId: string): boolean 
 
 /**
  * UPDATE en launches (la fila del launch + launch_daily). Admin y operador
- * miembros del proyecto pasan; analista y cliente nunca.
+ * miembros del proyecto pasan; coordinador y cliente nunca.
  * Mirror del SQL `can_edit_launches_in(project_id)`.
  */
 export function canEditLaunchesIn(
@@ -110,17 +110,18 @@ export function canUseCalculator(_ctx: SessionContext): boolean {
 export function canViewAuditLog(ctx: SessionContext, projectId: string): boolean {
   if (isSuperadmin(ctx)) return true;
   if (!ctx.memberOfProjectIds.has(projectId)) return false;
-  return isAdmin(ctx) || isAnalista(ctx);
+  return isAdmin(ctx) || isCoordinador(ctx);
 }
 
 /**
- * Aliases for the create/delete launch buttons in the UI; ambos resuelven a
- * project-level write porque el operador nunca crea ni borra launches.
+ * Aliases for the create/delete launch buttons in the UI. Ambos resuelven a
+ * `canEditLaunchesIn` — operador miembro del proyecto crea y borra sus
+ * launches además de editarlos (regla nueva 2026-08-08).
  */
 export function canCreateLaunch(ctx: SessionContext, projectId: string): boolean {
-  return canEditProject(ctx, projectId);
+  return canEditLaunchesIn(ctx, projectId);
 }
 
 export function canDeleteLaunch(ctx: SessionContext, projectId: string): boolean {
-  return canEditProject(ctx, projectId);
+  return canEditLaunchesIn(ctx, projectId);
 }

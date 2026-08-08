@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useState } from "react";
 
 import { KgDataTable, type Column } from "@/components/kg/data-table";
@@ -17,8 +18,11 @@ import {
 } from "./link-invoice-movement-drawer";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Vista client-side de facturas — envuelve la tabla + botón crear + drawer
-// de edit. La página server hace el fetch y le pasa las rows serializables.
+// Vista client-side de facturas — envuelve la tabla y sus drawers (edit +
+// conciliación). El botón "+ Nueva factura" vive en `NewInvoiceButton`
+// aparte porque se renderiza como `actions` del Panel (misma fila que el
+// título) y el paginador entra como `footerActions` para no ocupar otra
+// franja vertical.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export type InvoiceStatus = "emitida" | "cobrada" | "vencida" | "anulada";
@@ -73,6 +77,7 @@ export function FacturasView({
   unconciledMovements,
   emptyTitle,
   emptyHint,
+  footerActions,
 }: {
   readonly rows: readonly FacturaRowData[];
   readonly totalCount: number;
@@ -81,8 +86,9 @@ export function FacturasView({
   readonly unconciledMovements: readonly UnconciledMovementForInvoice[];
   readonly emptyTitle: string;
   readonly emptyHint: string;
+  /** Slot para el paginador — va en la misma fila que "X de Y registros". */
+  readonly footerActions?: ReactNode;
 }) {
-  const [openCreate, setOpenCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [linkingId, setLinkingId] = useState<string | null>(null);
   const editingRow = editingId
@@ -226,33 +232,6 @@ export function FacturasView({
 
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "flex-end",
-          padding: "10px 14px",
-          borderBottom: "1px solid var(--kg-border-subtle)",
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => setOpenCreate(true)}
-          className="kg-focus"
-          style={{
-            padding: "6px 14px",
-            borderRadius: 999,
-            background: "var(--kg-accent-500)",
-            color: "#fff",
-            border: "none",
-            fontSize: 12,
-            fontWeight: 700,
-            cursor: "pointer",
-          }}
-        >
-          + Nueva factura
-        </button>
-      </div>
-
       <KgDataTable
         columns={columns}
         rows={rows}
@@ -260,18 +239,11 @@ export function FacturasView({
         totalCount={totalCount}
         emptyTitle={emptyTitle}
         emptyHint={emptyHint}
-        // Ajustada a la altura del viewport — la tabla scrollea internamente
-        // en lugar de estirar la página. El offset compensa ContextBar +
-        // filtros + header del Panel + toolbar del listado + paginador.
-        maxBodyHeight="calc(100vh - 360px)"
-      />
-
-      <InvoiceFormDrawer
-        mode="create"
-        open={openCreate}
-        onClose={() => setOpenCreate(false)}
-        projects={projects}
-        products={products}
+        // Ajustada al viewport — la tabla scrollea internamente y evita
+        // scroll de página. El offset compensa ContextBar + filtros + header
+        // del Panel + footer/paginador embebido (~280px en total).
+        maxBodyHeight="calc(100vh - 280px)"
+        footerActions={footerActions}
       />
 
       {editingRow && (

@@ -21,7 +21,7 @@ export function AiSummaryTrigger({
 }: {
   readonly projectId: string;
   readonly launchId: string;
-  /** Solo admin/operador pueden disparar. Analista/cliente leen el historial. */
+  /** Solo admin/operador pueden disparar. Coordinador/cliente leen el historial. */
   readonly canRun: boolean;
   readonly hasHistory: boolean;
 }) {

@@ -4,8 +4,9 @@ import { KgTabsBar, type TabItem } from "@/components/kg/tabs-bar";
 /**
  * Layout del módulo Financiero.
  *
- * Visible para superadmin / admin / analista. Operadores y clientes son
- * redirigidos a su módulo raíz vía requireRole (operador→/operaciones,
+ * Visible para superadmin / admin. Coordinador queda afuera (regla nueva:
+ * coordinador solo Clientes / Academia / Operaciones). Operadores y clientes
+ * son redirigidos a su módulo raíz vía requireRole (operador→/operaciones,
  * cliente→/lanzamientos). Los server actions de escritura tienen además
  * su propio requireRole("superadmin") — ese gate NO se afloja acá.
  */
@@ -14,7 +15,7 @@ export default async function FinancieroLayout({
 }: {
   readonly children: React.ReactNode;
 }) {
-  await requireRole("superadmin", "admin", "analista");
+  await requireRole("superadmin", "admin");
 
   const tabs: readonly TabItem[] = [
     { href: "/financiero", label: "Dashboard" },

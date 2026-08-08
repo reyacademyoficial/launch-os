@@ -5,7 +5,7 @@ import { KgTabsBar, type TabItem } from "@/components/kg/tabs-bar";
 /**
  * Layout del módulo Academia.
  *
- * Visible para superadmin / admin / analista. Operadores y clientes son
+ * Visible para superadmin / admin / coordinador. Operadores y clientes son
  * redirigidos a su módulo raíz vía requireRole.
  *
  * ACADEMIA VIVE SOBRE PROYECTOS PROPIOS (guard 0070). Si la organización
@@ -18,7 +18,7 @@ export default async function AcademiaLayout({
 }: {
   readonly children: React.ReactNode;
 }) {
-  await requireRole("superadmin", "admin", "analista");
+  await requireRole("superadmin", "admin", "coordinador");
 
   const supabase = await createClient();
   const { count: propiasCount } = await supabase

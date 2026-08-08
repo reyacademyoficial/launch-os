@@ -55,7 +55,10 @@ export default async function ProjectSalesPage({
   const { projectId } = await params;
 
   const profile = await requireSessionProfile();
-  if (profile.role === "cliente") redirect(`/proyectos/${projectId}`);
+  // Regla 2026-08-08: operador no ve el módulo ventas (redirigido al listado
+  // de launches). Cliente sí lee la tabla — readonly a través de canEdit=false
+  // que sale de userCanEditLaunchesIn.
+  if (profile.role === "operador") redirect(`/proyectos/${projectId}/launches`);
 
   const supabase = await createClient();
   const [

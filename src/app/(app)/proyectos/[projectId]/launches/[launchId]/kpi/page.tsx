@@ -22,7 +22,7 @@ import { listLaunchSalesData } from "@/lib/launch-sales/list";
 import { getLaunch } from "@/lib/launches/get";
 import { listMessagesDailyForLaunch } from "@/lib/launch-messages/list";
 import { listRecentRuns } from "@/lib/integrations/runs";
-import { userCanEditLaunchesIn } from "@/lib/supabase/auth";
+import { requireSessionProfile, userCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import {
   buildSalesFxContext,
@@ -50,6 +50,7 @@ export default async function LaunchKpiPage({
 
   const supabase = await createClient();
   const [
+    profile,
     launch,
     canEditLaunchValue,
     daily,
@@ -63,6 +64,7 @@ export default async function LaunchKpiPage({
     paymentMethods,
     banks,
   ] = await Promise.all([
+    requireSessionProfile(),
     getLaunch(launchId),
     userCanEditLaunchesIn(projectId),
     listDailyForLaunch(launchId),
@@ -76,6 +78,8 @@ export default async function LaunchKpiPage({
     listPaymentMethods(projectId),
     listBanks(),
   ]);
+
+  const hideRevenueKpis = profile.role === "operador";
 
   if (!launch || launch.project_id !== projectId) notFound();
 
@@ -204,6 +208,7 @@ export default async function LaunchKpiPage({
         kpi={kpi}
         launchArsPerUsd={arsPerUsd}
         kpisInUsd={revenueRate !== null}
+        hideRevenueKpis={hideRevenueKpis}
       />
 
       {missingFxNote && (
