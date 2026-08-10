@@ -6,7 +6,9 @@ Para que Launch OS pueda traer los datos de tus anuncios de Meta automáticament
 2. **Ad Account ID** — el ID de la cuenta publicitaria.
 3. **IDs de las campañas** del lanzamiento.
 
-No es difícil, pero hay que seguir cada paso. **Tomá 10 minutos y hacelo una vez** — después se reutiliza para futuros lanzamientos.
+Launch OS solo lee **métricas agregadas** de tus campañas (gasto, impresiones, clicks y cantidad de leads por día). No accede a los datos personales de los leads.
+
+No es difícil, pero hay que seguir cada paso. **Tomá 5 minutos y hacelo una vez** — después se reutiliza para futuros lanzamientos.
 
 > **Nota:** Meta cambia la UI del Business Manager seguido. Si una pantalla no coincide exactamente con la descripción, buscá la opción equivalente — la lógica es siempre la misma. Link a la doc oficial al final.
 
@@ -26,11 +28,9 @@ El System User es un "usuario virtual" que no es una persona real. Es lo que rec
 
 ---
 
-## Paso 2 — Asignarle los activos (cuenta publicitaria + Page)
+## Paso 2 — Asignarle la cuenta publicitaria
 
-Por defecto el System User recién creado no tiene acceso a ninguna cuenta. Hay que asignarle la(s) cuenta(s) **y la(s) Facebook Page(s)** que vas a usar para el lanzamiento.
-
-### 2.A — Cuenta publicitaria
+Por defecto el System User recién creado no tiene acceso a ninguna cuenta. Hay que asignarle la(s) cuenta(s) publicitaria(s) que vas a usar para el lanzamiento.
 
 1. Hacé click sobre el System User que acabás de crear.
 2. Click en **Agregar activos** (Add Assets) o **Asignar activos**.
@@ -39,17 +39,6 @@ Por defecto el System User recién creado no tiene acceso a ninguna cuenta. Hay 
 5. En **Permisos** elegí solo lectura. La opción mínima es **Administrar campañas** (Manage Campaigns) en lectura — para Launch OS alcanza con **Acceso solo a estadísticas** si está disponible.
 6. **Guardar cambios**.
 
-### 2.B — Facebook Page
-
-Los Instant Forms (Formularios para clientes potenciales) viven en la Facebook Page, no en la cuenta publicitaria. Sin asignar la Page acá, Launch OS no puede traer el detalle individual de cada lead (nombre, teléfono, email).
-
-1. En la misma pantalla, **Agregar activos** → pestaña **Páginas** (Pages).
-2. Tildá la Page que aloja los formularios de leads de tu campaña.
-3. Permiso: **Acceso a anuncios** (Ads access) como mínimo. Si solo está disponible **Acceso completo**, dalo — el System User es una cuenta de servicio interna, no un externo.
-4. **Guardar cambios**.
-
-> Si no tenés clara cuál es la Page: andá al Administrador de anuncios → cualquier ad de la campaña → identidad del anuncio → ahí dice qué Page la publica.
-
 ---
 
 ## Paso 3 — Generar el token de acceso
@@ -57,19 +46,11 @@ Los Instant Forms (Formularios para clientes potenciales) viven en la Facebook P
 1. Seguís en la página del System User.
 2. Click en **Generar nuevo token** (Generate New Token).
 3. Elegí la **app de Facebook** asociada al Business Manager. Si no tenés ninguna creada, andá a [developers.facebook.com/apps](https://developers.facebook.com/apps), creá una app de tipo "Business" (es gratis), y volvé acá.
-4. En **Permisos** (Scopes), tildá los siguientes:
+4. En **Permisos** (Scopes), tildá **únicamente**:
 
-   **Obligatorios para el sync de números (CPL, leads, gasto):**
    - `ads_read`
 
-   **Obligatorios para traer el detalle individual de cada lead** (nombre, teléfono, email a la tabla `leads` de Launch OS):
-   - `leads_retrieval`
-   - `pages_show_list`
-   - `pages_read_engagement`
-   - `pages_manage_ads`
-   - `ads_management`
-
-   Aunque hoy uses solo el sync de números, **tildá los 6 igual** desde el principio. Activar permisos nuevos después implica regenerar el token y, para los permisos de leads, suele requerir App Review de Meta (ver nota abajo). Es mucho más rápido tildarlos todos ahora que volver dentro de 2 meses.
+   Es el único permiso que Launch OS necesita. No tildes nada más — cuantos menos permisos, más seguro.
 
 5. Click **Generar token**.
 6. **MUY IMPORTANTE**: Copiá el token **completo** al momento. Meta NO te lo va a mostrar de nuevo después. Si lo perdés, generás uno nuevo desde acá mismo y listo.
@@ -78,16 +59,7 @@ Los Instant Forms (Formularios para clientes potenciales) viven en la Facebook P
 
 7. Volvé a Launch OS → detalle del lanzamiento → sección **Integraciones** → Meta → **Pegar token**.
 
-### Nota sobre App Review (solo para los permisos de leads)
-
-`leads_retrieval`, `pages_manage_ads`, `pages_read_engagement` y `pages_show_list` son permisos **avanzados**. Si tu app de Facebook está en modo **Desarrollo**, los permisos están disponibles solo para admins/desarrolladores de la app — funciona para sincronizar TU propio Business Manager sin trámite extra.
-
-Si tu app pasa a modo **Live** o si querés que cualquier usuario (no solo admins) pueda conectar su BM, vas a tener que pasar **App Review** de Meta:
-- Página: business.facebook.com → tu app → **App Review** → **Permissions and Features**.
-- Tenés que enviar: un screencast del flujo de usuario, descripción del caso de uso, y la política de privacidad de tu sitio. Meta responde en 3-7 días hábiles típicamente.
-- Mientras tanto, la app sigue funcionando en modo Desarrollo para los admins.
-
-`ads_read` y `ads_management` son **estándar** (no requieren App Review).
+> **App Review**: `ads_read` es un permiso **estándar** de Meta — no requiere App Review. Funciona directo tanto en modo Desarrollo como en modo Live de tu app de Facebook.
 
 ---
 
