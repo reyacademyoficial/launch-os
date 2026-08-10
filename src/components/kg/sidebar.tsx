@@ -2,8 +2,10 @@ import type { SessionProfile } from "@/lib/supabase/auth";
 
 import { KgBrand } from "./brand";
 import {
+  canSeeDev,
   canSeeOrganization,
   canSeeSystem,
+  DEV_MODULES,
   LAYERS,
   ORGANIZATION_MODULES,
   SYSTEM_MODULES,
@@ -31,6 +33,7 @@ import { KgUserBlock } from "./user-block";
 export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
   const showSystem = canSeeSystem(profile);
   const showOrganization = canSeeOrganization(profile);
+  const showDev = canSeeDev(profile);
   // cliente y operador ven un subconjunto de módulos; el resto ve todo.
   const isRestricted =
     profile.role === "cliente" || profile.role === "operador";
@@ -94,6 +97,19 @@ export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
         {!isRestricted && showSystem && SYSTEM_MODULES.length > 0 && (
           <LayerGroup label="Sistema">
             {SYSTEM_MODULES.map((m) => (
+              <KgNavItem
+                key={m.id}
+                href={m.href}
+                label={m.label}
+                icon={<m.icon size={18} />}
+              />
+            ))}
+          </LayerGroup>
+        )}
+
+        {showDev && DEV_MODULES.length > 0 && (
+          <LayerGroup label="Dev">
+            {DEV_MODULES.map((m) => (
               <KgNavItem
                 key={m.id}
                 href={m.href}

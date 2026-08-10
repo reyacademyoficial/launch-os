@@ -17,8 +17,12 @@ export default async function CalculatorPage() {
   // sin costos internos). Toggleable en src/lib/auth/permissions.ts.
   if (!canUseCalculator(profile)) redirect("/");
   // Save (= insert into `projections`) needs project-scope write, so coordinador
-  // and operador can use the simulator but no save UI for them either.
-  const canSave = profile.role === "admin" || profile.role === "superadmin";
+  // and operador can use the simulator but no save UI for them either. dev
+  // pasa por is_dev_privileged igual que superadmin.
+  const canSave =
+    profile.role === "admin" ||
+    profile.role === "superadmin" ||
+    profile.isDevPrivileged;
   const [projections, editableProjects] = await Promise.all([
     listAccessibleProjections(),
     canSave ? listAccessibleProjects() : Promise.resolve([]),
