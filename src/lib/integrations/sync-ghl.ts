@@ -592,20 +592,24 @@ function asCountryCode(v: string | null | undefined): CountryCode | undefined {
 }
 
 /**
- * Regla "manual gana": no pisar team_member_id existente. Solo escribimos
- * cuando el existing está en NULL (o string vacío defensivo) y la API trae
- * un valor mapeado.
+ * Regla de asignación GHL: la asignación actual de GHL es autoritativa y
+ * puede pisar cualquier asignación previa (incluyendo syncs anteriores).
+ * Solo respetamos asignaciones manuales hechas desde la UI cuando GHL no
+ * tiene un match directo para ese lead (el lead no aparece en el fetch GHL).
  *
- *   - existing.team_member_id ya seteado → undefined (no tocar).
- *   - existing vacío + fromApi con valor → fromApi.
- *   - existing vacío + fromApi null/undefined → undefined (nunca escribir null).
+ * En la práctica: si llegamos hasta acá con un `existing`, significa que GHL
+ * reportó este contacto con un `assignedTo` mapeado. GHL gana.
+ *
+ *   - fromApi vacío  → undefined (nunca escribir null desde GHL).
+ *   - fromApi igual a lo existente → undefined (evitar write innecesario).
+ *   - fromApi distinto → fromApi (GHL reasignó, actualizamos).
  */
 export function resolveTeamMemberAssignment(
   existing: ExistingLeadView | null,
   fromApi: string | null | undefined,
 ): string | undefined {
-  if (existing && existing.team_member_id) return undefined;
   if (!fromApi) return undefined;
+  if (existing?.team_member_id === fromApi) return undefined;
   return fromApi;
 }
 

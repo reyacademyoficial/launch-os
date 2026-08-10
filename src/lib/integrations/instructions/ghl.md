@@ -33,14 +33,14 @@ Este token es lo que Launch OS va a usar para llamar a la API de GHL en nombre d
 
 2. Click **Create New Integration**.
 3. Ponele un nombre que vas a reconocer después, por ejemplo: **`Launch OS — sync`**.
-4. **Permisos (Scopes)** — marcá EXACTAMENTE estos. Cualquier otro está de más:
+4. **Permisos (Scopes)** — marcá EXACTAMENTE estos tres. Cualquier otro está de más:
    - `View Contacts`
-   - `View Calendars`
-   - `View Calendar Events`
    - `View Conversations`
    - `View Users`
 
-   No marques permisos de edición. Launch OS **solo lee** — no modifica contactos ni envía mensajes desde acá.
+   No marques permisos de edición ni de calendars/opportunities. Launch OS **solo lee** contactos, conversaciones y usuarios — no modifica nada en GHL ni envía mensajes desde acá.
+
+   > Si ya tenías la integración creada con los permisos viejos (Calendars, Calendar Events, Opportunities), podés dejarlos — no molestan. Pero para una integración nueva alcanzan estos tres.
 
 5. Click **Create**.
 6. GHL te va a mostrar el token en pantalla — empieza con `pit-` seguido de una cadena larga.
@@ -62,16 +62,20 @@ Este token es lo que Launch OS va a usar para llamar a la API de GHL en nombre d
 
 ## Qué se va a sincronizar
 
-Un solo botón **Sincronizar** trae todo junto en una corrida:
+El sync hace **dos cosas**, ambas en una sola corrida del botón **Sincronizar**:
 
-- **Contactos**: los contactos del subaccount con `dateUpdated` dentro de la ventana del lanzamiento. Se cruzan con los leads del proyecto por `external_id` y por teléfono normalizado.
-  - Sin tags relevantes → entra como **frío** (a la tabla, no al kanban).
-  - Con tag `cliente` → **cerrado** + va al kanban.
-  - Si tiene conversación WhatsApp con mensaje inbound durante compra+cierre → **tibio** + va al kanban.
-  - Si tiene `assignedTo`, se mapea con el vendedor del equipo via el modal "Mapear vendedores".
-- **Agendados**: eventos del calendario del subaccount cuya fecha de comienzo esté dentro de la ventana del lanzamiento. Se cruzan con leads por teléfono. Si matchea → pasa a **agendado** + va al kanban. Si no matchea → se crea un lead nuevo con origen `ghl` directamente en *agendado*. Los appointments cancelados o noshow no agendan a nadie.
+1. **Cuenta de leads captados por día** (KPI card "Leads GHL" + curva en la gráfica).
+   Pide a GHL, por cada día de la ventana `[fecha inicio, fecha fin]` del lanzamiento, cuántos contactos nuevos hay (`dateAdded` de ese día). **No baja los datos del contacto** — solo el número. Se guarda por día para poder ver la evolución en el gráfico junto a Meta y SendFlow.
 
-El sync es **idempotente**: correrlo dos veces no duplica ni reprocesa lo ya hecho. Es **incremental**: cada corrida arranca desde el último sync exitoso, no del principio del launch.
+2. **Asignación de vendedor a leads existentes** (solo dentro de compra+cierre).
+   Trae los contactos que fueron actualizados o tuvieron actividad WhatsApp dentro de compra+cierre, matchea contra los leads del proyecto por `external_id` o teléfono, y setea `team_member_id` según el mapeo GHL user → vendedor del modal "Mapear vendedores". Respeta la regla "manual gana": si el lead ya tiene vendedor asignado a mano, no lo pisa.
+
+Lo que **NO** hace este sync (a propósito):
+- **No crea leads nuevos en Launch OS** — los leads los alimentan Meta (formularios de campaña) y la carga manual de orgánicos. Un contacto de GHL sin match contra un lead existente se ignora.
+- **No cambia el status** de los leads (frío/tibio/agendado/cerrado). El status viene del Kanban y de la carga de ventas, no de GHL.
+- **No sincroniza appointments, calendars ni opportunities.**
+
+El sync es **idempotente** (correrlo dos veces no duplica) e **incremental** para la parte de asignación de vendedor (arranca desde el último sync exitoso). La cuenta de leads pide siempre la ventana completa del lanzamiento — es barato: 1 request por día.
 
 ---
 
@@ -84,4 +88,4 @@ El sync es **idempotente**: correrlo dos veces no duplica ni reprocesa lo ya hec
 | `config_missing` | Falta el Location ID o el token en el lanzamiento. Volvé al paso 3. |
 | `error` con detalle de schema | GHL cambió el shape de la respuesta. Avisanos para actualizar el adapter. |
 
-Doc oficial de referencia: [highlevel.stoplight.io](https://highlevel.stoplight.io/) (sección "Calendars" y "Conversations").
+Doc oficial de referencia: [highlevel.stoplight.io](https://highlevel.stoplight.io/) (secciones "Contacts", "Conversations" y "Users").
