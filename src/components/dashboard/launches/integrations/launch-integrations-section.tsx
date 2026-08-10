@@ -165,16 +165,41 @@ export async function LaunchIntegrationsSection({
                   </div>
                   <div className="mt-1 space-y-0.5 text-xs text-fg-subtle">
                     {display.hasConfig ? (
-                      display.fields.map((f) => (
-                        <div key={f.label}>
-                          <span className="text-fg-muted">{f.label}:</span>{" "}
-                          {f.code ? (
-                            <code className="text-fg">{f.value}</code>
-                          ) : (
-                            <span className="text-fg">{f.value}</span>
-                          )}
-                        </div>
-                      ))
+                      <>
+                        {display.fields.map((f) => (
+                          <div key={f.label}>
+                            <span className="text-fg-muted">{f.label}:</span>{" "}
+                            {f.code ? (
+                              <code className="text-fg">{f.value}</code>
+                            ) : (
+                              <span className="text-fg">{f.value}</span>
+                            )}
+                          </div>
+                        ))}
+                        {display.campaignDetails && display.campaignDetails.length > 0 && (
+                          <details className="mt-1">
+                            <summary className="cursor-pointer select-none text-accent hover:underline">
+                              Ver campañas (
+                              {display.campaignDetails.reduce((s, a) => s + a.campaignIds.length, 0)}
+                              )
+                            </summary>
+                            <div className="mt-1.5 space-y-2 pl-2">
+                              {display.campaignDetails.map((account) => (
+                                <div key={account.adAccountId}>
+                                  <code className="text-fg-muted">{account.adAccountId}</code>
+                                  <ul className="mt-0.5 ml-3 space-y-0.5">
+                                    {account.campaignIds.map((id) => (
+                                      <li key={id}>
+                                        <code className="text-fg">{id}</code>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+                        )}
+                      </>
                     ) : (
                       <div>Sin configurar</div>
                     )}
@@ -328,6 +353,8 @@ interface ProviderDisplay {
   hasConfig: boolean;
   missingMessage: string;
   fields: ReadonlyArray<{ label: string; value: string; code?: boolean }>;
+  /** Lista expandible de campañas por cuenta, solo para providers de ads. */
+  campaignDetails?: ReadonlyArray<AdAccountEntry>;
   initialConfig:
     | { kind: "ads"; adAccounts: AdAccountEntry[] }
     | { kind: "ghl"; locationId: string; defaultCountry: string }
@@ -379,6 +406,7 @@ function buildAdsDisplay(cfg: MetaConfigShape): ProviderDisplay {
           },
         ]
       : [],
+    campaignDetails: hasConfig ? adAccounts : undefined,
     initialConfig: { kind: "ads", adAccounts },
   };
 }
