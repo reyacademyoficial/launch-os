@@ -17,6 +17,8 @@ export interface SessionProfile {
   email: string | null;
   fullName: string | null;
   role: Role;
+  /** true cuando el usuario tiene privilegios dev, independientemente del role visible. */
+  isDevPrivileged: boolean;
   /**
    * Project IDs el usuario es miembro vía `project_members`. Vacío para
    * superadmin (que no carga rows acá por diseño). Es lo único que necesita
@@ -41,6 +43,7 @@ interface ProfileSummary {
   id: string;
   full_name: string | null;
   role: string;
+  is_dev_privileged: boolean;
 }
 
 interface ProjectMemberSummary {
@@ -65,7 +68,7 @@ export async function getSessionProfile(): Promise<SessionProfile | null> {
   const [profileResult, membersResult] = await Promise.all([
     supabase
       .from("profiles")
-      .select("id, full_name, role")
+      .select("id, full_name, role, is_dev_privileged")
       .eq("id", user.id)
       .is("deleted_at", null)
       .maybeSingle(),
@@ -83,6 +86,7 @@ export async function getSessionProfile(): Promise<SessionProfile | null> {
     email: user.email ?? null,
     fullName: profile.full_name,
     role: profile.role as Role,
+    isDevPrivileged: profile.is_dev_privileged,
     memberOfProjectIds,
   };
 }
@@ -109,7 +113,7 @@ export async function requireRole(
   ...allowed: readonly [Role, ...Role[]]
 ): Promise<SessionProfile> {
   const profile = await requireSessionProfile();
-  if (profile.role === "dev") return profile;
+  if (profile.role === "dev" || profile.isDevPrivileged) return profile;
   if (!allowed.includes(profile.role)) {
     if (profile.role === "cliente") redirect("/lanzamientos");
     if (profile.role === "operador") redirect("/operaciones");

@@ -20,7 +20,7 @@ export default async function ConfiguracionLayout({
   readonly children: React.ReactNode;
 }) {
   const profile = await requireSessionProfile();
-  const isAdmin = profile.role === "superadmin" || profile.role === "dev";
+  const isAdmin = profile.role === "superadmin" || profile.isDevPrivileged;
 
   const tabs: TabItem[] = [
     { href: "/configuracion", label: "Mi cuenta" },

@@ -20,6 +20,7 @@ interface ProfileRow {
   role: string;
   created_at: string;
   deleted_at: string | null;
+  is_dev_privileged: boolean;
 }
 
 interface MemberRow {
@@ -42,16 +43,18 @@ export async function listAllUsers(): Promise<UserListItem[]> {
   const service = createServiceClient();
   const supabase = await createClient();
 
-  const [authResult, profilesResult, membersResult] = await Promise.all([
+  const [authResult, profilesResult, membersResult, allProjectsResult] = await Promise.all([
     service.auth.admin.listUsers({ perPage: 1000 }),
     // Incluimos soft-deleted (deleted_at != null): la UI los muestra en gris
     // con un botón "Reactivar". Filtrar acá los ocultaría del panel y no habría
     // forma de recuperarlos sin ir a Studio.
-    supabase.from("profiles").select("id, full_name, role, created_at, deleted_at"),
+    supabase.from("profiles").select("id, full_name, role, created_at, deleted_at, is_dev_privileged"),
     supabase.from("project_members").select("user_id, projects(id, name)"),
+    supabase.from("projects").select("id, name"),
   ]);
 
   const authUsers = authResult.data?.users ?? [];
+  const allProjects = (allProjectsResult.data ?? []) as Array<{ id: string; name: string }>;
 
   const profileById = new Map<string, ProfileRow>();
   for (const p of (profilesResult.data ?? []) as ProfileRow[]) {
@@ -70,8 +73,6 @@ export async function listAllUsers(): Promise<UserListItem[]> {
   for (const u of authUsers) {
     const profile = profileById.get(u.id);
     if (!profile || !u.email) continue;
-    // El rol 'dev' es invisible: nunca se lista en /admin/usuarios.
-    if (profile.role === "dev") continue;
     items.push({
       id: u.id,
       email: u.email,
@@ -79,7 +80,7 @@ export async function listAllUsers(): Promise<UserListItem[]> {
       role: profile.role as Role,
       createdAt: profile.created_at,
       deletedAt: profile.deleted_at,
-      projects: projectsByUserId.get(u.id) ?? [],
+      projects: profile.is_dev_privileged ? allProjects : (projectsByUserId.get(u.id) ?? []),
     });
   }
 

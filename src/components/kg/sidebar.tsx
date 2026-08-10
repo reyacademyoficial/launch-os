@@ -29,8 +29,8 @@ import { KgUserBlock } from "./user-block";
  * lo salta a /portal antes de renderizar este shell.
  */
 export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
-  const showSystem = canSeeSystem(profile.role);
-  const showOrganization = canSeeOrganization(profile.role);
+  const showSystem = canSeeSystem(profile);
+  const showOrganization = canSeeOrganization(profile);
   // cliente y operador ven un subconjunto de módulos; el resto ve todo.
   const isRestricted =
     profile.role === "cliente" || profile.role === "operador";

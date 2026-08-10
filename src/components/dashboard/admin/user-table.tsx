@@ -12,15 +12,16 @@ import { EditUserModal } from "./edit-user-modal";
 import { ReactivateUserButton } from "./reactivate-user-button";
 
 const ROLE_VARIANT: Record<Role, "info" | "warning" | "success" | "neutral"> = {
-  // 'dev' es invisible: listAllUsers ya filtra estas filas. La key existe
-  // sólo para satisfacer el type, nunca se renderiza.
-  dev: "neutral",
+  dev: "warning",
   superadmin: "info",
   admin: "warning",
   operador: "success",
   coordinador: "info",
   cliente: "neutral",
 };
+
+// Dev aparece en la lista como "admin" para no exponer el rol interno.
+const ROLE_LABEL: Partial<Record<Role, string>> = { dev: "admin" };
 
 interface Project {
   id: string;
@@ -98,7 +99,7 @@ export function UserTable({
                 </td>
                 <td className="px-4 py-3 text-fg-muted">{u.fullName ?? "—"}</td>
                 <td className="px-4 py-3">
-                  <Badge variant={ROLE_VARIANT[u.role]}>{u.role}</Badge>
+                  <Badge variant={ROLE_VARIANT[u.role]}>{ROLE_LABEL[u.role] ?? u.role}</Badge>
                 </td>
                 <td className="px-4 py-3 text-fg-muted">
                   {u.projects.length === 0 ? (

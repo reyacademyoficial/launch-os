@@ -6,6 +6,7 @@ import {
   fetchGhlContacts,
   fetchGhlContactCountsByDay,
   fetchGhlConversations,
+  fetchGhlPipelineLeadCounts,
   type ContactsMeta,
   type ConversationsMeta,
   type DailyLeadCountsMeta,
@@ -94,6 +95,11 @@ export interface GhlCombinedCounts {
   leads_updated: number;
   /** Matches donde el lead ya tenía team_member_id — saltados por manual-gana. */
   leads_skipped_manual: number;
+  /**
+   * Total de leads contados en la pipeline GHL configurada (suma de todos los
+   * assignedTo). 0 si no hay pipeline configurada o si el fetch falló.
+   */
+  pipeline_leads_total: number;
 }
 
 export type GhlPaginatedEndpoint = "contacts" | "conversations";
@@ -147,6 +153,8 @@ interface GhlRunMeta {
    * dateUpdated/lastMessageDate cae acá.
    */
   warm_window: { start: string; end: string };
+  /** Presente solo si el sync de pipeline falló (soft-failure). */
+  pipeline_error?: string;
 }
 
 export interface RunGhlSyncArgs {
@@ -164,6 +172,8 @@ export interface RunGhlSyncArgs {
    */
   warmWindow?: { start: string; end: string } | null;
   lastSuccessAt?: string | null;
+  /** Pipeline ID de GHL. Si está presente, se contabilizan los leads por vendedor. */
+  pipelineId?: string | null;
 }
 
 const BULK_LOOKUP_CHUNK = 1000;
@@ -406,6 +416,24 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     };
   }
 
+  // 8) Pipeline lead counts — opcional. Si hay pipeline configurada, contamos
+  //    leads por vendedor y los persistimos en ghl_pipeline_lead_counts.
+  //    Es soft-failure: si falla, el sync sigue y el error queda en el meta.
+  let pipelineLeadsTotal = 0;
+  let pipelineError: string | null = null;
+  if (args.pipelineId) {
+    const pipelineResult = await syncPipelineLeadCounts({
+      service: args.service,
+      token: args.token,
+      locationId: args.locationId,
+      pipelineId: args.pipelineId,
+      launchId: args.launchId,
+      mappings,
+    });
+    pipelineLeadsTotal = pipelineResult.total;
+    pipelineError = pipelineResult.error ?? null;
+  }
+
   const counts: GhlCombinedCounts = {
     contacts_fetched: contactsResult.rows.length,
     conversations_fetched: conversationsResult.rows.length,
@@ -414,6 +442,7 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     leads_matched: leadsMatched,
     leads_updated: updated,
     leads_skipped_manual: leadsSkippedManual,
+    pipeline_leads_total: pipelineLeadsTotal,
   };
   const meta: GhlRunMeta = {
     contacts: contactsResult.meta,
@@ -423,6 +452,7 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     unmapped_ghl_user_ids: Array.from(unmappedGhlUserIds),
     launch_window: launchWindow,
     warm_window: warmWindow,
+    ...(pipelineError ? { pipeline_error: pipelineError } : {}),
   };
 
   const hitMaxPages: GhlPaginatedEndpoint[] = [];
@@ -433,6 +463,76 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     return { status: "partial", hitMaxPages, counts, meta };
   }
   return { status: "success", hitMaxPages: [], counts, meta };
+}
+
+// ─── Pipeline lead counts ─────────────────────────────────────────────────
+
+interface SyncPipelineArgs {
+  service: ServiceClient;
+  token: string;
+  locationId: string;
+  pipelineId: string;
+  launchId: string;
+  mappings: Map<string, string>;
+}
+
+interface SyncPipelineResult {
+  total: number;
+  error?: string;
+}
+
+/**
+ * Trae los leads de la pipeline, los agrupa por `assignedTo` (ghl_user_id),
+ * resuelve el team_member_id via mappings y sobreescribe la tabla
+ * `ghl_pipeline_lead_counts` (delete + insert). Soft-failure: si GHL falla,
+ * devuelve el error sin frenar el sync principal.
+ */
+async function syncPipelineLeadCounts(args: SyncPipelineArgs): Promise<SyncPipelineResult> {
+  const result = await fetchGhlPipelineLeadCounts(
+    args.token,
+    args.locationId,
+    args.pipelineId,
+  );
+  if (!result.ok) {
+    return { total: 0, error: `Pipeline fetch falló (${result.kind}): ${result.message}` };
+  }
+
+  if (result.rows.length === 0) {
+    // No hay filas — borramos las anteriores y salimos.
+    await loose(args.service)
+      .from("ghl_pipeline_lead_counts")
+      .delete()
+      .eq("launch_id", args.launchId);
+    return { total: 0 };
+  }
+
+  const total = result.rows.reduce((s, r) => s + r.count, 0);
+
+  // Delete existentes para este launch (re-escritura completa)
+  const delRes = await loose(args.service)
+    .from("ghl_pipeline_lead_counts")
+    .delete()
+    .eq("launch_id", args.launchId);
+  if (delRes.error) {
+    return { total, error: `No se pudo limpiar ghl_pipeline_lead_counts: ${delRes.error.message}` };
+  }
+
+  const rows = result.rows.map((r) => ({
+    launch_id: args.launchId,
+    ghl_user_id: r.ghlUserId,
+    team_member_id: args.mappings.get(r.ghlUserId) ?? null,
+    lead_count: r.count,
+    synced_at: new Date().toISOString(),
+  }));
+
+  const insRes = await loose(args.service)
+    .from("ghl_pipeline_lead_counts")
+    .insert(rows);
+  if (insRes.error) {
+    return { total, error: `No se pudo insertar en ghl_pipeline_lead_counts: ${insRes.error.message}` };
+  }
+
+  return { total };
 }
 
 // ─── bulk lookup ───────────────────────────────────────────────────────────

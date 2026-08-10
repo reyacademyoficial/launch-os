@@ -119,6 +119,13 @@ interface GhlProviderConfig {
    * config por project, este default se va al project.
    */
   default_country?: string;
+  /**
+   * Pipeline de GHL elegida en el modal de config. Cuando está presente, el
+   * sync cuenta los leads por vendedor en esa pipeline y los persiste en
+   * `ghl_pipeline_lead_counts`. Opcional — si no está configurado el sync
+   * sigue corriendo el flujo de contacts/conversations normal.
+   */
+  pipeline_id?: string;
 }
 
 /**
@@ -424,10 +431,15 @@ function readGhlConfig(configBlob: unknown): GhlProviderConfig {
   const cfg = (configBlob as Record<string, unknown>).ghl;
   if (cfg === null || typeof cfg !== "object") return {};
   const record = cfg as Record<string, unknown>;
+  const pipelineId =
+    typeof record.pipeline_id === "string" && record.pipeline_id.trim()
+      ? record.pipeline_id.trim()
+      : undefined;
   return {
     location_id: typeof record.location_id === "string" ? record.location_id : undefined,
     default_country:
       typeof record.default_country === "string" ? record.default_country : undefined,
+    pipeline_id: pipelineId,
   };
 }
 
@@ -595,6 +607,7 @@ async function runGhlBranch(args: {
     // "AR" cuando falta: se pasa lo que el operador haya configurado (o "")
     // y el adapter resuelve E.164-only sin asumir país.
     defaultCountry: cfg.default_country ?? "",
+    pipelineId: cfg.pipeline_id ?? null,
     projectId: args.projectId,
     launchId: args.launchId,
     since: args.dateStart,

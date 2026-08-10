@@ -154,7 +154,7 @@ export function EditUserModal({
                     id="edit-role"
                     name="role"
                     required
-                    defaultValue={user.role}
+                    defaultValue={user.role === "dev" ? "admin" : user.role}
                   >
                     <option value="cliente">cliente (solo lectura, scope por launch)</option>
                     <option value="operador">operador (edita launches asignados)</option>

@@ -65,7 +65,7 @@ export default async function AuditPage({
   // Defensa dura: sólo rol 'dev'. Para cualquier otro, devolvemos 404 (no
   // queremos revelar que la ruta existe).
   const me = await requireSessionProfile();
-  if (me.role !== "dev") notFound();
+  if (!me.isDevPrivileged) notFound();
 
   const sp = await searchParams;
   const tableFilter =
