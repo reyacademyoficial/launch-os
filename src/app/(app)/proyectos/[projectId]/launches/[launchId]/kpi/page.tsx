@@ -92,12 +92,25 @@ export default async function LaunchKpiPage({
   // meta/google/tiktok), así que este total NO se suma al de leads Meta.
   // La UI los renderea aparte: KPI card dedicada + curva propia en la gráfica.
   const ghlLeadsByDate = new Map<string, number>();
-  let ghlNewLeadsTotal = 0;
+  let ghlContactsTotal = 0;
   for (const r of ads) {
     if (r.provider !== "ghl") continue;
     ghlLeadsByDate.set(r.date, (ghlLeadsByDate.get(r.date) ?? 0) + r.leads);
-    ghlNewLeadsTotal += r.leads;
+    ghlContactsTotal += r.leads;
   }
+
+  // Si hay datos de pipeline en ghl_pipeline_lead_counts, ese es el conteo
+  // real de leads y reemplaza al de contacts. Si no hay datos de pipeline
+  // (pipeline no configurada o sync todavía no corrió con pipeline), usamos
+  // el count de contacts como fallback.
+  const pipelineCountsRes = await supabase
+    .from("ghl_pipeline_lead_counts" as never)
+    .select("lead_count")
+    .eq("launch_id", launchId);
+  const ghlPipelineTotal = ((pipelineCountsRes.data ?? []) as Array<{ lead_count: number }>)
+    .reduce((sum, r) => sum + r.lead_count, 0);
+
+  const ghlNewLeadsTotal = ghlPipelineTotal > 0 ? ghlPipelineTotal : ghlContactsTotal;
 
   // Aggregate tradicional para counts (salesCount, paymentsCount, hasData)
   const kanbanSalesAggregate = aggregateKanbanSales(
