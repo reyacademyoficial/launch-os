@@ -155,6 +155,8 @@ interface GhlRunMeta {
   warm_window: { start: string; end: string };
   /** Presente solo si el sync de pipeline falló (soft-failure). */
   pipeline_error?: string;
+  /** Diagnóstico del fetch de pipeline (keys de body, total GHL, etc.). */
+  pipeline_diag?: import("./ghl").GhlPipelineFetchDiag;
 }
 
 export interface RunGhlSyncArgs {
@@ -421,6 +423,7 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   //    Es soft-failure: si falla, el sync sigue y el error queda en el meta.
   let pipelineLeadsTotal = 0;
   let pipelineError: string | null = null;
+  let pipelineDiag: import("./ghl").GhlPipelineFetchDiag | undefined;
   if (args.pipelineId) {
     const pipelineResult = await syncPipelineLeadCounts({
       service: args.service,
@@ -432,6 +435,7 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     });
     pipelineLeadsTotal = pipelineResult.total;
     pipelineError = pipelineResult.error ?? null;
+    pipelineDiag = pipelineResult.diag;
   }
 
   const counts: GhlCombinedCounts = {
@@ -453,6 +457,7 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     launch_window: launchWindow,
     warm_window: warmWindow,
     ...(pipelineError ? { pipeline_error: pipelineError } : {}),
+    ...(pipelineDiag ? { pipeline_diag: pipelineDiag } : {}),
   };
 
   const hitMaxPages: GhlPaginatedEndpoint[] = [];
@@ -479,6 +484,7 @@ interface SyncPipelineArgs {
 interface SyncPipelineResult {
   total: number;
   error?: string;
+  diag?: import("./ghl").GhlPipelineFetchDiag;
 }
 
 /**
@@ -494,7 +500,10 @@ async function syncPipelineLeadCounts(args: SyncPipelineArgs): Promise<SyncPipel
     args.pipelineId,
   );
   if (!result.ok) {
-    return { total: 0, error: `Pipeline fetch falló (${result.kind}): ${result.message}` };
+    const detail = result.detail?.responseBody
+      ? ` | GHL body: ${JSON.stringify(result.detail.responseBody)}`
+      : "";
+    return { total: 0, error: `Pipeline fetch falló (${result.kind}): ${result.message}${detail}` };
   }
 
   if (result.rows.length === 0) {
@@ -503,7 +512,7 @@ async function syncPipelineLeadCounts(args: SyncPipelineArgs): Promise<SyncPipel
       .from("ghl_pipeline_lead_counts")
       .delete()
       .eq("launch_id", args.launchId);
-    return { total: 0 };
+    return { total: 0, diag: result.diag };
   }
 
   const total = result.rows.reduce((s, r) => s + r.count, 0);
@@ -532,7 +541,7 @@ async function syncPipelineLeadCounts(args: SyncPipelineArgs): Promise<SyncPipel
     return { total, error: `No se pudo insertar en ghl_pipeline_lead_counts: ${insRes.error.message}` };
   }
 
-  return { total };
+  return { total, diag: result.diag };
 }
 
 // ─── bulk lookup ───────────────────────────────────────────────────────────

@@ -80,13 +80,16 @@ export async function fetchGhlPipelineLeadCounts(
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("ghl_pipeline_lead_counts" as never)
-    .select("team_member_id, lead_count")
+    .select("ghl_user_id, team_member_id, lead_count")
     .eq("launch_id", launchId);
 
   if (error) throw new Error(error.message);
 
   const map = new Map<string | null, number>();
-  for (const row of ((data ?? []) as Array<{ team_member_id: string | null; lead_count: number }>)) {
+  for (const row of ((data ?? []) as Array<{ ghl_user_id: string; team_member_id: string | null; lead_count: number }>)) {
+    // La fila centinela almacena el total cuando no hay asignación por vendedor.
+    // No la incluimos en el mapa de ranking (no hay vendedor real al que atribuir).
+    if (row.ghl_user_id === "__pipeline_total__") continue;
     const prev = map.get(row.team_member_id) ?? 0;
     map.set(row.team_member_id, prev + row.lead_count);
   }

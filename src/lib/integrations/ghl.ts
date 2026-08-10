@@ -235,55 +235,103 @@ export interface GhlPipelineLeadCount {
 
 const MAX_OPP_PAGES = 200; // 200 × 100 = 20 000 oportunidades máximo
 
+export interface GhlPipelineFetchDiag {
+  itemsFetched: number;
+  nullAssignedTo: number;
+  ghlTotal: number | null;
+  bodyKeys: string[];
+  firstOppKeys: string[];
+}
+
+type PipelineFetchResult =
+  | GhlFetchFailure
+  | { ok: true; rows: GhlPipelineLeadCount[]; diag: GhlPipelineFetchDiag };
+
 /**
- * Trae el conteo de leads por vendedor en una pipeline. Pagina
- * `GET /opportunities/search?location_id=&pipeline_id=&limit=100&page=N`.
- * Solo agrega el campo `assignedTo` — no baja el resto del payload del lead.
- *
- * La respuesta de GHL tiene `meta.nextPage: number | null`. Paginamos
- * mientras `nextPage` no sea null y no se alcance el cap defensivo.
+ * Trae el conteo de leads por vendedor en una pipeline.
+ * `GET /opportunities/search?location_id=&pipeline_id=&limit=100`
+ * Este endpoint usa snake_case (a diferencia del resto de v2 que usa camelCase).
+ * GHL usa paginación por cursor: meta.startAfter + meta.startAfterId.
  */
 export async function fetchGhlPipelineLeadCounts(
   token: string,
   locationId: string,
   pipelineId: string,
-): Promise<GhlFetchResult<GhlPipelineLeadCount>> {
+): Promise<PipelineFetchResult> {
   const countsByUser = new Map<string, number>();
+  const diag: GhlPipelineFetchDiag = {
+    itemsFetched: 0,
+    nullAssignedTo: 0,
+    ghlTotal: null,
+    bodyKeys: [],
+    firstOppKeys: [],
+  };
 
-  for (let page = 1; page <= MAX_OPP_PAGES; page++) {
-    const params = new URLSearchParams({
-      location_id: locationId,
-      pipeline_id: pipelineId,
-      limit: "100",
-      page: String(page),
-    });
+  let startAfter: string | null = null;
+  let startAfterId: string | null = null;
+  let pageCount = 0;
+
+  while (pageCount < MAX_OPP_PAGES) {
+    pageCount++;
+    const params = new URLSearchParams({ location_id: locationId, pipeline_id: pipelineId, limit: "100" });
+    if (startAfter) params.set("startAfter", startAfter);
+    if (startAfterId) params.set("startAfterId", startAfterId);
+
     const url = `${GHL_API_BASE}/opportunities/search?${params.toString()}`;
     const result = await ghlFetch(url, token);
     if (!result.ok) return result;
 
+    const body = result.body as Record<string, unknown>;
+
+    // Diagnóstico de la primera página
+    if (pageCount === 1) {
+      diag.bodyKeys = Object.keys(body);
+      const meta = body?.meta as Record<string, unknown> | undefined;
+      const total = meta?.total;
+      if (typeof total === "number") diag.ghlTotal = total;
+    }
+
     const items = extractArray(result.body, ["opportunities"]);
     if (items.length === 0) break;
+
+    // Registrar keys del primer opportunity para diagnóstico
+    if (diag.firstOppKeys.length === 0 && items[0] && typeof items[0] === "object") {
+      diag.firstOppKeys = Object.keys(items[0] as Record<string, unknown>);
+    }
 
     for (const item of items) {
       if (typeof item !== "object" || item === null) continue;
       const opp = item as Record<string, unknown>;
-      const assignedTo = strOrNull(opp.assignedTo);
-      if (!assignedTo) continue;
+      diag.itemsFetched++;
+      // En GHL las oportunidades tienen assignedTo null cuando el usuario se
+      // asigna a nivel contacto. Fallback: opp.contact.assignedTo.
+      const contact = opp.contact as Record<string, unknown> | null | undefined;
+      const assignedTo = strOrNull(opp.assignedTo) ?? strOrNull(contact?.assignedTo);
+      if (!assignedTo) { diag.nullAssignedTo++; continue; }
       countsByUser.set(assignedTo, (countsByUser.get(assignedTo) ?? 0) + 1);
     }
 
-    // GHL indica si hay más páginas con meta.nextPage
-    const body = result.body as Record<string, unknown>;
+    if (items.length < 100) break;
+
     const meta = body?.meta as Record<string, unknown> | undefined;
-    const nextPage = meta?.nextPage;
-    if (!nextPage || items.length < 100) break;
+    const nextSA = meta?.startAfter;
+    const nextSAId = meta?.startAfterId;
+    if (!nextSA && !nextSAId) break;
+    startAfter = nextSA != null ? String(nextSA) : null;
+    startAfterId = nextSAId != null ? String(nextSAId) : null;
+  }
+
+  // Si ninguna oportunidad tenía assignedTo, guardamos el total bajo un
+  // centinela para que el KPI lo sume aunque no haya desglose por vendedor.
+  if (countsByUser.size === 0 && diag.itemsFetched > 0) {
+    countsByUser.set("__pipeline_total__", diag.itemsFetched);
   }
 
   const rows: GhlPipelineLeadCount[] = Array.from(countsByUser, ([ghlUserId, count]) => ({
     ghlUserId,
     count,
   }));
-  return { ok: true, rows };
+  return { ok: true, rows, diag };
 }
 
 // ─── Conversations (WhatsApp) ──────────────────────────────────────────────
