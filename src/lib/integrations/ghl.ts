@@ -321,10 +321,11 @@ export async function fetchGhlPipelineLeadCounts(
     startAfterId = nextSAId != null ? String(nextSAId) : null;
   }
 
-  // Si ninguna oportunidad tenía assignedTo, guardamos el total bajo un
-  // centinela para que el KPI lo sume aunque no haya desglose por vendedor.
-  if (countsByUser.size === 0 && diag.itemsFetched > 0) {
-    countsByUser.set("__pipeline_total__", diag.itemsFetched);
+  // Oportunidades sin assignedTo van a un bucket "__unassigned__" con
+  // team_member_id resuelto a null → caen en la fila "Sin asignar" del
+  // ranking y suman al total del KPI.
+  if (diag.nullAssignedTo > 0) {
+    countsByUser.set("__unassigned__", diag.nullAssignedTo);
   }
 
   const rows: GhlPipelineLeadCount[] = Array.from(countsByUser, ([ghlUserId, count]) => ({

@@ -87,8 +87,10 @@ export async function fetchGhlPipelineLeadCounts(
 
   const map = new Map<string | null, number>();
   for (const row of ((data ?? []) as Array<{ ghl_user_id: string; team_member_id: string | null; lead_count: number }>)) {
-    // La fila centinela almacena el total cuando no hay asignación por vendedor.
-    // No la incluimos en el mapa de ranking (no hay vendedor real al que atribuir).
+    // Fila centinela legacy (pre-fix): almacenaba el total cuando NINGUNA
+    // oportunidad tenía assignedTo. Se sigue saltando por si quedan filas
+    // viejas de antes del re-sync. El nuevo sentinel `__unassigned__` pasa
+    // como team_member_id=null y cae naturalmente en "Sin asignar".
     if (row.ghl_user_id === "__pipeline_total__") continue;
     const prev = map.get(row.team_member_id) ?? 0;
     map.set(row.team_member_id, prev + row.lead_count);
