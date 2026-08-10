@@ -219,6 +219,13 @@ const PAGE_SIZE = 100;
 // el cap silencioso era una de las hipótesis del partial data. Si se alcanza,
 // `hit_max_pages = true` lo deja visible en error_detail para diagnóstico.
 const MAX_PAGES = 200;
+// Cap específico para /contacts/ (usado por fetchGhlContacts). Locations con
+// >20k contacts activos en la ventana del launch necesitan más: verificado
+// 2026-08-10 con location cuya ventana de 45 días tenía >20k contacts y el
+// cap de 200 truncaba silenciosamente el count "leads nuevos GHL". Como el
+// sync post-refactor ya no hace warm lookup ni fetch de opportunities/
+// appointments, tenemos budget de rate limit para paginar más profundo.
+const MAX_CONTACTS_PAGES = 500;
 
 /**
  * Paginación de conversations con cortocircuito por fecha. GHL devuelve
@@ -791,7 +798,7 @@ export async function fetchGhlContacts(
   let startAfter: number | null = null;
   let startAfterId: string | null = null;
 
-  for (let page = 0; page < MAX_PAGES; page++) {
+  for (let page = 0; page < MAX_CONTACTS_PAGES; page++) {
     const params = new URLSearchParams({
       locationId: args.locationId,
       limit: String(PAGE_SIZE),
@@ -877,15 +884,171 @@ export async function fetchGhlContacts(
     startAfterId = lastIdSeen;
     if (startAfter === null || startAfterId === null) break;
 
-    // Última iteración antes de agotar MAX_PAGES → señalamos truncado para
-    // que el diagnóstico del run lo refleje.
-    if (page === MAX_PAGES - 1) {
+    // Última iteración antes de agotar MAX_CONTACTS_PAGES → señalamos
+    // truncado para que el diagnóstico del run lo refleje.
+    if (page === MAX_CONTACTS_PAGES - 1) {
       meta.hit_max_pages = true;
     }
   }
 
   meta.observed_tags = Array.from(tagsSet);
   return { ok: true, rows: out, meta };
+}
+
+// ─── Contacts count por día (POST /contacts/search) ───────────────────────
+
+export interface DailyLeadCount {
+  date: string; // YYYY-MM-DD
+  total: number;
+}
+
+export interface DailyLeadCountsMeta {
+  /** Cantidad de días de la ventana consultados (1 request por día). */
+  days_queried: number;
+  /** True si algún día devolvió un error tolerable (contamos como 0 y seguimos). */
+  had_per_day_errors: boolean;
+  /** Cuántos días fallaron (no propagados). Diagnóstico. */
+  per_day_errors: number;
+  /** Keys top-level de la primera respuesta OK — para verificar shape. */
+  sample_response_keys: string[];
+}
+
+export interface DailyLeadCountsFetchArgs {
+  token: string;
+  locationId: string;
+  since: string; // YYYY-MM-DD
+  until: string; // YYYY-MM-DD
+}
+
+/**
+ * Trae SOLO el count de contacts nuevos por día usando `POST /contacts/search`
+ * con `pageLimit: 1` y filtro `dateAdded` acotado a UN día. GHL devuelve el
+ * `total` en el header de la respuesta — no paginamos.
+ *
+ * Por qué este endpoint y no `/contacts/` paginado:
+ *   - `/contacts/` no filtra por dateAdded server-side. Había que traerse
+ *     TODOS los contacts (payload completo: nombre, phone, email, tags,
+ *     custom fields, etc.) y filtrar client-side. Para locations grandes
+ *     esto se comía la cuota de rate limit y tocaba el cap de páginas.
+ *   - `/contacts/search` filtra server-side y con pageLimit=1 la respuesta
+ *     es un objeto chico con `contacts: [1 item]` + `total: N`.
+ *
+ * Costo: 1 request por día del launch (típicamente 30-45 requests). Bajo
+ * comparado con los 200-500 pages del enfoque anterior.
+ *
+ * Sensibilidad a shape: GHL a veces devuelve `total` en camelCase, snake_case
+ * o dentro de un envelope `meta`. Probamos todas las variantes. Si ninguna
+ * matchea → contamos como 0 para ese día (no aborta el sync).
+ */
+export async function fetchGhlContactCountsByDay(
+  args: DailyLeadCountsFetchArgs,
+): Promise<
+  | { ok: true; rows: DailyLeadCount[]; meta: DailyLeadCountsMeta }
+  | GhlFetchFailure
+> {
+  const days = enumerateDays(args.since, args.until);
+  const meta: DailyLeadCountsMeta = {
+    days_queried: 0,
+    had_per_day_errors: false,
+    per_day_errors: 0,
+    sample_response_keys: [],
+  };
+  const rows: DailyLeadCount[] = [];
+
+  for (const date of days) {
+    const startIso = `${date}T00:00:00.000Z`;
+    const endIso = `${date}T23:59:59.999Z`;
+    const body = JSON.stringify({
+      locationId: args.locationId,
+      pageLimit: 1,
+      filters: [
+        {
+          field: "dateAdded",
+          operator: "range",
+          value: { gte: startIso, lte: endIso },
+        },
+      ],
+    });
+    const url = `${GHL_API_BASE}/contacts/search`;
+    const result = await ghlFetch(url, args.token, { method: "POST", body });
+    meta.days_queried++;
+
+    // Auth y rate limit propagan (no seguimos si el token está roto o nos
+    // están rate-limitando: los próximos días fallarían igual).
+    if (!result.ok) {
+      if (result.kind === "token_invalid" || result.kind === "rate_limited") {
+        return result;
+      }
+      meta.had_per_day_errors = true;
+      meta.per_day_errors++;
+      rows.push({ date, total: 0 });
+      continue;
+    }
+
+    if (
+      meta.sample_response_keys.length === 0 &&
+      typeof result.body === "object" &&
+      result.body !== null
+    ) {
+      meta.sample_response_keys = Object.keys(
+        result.body as Record<string, unknown>,
+      );
+    }
+
+    const total = extractTotal(result.body);
+    rows.push({ date, total: total ?? 0 });
+  }
+
+  return { ok: true, rows, meta };
+}
+
+/**
+ * Intenta extraer el `total` de la respuesta de `/contacts/search` probando
+ * las variantes documentadas por GHL. Si ninguna matchea, devuelve null y
+ * el caller lo trata como 0.
+ */
+function extractTotal(body: unknown): number | null {
+  if (typeof body !== "object" || body === null) return null;
+  const obj = body as Record<string, unknown>;
+
+  // Variante 1: `total` directo en el body.
+  if (typeof obj.total === "number" && Number.isFinite(obj.total)) {
+    return obj.total;
+  }
+  // Variante 2: `totalCount` (algunos endpoints de GHL usan este alias).
+  if (
+    typeof obj.totalCount === "number" &&
+    Number.isFinite(obj.totalCount)
+  ) {
+    return obj.totalCount;
+  }
+  // Variante 3: dentro de `meta.total`.
+  if (obj.meta && typeof obj.meta === "object") {
+    const m = obj.meta as Record<string, unknown>;
+    if (typeof m.total === "number" && Number.isFinite(m.total)) {
+      return m.total;
+    }
+  }
+  // Fallback: contar el array `contacts` (pero con pageLimit=1 esto siempre
+  // sería 0 o 1, así que no sirve como conteo real — devolvemos null para
+  // que el caller sepa que no pudo leer el total).
+  return null;
+}
+
+/**
+ * Genera la lista de fechas YYYY-MM-DD entre `since` y `until` inclusive.
+ * Iteramos en UTC para no depender del timezone del server.
+ */
+function enumerateDays(since: string, until: string): string[] {
+  const out: string[] = [];
+  const startMs = Date.parse(`${since}T00:00:00.000Z`);
+  const endMs = Date.parse(`${until}T00:00:00.000Z`);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return out;
+  const oneDay = 24 * 60 * 60 * 1000;
+  for (let ms = startMs; ms <= endMs; ms += oneDay) {
+    out.push(new Date(ms).toISOString().slice(0, 10));
+  }
+  return out;
 }
 
 // ─── HTTP + classifying ────────────────────────────────────────────────────

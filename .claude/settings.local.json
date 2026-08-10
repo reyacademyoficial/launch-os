@@ -92,7 +92,17 @@
       "Bash(echo \"---exit: $?\")",
       "Read(//c/c/Users/40306/Desktop/Rey academy/Descargas/launch-os/**)",
       "Bash(pnpm tsc *)",
-      "Bash(pnpm test *)"
+      "Bash(pnpm test *)",
+      "Bash(awk 'NR<174 || \\(NR>=329 && NR<=351\\) || NR>=463' src/lib/integrations/ghl.ts)",
+      "Bash(mv src/lib/integrations/ghl.ts.tmp src/lib/integrations/ghl.ts)",
+      "Bash(awk 'NR<891 || NR>=1110' src/lib/integrations/ghl.ts)",
+      "Bash(awk 'NR<157 || NR>253' src/lib/integrations/sync-ghl.test.ts)",
+      "Bash(mv src/lib/integrations/sync-ghl.test.ts.tmp src/lib/integrations/sync-ghl.test.ts)",
+      "Bash(awk 'NR<156' src/lib/integrations/sync-ghl.test.ts)",
+      "Bash(rm src/lib/integrations/ghl.test.ts src/lib/integrations/__fixtures__/ghl/appointments_happy.json src/lib/integrations/__fixtures__/ghl/conversations_happy.json src/lib/integrations/__fixtures__/ghl/empty.json)",
+      "Bash(ls src/lib/integrations/__fixtures__/ghl/)",
+      "Bash(ls src/lib/integrations/__fixtures__/)",
+      "Bash(echo \"---exit=$?---\")"
     ]
   }
 }
