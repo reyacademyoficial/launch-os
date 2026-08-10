@@ -17,7 +17,7 @@ const TS = "2026-06-10T00:00:00Z";
 function tm(id: string, name: string): TeamMemberRow {
   return {
     id,
-    project_id: "p-1",
+    organization_id: "org-1",
     name,
     role: "closer",
     commission_rate: null,

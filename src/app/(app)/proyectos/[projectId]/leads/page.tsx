@@ -40,7 +40,7 @@ import {
 } from "@/lib/sales/list";
 import { createClient } from "@/lib/supabase/server";
 import { requireSessionProfile, userCanEditLaunchesIn } from "@/lib/supabase/auth";
-import { listTeamMembers } from "@/lib/team/list";
+import { listTeamMembersForProject } from "@/lib/team/list";
 
 import {
   assignLeadOwner,
@@ -109,7 +109,7 @@ export default async function LeadsPage({
     banks,
     fxMap,
   ] = await Promise.all([
-    listTeamMembers(projectId),
+    listTeamMembersForProject(projectId),
     listLaunchesForProject(projectId),
     userCanEditLaunchesIn(projectId),
     listSalesForProject(projectId),

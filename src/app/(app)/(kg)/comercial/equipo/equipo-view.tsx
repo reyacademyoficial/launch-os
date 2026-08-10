@@ -7,10 +7,7 @@ import { fCount, fPct } from "@/lib/finance/format";
 import type { TeamMemberRole } from "@/lib/team/types";
 
 import { deleteTeamMember, setTeamMemberActive } from "./actions";
-import {
-  TeamMemberFormDrawer,
-  type ProjectOption,
-} from "./team-member-form-drawer";
+import { TeamMemberFormDrawer } from "./team-member-form-drawer";
 
 const ROLE_LABELS: Record<TeamMemberRole, string> = {
   setter: "Setter",
@@ -22,8 +19,6 @@ const ROLE_LABELS: Record<TeamMemberRole, string> = {
 
 export interface TeamMemberRowData {
   readonly id: string;
-  readonly projectId: string;
-  readonly projectName: string;
   readonly name: string;
   readonly role: TeamMemberRole;
   readonly commissionRate: number | null;
@@ -34,11 +29,9 @@ export interface TeamMemberRowData {
 export function EquipoView({
   rows,
   totalCount,
-  projects,
 }: {
   readonly rows: readonly TeamMemberRowData[];
   readonly totalCount: number;
-  readonly projects: readonly ProjectOption[];
 }) {
   const [openCreate, setOpenCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -47,7 +40,6 @@ export function EquipoView({
     : null;
 
   const columns: Column<TeamMemberRowData>[] = [
-    { key: "project", label: "Proyecto", render: (r) => r.projectName },
     { key: "name", label: "Nombre", render: (r) => r.name },
     {
       key: "role",
@@ -97,7 +89,6 @@ export function EquipoView({
         <button
           type="button"
           onClick={() => setOpenCreate(true)}
-          disabled={projects.length === 0}
           className="kg-focus"
           style={{
             padding: "6px 14px",
@@ -107,14 +98,9 @@ export function EquipoView({
             border: "none",
             fontSize: 12,
             fontWeight: 700,
-            cursor: projects.length === 0 ? "not-allowed" : "pointer",
-            opacity: projects.length === 0 ? 0.5 : 1,
+            cursor: "pointer",
           }}
-          title={
-            projects.length === 0
-              ? "Necesitás al menos un proyecto para crear un miembro"
-              : "Crear un miembro"
-          }
+          title="Crear un miembro"
         >
           + Nuevo miembro
         </button>
@@ -126,14 +112,13 @@ export function EquipoView({
         rowKey={(r) => r.id}
         totalCount={totalCount}
         emptyTitle="No hay miembros cargados"
-        emptyHint="El equipo de ventas se elige al cargar una venta (setter y closer) y alimenta el ranking del proyecto. Cada miembro pertenece a un proyecto."
+        emptyHint="El equipo comercial es único a nivel organización — se elige al cargar una venta (setter y closer) y alimenta el ranking de todos los proyectos."
       />
 
       <TeamMemberFormDrawer
         mode="create"
         open={openCreate}
         onClose={() => setOpenCreate(false)}
-        projects={projects}
       />
 
       {editingRow && (
@@ -141,10 +126,8 @@ export function EquipoView({
           mode="edit"
           open
           onClose={() => setEditingId(null)}
-          projects={projects}
           initial={{
             id: editingRow.id,
-            projectId: editingRow.projectId,
             name: editingRow.name,
             role: editingRow.role,
             commissionRate: editingRow.commissionRate,
@@ -168,7 +151,7 @@ function RowActions({
   function handleToggle() {
     setError(null);
     startTransition(async () => {
-      const r = await setTeamMemberActive(row.id, row.projectId, !row.active);
+      const r = await setTeamMemberActive(row.id, !row.active);
       if ("error" in r) setError(r.error);
     });
   }
@@ -183,7 +166,7 @@ function RowActions({
     }
     setError(null);
     startTransition(async () => {
-      const r = await deleteTeamMember(row.id, row.projectId);
+      const r = await deleteTeamMember(row.id);
       if ("error" in r) setError(r.error);
     });
   }
@@ -257,9 +240,6 @@ const ghostBtn: React.CSSProperties = {
 };
 
 function RolePill({ role }: { readonly role: TeamMemberRole }) {
-  // Colores diferenciados por función: setter/closer son las ventas
-  // directas (accent), media_buyer marketing (warning), manager (positive),
-  // otro (neutral).
   const spec: Record<TeamMemberRole, { bg: string; fg: string; dot: string }> =
     {
       setter: {

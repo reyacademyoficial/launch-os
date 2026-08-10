@@ -24,7 +24,7 @@ import type { TeamMemberPayoutRow } from "@/lib/payouts/types";
 import { listProductsForProject } from "@/lib/products/list";
 import { listAccessibleProjects } from "@/lib/projects/list";
 import { requireRole } from "@/lib/supabase/auth";
-import { listTeamMembers } from "@/lib/team/list";
+import { listTeamMembersForProject } from "@/lib/team/list";
 
 import { createPayout, deletePayout } from "./actions";
 import { FiltersBar } from "./filters-bar";
@@ -145,7 +145,7 @@ export default async function RankingPage({
     payouts,
     products,
   ] = await Promise.all([
-    listTeamMembers(projectId),
+    listTeamMembersForProject(projectId),
     fetchLeaderboardLeadStats(projectId, commonFilters.launchId),
     fetchLeaderboardSaleStats(
       projectId,

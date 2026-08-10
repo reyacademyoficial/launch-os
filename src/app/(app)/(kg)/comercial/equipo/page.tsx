@@ -5,13 +5,11 @@ import { IconOrg } from "@/components/kg/icons";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
-import { listAccessibleProjects } from "@/lib/projects/list";
 import { createClient } from "@/lib/supabase/server";
 import { listAllTeamMembers } from "@/lib/team/list";
 import type { TeamMemberRole } from "@/lib/team/types";
 
 import { EquipoView, type TeamMemberRowData } from "./equipo-view";
-import type { ProjectOption } from "./team-member-form-drawer";
 
 export const metadata: Metadata = { title: "Equipo · Comercial" };
 
@@ -50,15 +48,10 @@ export default async function EquipoPage({
   const sp = await searchParams;
   const activeParam = parseActive(sp.state);
   const roleParam = parseRole(sp.role);
-  const projectFilter =
-    typeof sp.project === "string" && sp.project.trim().length > 0
-      ? sp.project
-      : null;
 
   const supabase = await createClient();
-  const [members, projects, salesRes] = await Promise.all([
+  const [members, salesRes] = await Promise.all([
     listAllTeamMembers(),
-    listAccessibleProjects(),
     // Conteo de ventas por miembro — un miembro puede figurar como setter
     // o closer en una venta (0014 schema). Sumamos ambas contribuciones.
     supabase.from("sales").select("setter_id, closer_id"),
@@ -81,58 +74,25 @@ export default async function EquipoPage({
     }
   }
 
-  const projectById = new Map(projects.map((p) => [p.id, p]));
-
   const filtered = members.filter((m) => {
     if (activeParam === "activos" && !m.active) return false;
     if (activeParam === "inactivos" && m.active) return false;
     if (roleParam !== "todos" && m.role !== roleParam) return false;
-    if (projectFilter && m.project_id !== projectFilter) return false;
     return true;
   });
 
-  const rows: TeamMemberRowData[] = filtered.map((m) => {
-    const project = projectById.get(m.project_id);
-    return {
-      id: m.id,
-      projectId: m.project_id,
-      projectName: project?.name ?? "—",
-      name: m.name,
-      role: m.role,
-      commissionRate: m.commission_rate,
-      salesCount: salesByMemberId.get(m.id) ?? 0,
-      active: m.active,
-    };
-  });
+  const rows: TeamMemberRowData[] = filtered.map((m) => ({
+    id: m.id,
+    name: m.name,
+    role: m.role,
+    commissionRate: m.commission_rate,
+    salesCount: salesByMemberId.get(m.id) ?? 0,
+    active: m.active,
+  }));
 
   const totalCount = rows.length;
   const totalActive = rows.filter((r) => r.active).length;
   const totalSalesShown = rows.reduce((a, r) => a + r.salesCount, 0);
-
-  const projectsForDrawer: ProjectOption[] = projects.map((p) => ({
-    id: p.id,
-    name: p.name,
-  }));
-
-  const projectsWithMembers = new Set(members.map((m) => m.project_id));
-  const projectPillOptions = [
-    {
-      label: "Todos los proyectos",
-      href: buildHref({ state: activeParam, role: roleParam, project: null }),
-      active: projectFilter == null,
-    },
-    ...projects
-      .filter((p) => projectsWithMembers.has(p.id))
-      .map((p) => ({
-        label: p.name,
-        href: buildHref({
-          state: activeParam,
-          role: roleParam,
-          project: p.id,
-        }),
-        active: projectFilter === p.id,
-      })),
-  ];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -151,11 +111,7 @@ export default async function EquipoPage({
           ariaLabel="Filtrar por estado"
           options={ACTIVE_OPTIONS.map((o) => ({
             label: o.label,
-            href: buildHref({
-              state: o.value,
-              role: roleParam,
-              project: projectFilter,
-            }),
+            href: buildHref({ state: o.value, role: roleParam }),
             active: activeParam === o.value,
           }))}
         />
@@ -163,28 +119,14 @@ export default async function EquipoPage({
           ariaLabel="Filtrar por rol"
           options={ROLE_FILTER_OPTIONS.map((o) => ({
             label: o.label,
-            href: buildHref({
-              state: activeParam,
-              role: o.value,
-              project: projectFilter,
-            }),
+            href: buildHref({ state: activeParam, role: o.value }),
             active: roleParam === o.value,
           }))}
         />
-        {projectPillOptions.length > 1 && (
-          <KgParamPills
-            ariaLabel="Filtrar por proyecto"
-            options={projectPillOptions}
-          />
-        )}
       </div>
 
       <Panel title="Miembros del equipo" pad={false}>
-        <EquipoView
-          rows={rows}
-          totalCount={totalCount}
-          projects={projectsForDrawer}
-        />
+        <EquipoView rows={rows} totalCount={totalCount} />
       </Panel>
     </div>
   );
@@ -214,12 +156,10 @@ function parseRole(v: string | string[] | undefined): RoleFilterParam {
 function buildHref(overrides: {
   state: ActiveParam;
   role: RoleFilterParam;
-  project: string | null;
 }): string {
   const params = new URLSearchParams();
   if (overrides.state !== "activos") params.set("state", overrides.state);
   if (overrides.role !== "todos") params.set("role", overrides.role);
-  if (overrides.project) params.set("project", overrides.project);
   const qs = params.toString();
   return qs ? `/comercial/equipo?${qs}` : "/comercial/equipo";
 }

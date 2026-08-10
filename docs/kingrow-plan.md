@@ -801,3 +801,10 @@ No pertenecen a estos módulos pero conviene no perderlas de vista:
       filtrada por `visibleModulesForRole`; cliente va a `/lanzamientos`, operador
       a `/operaciones`.)_
 - [ ] Segunda cuenta superadmin como respaldo.
+- [ ] Regenerar `src/lib/types/database.ts` después de aplicar 0124 (team_members
+      org-scope). Hoy el archivo autogenerado todavía dice
+      `team_members.project_id NOT NULL`; el código usa `as never` para saltar
+      la inferencia y `tsc` pasa limpio, pero conviene poner los tipos al día.
+      Desde Studio: API Docs → sección TypeScript → descargar y reemplazar el
+      archivo entero. Alternativa CLI: `npx supabase gen types typescript
+      --project-id <PROJECT_REF> > src/lib/types/database.ts`.

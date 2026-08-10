@@ -425,13 +425,27 @@ export async function listGhlUserMappings(
     return { error: "Falta el Private Integration Token de GHL." };
   }
 
-  // 3) GHL users + team_members + mappings en paralelo
+  // 3) organization_id del proyecto — team_members es org-scope post 0124,
+  //    así que el filtro de miembros pasa por org, no por proyecto.
+  const projectRes = await service
+    .from("projects")
+    .select("organization_id")
+    .eq("id", projectId)
+    .maybeSingle();
+  const projectOrgId =
+    (projectRes.data as { organization_id: string } | null)?.organization_id ??
+    null;
+  if (!projectOrgId) {
+    return { error: "No se pudo resolver la organización del proyecto." };
+  }
+
+  // 4) GHL users + team_members (org-wide) + mappings en paralelo
   const [ghlUsersResult, teamRes, mappingsRes] = await Promise.all([
     fetchGhlUsers(token, locationId),
     loose(service)
       .from("team_members")
       .select("id, name, active")
-      .eq("project_id", projectId)
+      .eq("organization_id", projectOrgId)
       .eq("active", true)
       .order("name"),
     loose(service)

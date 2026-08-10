@@ -4,9 +4,11 @@ import { parsePhoneNumberFromString, type CountryCode } from "libphonenumber-js"
 
 import {
   fetchGhlContacts,
+  fetchGhlContactCountsByDay,
   fetchGhlConversations,
   type ContactsMeta,
   type ConversationsMeta,
+  type DailyLeadCountsMeta,
   type GhlFetchFailure,
 } from "./ghl";
 
@@ -64,8 +66,8 @@ export interface ExistingLeadView {
 
 export interface GhlCombinedCounts {
   /**
-   * Filas devueltas por `/contacts/` en la ventana COMPLETA del launch
-   * ([date_start, date_end]). Base para el count de leads nuevos.
+   * Filas devueltas por `/contacts/` en compra+cierre — usadas SOLO para el
+   * team_member update. Fuera de compra+cierre no se piden.
    */
   contacts_fetched: number;
   /**
@@ -74,9 +76,10 @@ export interface GhlCombinedCounts {
    */
   conversations_fetched: number;
   /**
-   * Leads nuevos en el launch según GHL: contacts cuyo `dateAdded` cae
-   * dentro de [date_start, date_end]. Este es el número que el usuario
-   * compara contra las ventas cerradas en el ranking.
+   * Leads nuevos en el launch según GHL: `total` acumulado de
+   * `POST /contacts/search` con filtro `dateAdded` por día × N días del
+   * launch. NO trae el payload de los contacts — solo el count. Este es el
+   * número que el usuario compara contra las ventas cerradas.
    */
   new_leads_in_launch: number;
   /**
@@ -120,6 +123,11 @@ export type GhlRunSummary =
 interface GhlRunMeta {
   contacts: ContactsMeta;
   conversations: ConversationsMeta;
+  /**
+   * Meta del fetch por día del count. Un request por día del launch — barato
+   * comparado con paginar `/contacts/` sobre la ventana completa.
+   */
+  daily_counts: DailyLeadCountsMeta;
   /** Cuántos `assignedTo` distintos se resolvieron a team_member vía mapping. */
   mappings_applied: number;
   /**
@@ -168,8 +176,6 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   const cutoffIso = args.lastSuccessAt ?? null;
   const warmStartMs = Date.parse(`${warmWindow.start}T00:00:00.000Z`);
   const warmEndMs = Date.parse(`${warmWindow.end}T23:59:59.999Z`);
-  const launchStartMs = Date.parse(`${launchWindow.start}T00:00:00.000Z`);
-  const launchEndMs = Date.parse(`${launchWindow.end}T23:59:59.999Z`);
 
   // 1) Mappings GHL user → team_member del proyecto.
   const mappingRes = await loose(args.service)
@@ -190,82 +196,83 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
     ),
   );
 
-  // 2) Fetch en paralelo.
-  //    - Contacts en la ventana COMPLETA del launch [date_start, date_end] —
-  //      necesitamos ver todos los contacts creados en el launch para el
-  //      count `new_leads_in_launch`. La paginación va desc por dateUpdated,
-  //      pero dateUpdated ≥ dateAdded, así que garantiza cubrir a todos los
-  //      nuevos del launch (con el cortocircuito en date_start).
-  //    - Conversations solo en warmWindow — la actividad "hablaron con el
-  //      lead" únicamente cuenta para el team_member update, no para el count.
-  const [contactsResult, conversationsResult] = await Promise.all([
-    fetchGhlContacts({
-      token: args.token,
-      locationId: args.locationId,
-      since: launchWindow.start,
-      until: launchWindow.end,
-      cutoffIso,
-    }),
-    fetchGhlConversations({
-      token: args.token,
-      locationId: args.locationId,
-      since: warmWindow.start,
-      until: warmWindow.end,
-      cutoffIso,
-    }),
-  ]);
+  // 2) Fetch en paralelo:
+  //    - Daily counts: `POST /contacts/search` por día del launch, pageLimit=1,
+  //      trae SOLO el total (no descargamos nombre, phone, tags de cada
+  //      contact). Un request por día → ~30-45 requests para un launch típico.
+  //    - Contacts en warmWindow (compra+cierre): usados exclusivamente para
+  //      el team_member update. Cuando el launch todavía está en
+  //      captación/nutrición esta ventana está en el futuro y el fetch
+  //      cortocircuita casi sin pedir páginas.
+  //    - Conversations en warmWindow: para detectar leads que hablaron pero
+  //      cuyo contact no fue re-tageado por un workflow.
+  const [dailyCountsResult, contactsResult, conversationsResult] =
+    await Promise.all([
+      fetchGhlContactCountsByDay({
+        token: args.token,
+        locationId: args.locationId,
+        since: launchWindow.start,
+        until: launchWindow.end,
+      }),
+      fetchGhlContacts({
+        token: args.token,
+        locationId: args.locationId,
+        since: warmWindow.start,
+        until: warmWindow.end,
+        cutoffIso,
+      }),
+      fetchGhlConversations({
+        token: args.token,
+        locationId: args.locationId,
+        since: warmWindow.start,
+        until: warmWindow.end,
+        cutoffIso,
+      }),
+    ]);
+  if (!dailyCountsResult.ok) return propagateFailure(dailyCountsResult, "contacts");
   if (!contactsResult.ok) return propagateFailure(contactsResult, "contacts");
   if (!conversationsResult.ok) {
     return propagateFailure(conversationsResult, "conversations");
   }
 
-  // 3a) Count de leads nuevos + bucketeo por día para la curva.
-  //     Leads nuevos = contacts con dateAdded dentro de [date_start, date_end].
-  //     Persistimos por día en `launch_daily_ads` con provider='ghl' — el merge
-  //     (mergeDailyData) ignora ese provider (solo mira meta/google/tiktok),
-  //     así que estos leads NO se suman a los de Meta en el KPI de leads
-  //     totales. La UI los renderea aparte (KPI card dedicada + curva propia
-  //     en la gráfica).
+  // 3) Persistir el count por día en launch_daily_ads con provider='ghl'.
+  //    mergeDailyData ignora ese provider (solo mira meta/google/tiktok), así
+  //    que estos leads NO se suman a los de Meta en el KPI de leads totales.
+  //    La UI los lee aparte (KPI card + curva propia en la gráfica).
   let newLeadsInLaunch = 0;
-  const newLeadsByDate = new Map<string, number>();
-  for (const c of contactsResult.rows) {
-    const iso = c.dateAdded ?? null;
-    if (!iso) continue;
-    const addedMs = Date.parse(iso);
-    if (
-      !Number.isFinite(addedMs) ||
-      addedMs < launchStartMs ||
-      addedMs > launchEndMs
-    ) {
-      continue;
-    }
-    newLeadsInLaunch++;
-    const date = iso.slice(0, 10);
-    newLeadsByDate.set(date, (newLeadsByDate.get(date) ?? 0) + 1);
-  }
-
-  if (newLeadsByDate.size > 0) {
-    const nowIso = new Date().toISOString();
-    const rows = Array.from(newLeadsByDate.entries()).map(([date, leads]) => ({
+  const nowIso = new Date().toISOString();
+  const dailyRowsToUpsert: Record<string, unknown>[] = [];
+  for (const r of dailyCountsResult.rows) {
+    newLeadsInLaunch += r.total;
+    if (r.total === 0) continue; // no upsertear días sin leads
+    dailyRowsToUpsert.push({
       launch_id: args.launchId,
-      date,
+      date: r.date,
       provider: "ghl",
       spend: 0,
       impressions: 0,
       clicks: 0,
-      leads,
-      raw: null,
+      leads: r.total,
+      // raw es NOT NULL con default '{}'. Sin payload crudo real para
+      // guardar acá (usamos POST /contacts/search solo por el count).
+      raw: {},
       synced_at: nowIso,
-    }));
+    });
+  }
+
+  if (dailyRowsToUpsert.length > 0) {
     const upsert = await loose(args.service)
       .from("launch_daily_ads")
-      .upsert(rows, { onConflict: "launch_id,date,provider" });
+      .upsert(dailyRowsToUpsert, { onConflict: "launch_id,date,provider" });
     if (upsert.error) {
       return {
         status: "error",
         stage: "updates",
         message: `Falló el upsert de leads GHL por día: ${upsert.error.message}`,
-        detail: { code: upsert.error.code ?? null, rows_attempted: rows.length },
+        detail: {
+          code: upsert.error.code ?? null,
+          rows_attempted: dailyRowsToUpsert.length,
+        },
       };
     }
   }
@@ -411,6 +418,7 @@ export async function runGhlSync(args: RunGhlSyncArgs): Promise<GhlRunSummary> {
   const meta: GhlRunMeta = {
     contacts: contactsResult.meta,
     conversations: conversationsResult.meta,
+    daily_counts: dailyCountsResult.meta,
     mappings_applied: resolvedTargets.length,
     unmapped_ghl_user_ids: Array.from(unmappedGhlUserIds),
     launch_window: launchWindow,

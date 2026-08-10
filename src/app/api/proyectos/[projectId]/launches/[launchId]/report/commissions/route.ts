@@ -12,7 +12,7 @@ import {
 import { listSalesByLaunch } from "@/lib/sales/list-by-launch";
 import { createClient } from "@/lib/supabase/server";
 import { requireCanEditProject } from "@/lib/supabase/auth";
-import { listTeamMembers } from "@/lib/team/list";
+import { listTeamMembersForProject } from "@/lib/team/list";
 
 /**
  * GET /api/proyectos/[projectId]/launches/[launchId]/report/commissions
@@ -51,7 +51,7 @@ export async function GET(
     listSalesByLaunch(projectId, launchId),
     listCommissionRules(projectId),
     listPaymentModalities(projectId),
-    listTeamMembers(projectId),
+    listTeamMembersForProject(projectId),
   ]);
 
   const project = projectRes.data as
