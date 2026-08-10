@@ -266,13 +266,8 @@ export function ConfigModal({
 /**
  * Form de Meta/Google/TikTok con UI dinámica para múltiples ad accounts. El
  * estado se serializa a un hidden input `ad_accounts_json` que el server action
- * parsea y valida. Cada fila tiene su account_id + textarea de campañas.
- *
- * Diseño:
- *  - Estado local React: array de entries (account_id + campaign string).
- *  - El campaign string se trabaja como texto libre (separado por espacios
- *    o comas) y solo se split al serializar — más cómodo para tipear.
- *  - Al menos 1 entry siempre. "Quitar" desaparece si solo queda una.
+ * parsea y valida. Cada fila tiene su account_id + lista de campaign IDs que
+ * se cargan de a uno (con soporte para pegar varios separados por coma/espacio).
  */
 function AdsMultiAccountForm({
   formAction,
@@ -287,16 +282,18 @@ function AdsMultiAccountForm({
 }) {
   interface Row {
     adAccountId: string;
-    campaignsText: string;
+    campaignIds: string[];
+    campaignInput: string;
   }
 
   const [rows, setRows] = useState<Row[]>(() => {
     if (initialAccounts.length === 0) {
-      return [{ adAccountId: "", campaignsText: "" }];
+      return [{ adAccountId: "", campaignIds: [], campaignInput: "" }];
     }
     return initialAccounts.map((a) => ({
       adAccountId: a.adAccountId,
-      campaignsText: a.campaignIds.join(" "),
+      campaignIds: [...a.campaignIds],
+      campaignInput: "",
     }));
   });
 
@@ -306,23 +303,41 @@ function AdsMultiAccountForm({
     );
   }
   function addRow() {
-    setRows((prev) => [...prev, { adAccountId: "", campaignsText: "" }]);
+    setRows((prev) => [...prev, { adAccountId: "", campaignIds: [], campaignInput: "" }]);
   }
   function removeRow(idx: number) {
     setRows((prev) => prev.filter((_, i) => i !== idx));
   }
 
-  // Serialización para el hidden input. Sanea entradas vacías; el server hace
-  // su propia validación, esto solo evita ruido obvio.
+  function addCampaign(idx: number) {
+    const raw = (rows[idx]?.campaignInput ?? "").trim();
+    if (!raw) return;
+    const newIds = raw.split(/[\s,]+/).map((s) => s.trim()).filter((s) => s.length > 0);
+    setRows((prev) =>
+      prev.map((row, i) => {
+        if (i !== idx) return row;
+        const existing = new Set(row.campaignIds);
+        const toAdd = newIds.filter((id) => !existing.has(id));
+        return { ...row, campaignIds: [...row.campaignIds, ...toAdd], campaignInput: "" };
+      }),
+    );
+  }
+
+  function removeCampaign(rowIdx: number, campaignIdx: number) {
+    setRows((prev) =>
+      prev.map((row, i) => {
+        if (i !== rowIdx) return row;
+        return { ...row, campaignIds: row.campaignIds.filter((_, ci) => ci !== campaignIdx) };
+      }),
+    );
+  }
+
   const serialized = JSON.stringify(
     rows
       .filter((r) => r.adAccountId.trim().length > 0)
       .map((r) => ({
         ad_account_id: r.adAccountId.trim(),
-        campaign_ids: r.campaignsText
-          .split(/[\s,]+/)
-          .map((s) => s.trim())
-          .filter((s) => s.length > 0),
+        campaign_ids: r.campaignIds,
       })),
   );
 
@@ -350,6 +365,7 @@ function AdsMultiAccountForm({
                 </button>
               )}
             </div>
+
             <div>
               <Label htmlFor={`ad_account_id_${idx}`}>Ad Account ID</Label>
               <Input
@@ -361,21 +377,63 @@ function AdsMultiAccountForm({
                 onChange={(e) => update(idx, { adAccountId: e.target.value })}
               />
             </div>
+
             <div>
-              <Label htmlFor={`campaign_ids_${idx}`}>
+              <Label htmlFor={`campaign_input_${idx}`}>
                 Campaign IDs{" "}
-                <span className="text-xs text-fg-subtle">(al menos 1)</span>
+                <span className="text-xs text-fg-subtle">
+                  ({row.campaignIds.length}{" "}
+                  {row.campaignIds.length === 1 ? "campaña" : "campañas"})
+                </span>
               </Label>
-              <Input
-                id={`campaign_ids_${idx}`}
-                type="text"
-                autoComplete="off"
-                placeholder="120203456789 120204567891"
-                value={row.campaignsText}
-                onChange={(e) => update(idx, { campaignsText: e.target.value })}
-              />
+
+              {row.campaignIds.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2 mb-2">
+                  {row.campaignIds.map((id, ci) => (
+                    <span
+                      key={id}
+                      className="flex items-center gap-1 rounded border border-border bg-surface px-2 py-0.5 font-mono text-xs text-fg"
+                    >
+                      {id}
+                      <button
+                        type="button"
+                        onClick={() => removeCampaign(idx, ci)}
+                        aria-label={`Quitar campaña ${id}`}
+                        className="ml-0.5 text-fg-subtle hover:text-error"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <Input
+                  id={`campaign_input_${idx}`}
+                  type="text"
+                  autoComplete="off"
+                  placeholder="120203456789"
+                  value={row.campaignInput}
+                  onChange={(e) => update(idx, { campaignInput: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addCampaign(idx);
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => addCampaign(idx)}
+                  className="!px-3 !py-1.5 !text-xs shrink-0"
+                >
+                  Agregar
+                </Button>
+              </div>
               <p className="mt-1 text-xs text-fg-subtle">
-                Separados por coma o espacio.
+                Pegá un ID y presioná Enter o "Agregar". También podés pegar varios separados por coma o espacio.
               </p>
             </div>
           </div>
