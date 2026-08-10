@@ -441,10 +441,10 @@ async function finalize(workbook: ExcelJS.Workbook): Promise<Uint8Array> {
   return new Uint8Array(buf);
 }
 
-/** yyyy-mm-dd → Date a las 00:00 local (Excel lo muestra sin hora). */
+/** yyyy-mm-dd → Date UTC midnight (ExcelJS serializa en UTC para el serial de Excel). */
 function ymdToDate(ymd: string): Date | string {
   if (!/^\d{4}-\d{2}-\d{2}/.test(ymd)) return ymd;
-  return new Date(`${ymd.slice(0, 10)}T00:00:00`);
+  return new Date(`${ymd.slice(0, 10)}T00:00:00Z`);
 }
 
 /** ISO timestamptz → Date. */

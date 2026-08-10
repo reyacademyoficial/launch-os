@@ -36,8 +36,7 @@ const ROLE_FILTER_OPTIONS: ReadonlyArray<{
 ];
 
 interface SaleCountRow {
-  readonly setter_id: string | null;
-  readonly closer_id: string | null;
+  readonly team_member_id: string | null;
 }
 
 export default async function EquipoPage({
@@ -52,24 +51,16 @@ export default async function EquipoPage({
   const supabase = await createClient();
   const [members, salesRes] = await Promise.all([
     listAllTeamMembers(),
-    // Conteo de ventas por miembro — un miembro puede figurar como setter
-    // o closer en una venta (0014 schema). Sumamos ambas contribuciones.
-    supabase.from("sales").select("setter_id, closer_id"),
+    supabase.from("sales").select("team_member_id"),
   ]);
   const sales = (salesRes.data ?? []) as unknown as SaleCountRow[];
 
   const salesByMemberId = new Map<string, number>();
   for (const s of sales) {
-    if (s.setter_id) {
+    if (s.team_member_id) {
       salesByMemberId.set(
-        s.setter_id,
-        (salesByMemberId.get(s.setter_id) ?? 0) + 1,
-      );
-    }
-    if (s.closer_id && s.closer_id !== s.setter_id) {
-      salesByMemberId.set(
-        s.closer_id,
-        (salesByMemberId.get(s.closer_id) ?? 0) + 1,
+        s.team_member_id,
+        (salesByMemberId.get(s.team_member_id) ?? 0) + 1,
       );
     }
   }

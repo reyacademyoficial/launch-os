@@ -1017,7 +1017,8 @@ function Callout({
 }
 
 function fmtDate(iso: string): string {
-  const d = new Date(iso);
+  const s = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T12:00:00Z` : iso;
+  const d = new Date(s);
   if (!Number.isFinite(d.getTime())) return iso;
   return d.toLocaleDateString("es-AR", {
     day: "numeric",
@@ -1027,7 +1028,7 @@ function fmtDate(iso: string): string {
 }
 
 function impactMonthLabel(ymd: string): string {
-  const d = new Date(`${ymd}T00:00:00`);
+  const d = new Date(`${ymd}T12:00:00Z`);
   if (!Number.isFinite(d.getTime())) return "—";
   return d.toLocaleDateString("es-AR", { month: "long", year: "numeric" });
 }

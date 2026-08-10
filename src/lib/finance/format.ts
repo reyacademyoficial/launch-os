@@ -64,7 +64,7 @@ export function fCount(n: MaybeNumber): string {
  */
 export function fDateShort(d: Date | string | null | undefined): string {
   if (d == null) return "—";
-  const date = d instanceof Date ? d : new Date(d);
+  const date = d instanceof Date ? d : new Date(typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d}T12:00:00Z` : d as string);
   if (!Number.isFinite(date.getTime())) return "—";
   return date.toLocaleDateString("es-AR", { day: "numeric", month: "short" });
 }

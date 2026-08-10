@@ -249,7 +249,7 @@ export function NpsView({
 
 function formatDate(iso: string): string {
   try {
-    return new Date(iso).toLocaleDateString("es-AR", {
+    return new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T12:00:00Z` : iso).toLocaleDateString("es-AR", {
       day: "2-digit",
       month: "short",
       year: "numeric",
