@@ -97,13 +97,21 @@ export const ORGANIZATION_MODULES: readonly KgModule[] = [];
 export const SYSTEM_MODULES: readonly KgModule[] = [];
 
 /**
+ * Sección "Dev" — herramientas exclusivas del rol dev (is_dev_privileged).
+ * No es una capa; se renderiza al pie del sidebar sólo para dev. La auditoría
+ * responde "quién hizo cada movimiento" leyendo audit_log + auth_events.
+ */
+export const DEV_MODULES: readonly KgModule[] = [
+  { id: "auditoria", label: "Auditoría", href: "/dev/auditoria", icon: IconAdmin },
+];
+
+/**
  * Páginas ocultas en la sidebar pero visibles para el topbar.
  * Incluye las rutas que antes vivían en Organización/Sistema (ahora en
  * Configuración) para que el topbar resuelva el título al editar/crear.
  */
 const HIDDEN_MODULES: readonly KgModule[] = [
   { id: "configuracion", label: "Configuración", href: "/configuracion", icon: IconAdmin },
-  { id: "auditoria", label: "Auditoría", href: "/dev/auditoria", icon: IconAdmin },
   { id: "org-personas", label: "Personas", href: "/organizacion/personas", icon: IconOrg },
   { id: "org-reglas-split", label: "Distribución de ingresos", href: "/organizacion/reglas-split", icon: IconOrg },
   { id: "admin-proyectos", label: "Proyectos", href: "/admin/proyectos", icon: IconAdmin },
@@ -116,6 +124,11 @@ export function canSeeSystem(ctx: { role: Role; isDevPrivileged: boolean }): boo
 
 export function canSeeOrganization(ctx: { role: Role; isDevPrivileged: boolean }): boolean {
   return ctx.role === "superadmin" || ctx.isDevPrivileged;
+}
+
+/** Sección Dev — sólo usuarios con is_dev_privileged. */
+export function canSeeDev(ctx: { isDevPrivileged: boolean }): boolean {
+  return ctx.isDevPrivileged;
 }
 
 /**
@@ -162,9 +175,10 @@ const FLAT_GROUPS: readonly FlatGroup[] = [
   { label: "Organización", modules: ORGANIZATION_MODULES },
   { label: "Sistema", modules: SYSTEM_MODULES },
   { label: "Utilidades", modules: UTILITY_MODULES },
-  // HIDDEN_MODULES conservan la etiqueta "Sistema" — no se renderizan en la
-  // sidebar, sirven sólo para que el topbar tenga título cuando el usuario
-  // aterriza en /configuracion o /dev/auditoria.
+  // DEV_MODULES sí se renderizan en la sidebar (para dev) — acá se listan
+  // igual para que el topbar resuelva "Dev · Auditoría" al aterrizar en la
+  // ruta. HIDDEN_MODULES son puramente para resolver título en topbar.
+  { label: "Dev", modules: DEV_MODULES },
   { label: "Sistema", modules: HIDDEN_MODULES },
 ];
 
