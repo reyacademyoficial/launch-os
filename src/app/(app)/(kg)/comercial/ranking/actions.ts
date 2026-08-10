@@ -14,8 +14,10 @@ import { translatePayoutError } from "./translate-error";
 //   1. requireRole("superadmin") en vez de requireCanEditLaunchesIn.
 //   2. revalidatePath apunta a /comercial/ranking.
 //
-// El guard cross-tenant (member y launch pertenecen al projectId) se
-// preserva — RLS ya bloquea, pero el mensaje friendly ayuda.
+// Guard cross-tenant post 0124: team_members es org-scope, así que ya no se
+// puede chequear "member pertenece a este proyecto". El check pasa a "member
+// pertenece a la MISMA org que el proyecto del payout". Launch sigue
+// project-scope (chequeo directo). RLS ya bloquea; el mensaje friendly ayuda.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export type PayoutActionState =
@@ -55,17 +57,28 @@ export async function createPayout(
 
   const supabase = await createClient();
 
-  // Guards cross-tenant: member y launch tienen que pertenecer al proyecto
-  // que el usuario está mirando. Sin esto un payload manipulado desde el
-  // cliente podría registrar un payout con datos cruzados de proyectos.
+  // Guards cross-tenant: launch pertenece al proyecto (project-scope) y el
+  // miembro pertenece a la MISMA org que el proyecto (member es org-scope
+  // post 0124). Sin esto un payload manipulado desde el cliente podría
+  // registrar un payout con datos cruzados de proyectos u orgs.
+  const { data: projectData } = await supabase
+    .from("projects")
+    .select("organization_id")
+    .eq("id", projectId)
+    .maybeSingle();
+  const project = projectData as { organization_id: string } | null;
+  if (!project) {
+    return { error: "Proyecto inexistente o inaccesible." };
+  }
+
   const { data: memberData } = await supabase
     .from("team_members")
-    .select("project_id")
+    .select("organization_id")
     .eq("id", team_member_id)
     .maybeSingle();
-  const member = memberData as { project_id: string } | null;
-  if (!member || member.project_id !== projectId) {
-    return { error: "Miembro inexistente o de otro proyecto." };
+  const member = memberData as { organization_id: string } | null;
+  if (!member || member.organization_id !== project.organization_id) {
+    return { error: "Miembro inexistente o de otra organización." };
   }
 
   const { data: launchData } = await supabase

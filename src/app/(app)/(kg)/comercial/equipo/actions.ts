@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { resolveCurrentOrganizationId } from "@/lib/organization/current";
 import { requireRole } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import type { TeamMemberRole } from "@/lib/team/types";
@@ -9,8 +10,11 @@ import type { TeamMemberRole } from "@/lib/team/types";
 import { translateTeamMemberError } from "./translate-error";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Server actions para team_members desde Kingrow — org-wide con selector
-// de proyecto en el drawer. Schema sigue project-scope (0013).
+// Server actions para team_members — org-scope desde 0124.
+//
+// El equipo comercial es único a nivel organización: un mismo closer trabaja
+// para todos los proyectos de Kingrow. Por eso el form ya no pide project_id
+// (antes lo pedía) — el organization_id se resuelve del user en runtime.
 //
 // Delete: PERMITIDO condicionalmente (schema con ON DELETE RESTRICT hacia
 // sales/payouts). Si tiene ventas o payouts asociados, el translate-error
@@ -37,16 +41,12 @@ const VALID_ROLES: readonly TeamMemberRole[] = [
 ] as const;
 
 interface TeamMemberPayload {
-  readonly projectId: string;
   readonly name: string;
   readonly role: TeamMemberRole;
   readonly commissionRate: number | null;
 }
 
 function parseFormData(formData: FormData): TeamMemberPayload | string {
-  const projectId = String(formData.get("project_id") ?? "").trim();
-  if (projectId.length === 0) return "Elegí un proyecto.";
-
   const name = String(formData.get("name") ?? "").trim();
   if (name.length === 0) return "El nombre del miembro es obligatorio.";
 
@@ -66,18 +66,16 @@ function parseFormData(formData: FormData): TeamMemberPayload | string {
     commissionRate = parsed;
   }
 
-  return { projectId, name, role, commissionRate };
+  return { name, role, commissionRate };
 }
 
-function revalidateCommon(projectId: string) {
+function revalidateCommon() {
   revalidatePath("/comercial/equipo");
-  // Selector de miembro en el sale-modal (LaunchOS): tab de leads + cobros
-  // + ventas. Un miembro recién creado / desactivado tiene que reflejarse.
-  revalidatePath(`/proyectos/${projectId}/leads`);
-  revalidatePath(`/proyectos/${projectId}/cobros`);
-  revalidatePath(`/proyectos/${projectId}/ventas`);
-  revalidatePath(`/proyectos/${projectId}/leaderboard`);
-  revalidatePath(`/proyectos/${projectId}/launches`, "layout");
+  // El selector de miembro vive en cada proyecto (leads/cobros/ventas). Como
+  // team_members es org-wide desde 0124, cualquier alta/edición afecta a
+  // TODOS los proyectos — revalidamos el layout raíz de proyectos para que
+  // los server components vuelvan a leer.
+  revalidatePath("/proyectos", "layout");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -94,8 +92,13 @@ export async function createTeamMember(
   if (typeof parsed === "string") return { error: parsed };
 
   const supabase = await createClient();
+  const organizationId = await resolveCurrentOrganizationId(supabase);
+  if (!organizationId) {
+    return { error: "No se pudo resolver tu organización actual." };
+  }
+
   const payload = {
-    project_id: parsed.projectId,
+    organization_id: organizationId,
     name: parsed.name,
     role: parsed.role,
     commission_rate: parsed.commissionRate,
@@ -112,12 +115,12 @@ export async function createTeamMember(
   const created = data as { id: string } | null;
   if (!created) return { error: "El insert no devolvió fila." };
 
-  revalidateCommon(parsed.projectId);
+  revalidateCommon();
   return { ok: true, memberId: created.id };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// updateTeamMember — el projectId NO se puede cambiar (rompería sales/payouts)
+// updateTeamMember
 // ═══════════════════════════════════════════════════════════════════════════
 
 export async function updateTeamMember(
@@ -144,7 +147,7 @@ export async function updateTeamMember(
 
   if (error) return { error: translateTeamMemberError(error) };
 
-  revalidateCommon(parsed.projectId);
+  revalidateCommon();
   return { ok: true };
 }
 
@@ -154,7 +157,6 @@ export async function updateTeamMember(
 
 export async function setTeamMemberActive(
   memberId: string,
-  projectId: string,
   active: boolean,
 ): Promise<SetTeamMemberActiveResult> {
   await requireRole("superadmin");
@@ -169,7 +171,7 @@ export async function setTeamMemberActive(
 
   if (error) return { error: translateTeamMemberError(error) };
 
-  revalidateCommon(projectId);
+  revalidateCommon();
   return { ok: true };
 }
 
@@ -179,7 +181,6 @@ export async function setTeamMemberActive(
 
 export async function deleteTeamMember(
   memberId: string,
-  projectId: string,
 ): Promise<DeleteTeamMemberResult> {
   await requireRole("superadmin");
 
@@ -191,6 +192,6 @@ export async function deleteTeamMember(
 
   if (error) return { error: translateTeamMemberError(error) };
 
-  revalidateCommon(projectId);
+  revalidateCommon();
   return { ok: true };
 }

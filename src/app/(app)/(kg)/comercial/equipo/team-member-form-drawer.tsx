@@ -12,14 +12,8 @@ import {
   type UpdateTeamMemberState,
 } from "./actions";
 
-export interface ProjectOption {
-  readonly id: string;
-  readonly name: string;
-}
-
 export interface TeamMemberInitial {
   readonly id?: string;
-  readonly projectId?: string;
   readonly name?: string;
   readonly role?: TeamMemberRole;
   readonly commissionRate?: number | null;
@@ -28,7 +22,6 @@ export interface TeamMemberInitial {
 export interface TeamMemberFormDrawerProps {
   readonly mode: "create" | "edit";
   readonly initial?: TeamMemberInitial;
-  readonly projects: readonly ProjectOption[];
   readonly open: boolean;
   readonly onClose: () => void;
 }
@@ -54,7 +47,6 @@ export function TeamMemberFormDrawer(props: TeamMemberFormDrawerProps) {
 function FormBody({
   mode,
   initial,
-  projects,
   onClose,
 }: TeamMemberFormDrawerProps) {
   const isEdit = mode === "edit" && initial?.id;
@@ -89,36 +81,13 @@ function FormBody({
       action={formAction}
       style={{ display: "flex", flexDirection: "column", gap: 16 }}
     >
-      <Field label="Proyecto" htmlFor="project_id" required>
-        <select
-          id="project_id"
-          name="project_id"
-          required
-          defaultValue={initial?.projectId ?? ""}
-          disabled={isEdit ? true : false}
-          style={{
-            ...inputStyle,
-            opacity: isEdit ? 0.7 : 1,
-            cursor: isEdit ? "not-allowed" : "auto",
-          }}
-        >
-          {!isEdit && <option value="">Elegí un proyecto…</option>}
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-        {isEdit && (
-          <div
-            className="kg-t7"
-            style={{ color: "var(--kg-text-3)", marginTop: 6 }}
-          >
-            No se puede cambiar el proyecto de un miembro existente. Si hace
-            falta, desactivalo y creá uno nuevo en el proyecto correcto.
-          </div>
-        )}
-      </Field>
+      <div
+        className="kg-t7"
+        style={{ color: "var(--kg-text-3)" }}
+      >
+        El equipo comercial es único a nivel organización — este miembro va
+        a estar disponible en todos los proyectos.
+      </div>
 
       <Field label="Nombre" htmlFor="name" required>
         <input

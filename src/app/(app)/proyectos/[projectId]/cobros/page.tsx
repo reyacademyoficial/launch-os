@@ -25,7 +25,7 @@ import {
   requireSessionProfile,
   userCanEditLaunchesIn,
 } from "@/lib/supabase/auth";
-import { listTeamMembers } from "@/lib/team/list";
+import { listTeamMembersForProject } from "@/lib/team/list";
 
 import { assignLeadOwner } from "../leads/actions";
 import {
@@ -82,7 +82,7 @@ export default async function ProjectCobrosPage({
     listProductsForProject(projectId),
     listCommissionRules(projectId),
     listPaymentMethods(projectId),
-    listTeamMembers(projectId),
+    listTeamMembersForProject(projectId),
     listLaunchesForProject(projectId),
     listBanks(),
     loadProjectFxRates(supabase, projectId),
