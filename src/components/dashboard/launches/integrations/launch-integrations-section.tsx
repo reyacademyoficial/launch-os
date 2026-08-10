@@ -63,6 +63,7 @@ interface MetaConfigShape {
 interface GhlConfigShape {
   location_id?: string;
   default_country?: string;
+  pipeline_id?: string;
 }
 interface SendflowConfigShape {
   release_ids?: string[];
@@ -357,7 +358,7 @@ interface ProviderDisplay {
   campaignDetails?: ReadonlyArray<AdAccountEntry>;
   initialConfig:
     | { kind: "ads"; adAccounts: AdAccountEntry[] }
-    | { kind: "ghl"; locationId: string; defaultCountry: string }
+    | { kind: "ghl"; locationId: string; defaultCountry: string; pipelineId: string }
     | { kind: "sendflow"; releaseIds: string[] };
 }
 
@@ -509,18 +510,24 @@ function GhlMessagesSyncButton({
 function buildGhlDisplay(cfg: GhlConfigShape): ProviderDisplay {
   const locationId = cfg.location_id ?? "";
   const defaultCountry = cfg.default_country ?? "AR";
+  const pipelineId = cfg.pipeline_id ?? "";
   const hasConfig = locationId.length > 0;
+
+  const fields: ProviderDisplay["fields"] = hasConfig
+    ? [
+        { label: "Location ID", value: locationId, code: true },
+        { label: "País default", value: defaultCountry },
+        ...(pipelineId
+          ? [{ label: "Pipeline", value: pipelineId, code: true }]
+          : [{ label: "Pipeline", value: "Sin configurar" }]),
+      ]
+    : [];
 
   return {
     hasConfig,
     missingMessage: "Falta el Location ID",
-    fields: hasConfig
-      ? [
-          { label: "Location ID", value: locationId, code: true },
-          { label: "País default", value: defaultCountry },
-        ]
-      : [],
-    initialConfig: { kind: "ghl", locationId, defaultCountry },
+    fields,
+    initialConfig: { kind: "ghl", locationId, defaultCountry, pipelineId },
   };
 }
 

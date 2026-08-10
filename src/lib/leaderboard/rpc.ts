@@ -68,6 +68,31 @@ export async function fetchLeaderboardLeadStats(
   }));
 }
 
+/**
+ * Lee `ghl_pipeline_lead_counts` para un launch y devuelve un Map de
+ * `team_member_id → lead_count`. Si un GHL user no tiene mapping, su
+ * team_member_id es null (va a la fila "Sin asignar" del ranking).
+ * Varios GHL users pueden apuntar al mismo team_member_id — sumamos.
+ */
+export async function fetchGhlPipelineLeadCounts(
+  launchId: string,
+): Promise<Map<string | null, number>> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("ghl_pipeline_lead_counts" as never)
+    .select("team_member_id, lead_count")
+    .eq("launch_id", launchId);
+
+  if (error) throw new Error(error.message);
+
+  const map = new Map<string | null, number>();
+  for (const row of ((data ?? []) as Array<{ team_member_id: string | null; lead_count: number }>)) {
+    const prev = map.get(row.team_member_id) ?? 0;
+    map.set(row.team_member_id, prev + row.lead_count);
+  }
+  return map;
+}
+
 export async function fetchLeaderboardSaleStats(
   projectId: string,
   launchId: string | null,

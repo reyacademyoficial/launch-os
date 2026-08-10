@@ -168,8 +168,9 @@ interface FetchArgs {
 
 // El sync ya no llama /calendars/ ni /calendars/events — la única razón por
 // la que /users/ sobrevive es la UI de mapeo (server action listGhlUserMappings
-// en sync-actions.ts). Todo lo relativo a appointments/opportunities se removió
-// en el refactor 2026-08-10.
+// en sync-actions.ts). Todo lo relativo a appointments se removió en el
+// refactor 2026-08-10; las opportunities volvieron en 0126 pero solo para
+// contar leads por vendedor en una pipeline elegida.
 
 /**
  * Lista users del location. La API devuelve `{ users: [...] }`. Si el PIT no
@@ -193,6 +194,95 @@ export async function fetchGhlUsers(
     if (!id) continue;
     rows.push({ id, name: strOrNull(u.name) ?? id });
   }
+  return { ok: true, rows };
+}
+
+// ─── Pipelines + conteo de leads por vendedor ─────────────────────────────
+
+export interface GhlPipeline {
+  id: string;
+  name: string;
+}
+
+/**
+ * Lista los pipelines del location. Endpoint: GET /opportunities/pipelines
+ * Response shape: `{ pipelines: [{ id, name, stages, ... }] }`.
+ */
+export async function fetchGhlPipelines(
+  token: string,
+  locationId: string,
+): Promise<GhlFetchResult<GhlPipeline>> {
+  const url = `${GHL_API_BASE}/opportunities/pipelines?locationId=${encodeURIComponent(locationId)}`;
+  const result = await ghlFetch(url, token);
+  if (!result.ok) return result;
+
+  const items = extractArray(result.body, ["pipelines"]);
+  const rows: GhlPipeline[] = [];
+  for (const item of items) {
+    if (typeof item !== "object" || item === null) continue;
+    const p = item as Record<string, unknown>;
+    const id = strOrNull(p.id);
+    if (!id) continue;
+    rows.push({ id, name: strOrNull(p.name) ?? id });
+  }
+  return { ok: true, rows };
+}
+
+export interface GhlPipelineLeadCount {
+  ghlUserId: string;
+  count: number;
+}
+
+const MAX_OPP_PAGES = 200; // 200 × 100 = 20 000 oportunidades máximo
+
+/**
+ * Trae el conteo de leads por vendedor en una pipeline. Pagina
+ * `GET /opportunities/search?location_id=&pipeline_id=&limit=100&page=N`.
+ * Solo agrega el campo `assignedTo` — no baja el resto del payload del lead.
+ *
+ * La respuesta de GHL tiene `meta.nextPage: number | null`. Paginamos
+ * mientras `nextPage` no sea null y no se alcance el cap defensivo.
+ */
+export async function fetchGhlPipelineLeadCounts(
+  token: string,
+  locationId: string,
+  pipelineId: string,
+): Promise<GhlFetchResult<GhlPipelineLeadCount>> {
+  const countsByUser = new Map<string, number>();
+
+  for (let page = 1; page <= MAX_OPP_PAGES; page++) {
+    const params = new URLSearchParams({
+      location_id: locationId,
+      pipeline_id: pipelineId,
+      limit: "100",
+      page: String(page),
+    });
+    const url = `${GHL_API_BASE}/opportunities/search?${params.toString()}`;
+    const result = await ghlFetch(url, token);
+    if (!result.ok) return result;
+
+    const items = extractArray(result.body, ["opportunities"]);
+    if (items.length === 0) break;
+
+    for (const item of items) {
+      if (typeof item !== "object" || item === null) continue;
+      const opp = item as Record<string, unknown>;
+      const assignedTo = strOrNull(opp.assignedTo);
+      if (!assignedTo) continue;
+      countsByUser.set(assignedTo, (countsByUser.get(assignedTo) ?? 0) + 1);
+    }
+
+    // GHL indica si hay más páginas con meta.nextPage
+    const body = result.body as Record<string, unknown>;
+    const meta = body?.meta as Record<string, unknown> | undefined;
+    const nextPage = meta?.nextPage;
+    if (!nextPage || items.length < 100) break;
+  }
+
+  const rows: GhlPipelineLeadCount[] = Array.from(countsByUser, ([ghlUserId, count]) => ({
+    ghlUserId,
+    count,
+  }));
   return { ok: true, rows };
 }
 

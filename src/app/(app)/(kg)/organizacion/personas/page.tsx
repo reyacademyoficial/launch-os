@@ -54,8 +54,7 @@ export default async function PersonasPage({
 
   // Usuarios asignables al dropdown de "Usuario Kingrow" en la edición.
   // Excluimos cliente_role (portal externo, no operan) y soft-deleted.
-  // `listAllUsers` ya excluye rol dev. Dev con persona vinculada hay que
-  // hacerlo por Studio — es un caso edge que no justifica UI.
+  // El rol dev se incluye para permitir vincular el usuario dev a una persona.
   const assignableUsers: AssignableUser[] = allUsers
     .filter((u) => u.role !== "cliente" && u.deletedAt == null)
     .map((u) => ({

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
-import { fetchGhlUsers } from "@/lib/integrations/ghl";
+import { fetchGhlPipelines, fetchGhlUsers } from "@/lib/integrations/ghl";
 import { syncLaunch, type SyncProviderId } from "@/lib/integrations/sync";
 import {
   requireCanEditLaunchesIn,
@@ -82,6 +82,7 @@ interface AdsConfigPayload {
 interface GhlConfigPayload {
   location_id: string;
   default_country: string;
+  pipeline_id: string; // vacío = no configurada
 }
 interface SendflowConfigPayload {
   release_ids: string[];
@@ -139,7 +140,8 @@ export async function saveIntegrationConfig(
     }
     const defaultCountry =
       String(formData.get("default_country") ?? "AR").trim() || "AR";
-    payload = { location_id: locationId, default_country: defaultCountry };
+    const pipelineId = String(formData.get("pipeline_id") ?? "").trim();
+    payload = { location_id: locationId, default_country: defaultCountry, pipeline_id: pipelineId };
   } else {
     // Multi-account: la UI envía un JSON serializado con las entradas. Cada
     // entrada es { ad_account_id, campaign_ids } y necesitamos al menos una
@@ -370,6 +372,58 @@ export async function copyConnectionsFromLaunch(
 
   revalidatePath(`/proyectos/${projectId}/launches/${targetLaunchId}`);
   return { ok: true };
+}
+
+// ─── GHL pipelines ────────────────────────────────────────────────────────
+
+export interface GhlPipelineItem {
+  id: string;
+  name: string;
+}
+
+/**
+ * Lista los pipelines del location configurado en el launch. Se llama desde
+ * el modal de config de GHL cuando el usuario hace click en "Cargar pipelines".
+ * Requiere que token + location_id estén ya guardados.
+ */
+export async function listGhlPipelines(
+  projectId: string,
+  launchId: string,
+): Promise<{ ok: true; pipelines: GhlPipelineItem[] } | { ok: false; error: string }> {
+  await requireCanEditLaunchesIn(projectId);
+
+  const service = createServiceClient();
+
+  const [configRes, secretRes] = await Promise.all([
+    service
+      .from("launches")
+      .select("integration_config")
+      .eq("id", launchId)
+      .maybeSingle(),
+    service
+      .from("launch_secrets")
+      .select("secret")
+      .eq("launch_id", launchId)
+      .eq("provider", "ghl")
+      .maybeSingle(),
+  ]);
+
+  const config = ((configRes.data as { integration_config: unknown } | null)
+    ?.integration_config ?? {}) as Record<string, unknown>;
+  const ghlConfig = (config.ghl ?? {}) as Record<string, unknown>;
+  const locationId =
+    typeof ghlConfig.location_id === "string" ? ghlConfig.location_id.trim() : "";
+  const token = (secretRes.data as { secret: string } | null)?.secret ?? "";
+
+  if (!locationId) return { ok: false, error: "Guardá el Location ID primero." };
+  if (!token) return { ok: false, error: "Guardá el token de GHL primero." };
+
+  const result = await fetchGhlPipelines(token, locationId);
+  if (!result.ok) {
+    return { ok: false, error: `No pude traer los pipelines de GHL: ${result.message}` };
+  }
+
+  return { ok: true, pipelines: result.rows };
 }
 
 // ─── GHL user mappings ────────────────────────────────────────────────────

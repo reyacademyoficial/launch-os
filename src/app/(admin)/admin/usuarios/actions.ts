@@ -210,6 +210,17 @@ export async function deactivateUser(userId: string): Promise<void> {
 
   const service = createServiceClient();
 
+  // El usuario dev-privileged no puede desactivarse desde la UI — silencioso.
+  const { data: pr } = await service
+    .from("profiles")
+    .select("is_dev_privileged")
+    .eq("id", userId)
+    .maybeSingle();
+  if ((pr as { is_dev_privileged: boolean } | null)?.is_dev_privileged) {
+    revalidatePath("/admin/usuarios");
+    return;
+  }
+
   const payload = { deleted_at: new Date().toISOString() } as never;
   await service.from("profiles").update(payload).eq("id", userId);
 

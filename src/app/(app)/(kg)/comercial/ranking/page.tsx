@@ -16,6 +16,7 @@ import { listLaunchesForProject } from "@/lib/launches/list";
 import { aggregateLeaderboardFromStats } from "@/lib/leaderboard/aggregate";
 import { aggregateProductBreakdownFromStats } from "@/lib/leaderboard/product-breakdown";
 import {
+  fetchGhlPipelineLeadCounts,
   fetchLeaderboardLeadStats,
   fetchLeaderboardSaleStats,
 } from "@/lib/leaderboard/rpc";
@@ -144,6 +145,7 @@ export default async function RankingPage({
     launches,
     payouts,
     products,
+    ghlLeadsByMember,
   ] = await Promise.all([
     listTeamMembersForProject(projectId),
     fetchLeaderboardLeadStats(projectId, commonFilters.launchId),
@@ -157,11 +159,17 @@ export default async function RankingPage({
     listLaunchesForProject(projectId),
     listPayoutsForProject(projectId),
     listProductsForProject(projectId),
+    // Solo trae datos de pipeline cuando hay un launch filter activo
+    commonFilters.launchId
+      ? fetchGhlPipelineLeadCounts(commonFilters.launchId)
+      : Promise.resolve(new Map<string | null, number>()),
   ]);
 
   // listPaymentModalities importado por completitud del ecosistema — no
   // se usa en esta vista pero el linter lo purga si lo elimino sin usar.
   void listPaymentModalities;
+
+  const hasGhlLeads = ghlLeadsByMember.size > 0;
 
   const rows = aggregateLeaderboardFromStats({
     teamMembers,
@@ -170,6 +178,7 @@ export default async function RankingPage({
     rules,
     payouts,
     filters: commonFilters,
+    ghlLeadsByMember: hasGhlLeads ? ghlLeadsByMember : undefined,
   });
 
   const productBreakdown = aggregateProductBreakdownFromStats({
@@ -280,6 +289,7 @@ export default async function RankingPage({
             launches={launches.map((l) => ({ id: l.id, name: l.name }))}
             activeLaunchId={launchId}
             canEdit={true}
+            hasGhlLeads={hasGhlLeads}
             createPayoutAction={createPayoutAction}
             deletePayoutAction={deletePayoutAction}
           />

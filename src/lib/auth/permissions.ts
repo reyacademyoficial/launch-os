@@ -28,6 +28,7 @@ export type Role =
  */
 export interface SessionContext {
   role: Role;
+  isDevPrivileged: boolean;
   /** Project IDs el usuario es miembro (vía `project_members`). */
   memberOfProjectIds: ReadonlySet<string>;
 }
@@ -35,8 +36,7 @@ export interface SessionContext {
 // ─── Role predicates ────────────────────────────────────────────────────────
 
 export function isSuperadmin(ctx: SessionContext): boolean {
-  // 'dev' hereda todos los gates de superadmin (mirror del SQL is_superadmin).
-  return ctx.role === "superadmin" || ctx.role === "dev";
+  return ctx.role === "superadmin" || ctx.role === "dev" || ctx.isDevPrivileged;
 }
 
 export function isAdmin(ctx: SessionContext): boolean {

@@ -110,12 +110,12 @@ const HIDDEN_MODULES: readonly KgModule[] = [
   { id: "admin-usuarios", label: "Usuarios", href: "/admin/usuarios", icon: IconAdmin },
 ];
 
-export function canSeeSystem(role: Role): boolean {
-  return role === "superadmin" || role === "dev";
+export function canSeeSystem(ctx: { role: Role; isDevPrivileged: boolean }): boolean {
+  return ctx.role === "superadmin" || ctx.isDevPrivileged;
 }
 
-export function canSeeOrganization(role: Role): boolean {
-  return role === "superadmin" || role === "dev";
+export function canSeeOrganization(ctx: { role: Role; isDevPrivileged: boolean }): boolean {
+  return ctx.role === "superadmin" || ctx.isDevPrivileged;
 }
 
 /**

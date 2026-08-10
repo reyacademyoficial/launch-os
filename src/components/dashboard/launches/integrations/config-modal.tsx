@@ -1,10 +1,12 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useState, useTransition } from "react";
 
 import {
+  listGhlPipelines,
   saveIntegrationConfig,
   saveLaunchSecret,
+  type GhlPipelineItem,
   type SyncActionState,
 } from "@/app/(app)/proyectos/[projectId]/launches/[launchId]/sync-actions";
 import { Button } from "@/components/ui/button";
@@ -29,7 +31,7 @@ export interface InitialAdAccountEntry {
 
 export type InitialConfig =
   | { kind: "ads"; adAccounts: ReadonlyArray<InitialAdAccountEntry> }
-  | { kind: "ghl"; locationId: string; defaultCountry: string }
+  | { kind: "ghl"; locationId: string; defaultCountry: string; pipelineId: string }
   | { kind: "sendflow"; releaseIds: ReadonlyArray<string> };
 
 export function ConfigModal({
@@ -170,52 +172,16 @@ export function ConfigModal({
 
               {/* Paso 2: config polimórfica por provider */}
               {initialConfig.kind === "ghl" ? (
-                <form action={configAction} className="space-y-3">
-                  <div>
-                    <Label htmlFor="location_id">Location ID (Subaccount)</Label>
-                    <Input
-                      id="location_id"
-                      name="location_id"
-                      type="text"
-                      autoComplete="off"
-                      placeholder="abc123XYZ456"
-                      defaultValue={initialConfig.locationId}
-                    />
-                    <p className="mt-1 text-xs text-fg-subtle">
-                      El ID del subaccount del cliente (se ve en la URL de GHL después de <code className="text-fg">/location/</code>).
-                    </p>
-                  </div>
-                  <div>
-                    <Label htmlFor="default_country">
-                      País default del teléfono
-                    </Label>
-                    <select
-                      id="default_country"
-                      name="default_country"
-                      defaultValue={initialConfig.defaultCountry || "AR"}
-                      className="mt-1 w-full rounded-md border border-border bg-bg-elevated p-2 text-sm text-fg"
-                    >
-                      <option value="AR">Argentina (+54)</option>
-                      <option value="UY">Uruguay (+598)</option>
-                      <option value="CL">Chile (+56)</option>
-                      <option value="CO">Colombia (+57)</option>
-                      <option value="MX">México (+52)</option>
-                      <option value="ES">España (+34)</option>
-                      <option value="US">Estados Unidos (+1)</option>
-                    </select>
-                    <p className="mt-1 text-xs text-fg-subtle">
-                      Usado para normalizar los teléfonos de GHL antes del match con leads.
-                    </p>
-                  </div>
-                  <div className="flex items-center justify-end gap-3">
-                    {configState && "error" in configState && (
-                      <FieldError>{configState.error}</FieldError>
-                    )}
-                    <Button type="submit" disabled={configPending}>
-                      {configPending ? "Guardando…" : "Guardar config"}
-                    </Button>
-                  </div>
-                </form>
+                <GhlConfigForm
+                  projectId={projectId}
+                  launchId={launchId}
+                  formAction={configAction}
+                  pending={configPending}
+                  error={configState && "error" in configState ? configState.error : null}
+                  initialLocationId={initialConfig.locationId}
+                  initialDefaultCountry={initialConfig.defaultCountry}
+                  initialPipelineId={initialConfig.pipelineId}
+                />
               ) : initialConfig.kind === "sendflow" ? (
                 <form action={configAction} className="space-y-3">
                   <div>
@@ -260,6 +226,162 @@ export function ConfigModal({
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Form de config GHL. Además de location_id + default_country expone un
+ * selector de pipeline que carga los pipelines disponibles desde GHL con un
+ * click ("Cargar pipelines") y los muestra en un select. El pipeline elegido
+ * se envía al server action como `pipeline_id`.
+ */
+function GhlConfigForm({
+  projectId,
+  launchId,
+  formAction,
+  pending,
+  error,
+  initialLocationId,
+  initialDefaultCountry,
+  initialPipelineId,
+}: {
+  readonly projectId: string;
+  readonly launchId: string;
+  readonly formAction: (formData: FormData) => void;
+  readonly pending: boolean;
+  readonly error: string | null;
+  readonly initialLocationId: string;
+  readonly initialDefaultCountry: string;
+  readonly initialPipelineId: string;
+}) {
+  const [pipelines, setPipelines] = useState<GhlPipelineItem[]>([]);
+  const [pipelinesLoaded, setPipelinesLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [selectedPipelineId, setSelectedPipelineId] = useState(initialPipelineId);
+  const [isPending, startTransition] = useTransition();
+
+  function handleLoadPipelines() {
+    setLoadError(null);
+    startTransition(async () => {
+      const res = await listGhlPipelines(projectId, launchId);
+      if (res.ok) {
+        setPipelines(res.pipelines);
+        setPipelinesLoaded(true);
+        // Si la pipeline actual ya está en la lista, la pre-seleccionamos.
+        if (selectedPipelineId && res.pipelines.some((p) => p.id === selectedPipelineId)) {
+          // ya está seleccionada, no hace falta cambiar
+        } else if (res.pipelines.length > 0 && !selectedPipelineId) {
+          setSelectedPipelineId(res.pipelines[0]!.id);
+        }
+      } else {
+        setLoadError(res.error);
+      }
+    });
+  }
+
+  return (
+    <form action={formAction} className="space-y-3">
+      {/* pipeline_id siempre presente en el FormData */}
+      <input type="hidden" name="pipeline_id" value={selectedPipelineId} />
+
+      <div>
+        <Label htmlFor="location_id">Location ID (Subaccount)</Label>
+        <Input
+          id="location_id"
+          name="location_id"
+          type="text"
+          autoComplete="off"
+          placeholder="abc123XYZ456"
+          defaultValue={initialLocationId}
+        />
+        <p className="mt-1 text-xs text-fg-subtle">
+          El ID del subaccount del cliente (se ve en la URL de GHL después de{" "}
+          <code className="text-fg">/location/</code>).
+        </p>
+      </div>
+
+      <div>
+        <Label htmlFor="default_country">País default del teléfono</Label>
+        <select
+          id="default_country"
+          name="default_country"
+          defaultValue={initialDefaultCountry || "AR"}
+          className="mt-1 w-full rounded-md border border-border bg-bg-elevated p-2 text-sm text-fg"
+        >
+          <option value="AR">Argentina (+54)</option>
+          <option value="UY">Uruguay (+598)</option>
+          <option value="CL">Chile (+56)</option>
+          <option value="CO">Colombia (+57)</option>
+          <option value="MX">México (+52)</option>
+          <option value="ES">España (+34)</option>
+          <option value="US">Estados Unidos (+1)</option>
+        </select>
+        <p className="mt-1 text-xs text-fg-subtle">
+          Usado para normalizar los teléfonos de GHL antes del match con leads.
+        </p>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between gap-2">
+          <Label>
+            Pipeline de leads{" "}
+            {selectedPipelineId && (
+              <span className="ml-1 text-xs text-success">· seleccionada</span>
+            )}
+          </Label>
+          <button
+            type="button"
+            onClick={handleLoadPipelines}
+            disabled={isPending}
+            className="text-xs text-accent hover:underline disabled:opacity-50"
+          >
+            {isPending ? "Cargando…" : "Cargar desde GHL"}
+          </button>
+        </div>
+
+        {pipelinesLoaded && pipelines.length > 0 ? (
+          <select
+            className="mt-1 w-full rounded-md border border-border bg-bg-elevated p-2 text-sm text-fg"
+            value={selectedPipelineId}
+            onChange={(e) => setSelectedPipelineId(e.target.value)}
+          >
+            <option value="">— Sin pipeline —</option>
+            {pipelines.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        ) : pipelinesLoaded && pipelines.length === 0 ? (
+          <p className="mt-1 text-xs text-fg-subtle">
+            No se encontraron pipelines en este location.
+          </p>
+        ) : selectedPipelineId ? (
+          <p className="mt-1 text-xs text-fg-subtle">
+            Pipeline guardada:{" "}
+            <code className="text-fg">{selectedPipelineId}</code>. Hacé click en
+            "Cargar desde GHL" para ver la lista y cambiarla.
+          </p>
+        ) : (
+          <p className="mt-1 text-xs text-fg-subtle">
+            Hacé click en "Cargar desde GHL" para elegir la pipeline desde donde
+            se cuentan los leads por vendedor. Requiere token + Location ID ya
+            guardados.
+          </p>
+        )}
+
+        {loadError && (
+          <p className="mt-1 text-xs text-error">{loadError}</p>
+        )}
+      </div>
+
+      <div className="flex items-center justify-end gap-3 border-t border-border pt-3">
+        {error && <FieldError>{error}</FieldError>}
+        <Button type="submit" disabled={pending}>
+          {pending ? "Guardando…" : "Guardar config"}
+        </Button>
+      </div>
+    </form>
   );
 }
 

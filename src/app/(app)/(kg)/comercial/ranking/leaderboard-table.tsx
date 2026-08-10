@@ -26,6 +26,7 @@ import { PayoutsModal } from "./payouts-modal";
 type SortKey =
   | "name"
   | "leadsWorked"
+  | "ghlLeads"
   | "closed"
   | "conversionRate"
   | "revenueCollected"
@@ -41,14 +42,16 @@ type CreateAction = (
 ) => Promise<PayoutActionState>;
 type DeleteAction = (payoutId: string) => Promise<void>;
 
-const COLUMNS: ReadonlyArray<{
+type ColumnDef = {
   key: SortKey;
   label: string;
   align: "left" | "right";
   defaultDir: SortDir;
-}> = [
+};
+
+const BASE_COLUMNS: ReadonlyArray<ColumnDef> = [
   { key: "name", label: "Team member", align: "left", defaultDir: "asc" },
-  { key: "leadsWorked", label: "Leads", align: "right", defaultDir: "desc" },
+  { key: "leadsWorked", label: "Leads DB", align: "right", defaultDir: "desc" },
   { key: "closed", label: "Cerrados", align: "right", defaultDir: "desc" },
   { key: "conversionRate", label: "Conversión", align: "right", defaultDir: "desc" },
   { key: "revenueCollected", label: "Cobrado", align: "right", defaultDir: "desc" },
@@ -56,6 +59,13 @@ const COLUMNS: ReadonlyArray<{
   { key: "paidOut", label: "Pagado", align: "right", defaultDir: "desc" },
   { key: "pending", label: "Pendiente", align: "right", defaultDir: "desc" },
 ];
+
+const GHL_COLUMN: ColumnDef = {
+  key: "ghlLeads",
+  label: "Leads GHL",
+  align: "right",
+  defaultDir: "desc",
+};
 
 /**
  * Tabla ordenable por columna con estilo KG. Sort client-side sobre el
@@ -73,6 +83,7 @@ export function LeaderboardTable({
   launches,
   activeLaunchId,
   canEdit,
+  hasGhlLeads,
   createPayoutAction,
   deletePayoutAction,
 }: {
@@ -81,11 +92,21 @@ export function LeaderboardTable({
   readonly launches: ReadonlyArray<{ id: string; name: string }>;
   readonly activeLaunchId: string;
   readonly canEdit: boolean;
+  /** Cuando true muestra la columna "Leads GHL" con datos de pipeline. */
+  readonly hasGhlLeads?: boolean;
   readonly createPayoutAction: CreateAction;
   readonly deletePayoutAction: DeleteAction;
 }) {
   const [sortKey, setSortKey] = useState<SortKey>("commissionAccrued");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  // La columna "Leads GHL" se inserta después de "Leads DB" cuando hay datos.
+  const columns = useMemo<ReadonlyArray<ColumnDef>>(() => {
+    if (!hasGhlLeads) return BASE_COLUMNS;
+    const out = [...BASE_COLUMNS];
+    out.splice(2, 0, GHL_COLUMN); // posición 2 = después de "Leads DB"
+    return out;
+  }, [hasGhlLeads]);
 
   const sorted = useMemo(() => {
     const named = rows.filter((r) => r.teamMember !== null);
@@ -109,7 +130,7 @@ export function LeaderboardTable({
       return;
     }
     setSortKey(key);
-    setSortDir(COLUMNS.find((c) => c.key === key)?.defaultDir ?? "desc");
+    setSortDir(columns.find((c) => c.key === key)?.defaultDir ?? "desc");
   }
 
   return (
@@ -134,7 +155,7 @@ export function LeaderboardTable({
             >
               #
             </th>
-            {COLUMNS.map((c) => {
+            {columns.map((c) => {
               const active = sortKey === c.key;
               const arrow = active ? (sortDir === "asc" ? " ↑" : " ↓") : "";
               return (
@@ -237,6 +258,11 @@ export function LeaderboardTable({
                   )}
                 </td>
                 <NumericTD>{fmtNumber(row.leadsWorked)}</NumericTD>
+                {hasGhlLeads && (
+                  <NumericTD strong>
+                    {row.ghlLeads !== undefined ? fmtNumber(row.ghlLeads) : "—"}
+                  </NumericTD>
+                )}
                 <NumericTD strong>{fmtNumber(row.closed)}</NumericTD>
                 <NumericTD>{fmtPercent(row.conversionRate)}</NumericTD>
                 <NumericTD strong>{fmtUsd(row.revenueCollected)}</NumericTD>
@@ -339,6 +365,7 @@ function NumericTD({
 
 function readValue(row: LeaderboardRow, key: SortKey): number | string {
   if (key === "name") return row.teamMember?.name.toLowerCase() ?? "";
+  if (key === "ghlLeads") return row.ghlLeads ?? 0;
   // Sort de "Comisión": suma ambas monedas como proxy — imperfecto cuando
   // convive ARS+USD (mezcla unidades) pero razonable para ordenar el top.
   // Mientras la operación siga siendo ARS mayoritaria no se nota.

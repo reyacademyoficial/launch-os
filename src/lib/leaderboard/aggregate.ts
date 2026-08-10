@@ -43,6 +43,11 @@ export interface LeaderboardRow {
   /** Suma de cobros (sum payments.amount) de las ventas que entraron. */
   revenueCollected: number;
   /**
+   * Leads asignados al miembro en la pipeline GHL configurada. Solo presente
+   * cuando el ranking se filtra por un launch con pipeline GHL activa.
+   */
+  ghlLeads?: number;
+  /**
    * Comisiones acumuladas separadas por moneda (0107). Cada tier `fixed`
    * respeta su moneda tal cual — no convertimos. El UI muestra ambas cuando
    * conviven; hoy la operación va en ARS y USD queda en 0 en la práctica.
@@ -144,9 +149,12 @@ export function aggregateLeaderboardFromStats(input: {
   rules: ReadonlyArray<CommissionRuleRow>;
   payouts?: ReadonlyArray<TeamMemberPayoutRow>;
   filters: LeaderboardFilters;
+  /** Leads desde GHL pipeline keyed por team_member_id (null = sin mapeo). */
+  ghlLeadsByMember?: ReadonlyMap<string | null, number>;
 }): LeaderboardRow[] {
   const { teamMembers, leadStats, saleStats, rules, filters } = input;
   const payouts = input.payouts ?? [];
+  const ghlLeadsByMember = input.ghlLeadsByMember;
 
   // Index por owner: leadStats y saleStats vienen ya filtrados por launch +
   // período desde la RPC, así que acá solo agrupamos por miembro.
@@ -225,6 +233,8 @@ export function aggregateLeaderboardFromStats(input: {
     const conversionRate =
       leadsWorked === 0 ? 0 : (closed / leadsWorked) * 100;
 
+    const ghlLeads = ghlLeadsByMember?.get(memberId);
+
     return {
       teamMember,
       leadsWorked,
@@ -239,6 +249,7 @@ export function aggregateLeaderboardFromStats(input: {
       // ese saldo no se refleja acá — el UI lo muestra aparte para que el
       // admin sepa que hay algo por liquidar.
       pending: commissionAccruedArs - paidOut,
+      ...(ghlLeads !== undefined ? { ghlLeads } : {}),
     };
   }
 
