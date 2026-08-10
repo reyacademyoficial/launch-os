@@ -41,6 +41,7 @@ export function KpiGrid({
   launchArsPerUsd,
   kpisInUsd,
   hideRevenueKpis,
+  ghlNewLeads,
 }: {
   readonly kpi: LaunchKPIs;
   /**
@@ -62,6 +63,12 @@ export function KpiGrid({
    * no ve dinero facturado, solo ejecución (inversión, leads, funnel, CPL).
    */
   readonly hideRevenueKpis?: boolean;
+  /**
+   * Leads capturados por GHL durante la ventana del launch (contacts nuevos
+   * con `dateAdded` in [date_start, date_end]). Se muestra en una card
+   * aparte — NO se suma a "Leads totales" (que es solo Meta/Google/TikTok).
+   */
+  readonly ghlNewLeads?: number;
 }) {
   // Helpers: si hay tasa del launch, dividimos y usamos fmtUsd (prefijo US$).
   // Sin tasa: legacy `fmtMoney` sin distinción.
@@ -215,6 +222,14 @@ export function KpiGrid({
         value={fMoneyDec(kpi.cplTiktok)}
         hint={`${fMoney(kpi.tiktokInv)} / ${fmtNumber(kpi.tiktokLeads)} leads`}
       />
+
+      {ghlNewLeads !== undefined && (
+        <KpiCard
+          label="Leads GHL"
+          value={fmtNumber(ghlNewLeads)}
+          hint="Contacts nuevos en GHL durante el launch. No se suma a Leads totales."
+        />
+      )}
     </div>
   );
 }

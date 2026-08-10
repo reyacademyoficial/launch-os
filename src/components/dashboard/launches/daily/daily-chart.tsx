@@ -22,8 +22,9 @@ import {
 /**
  * Leads-per-day-per-channel line chart con overlay opcional (Fase B):
  *  - Series existentes: canales de lead (meta_ads, organico, whatsapp, etc.).
- *  - Serie nueva `sendflow_add`: altas diarias de comunidad SendFlow.
- *  - Serie nueva `ghl_inbound`: mensajes WhatsApp/SMS entrantes por día (GHL).
+ *  - Serie `sendflow_add`: altas diarias de comunidad SendFlow.
+ *  - Serie `ghl_inbound`: mensajes WhatsApp/SMS entrantes por día (GHL).
+ *  - Serie `ghl_new_leads`: contacts nuevos por día en GHL (leads captados).
  *
  * Leyenda interactiva: click en una serie la oculta/muestra (estado local).
  * Tooltip muestra solo las series activas. Series sin data en TODO el rango
@@ -37,22 +38,25 @@ import {
  * mensajes no-WhatsApp). El chart es para comparación de FORMA, no de totales.
  */
 
-const OVERLAY_KEYS = ["sendflow_add", "ghl_inbound"] as const;
+const OVERLAY_KEYS = ["sendflow_add", "ghl_inbound", "ghl_new_leads"] as const;
 type OverlayKey = (typeof OVERLAY_KEYS)[number];
 
 const OVERLAY_LABELS: Record<OverlayKey, string> = {
   sendflow_add: "SendFlow altas",
   ghl_inbound: "WhatsApp/SMS in",
+  ghl_new_leads: "Leads GHL",
 };
 
 /**
  * Colores elegidos para que NO choquen con los de canales (ver
  * CHANNEL_COLORS). SendFlow = violeta (comunidad, fuera del funnel pago).
- * GHL inbound = cyan (distinto del verde WhatsApp de canal manual #25D366).
+ * GHL inbound = cyan (mensajes). GHL new leads = ámbar (captación distinta
+ * a los mensajes y al canal manual whatsapp).
  */
 const OVERLAY_COLORS: Record<OverlayKey, string> = {
   sendflow_add: "#a855f7",
   ghl_inbound: "#06b6d4",
+  ghl_new_leads: "#f59e0b",
 };
 
 type SeriesKey = DailyChannel | OverlayKey;
@@ -60,6 +64,7 @@ type SeriesKey = DailyChannel | OverlayKey;
 export type DailyChartRow = { date: string } & Record<DailyChannel, number> & {
   sendflow_add?: number;
   ghl_inbound?: number;
+  ghl_new_leads?: number;
 };
 
 export interface DailyChartProps {
@@ -92,6 +97,7 @@ export function DailyChart({ rows, overlayPartialNote }: DailyChartProps) {
       otro: r.otro,
       sendflow_add: r.sendflow_add ?? 0,
       ghl_inbound: r.ghl_inbound ?? 0,
+      ghl_new_leads: r.ghl_new_leads ?? 0,
     }));
 
   // Solo dibujamos lineas con al menos un día > 0 (igual que el chart pre-B).

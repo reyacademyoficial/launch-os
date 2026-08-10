@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { extractCountryIso2, type GhlOpportunity } from "./ghl";
-import type { ExistingLeadView } from "./ghl-match";
+import { extractCountryIso2 } from "./ghl";
 import {
   normalize,
   resolveTeamMemberAssignment,
-  selectBestOppByContact,
+  type ExistingLeadView,
 } from "./sync-ghl";
 
 /**
@@ -21,20 +20,14 @@ import {
 
 const existingWithManual: ExistingLeadView = {
   id: "lead-A",
-  status: "tibio",
-  pinned_to_kanban: true,
   external_id: "ghl-1",
-  source: "ghl",
   phone_normalized: "+5491100000000",
   team_member_id: "manual-X",
 };
 
 const existingEmpty: ExistingLeadView = {
   id: "lead-B",
-  status: "tibio",
-  pinned_to_kanban: true,
   external_id: "ghl-2",
-  source: "ghl",
   phone_normalized: "+5491100000001",
   team_member_id: null,
 };
@@ -160,101 +153,3 @@ describe("normalize (phone → E.164)", () => {
   });
 });
 
-describe("selectBestOppByContact", () => {
-  function makeOpp(over: Partial<GhlOpportunity>): GhlOpportunity {
-    return {
-      id: "opp-" + Math.random().toString(36).slice(2, 8),
-      contactId: null,
-      pipelineId: null,
-      pipelineStageId: null,
-      status: "open",
-      monetaryValue: null,
-      source: null,
-      assignedTo: null,
-      wonAt: null,
-      createdAt: null,
-      updatedAt: null,
-      raw: {},
-      ...over,
-    };
-  }
-
-  it("descarta opps sin contactId", () => {
-    const map = selectBestOppByContact([
-      makeOpp({ contactId: null, assignedTo: "ghl-1" }),
-    ]);
-    expect(map.size).toBe(0);
-  });
-
-  it("descarta opps sin assignedTo", () => {
-    const map = selectBestOppByContact([
-      makeOpp({ contactId: "c-1", assignedTo: null }),
-    ]);
-    expect(map.size).toBe(0);
-  });
-
-  it("una opp por contact con assignedTo → la incluye", () => {
-    const opp = makeOpp({ contactId: "c-1", assignedTo: "ghl-1" });
-    const map = selectBestOppByContact([opp]);
-    expect(map.get("c-1")).toBe(opp);
-  });
-
-  it("varias opps del mismo contact → gana la más reciente por updatedAt", () => {
-    const older = makeOpp({
-      contactId: "c-1",
-      assignedTo: "ghl-A",
-      updatedAt: "2026-06-20T10:00:00Z",
-    });
-    const newer = makeOpp({
-      contactId: "c-1",
-      assignedTo: "ghl-B",
-      updatedAt: "2026-06-24T10:00:00Z",
-    });
-    const map = selectBestOppByContact([older, newer]);
-    expect(map.get("c-1")).toBe(newer);
-    expect(map.get("c-1")!.assignedTo).toBe("ghl-B");
-  });
-
-  it("orden de entrada no afecta — la más reciente gana siempre", () => {
-    const older = makeOpp({
-      contactId: "c-1",
-      assignedTo: "ghl-A",
-      updatedAt: "2026-06-20T10:00:00Z",
-    });
-    const newer = makeOpp({
-      contactId: "c-1",
-      assignedTo: "ghl-B",
-      updatedAt: "2026-06-24T10:00:00Z",
-    });
-    expect(selectBestOppByContact([older, newer]).get("c-1")).toBe(newer);
-    expect(selectBestOppByContact([newer, older]).get("c-1")).toBe(newer);
-  });
-
-  it("opps de varios contacts → mapa con una entry por contact", () => {
-    const opps: GhlOpportunity[] = [
-      makeOpp({ contactId: "c-1", assignedTo: "ghl-A" }),
-      makeOpp({ contactId: "c-2", assignedTo: "ghl-B" }),
-      makeOpp({ contactId: "c-3", assignedTo: "ghl-A" }),
-    ];
-    const map = selectBestOppByContact(opps);
-    expect(map.size).toBe(3);
-    expect(map.get("c-1")!.assignedTo).toBe("ghl-A");
-    expect(map.get("c-2")!.assignedTo).toBe("ghl-B");
-    expect(map.get("c-3")!.assignedTo).toBe("ghl-A");
-  });
-
-  it("opp sin updatedAt no pisa una con updatedAt válido (defensa)", () => {
-    const withDate = makeOpp({
-      contactId: "c-1",
-      assignedTo: "ghl-A",
-      updatedAt: "2026-06-24T10:00:00Z",
-    });
-    const noDate = makeOpp({
-      contactId: "c-1",
-      assignedTo: "ghl-B",
-      updatedAt: null,
-    });
-    // Llega primero la que SÍ tiene fecha; la siguiente no tiene → no debe pisar.
-    expect(selectBestOppByContact([withDate, noDate]).get("c-1")).toBe(withDate);
-  });
-});

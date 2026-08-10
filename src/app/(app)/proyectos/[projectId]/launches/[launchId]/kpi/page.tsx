@@ -87,6 +87,18 @@ export default async function LaunchKpiPage({
   const adsAggregate = aggregateMergedDaily(mergedDaily);
   const communityAggregate = aggregateCommunityMetrics(community);
 
+  // GHL leads capturados en la ventana del launch. Vienen del sync GHL en
+  // launch_daily_ads con provider='ghl'. mergeDailyData los IGNORA (solo mira
+  // meta/google/tiktok), así que este total NO se suma al de leads Meta.
+  // La UI los renderea aparte: KPI card dedicada + curva propia en la gráfica.
+  const ghlLeadsByDate = new Map<string, number>();
+  let ghlNewLeadsTotal = 0;
+  for (const r of ads) {
+    if (r.provider !== "ghl") continue;
+    ghlLeadsByDate.set(r.date, (ghlLeadsByDate.get(r.date) ?? 0) + r.leads);
+    ghlNewLeadsTotal += r.leads;
+  }
+
   // Aggregate tradicional para counts (salesCount, paymentsCount, hasData)
   const kanbanSalesAggregate = aggregateKanbanSales(
     launchSalesData.sales as never,
@@ -199,6 +211,7 @@ export default async function LaunchKpiPage({
     merged: mergedDaily,
     sendflow: sendflowDaily.rows,
     messages: messagesDaily,
+    ghlLeadsByDate,
   });
   const overlayPartialNote = buildOverlayPartialNote(recentRuns);
 
@@ -209,6 +222,7 @@ export default async function LaunchKpiPage({
         launchArsPerUsd={arsPerUsd}
         kpisInUsd={revenueRate !== null}
         hideRevenueKpis={hideRevenueKpis}
+        ghlNewLeads={ghlNewLeadsTotal}
       />
 
       {missingFxNote && (
@@ -309,6 +323,7 @@ function buildOverlayRows(args: {
     readonly date: string;
     readonly inboundCount: number;
   }>;
+  readonly ghlLeadsByDate: ReadonlyMap<string, number>;
 }): DailyChartRow[] {
   const byDate = new Map<string, DailyChartRow>();
   for (const r of args.merged) {
@@ -323,6 +338,7 @@ function buildOverlayRows(args: {
       otro: r.otro,
       sendflow_add: 0,
       ghl_inbound: 0,
+      ghl_new_leads: 0,
     });
   }
   const ensure = (date: string): DailyChartRow => {
@@ -339,6 +355,7 @@ function buildOverlayRows(args: {
       otro: 0,
       sendflow_add: 0,
       ghl_inbound: 0,
+      ghl_new_leads: 0,
     };
     byDate.set(date, fresh);
     return fresh;
@@ -350,6 +367,10 @@ function buildOverlayRows(args: {
   for (const m of args.messages) {
     const row = ensure(m.date);
     row.ghl_inbound = m.inboundCount;
+  }
+  for (const [date, count] of args.ghlLeadsByDate) {
+    const row = ensure(date);
+    row.ghl_new_leads = count;
   }
   return Array.from(byDate.values()).sort((a, b) =>
     a.date.localeCompare(b.date),

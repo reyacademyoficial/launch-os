@@ -604,15 +604,9 @@ async function runGhlBranch(args: {
   });
 
   if (summary.status === "success" || summary.status === "partial") {
-    const written =
-      summary.counts.contacts.created +
-      summary.counts.contacts.updated +
-      summary.counts.appointments.created +
-      summary.counts.appointments.updated +
-      summary.counts.opportunities.created +
-      summary.counts.opportunities.updated +
-      summary.counts.orphan_whatsapp.created +
-      summary.counts.orphan_whatsapp.updated;
+    // Post-refactor 2026-08-10: el sync GHL solo actualiza team_member_id en
+    // leads existentes. `rows_written` = cantidad de UPDATEs efectivos.
+    const written = summary.counts.leads_updated;
 
     // Bug 3 fix — antes el sync devolvía success aunque hubiera truncado por
     // MAX_PAGES. Ahora si runGhlSync marcó partial, lo propagamos como tal
