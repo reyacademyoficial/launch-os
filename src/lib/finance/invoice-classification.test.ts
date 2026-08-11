@@ -14,18 +14,26 @@ function invoice(
 }
 
 describe("classifyInvoice", () => {
-  // Los tres casos de la tabla del brief ────────────────────────────────
+  // Regla actual: propia siempre es kingrow-income; group-volume queda solo
+  // para launches externos (contexto), y third-party para ventas sueltas
+  // externas o defectos de carga.
 
-  it("con launch_id → group-volume (aunque el proyecto sea propio)", () => {
-    // Regla: si está ligada a un lanzamiento, la plata ya la contó la
-    // liquidación. El ownership es irrelevante para esta rama.
+  it("propia con launch_id → kingrow-income (percibido, sin esperar liquidación)", () => {
+    // Cambio de regla: administración quiere ver la plata cobrada de las
+    // propias en el día a día. La liquidación de propias no debe volver a
+    // sumar — la enforce está en el caller filtrando settlements.
     expect(
       classifyInvoice(
-        invoice({ project_id: "proj-A", launch_id: "launch-1" }),
+        invoice({ project_id: "proj-rey", launch_id: "launch-1" }),
         "propia",
       ),
-    ).toBe("group-volume");
+    ).toBe("kingrow-income");
+  });
 
+  it("externa con launch_id → group-volume (ingreso llega al liquidar)", () => {
+    // Externa sigue con la regla vieja: la factura del launch es plata del
+    // cliente externo, no de Kingrow. El ingreso propio se reconoce al
+    // cerrar la liquidación (kingrow_retained).
     expect(
       classifyInvoice(
         invoice({ project_id: "proj-B", launch_id: "launch-2" }),
@@ -34,9 +42,8 @@ describe("classifyInvoice", () => {
     ).toBe("group-volume");
   });
 
-  it("sin launch_id + proyecto propio → kingrow-income", () => {
+  it("propia sin launch_id → kingrow-income", () => {
     // Venta suelta / retainer de una empresa propia (Rey Academy, Growins).
-    // Ninguna liquidación la captura → es ingreso real de Kingrow.
     expect(
       classifyInvoice(
         invoice({ project_id: "proj-rey", launch_id: null }),
@@ -45,7 +52,7 @@ describe("classifyInvoice", () => {
     ).toBe("kingrow-income");
   });
 
-  it("sin launch_id + proyecto externo → third-party", () => {
+  it("externa sin launch_id → third-party", () => {
     // Venta suelta de un cliente externo (Maestro Charcutero,
     // Super Instructor Marcos). Visible pero no es plata de Kingrow.
     expect(

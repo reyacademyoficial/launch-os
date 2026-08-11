@@ -18,10 +18,7 @@ import { EmptyState } from "@/components/kg/empty-state";
 import { HeroKpi, type HeroKpiTone } from "@/components/kg/hero-kpi";
 import { IconFin } from "@/components/kg/icons";
 import { Panel } from "@/components/kg/panel";
-import {
-  ProvenanceDrawer,
-  type ProvenanceSource,
-} from "@/components/kg/provenance-drawer";
+import { ProvenanceDrawer } from "@/components/kg/provenance-drawer";
 import { SectionHeader } from "@/components/kg/section-header";
 import { StatRow } from "@/components/kg/stat-row";
 import { SupportKpi, type SupportKpiTone } from "@/components/kg/support-kpi";
@@ -42,7 +39,6 @@ export interface FinancieroKpi {
   readonly value: number;
   readonly tone: HeroKpiTone;
   readonly parts: ReadonlyArray<{ readonly l: string; readonly v: number }>;
-  readonly sources: ReadonlyArray<ProvenanceSource>;
 }
 
 export interface RevenueSeries {
@@ -180,7 +176,6 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
           title: "Ingreso de Kingrow",
           value: fMoney(data.revenue.value),
           parts: data.revenue.parts,
-          sources: data.revenue.sources,
           fmt: fMoney,
           halo: "var(--kg-positive-500)",
         };
@@ -189,7 +184,6 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
           title: "Utilidad neta",
           value: fMoney(data.netProfit.value),
           parts: data.netProfit.parts,
-          sources: data.netProfit.sources,
           fmt: fMoney,
           halo:
             data.netProfit.value >= 0
@@ -201,7 +195,6 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
           title: "Flujo de caja",
           value: fMoney(data.cashFlow.value),
           parts: data.cashFlow.parts,
-          sources: data.cashFlow.sources,
           fmt: fMoney,
           halo:
             data.cashFlow.value >= 0
@@ -213,7 +206,6 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
           title: "Cuentas por cobrar",
           value: fMoney(data.ar.value),
           parts: data.ar.parts,
-          sources: data.ar.sources,
           fmt: fMoney,
           halo: "var(--kg-warning-500)",
         };
@@ -222,7 +214,6 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
           title: "Cuentas por pagar",
           value: fMoney(data.ap.value),
           parts: data.ap.parts,
-          sources: data.ap.sources,
           fmt: fMoney,
           halo: "var(--kg-negative-500)",
         };
@@ -231,7 +222,6 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
           title: "Patrimonio neto",
           value: fMoney(data.equity.value),
           parts: data.equity.parts,
-          sources: data.equity.sources,
           fmt: fMoney,
           halo:
             data.equity.value >= 0
@@ -301,7 +291,7 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
             label="Ingreso de Kingrow"
             value={data.revenue.value}
             format={fMoney}
-            sub={`Liquidaciones + ventas sueltas propias · ${data.period.label}`}
+            sub={`Liquidaciones externas + facturas cobradas propias · ${data.period.label}`}
             tone="positive"
             featured
             spark={shownRevenueTrend.map((b) => b.revenue)}
@@ -617,7 +607,6 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
           title={openDetail.title}
           value={openDetail.value}
           parts={openDetail.parts}
-          sources={openDetail.sources}
           fmtFn={openDetail.fmt}
           haloTone={openDetail.halo}
         />

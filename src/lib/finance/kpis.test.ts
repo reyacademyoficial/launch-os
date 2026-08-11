@@ -57,6 +57,7 @@ function invoice(overrides: Partial<FinanceInvoiceRow> = {}): FinanceInvoiceRow 
     launch_id: null,
     amount_gross: 0,
     tax_amount: 0,
+    currency: "ARS",
     status: "emitida",
     paid_at: null,
     due_date: null,
@@ -279,7 +280,10 @@ describe("computeAccountsReceivable", () => {
   it("nunca mezcla plata de Kingrow con plata de terceros", () => {
     // Una factura pendiente de Maestro Charcutero (externa, sin launch)
     // es plata que espera Maestro, no Kingrow. Va al balde de terceros y
-    // NUNCA se suma al total AR.
+    // NUNCA se suma al total AR. En cambio, las facturas de propias (con o
+    // sin launch) SÍ son AR de Kingrow — la nueva regla percibido cuenta
+    // toda invoice cobrada de propias, y por simetría toda invoice
+    // pendiente es plata que Kingrow espera cobrar.
     const ar = computeAccountsReceivable({
       invoices: [
         invoice({
@@ -292,8 +296,9 @@ describe("computeAccountsReceivable", () => {
           amount_gross: 50000,
           status: "emitida",
         }),
-        // Factura de lanzamiento de una empresa propia: group-volume,
-        // tampoco es AR de Kingrow (la liquidación la resolverá).
+        // Factura de lanzamiento de una empresa propia: ahora también es
+        // AR de Kingrow — la va a cobrar Rey Academy y esa plata la usa
+        // Kingrow en el día a día.
         invoice({
           project_id: "rey",
           launch_id: "launch-1",
@@ -303,11 +308,11 @@ describe("computeAccountsReceivable", () => {
       ],
       resolveOwnership: resolver({ rey: "propia", maestro: "externa" }),
     });
-    expect(ar.invoicesCount).toBe(1);
-    expect(ar.invoicesReceivableNet).toBe(10000);
-    expect(ar.totalReceivable).toBe(10000); // NUNCA 80000
-    expect(ar.thirdPartyCount).toBe(2);
-    expect(ar.thirdPartyReceivableNet).toBe(70000);
+    expect(ar.invoicesCount).toBe(2);
+    expect(ar.invoicesReceivableNet).toBe(30000);
+    expect(ar.totalReceivable).toBe(30000);
+    expect(ar.thirdPartyCount).toBe(1);
+    expect(ar.thirdPartyReceivableNet).toBe(50000);
   });
 
   it("factura sin project_id (defecto de carga) cae a terceros, no a Kingrow", () => {
@@ -500,6 +505,7 @@ describe("Pipeline integrado — cifras que se compone entre módulos", () => {
           launch_id: null,
           amount_gross: 12100,
           tax_amount: 2100,
+          currency: "ARS",
           status: "cobrada",
           paid_at: "2026-07-20",
           due_date: "2026-07-15",

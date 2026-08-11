@@ -249,7 +249,7 @@ export default async function EjecutivoDashboardPage({
     supabase.from("client_transfers").select("amount, direction, date"),
     supabase
       .from("launch_settlements")
-      .select("kingrow_retained, status, closed_at, created_at"),
+      .select("kingrow_retained, status, closed_at, created_at, project_id"),
   ]);
 
   const projects =
@@ -281,7 +281,9 @@ export default async function EjecutivoDashboardPage({
   const allClientTransfers =
     (clientTransfersRes.data ?? []) as unknown as FinanceClientTransferRow[];
   const allSettlements =
-    (settlementsRes.data ?? []) as unknown as FinanceLaunchSettlementRow[];
+    (settlementsRes.data ?? []) as unknown as (FinanceLaunchSettlementRow & {
+      project_id: string;
+    })[];
 
   // Filtrar al período seleccionado.
   const expensesInPeriod = allExpenses.filter((e) =>
@@ -300,9 +302,14 @@ export default async function EjecutivoDashboardPage({
     (i) => i.status === "cobrada" && inPeriodTs(i.paid_at, period),
   );
 
-  // Revenue Kingrow del período — settlements + invoices ya filtradas.
+  // Revenue Kingrow del período. Regla nueva: para propias el ingreso ya
+  // sumó por invoice cobrada, así que descartamos sus liquidaciones para no
+  // contar dos veces. Solo cuentan las settlements de projects externos.
+  const settlementsForRevenue = settlementsInPeriod.filter(
+    (s) => ownershipByProject.get(s.project_id) !== "propia",
+  );
   const revenue = computeRevenue({
-    settlements: settlementsInPeriod,
+    settlements: settlementsForRevenue,
     invoices: invoicesCollectedInPeriod,
     resolveOwnership,
   });

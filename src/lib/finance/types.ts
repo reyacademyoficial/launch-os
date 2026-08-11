@@ -49,6 +49,7 @@ export interface FinanceInvoiceRow {
   launch_id: string | null;
   amount_gross: number;
   tax_amount: number;
+  currency: "ARS" | "USD";
   status: InvoiceStatus;
   paid_at: string | null;
   due_date: string | null;

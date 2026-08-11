@@ -63,6 +63,7 @@ const MS_PER_DAY = 1000 * 60 * 60 * 24;
 // ═══════════════════════════════════════════════════════════════════════════
 type SettlementRowWithMeta = FinanceLaunchSettlementRow & {
   readonly launch_id: string;
+  readonly project_id: string;
   readonly collected_total: number;
   readonly owed_to_client: number;
 };
@@ -71,10 +72,19 @@ type AssetRowWithMeta = FinanceAssetRow & {
   readonly asset_type: string;
   readonly updated_at: string;
 };
-type LaunchNameRow = { readonly id: string; readonly name: string | null };
+type LaunchFxRow = {
+  readonly id: string;
+  readonly name: string | null;
+  readonly ars_per_usd: number | null;
+};
 type ProjectOwnershipRow = {
   readonly id: string;
   readonly ownership: "propia" | "externa";
+};
+type ProjectFxMonthlyRow = {
+  readonly project_id: string;
+  readonly month: string;
+  readonly ars_per_usd: number;
 };
 
 export default async function FinancieroPage({
@@ -121,7 +131,7 @@ export default async function FinancieroPage({
     supabase
       .from("launch_settlements")
       .select(
-        "kingrow_retained, collected_total, owed_to_client, status, closed_at, created_at, launch_id",
+        "kingrow_retained, collected_total, owed_to_client, status, closed_at, created_at, launch_id, project_id",
       )
       .gte("closed_at", fetchFloorYmd),
     // Invoices: OR entre "paid_at NULL" (pendientes → alimentan AR sin filtro
@@ -132,7 +142,7 @@ export default async function FinancieroPage({
     supabase
       .from("invoices")
       .select(
-        "project_id, launch_id, amount_gross, tax_amount, status, paid_at, due_date, issue_date",
+        "project_id, launch_id, amount_gross, tax_amount, currency, status, paid_at, due_date, issue_date",
       )
       .or(`paid_at.is.null,paid_at.gte.${fetchFloorYmd}`),
     supabase
@@ -172,27 +182,32 @@ export default async function FinancieroPage({
     []) as FinanceClientTransferRow[];
   const bankMovements = (bankMovementsRes.data ?? []) as FinanceBankMovementRow[];
 
-  // Nombres de lanzamientos para el panel "Liquidaciones por lanzamiento".
+  // Lanzamientos: nombre (panel de liquidaciones) + `ars_per_usd` para
+  // convertir `kingrow_retained` a USD. Rate null = launch operado en USD
+  // nativo (no convertir); rate > 0 = launch en ARS y se divide por la tasa.
   // Si RLS de `launches` no deja leer (project-scope), caemos a launch_id
-  // truncado — no rompe el dashboard.
+  // truncado y sin conversión — no rompe el dashboard.
   const launchIds = Array.from(new Set(settlements.map((s) => s.launch_id)));
-  let launchNameById = new Map<string, string>();
+  const launchById = new Map<string, LaunchFxRow>();
+  const launchNameById = new Map<string, string>();
   if (launchIds.length > 0) {
     const launchesRes = await supabase
       .from("launches")
-      .select("id, name")
+      .select("id, name, ars_per_usd")
       .in("id", launchIds);
-    const launchRows = (launchesRes.data ?? []) as LaunchNameRow[];
-    launchNameById = new Map(
-      launchRows.map((l) => [l.id, l.name ?? `Lanzamiento ${l.id.slice(0, 6)}`]),
-    );
+    const launchRows = (launchesRes.data ?? []) as LaunchFxRow[];
+    for (const l of launchRows) {
+      launchById.set(l.id, l);
+      launchNameById.set(l.id, l.name ?? `Lanzamiento ${l.id.slice(0, 6)}`);
+    }
   }
 
-  // Ownership de los projects referenciados por las invoices. Se resuelve
-  // UNA sola vez: el mapa alimenta tanto al selector del período como a las
-  // 12 iteraciones del sparkline. Sin este pooling, computeRevenue haría 12
-  // queries idénticas y las inicializaciones del clasificador se volverían
-  // pesadas sin motivo. Regla del feedback del brief.
+  // Ownership de los projects referenciados por invoices Y settlements. El
+  // mapa alimenta al selector del período, a las 12 iteraciones del
+  // sparkline, Y al filtro que descarta settlements de propias (nueva
+  // regla: propias van por percibido vía invoices, no por liquidación).
+  // Sin pooling, computeRevenue haría 12 queries idénticas y las
+  // inicializaciones del clasificador se volverían pesadas sin motivo.
   const projectIdsInInvoices = Array.from(
     new Set(
       invoices
@@ -200,12 +215,14 @@ export default async function FinancieroPage({
         .filter((pid): pid is string => pid != null),
     ),
   );
+  const projectIdsForOwnership = new Set<string>(projectIdsInInvoices);
+  for (const s of settlements) projectIdsForOwnership.add(s.project_id);
   const ownershipByProjectId = new Map<string, Ownership>();
-  if (projectIdsInInvoices.length > 0) {
+  if (projectIdsForOwnership.size > 0) {
     const projectsRes = await supabase
       .from("projects")
       .select("id, ownership")
-      .in("id", projectIdsInInvoices);
+      .in("id", Array.from(projectIdsForOwnership));
     const projectRows = (projectsRes.data ?? []) as ProjectOwnershipRow[];
     for (const row of projectRows) {
       ownershipByProjectId.set(row.id, row.ownership);
@@ -216,6 +233,69 @@ export default async function FinancieroPage({
   // third-party (nunca inflar el ingreso).
   const resolveOwnership: OwnershipResolver = (projectId) =>
     projectId == null ? null : ownershipByProjectId.get(projectId) ?? null;
+
+  // ─── FX para consolidar el ingreso en USD ────────────────────────────
+  // Tasa mensual por proyecto para invoices en ARS sin launch (kingrow-income
+  // + third-party). Match por (project_id, mes de paid_at). Fallback: tasa
+  // org más reciente (`latestFx`). Si tampoco hay tasa, el monto ARS se toma
+  // como-está — no es ideal pero coincide con el comportamiento previo
+  // (mejor mostrar algo que romper el KPI).
+  const fxByProjectMonth = new Map<string, number>();
+  if (projectIdsInInvoices.length > 0) {
+    const fxRes = await supabase
+      .from("project_fx_rates")
+      .select("project_id, month, ars_per_usd")
+      .in("project_id", projectIdsInInvoices);
+    const fxRows = (fxRes.data ?? []) as ProjectFxMonthlyRow[];
+    for (const r of fxRows) {
+      // `month` viene YYYY-MM-DD (primer día del mes por CHECK 0103).
+      fxByProjectMonth.set(`${r.project_id}:${r.month.slice(0, 7)}`, r.ars_per_usd);
+    }
+  }
+  const orgLatestRate =
+    latestFx && latestFx.rate > 0 ? latestFx.rate : null;
+
+  // Conversión settlement → USD. Regla: launch.ars_per_usd null = USD nativo
+  // (retention ya está en USD, no convertir). Si el launch no está en el mapa
+  // (RLS o borrado), tampoco convierte.
+  function settlementToUsd(amount: number, launchId: string): number {
+    const rate = launchById.get(launchId)?.ars_per_usd ?? null;
+    if (rate == null || rate <= 0) return amount;
+    return amount / rate;
+  }
+
+  // Conversión invoice → USD. USD nativo pasa directo. ARS busca tasa por
+  // (project, mes de paid_at); fallback a la tasa org más reciente. Si no
+  // hay tasa ni fallback, devuelve el monto crudo.
+  function invoiceToUsd(amount: number, i: FinanceInvoiceRow): number {
+    if (i.currency === "USD") return amount;
+    const anchor = i.paid_at ?? i.issue_date;
+    const monthKey = anchor.slice(0, 7);
+    const pid = i.project_id;
+    const rate = pid != null ? fxByProjectMonth.get(`${pid}:${monthKey}`) : undefined;
+    if (rate != null && rate > 0) return amount / rate;
+    if (orgLatestRate != null) return amount / orgLatestRate;
+    return amount;
+  }
+
+  // Arrays convertidas para todo cálculo de ingreso (KPI principal + sparkline).
+  // El resto de KPIs (AR, AP, group volume, P&L) siguen leyendo los arrays
+  // nativos — fix pendiente cuando se acuerde.
+  //
+  // Settlements: descarto las de projects propias. Para propias, el ingreso
+  // ya suma vía invoices cobradas (nueva regla percibido). Si dejara la
+  // liquidación posterior también sumar, contaría dos veces.
+  const settlementsForRevenue: SettlementRowWithMeta[] = settlements
+    .filter((s) => ownershipByProjectId.get(s.project_id) !== "propia")
+    .map((s) => ({
+      ...s,
+      kingrow_retained: settlementToUsd(s.kingrow_retained, s.launch_id),
+    }));
+  const invoicesForRevenue: FinanceInvoiceRow[] = invoices.map((i) => ({
+    ...i,
+    amount_gross: invoiceToUsd(i.amount_gross, i),
+    tax_amount: invoiceToUsd(i.tax_amount, i),
+  }));
 
   // ═════════════════════════════════════════════════════════════════════════
   // Filtrado por período. Los selectores no filtran por fecha (regla del
@@ -229,6 +309,13 @@ export default async function FinancieroPage({
     inPeriodTs(s.closed_at, period),
   );
   const invoicesRevenueInPeriod = invoices.filter((i) =>
+    inPeriodDate(i.paid_at, period),
+  );
+  // Versiones USD-convertidas del mismo filtro — sólo para revenue.
+  const settlementsInPeriodUsd = settlementsForRevenue.filter((s) =>
+    inPeriodTs(s.closed_at, period),
+  );
+  const invoicesRevenueInPeriodUsd = invoicesForRevenue.filter((i) =>
     inPeriodDate(i.paid_at, period),
   );
   const expensesInPeriod = expenses.filter((e) =>
@@ -248,8 +335,8 @@ export default async function FinancieroPage({
   // KPIs — todos vienen de selectores puros.
   // ═════════════════════════════════════════════════════════════════════════
   const revenue = computeRevenue({
-    settlements: settlementsInPeriod,
-    invoices: invoicesRevenueInPeriod,
+    settlements: settlementsInPeriodUsd,
+    invoices: invoicesRevenueInPeriodUsd,
     resolveOwnership,
   });
 
@@ -375,8 +462,8 @@ export default async function FinancieroPage({
   const buckets = lastMonths(12);
   const revenueBuckets = buckets.map((b) => {
     const rev = computeRevenue({
-      settlements: settlements.filter((s) => inPeriodTs(s.closed_at, b)),
-      invoices: invoices.filter((i) => inPeriodDate(i.paid_at, b)),
+      settlements: settlementsForRevenue.filter((s) => inPeriodTs(s.closed_at, b)),
+      invoices: invoicesForRevenue.filter((i) => inPeriodDate(i.paid_at, b)),
       resolveOwnership,
     });
     return { label: b.label, revenue: rev.revenueTotal };
@@ -471,26 +558,14 @@ export default async function FinancieroPage({
       tone: "positive",
       parts: [
         {
-          l: "Liquidaciones (Kingrow retenido)",
+          l: "Liquidaciones externas (Kingrow retenido)",
           v: revenue.revenueFromSettlements,
         },
         {
-          l: "Ventas sueltas de empresas propias",
+          l: "Facturas cobradas de empresas propias",
           v: revenue.revenueFromDirectSales,
         },
         { l: "Otros ingresos", v: revenue.otherIncome },
-      ],
-      sources: [
-        {
-          table: "launch_settlements",
-          field: "kingrow_retained",
-          cond: "status ∈ {liquidada, transferida}",
-        },
-        {
-          table: "invoices",
-          field: "amount_gross − tax_amount",
-          cond: "status=cobrada · sin launch_id · projects.ownership=propia",
-        },
       ],
     },
     groupVolume: {
@@ -505,11 +580,6 @@ export default async function FinancieroPage({
         { l: "Ingresos", v: revenue.revenueTotal },
         { l: "Gastos operativos (neto IVA)", v: -opExNet },
         { l: "Nómina", v: -payrollTotal },
-      ],
-      sources: [
-        { table: "launch_settlements + invoices", field: "revenue derivado" },
-        { table: "expenses", field: "amount_gross − tax_amount", cond: `expense_date ∈ período` },
-        { table: "payroll", field: "total_amount", cond: "período solapado" },
       ],
     },
     banks: {
@@ -527,13 +597,6 @@ export default async function FinancieroPage({
         { l: "Entradas", v: cashFlow.cashIn },
         { l: "Salidas", v: -cashFlow.cashOut },
       ],
-      sources: [
-        {
-          table: "bank_movements",
-          field: "amount",
-          cond: `kind ∈ {in,out} · occurred_at ∈ período`,
-        },
-      ],
     },
     margin: profit.netMargin,
     ar: {
@@ -542,18 +605,6 @@ export default async function FinancieroPage({
       parts: [
         { l: "Facturas por cobrar (neto)", v: ar.invoicesReceivableNet },
         { l: "Saldo a favor de Kingrow", v: ar.favorKingrowBalance },
-      ],
-      sources: [
-        {
-          table: "invoices",
-          field: "amount_gross − tax_amount",
-          cond: "status ∉ {cobrada, anulada} · sin launch_id · projects.ownership=propia",
-        },
-        {
-          table: "client_transfers",
-          field: "clamp(−balance, 0)",
-          cond: "clientes que nos deben",
-        },
       ],
     },
     ap: {
@@ -564,11 +615,6 @@ export default async function FinancieroPage({
         { l: "Nómina por pagar", v: ap.payrollPayable },
         { l: "Debido a clientes", v: ap.clientPayable },
       ],
-      sources: [
-        { table: "expenses", field: "amount_gross − tax_amount", cond: "paid_at IS NULL" },
-        { table: "payroll", field: "total_amount", cond: "paid_at IS NULL" },
-        { table: "client_transfers", field: "max(balance, 0)" },
-      ],
     },
     equity: {
       value: netWorth.netWorth,
@@ -577,15 +623,6 @@ export default async function FinancieroPage({
         { l: "Activos", v: netWorth.totalAssets },
         { l: "Pasivos", v: -netWorth.totalLiabilities },
         { l: "Cuentas por pagar corrientes", v: -netWorth.currentPayables },
-      ],
-      sources: [
-        { table: "assets", field: "amount", cond: "active = true" },
-        {
-          table: "liabilities",
-          field: "amount",
-          cond: "active AND settled_at IS NULL",
-        },
-        { table: "expenses+payroll+client_transfers", field: "AP corriente (derivado)" },
       ],
     },
     plParts,

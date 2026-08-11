@@ -69,7 +69,6 @@ interface InvoiceDbRow extends FinanceInvoiceRow {
   readonly description: string;
   readonly issue_date: string;
   readonly due_date: string | null;
-  readonly currency: string | null;
   readonly category: string | null;
   readonly purchase_date: string | null;
   readonly payment_date: string | null;

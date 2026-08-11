@@ -1,41 +1,34 @@
 /**
  * Selector de INGRESOS de Kingrow — función pura, sin acceso a DB.
  *
- * REGLA DE ORO (bloque 6b-rev, cerrada con el dueño):
- * La liquidación mide cuánto GANÓ Kingrow. La factura mide cuánto VENDIÓ
- * una operativa. Son magnitudes distintas y no se suman nunca. Por eso el
- * ingreso de Kingrow se deriva de DOS fuentes, y las facturas entran solo
- * cuando corresponden — la clasificación vive en `classifyInvoice`
- * (invoice-classification.ts), este selector la aplica.
+ * REGLA DE NEGOCIO (cerrada con administración):
+ *
+ *   · Propias (Rey Academy, Growins, Kingrow): criterio PERCIBIDO. Toda
+ *     factura cobrada del proyecto es ingreso inmediato, con o sin launch.
+ *     La caja del día a día refleja lo que administración usa para operar.
+ *   · Externas (clientes gestionados): ingreso = kingrow_retained al cerrar
+ *     la liquidación. Las facturas del launch son volumen del cliente
+ *     externo, no ingreso propio.
  *
  * QUÉ CUENTA COMO INGRESO REALIZADO
  *
- *   - `launch_settlements` con status ∈ {liquidada, transferida}.
- *     La status `abierta` es un BORRADOR (aún no confirmado); NO se cuenta.
- *   - `invoices` con status='cobrada' clasificadas como 'kingrow-income'
- *     (proyecto propio + sin launch_id). Las 'group-volume' y 'third-party'
- *     NO entran al ingreso, aunque se calculan y devuelven por separado
- *     para que la UI pueda mostrarlas como contexto.
+ *   - `launch_settlements` con status ∈ {liquidada, transferida}, PERO
+ *     solo las de projects externos. El caller filtra las de propias
+ *     antes de pasarlas — sino se contaría dos veces con las invoices.
+ *     La status `abierta` es BORRADOR y no se cuenta.
+ *   - `invoices` con status='cobrada' clasificadas como 'kingrow-income'.
+ *     Con la nueva regla, toda invoice cobrada de un project propio cae
+ *     acá (con o sin launch_id). Las 'group-volume' y 'third-party' NO
+ *     entran al ingreso, se devuelven por separado como contexto.
  *   - `otherIncome` — hueco para líneas ad-hoc que el caller pase
  *     manualmente (dividendos, extras).
  *
- * CAMBIO DE COMPORTAMIENTO — REVISAR CON EL EQUIPO SI APARECE UN "BUG"
+ * DOBLE CONTEO — obligación del caller
  *
- *   Con esta regla, el ingreso de un lanzamiento aparece recién cuando la
- *   liquidación pasa a `liquidada`. Antes de eso:
- *     - La liquidación en borrador (`abierta`) NO suma.
- *     - Las facturas de ese lanzamiento (`launch_id != null`) NO suman —
- *       son volumen del grupo, no ingreso de Kingrow.
- *   Es CORRECTO — el ingreso se reconoce al liquidar, no al cobrar la
- *   factura del cliente. Pero alguien va a notar la baja aparente cuando
- *   el ingreso empiece a "aparecer con retraso" respecto de lo que veía
- *   antes, y lo va a reportar como bug. No lo es.
- *
- * // REVISAR CON CONTADOR: usamos criterio PERCIBIDO — solo cuenta lo
- * efectivamente cobrado (liquidaciones cerradas, facturas kingrow-income
- * cobradas). Bajo criterio DEVENGADO habría que sumar también las
- * 'kingrow-income' en `emitida`/`vencida` como ingreso del período de
- * emisión. Cambio de un solo filtro si el contador lo pide.
+ *   Si una factura de un launch propio cobrada suma como kingrow-income, la
+ *   liquidación posterior de ese mismo launch NO puede sumar de nuevo. Por
+ *   eso el caller descarta settlements de projects propias antes de pasar.
+ *   El selector no sabe ownership de settlement — el enforce vive arriba.
  *
  * IVA / IMPUESTOS EN INVOICES
  *

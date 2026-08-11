@@ -6,21 +6,13 @@ import { Halo } from "./halo";
 
 /**
  * KG · ProvenanceDrawer. Muestra de dónde sale un KPI: valor grande + desglose
- * (Breakdown con las partes que devolvió el selector) + chips con la metadata
- * origen (`<tabla>.<campo> · <condición>`).
+ * (Breakdown con las partes que devolvió el selector).
  *
  * A diferencia del artefacto — que resolvía todo desde el registro `KPIS` —
- * este drawer recibe el desglose ya armado por la page/dashboard. Los sources
- * se declaran una sola vez, al lado del fetch, y viajan como prop.
+ * este drawer recibe el desglose ya armado por la page/dashboard.
  *
  * Footer: "Ningún valor se introduce a mano" — es la tesis del sistema.
  */
-export interface ProvenanceSource {
-  readonly table: string;
-  readonly field: string;
-  readonly cond?: string;
-}
-
 export interface ProvenanceDrawerProps {
   readonly open: boolean;
   readonly onClose: () => void;
@@ -28,7 +20,6 @@ export interface ProvenanceDrawerProps {
   /** Valor total YA FORMATEADO (la page lo pasa listo). */
   readonly value: string;
   readonly parts: ReadonlyArray<BreakdownPart>;
-  readonly sources: ReadonlyArray<ProvenanceSource>;
   readonly fmtFn: (n: number) => string;
   readonly haloTone?: string;
 }
@@ -39,7 +30,6 @@ export function ProvenanceDrawer({
   title,
   value,
   parts,
-  sources,
   fmtFn,
   haloTone,
 }: ProvenanceDrawerProps) {
@@ -119,45 +109,6 @@ export function ProvenanceDrawer({
         </div>
       )}
 
-      {/* Campos origen */}
-      {sources.length > 0 && (
-        <div>
-          <div
-            className="kg-t7"
-            style={{ color: "var(--kg-text-3)", marginBottom: 10 }}
-          >
-            Campos origen
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {sources.map((s, i) => (
-              <div
-                key={i}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "baseline",
-                  gap: 6,
-                  padding: "8px 12px",
-                  borderRadius: "var(--kg-r-8)",
-                  background: "var(--kg-surface-2-solid)",
-                  border: "1px solid var(--kg-border-subtle)",
-                  fontFamily:
-                    "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-                  fontSize: 12,
-                  color: "var(--kg-text-2)",
-                }}
-              >
-                <span style={{ color: "var(--kg-accent-text)", fontWeight: 700 }}>
-                  {s.table}
-                </span>
-                <span>.{s.field}</span>
-                {s.cond && (
-                  <span style={{ color: "var(--kg-text-3)" }}>· {s.cond}</span>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </Drawer>
   );
 }
