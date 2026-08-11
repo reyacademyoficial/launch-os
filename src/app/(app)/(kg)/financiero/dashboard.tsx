@@ -447,6 +447,7 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
             value={data.margin ?? Number.NaN}
             format={fPct}
             tone={marginTone}
+            help="Margen neto = Utilidad neta ÷ Ingresos. Qué porcentaje del ingreso queda como ganancia después de restar todos los costos (gastos operativos + costos directos + nómina + impuestos). Ej: 20% = por cada US$100 que entran, US$20 quedan como utilidad. Bajo 0% significa que estás perdiendo plata en el período. Muestra '—' cuando no hay ingresos (división por cero)."
           />
         </div>
         <div style={span(2)}>
