@@ -37,6 +37,7 @@ export {
   effectiveCurrency,
   loadProjectFxRates,
   loadLatestOrgFxRate,
+  loadOrgFxRatesByMonth,
   type ProjectFxRateRow,
 } from "./rates";
 

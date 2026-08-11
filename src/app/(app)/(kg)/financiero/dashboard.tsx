@@ -68,7 +68,7 @@ export interface BanksSnapshot {
  */
 export interface RunwaySnapshot {
   readonly months: number | null;
-  readonly reason: "ok" | "stale-snapshot" | "no-burn-data";
+  readonly reason: "ok" | "stale-snapshot" | "no-burn-data" | "no-cash-data";
 }
 
 export interface ExpenseCategory {
@@ -336,7 +336,7 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
             format={(n) => (data.runway.months == null ? "—" : fMonths(n))}
             sub={runwaySubtitle(data.runway.reason, data.burn)}
             tone={runwayTone}
-            help="Runway = Caja ÷ Burn mensual. Estima cuántos meses te alcanza la caja actual si seguís gastando al ritmo promedio de los últimos 3 meses calendario cerrados. El mes en curso se excluye para no subestimar el burn (a día 3 saldría muy bajo). Muestra '—' cuando no hay gastos en la ventana, '0 meses' cuando la caja se agotó."
+            help="Runway = Caja consolidada de bancos ÷ Burn mensual. Caja = suma de saldos de todos los bancos activos en USD (ARS convertido con la tasa mensual). Burn = promedio mensual de gastos operativos + costos directos (publicidad + comisiones) + nómina + impuestos de los últimos 3 meses calendario cerrados. El mes en curso se excluye para no subestimar el burn. Muestra '—' cuando no hay gastos en la ventana o falta tasa FX para consolidar bancos, '0 meses' cuando la caja se agotó."
           />
         </div>
       </div>
@@ -492,7 +492,7 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
             value={data.burn}
             format={fMoneyK}
             tone={data.burn > 0 ? "warning" : "neutral"}
-            help="Promedio mensual de gastos + nómina de los últimos 3 meses calendario cerrados (ventana fija; el mes en curso queda excluido). Alimenta el cálculo del Runway. Si acabás de cargar gastos con fecha del mes en curso, no van a aparecer acá hasta el mes siguiente — usá la fecha del devengo (cuándo se generó el servicio), no la del pago."
+            help="Promedio mensual de todos los costos que restan a la utilidad neta — gastos operativos + costos directos (publicidad + comisiones al equipo) + nómina + impuestos — sobre los últimos 3 meses calendario cerrados (ventana fija; el mes en curso queda excluido). Alimenta el cálculo del Runway. Si acabás de cargar gastos con fecha del mes en curso, no van a aparecer acá hasta el mes siguiente — usá la fecha del devengo (cuándo se generó el servicio), no la del pago."
           />
         </div>
       </div>
@@ -662,12 +662,14 @@ function runwaySubtitle(
   reason: RunwaySnapshot["reason"],
   _burn: number,
 ): string {
+  if (reason === "no-cash-data")
+    return "Falta cargar tasa ARS/USD para consolidar la caja";
   if (reason === "stale-snapshot") return "Requiere actualizar el snapshot de caja";
   if (reason === "no-burn-data") return "Sin gastos registrados en los últimos 3 meses";
   // Ventana explícita: el usuario no puede creer que el runway responde al
   // ?range elegido arriba — es 3 meses cerrados, fijo. El burn ya tiene su
   // propia tarjeta (SupportKpi de "Burn mensual"), no lo duplicamos acá.
-  return "Promedio de los últimos 3 meses cerrados";
+  return "Caja de bancos ÷ costos mensuales promedio (3 meses cerrados)";
 }
 
 function statusLabel(s: "abierta" | "liquidada" | "transferida"): string {

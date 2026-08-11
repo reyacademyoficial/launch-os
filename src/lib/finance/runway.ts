@@ -5,8 +5,12 @@
  * (meses), `null` (burn ≤ 0) o `0` (caja ≤ 0). Esa firma se respeta y no se
  * toca — es contrato del bloque económico.
  *
- * Este módulo la envuelve con la política acordada en 6b-fix:
- *   - Si el snapshot de caja está viejo → runway "—" con hint específico.
+ * Este módulo la envuelve con la política:
+ *   - Si la caja no se pudo consolidar (banks ARS sin tasa FX cargada) →
+ *     runway "—" con reason `no-cash-data`.
+ *   - Si el snapshot de caja está viejo → runway "—" con hint específico
+ *     (relevante cuando `cashOnHand` viene de assets manuales; con caja
+ *     derivada de bank_movements no aplica y el caller pasa `false`).
  *   - Si el burn es 0 por falta de datos → runway "—" con hint específico
  *     (el "∞" ya no se usa: burn=0 significa "no tenemos gastos cargados",
  *     no significa "Kingrow no gasta").
@@ -19,7 +23,11 @@
 
 import { computeRunway } from "./kpis";
 
-export type RunwayReason = "ok" | "stale-snapshot" | "no-burn-data";
+export type RunwayReason =
+  | "ok"
+  | "stale-snapshot"
+  | "no-burn-data"
+  | "no-cash-data";
 
 export interface RunwayClassification {
   /** `null` significa "mostrar em-dash". Nunca es undefined. */
@@ -28,7 +36,8 @@ export interface RunwayClassification {
 }
 
 export interface ClassifyRunwayInputs {
-  readonly cashOnHand: number;
+  /** `null` = caja no consolidable (falta tasa FX para bancos ARS). */
+  readonly cashOnHand: number | null;
   readonly monthlyBurn: number;
   readonly snapshotStale: boolean;
 }
@@ -36,7 +45,12 @@ export interface ClassifyRunwayInputs {
 export function classifyRunway(
   inputs: ClassifyRunwayInputs,
 ): RunwayClassification {
-  // Precedencia: si la caja está desactualizada, no importa el burn — no
+  // Precedencia 1: caja no consolidada. Sin numerador confiable no hay
+  // runway posible; hint específico para que el operador cargue la tasa.
+  if (inputs.cashOnHand == null) {
+    return { months: null, reason: "no-cash-data" };
+  }
+  // Precedencia 2: si la caja está desactualizada, no importa el burn — no
   // podemos garantizar el numerador. Mostrar "—" con hint de snapshot.
   if (inputs.snapshotStale) {
     return { months: null, reason: "stale-snapshot" };

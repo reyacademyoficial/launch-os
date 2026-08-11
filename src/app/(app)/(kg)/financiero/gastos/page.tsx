@@ -41,7 +41,6 @@ interface ExpenseDbRow extends FinanceExpenseRow {
   readonly description: string;
   readonly supplier_id: string | null;
   readonly bank_movement_id: string | null;
-  readonly currency: string | null;
   readonly notes: string | null;
   readonly due_date: string | null;
   readonly transaction_number: string | null;

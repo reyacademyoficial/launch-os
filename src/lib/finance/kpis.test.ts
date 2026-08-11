@@ -32,6 +32,7 @@ function expense(overrides: Partial<FinanceExpenseRow> = {}): FinanceExpenseRow 
   return {
     amount_gross: 0,
     tax_amount: 0,
+    currency: "ARS",
     category: null,
     paid_at: null,
     due_date: null,
@@ -43,6 +44,7 @@ function expense(overrides: Partial<FinanceExpenseRow> = {}): FinanceExpenseRow 
 function payroll(overrides: Partial<FinancePayrollRow> = {}): FinancePayrollRow {
   return {
     total_amount: 0,
+    currency: "ARS",
     paid_at: null,
     due_date: null,
     period_start: "2026-07-01",
@@ -85,13 +87,19 @@ function transfer(
 }
 
 function asset(overrides: Partial<FinanceAssetRow> = {}): FinanceAssetRow {
-  return { amount: 0, active: true, ...overrides };
+  return { amount: 0, currency: "ARS", active: true, ...overrides };
 }
 
 function liability(
   overrides: Partial<FinanceLiabilityRow> = {},
 ): FinanceLiabilityRow {
-  return { amount: 0, active: true, settled_at: null, ...overrides };
+  return {
+    amount: 0,
+    currency: "ARS",
+    active: true,
+    settled_at: null,
+    ...overrides,
+  };
 }
 
 function movement(

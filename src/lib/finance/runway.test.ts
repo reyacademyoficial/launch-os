@@ -71,4 +71,16 @@ describe("classifyRunway — política de UI del runway", () => {
     expect(r.reason).toBe("ok");
     expect(r.months).toBe(0);
   });
+
+  it("caja null (bancos sin tasa FX resuelta) → 'no-cash-data'", () => {
+    // Caso banks totalUsd=null cuando hay saldo ARS y no hay tasa cargada.
+    // Precedencia sobre burn: sin numerador, no hay runway posible.
+    const r = classifyRunway({
+      cashOnHand: null,
+      monthlyBurn: 100_000,
+      snapshotStale: false,
+    });
+    expect(r.months).toBeNull();
+    expect(r.reason).toBe("no-cash-data");
+  });
 });

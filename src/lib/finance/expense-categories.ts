@@ -73,3 +73,49 @@ export function isValidExpenseCategory(
     (EXPENSE_CATEGORIES as readonly string[]).includes(value)
   );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Bucketing para el estado de resultados (P&L)
+//
+// El P&L parte los expenses en tres canaletas:
+//   · DIRECT     → costos atribuibles a lanzamientos (publicidad).
+//                  NO incluye comisiones de equipo — esas vienen de
+//                  `team_member_payouts` (tabla aparte con `launch_id`).
+//   · TAX        → impuestos que restan de la utilidad (Ganancias, IIBB,
+//                  débitos y créditos). NO el IVA — ese ya se descuenta
+//                  vía `tax_amount` en cada línea.
+//   · OPERATING  → todo el resto (alquiler, servicios, software, oficina,
+//                  representación, comisiones de procesadores, otros).
+//
+// Convención — si el negocio empieza a tratar otro rubro como directo
+// (p.ej. IA como línea propia), extender la constante `DIRECT_COSTS`.
+// Comparación tolerante: normaliza a minúscula + trim + sin acentos, así
+// filas históricas con capitalización libre siguen clasificando.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DIRECT_COST_CATEGORIES = new Set<ExpenseCategory>(["publicidad"]);
+
+const INCOME_TAX_CATEGORIES = new Set<ExpenseCategory>(["impuestos"]);
+
+/**
+ * Normaliza para matching contra las constantes. Minúscula, trim, y saca
+ * tildes (representación → representacion). El vocabulario canónico ya
+ * está sin tildes; esto es para tolerar filas viejas cargadas a mano.
+ */
+function normalizeCategory(category: string | null): string {
+  if (category == null) return "";
+  return category
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+}
+
+export type ExpenseBucket = "direct" | "tax" | "operating";
+
+export function bucketOfCategory(category: string | null): ExpenseBucket {
+  const n = normalizeCategory(category);
+  if ((DIRECT_COST_CATEGORIES as Set<string>).has(n)) return "direct";
+  if ((INCOME_TAX_CATEGORIES as Set<string>).has(n)) return "tax";
+  return "operating";
+}

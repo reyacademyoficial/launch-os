@@ -471,13 +471,22 @@ export interface BurnRateInputs {
   expenses: FinanceExpenseRow[];
   payroll: FinancePayrollRow[];
   monthsInWindow: number;
+  /**
+   * Costos adicionales YA sumados del mismo período (p.ej. comisiones al
+   * equipo desde `team_member_payouts`, que el selector no lee porque
+   * pertenece a otro módulo). Se suma al numerador antes de promediar.
+   * Convención: mismo currency que expenses + payroll — el caller es
+   * responsable de convertir todo a la misma unidad.
+   */
+  otherCosts?: number;
 }
 
 export function computeBurnRate(inputs: BurnRateInputs): number {
   if (inputs.monthsInWindow <= 0) return 0;
   const expensesTotal = sumExpensesNet(inputs.expenses);
   const payrollTotal = sumPayrollTotal(inputs.payroll);
-  return (expensesTotal + payrollTotal) / inputs.monthsInWindow;
+  const other = inputs.otherCosts ?? 0;
+  return (expensesTotal + payrollTotal + other) / inputs.monthsInWindow;
 }
 
 /**

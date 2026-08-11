@@ -68,6 +68,7 @@ export interface FinanceInvoiceRow {
 export interface FinanceExpenseRow {
   amount_gross: number;
   tax_amount: number;
+  currency: "ARS" | "USD";
   category: string | null;
   paid_at: string | null;
   due_date: string | null;
@@ -81,6 +82,7 @@ export interface FinanceExpenseRow {
  */
 export interface FinancePayrollRow {
   total_amount: number;
+  currency: "ARS" | "USD";
   paid_at: string | null;
   due_date: string | null;
   period_start: string;
@@ -109,11 +111,13 @@ export interface FinanceClientTransferRow {
 
 export interface FinanceAssetRow {
   amount: number;
+  currency: "ARS" | "USD";
   active: boolean;
 }
 
 export interface FinanceLiabilityRow {
   amount: number;
+  currency: "ARS" | "USD";
   active: boolean;
   settled_at: string | null;
 }

@@ -187,3 +187,33 @@ export async function loadLatestOrgFxRate(
   }
   return { rate: row.ars_per_usd, month: monthKey(row.month) };
 }
+
+/**
+ * Devuelve un Map keyed por "YYYY-MM" con la tasa más reciente de ese mes
+ * a nivel org (agregando entre proyectos). Uso: convertir gastos/nómina
+ * org-scope (sin `project_id`) usando la tasa del mes de devengo en vez de
+ * una única tasa global — mucho más justo para períodos largos donde la
+ * tasa varía.
+ *
+ * Si el mismo mes tiene tasas de proyectos distintos, se queda con la
+ * ÚLTIMA que aparece en el orden ascendente por mes — postgrest no
+ * garantiza tiebreak. Es aceptable: las tasas mensuales son prácticamente
+ * iguales entre proyectos porque las carga la misma persona con la misma
+ * referencia. Si en algún caso divergen, ver `resolveMonthlyRateFromMap`
+ * con el `project_id` específico.
+ */
+export async function loadOrgFxRatesByMonth(
+  supabase: LooseClient,
+): Promise<Map<string, number>> {
+  const res = await supabase
+    .from("project_fx_rates")
+    .select("month, ars_per_usd")
+    .order("month", { ascending: true });
+  const rows = (res.data ?? []) as ProjectFxRateRow[];
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    if (!Number.isFinite(r.ars_per_usd) || r.ars_per_usd <= 0) continue;
+    map.set(monthKey(r.month), r.ars_per_usd);
+  }
+  return map;
+}

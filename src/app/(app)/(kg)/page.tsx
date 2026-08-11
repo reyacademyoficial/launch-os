@@ -19,6 +19,7 @@ import type {
   ProjectHealthRow,
   TicketRow,
 } from "@/lib/clients/types";
+import { bucketOfCategory } from "@/lib/finance/expense-categories";
 import { fCount, fMoney } from "@/lib/finance/format";
 import type { Ownership } from "@/lib/finance/invoice-classification";
 import {
@@ -31,9 +32,11 @@ import {
   sumExpensesNet,
   sumPayrollTotal,
 } from "@/lib/finance/kpis";
+import { loadLatestOrgFxRate, loadOrgFxRatesByMonth } from "@/lib/money";
 import {
   inPeriodDate,
   inPeriodTs,
+  lastClosedMonths,
   overlapsPeriodDate,
   resolvePeriod,
 } from "@/lib/finance/period";
@@ -225,31 +228,47 @@ export default async function EjecutivoDashboardPage({
     liabilitiesRes,
     clientTransfersRes,
     settlementsRes,
+    payoutsRes,
+    latestFx,
+    orgFxByMonth,
   ] = await Promise.all([
     supabase.from("projects").select("id, name, ownership"),
-    supabase.from("banks").select("id, balance, opening_balance"),
+    supabase
+      .from("banks")
+      .select("id, balance, opening_balance, currency, active"),
     supabase
       .from("bank_movements")
       .select("bank_id, amount, kind, occurred_at"),
     supabase
       .from("expenses")
       .select(
-        "amount_gross, tax_amount, category, paid_at, due_date, expense_date",
+        "amount_gross, tax_amount, currency, category, paid_at, due_date, expense_date",
       ),
     supabase
       .from("payroll")
-      .select("total_amount, paid_at, due_date, period_start, period_end"),
+      .select(
+        "total_amount, currency, paid_at, due_date, period_start, period_end",
+      ),
     supabase
       .from("invoices")
       .select(
-        "project_id, launch_id, amount_gross, tax_amount, status, paid_at, due_date, issue_date",
+        "project_id, launch_id, amount_gross, tax_amount, currency, status, paid_at, due_date, issue_date",
       ),
     supabase.from("assets").select("amount, active"),
     supabase.from("liabilities").select("amount, active, settled_at"),
     supabase.from("client_transfers").select("amount, direction, date"),
     supabase
       .from("launch_settlements")
-      .select("kingrow_retained, status, closed_at, created_at, project_id"),
+      .select("kingrow_retained, status, closed_at, created_at, project_id, launch_id"),
+    // Comisiones al equipo del período — cost directo del launch. Se filtra
+    // por launch después de resolver la tasa; acá traemos el período crudo.
+    supabase
+      .from("team_member_payouts")
+      .select("launch_id, amount, paid_at")
+      .gte("paid_at", period.fromYmd)
+      .lte("paid_at", period.toYmd),
+    loadLatestOrgFxRate(supabase),
+    loadOrgFxRatesByMonth(supabase),
   ]);
 
   const projects =
@@ -264,6 +283,8 @@ export default async function EjecutivoDashboardPage({
       id: string;
       balance: number;
       opening_balance: number;
+      currency: "ARS" | "USD";
+      active: boolean;
     }>;
   const bankMovements =
     (bankMovementsRes.data ?? []) as unknown as (FinanceBankMovementRow & {
@@ -283,7 +304,73 @@ export default async function EjecutivoDashboardPage({
   const allSettlements =
     (settlementsRes.data ?? []) as unknown as (FinanceLaunchSettlementRow & {
       project_id: string;
+      launch_id: string;
     })[];
+  const payouts = (payoutsRes.data ?? []) as unknown as ReadonlyArray<{
+    readonly launch_id: string;
+    readonly amount: number;
+    readonly paid_at: string;
+  }>;
+
+  // ─── FX helpers (mismo patrón que /financiero) ───────────────────────
+  // Para expenses/payroll usamos tasa org por mes con fallback a la más
+  // reciente. Payouts se convierten con la tasa del launch (si null → USD
+  // nativo). Invoices y settlements piden lookup por launch — pero acá el
+  // exec no carga launches individuales, así que usamos la tasa org como
+  // fallback global; para invoices, la tasa mensual del proyecto si existe.
+  const orgLatestRate =
+    latestFx && latestFx.rate > 0 ? latestFx.rate : null;
+  function resolveOrgRateForMonth(ymd: string | null | undefined): number | null {
+    if (ymd == null) return orgLatestRate;
+    const m = orgFxByMonth.get(ymd.slice(0, 7));
+    if (m != null && m > 0) return m;
+    return orgLatestRate;
+  }
+  function expenseToUsd(amount: number, e: FinanceExpenseRow): number {
+    if (e.currency === "USD") return amount;
+    const rate = resolveOrgRateForMonth(e.expense_date);
+    return rate != null ? amount / rate : amount;
+  }
+  function payrollToUsd(amount: number, p: FinancePayrollRow): number {
+    if (p.currency === "USD") return amount;
+    const rate = resolveOrgRateForMonth(p.period_start);
+    return rate != null ? amount / rate : amount;
+  }
+  function invoiceToUsd(amount: number, i: FinanceInvoiceRow): number {
+    if (i.currency === "USD") return amount;
+    const rate = resolveOrgRateForMonth(i.paid_at ?? i.issue_date);
+    return rate != null ? amount / rate : amount;
+  }
+
+  // Cargo launches para todos los launch_ids referenciados por settlements
+  // y payouts. Necesito `ars_per_usd` para convertir kingrow_retained y
+  // comisiones — un launch USD-native (rate=null) no debe convertirse; si
+  // es ARS, se divide por la tasa. RLS de launches es project-scope; si
+  // deniega, el fallback es tasa org (imperfecto pero no rompe).
+  const launchIdSet = new Set<string>();
+  for (const s of allSettlements) launchIdSet.add(s.launch_id);
+  for (const p of payouts) launchIdSet.add(p.launch_id);
+  const launchArsPerUsd = new Map<string, number | null>();
+  if (launchIdSet.size > 0) {
+    const launchesRes = await supabase
+      .from("launches")
+      .select("id, ars_per_usd")
+      .in("id", Array.from(launchIdSet));
+    const rows = (launchesRes.data ?? []) as unknown as ReadonlyArray<{
+      readonly id: string;
+      readonly ars_per_usd: number | null;
+    }>;
+    for (const l of rows) launchArsPerUsd.set(l.id, l.ars_per_usd);
+  }
+  function launchToUsd(amount: number, launchId: string): number {
+    // Prioridad: tasa del launch (si ARS-nativo). Si el launch es USD
+    // (rate=null) o no lo pudimos leer, cae a la tasa org del mes actual.
+    const rate = launchArsPerUsd.get(launchId);
+    if (rate != null && rate > 0) return amount / rate;
+    if (rate === null) return amount; // launch USD-nativo explícito
+    // Sin info del launch → fallback org (mejor que romper)
+    return orgLatestRate != null ? amount / orgLatestRate : amount;
+  }
 
   // Filtrar al período seleccionado.
   const expensesInPeriod = allExpenses.filter((e) =>
@@ -302,66 +389,166 @@ export default async function EjecutivoDashboardPage({
     (i) => i.status === "cobrada" && inPeriodTs(i.paid_at, period),
   );
 
-  // Revenue Kingrow del período. Regla nueva: para propias el ingreso ya
-  // sumó por invoice cobrada, así que descartamos sus liquidaciones para no
+  // ─── Conversión a USD para el P&L ────────────────────────────────────
+  // Mismo racional que en /financiero: revenue + expenses + payroll +
+  // payouts convertidos con las tasas cargadas. Fallback a la tasa org
+  // más reciente cuando no hay tasa específica del mes/launch.
+  const settlementsUsd = settlementsInPeriod.map((s) => ({
+    ...s,
+    kingrow_retained: launchToUsd(s.kingrow_retained, s.launch_id),
+  }));
+  const invoicesCollectedInPeriodUsd = invoicesCollectedInPeriod.map((i) => ({
+    ...i,
+    amount_gross: invoiceToUsd(i.amount_gross, i),
+    tax_amount: invoiceToUsd(i.tax_amount, i),
+  }));
+
+  // Revenue Kingrow del período. Regla: para propias el ingreso ya sumó
+  // por invoice cobrada, así que descartamos sus liquidaciones para no
   // contar dos veces. Solo cuentan las settlements de projects externos.
-  const settlementsForRevenue = settlementsInPeriod.filter(
+  const settlementsForRevenue = settlementsUsd.filter(
     (s) => ownershipByProject.get(s.project_id) !== "propia",
   );
   const revenue = computeRevenue({
     settlements: settlementsForRevenue,
-    invoices: invoicesCollectedInPeriod,
+    invoices: invoicesCollectedInPeriodUsd,
     resolveOwnership,
   });
 
-  // Profit del período (simple: sin split directo/operativo — el
-  // dashboard financiero lo desglosa mejor).
-  const expensesNet = sumExpensesNet(expensesInPeriod);
-  const payrollTotal = sumPayrollTotal(payrollInPeriod);
+  // Egresos convertidos a USD y separados en 3 buckets (direct / tax /
+  // operating) por category, mismo criterio que /financiero. Payouts al
+  // equipo suman como costo directo del launch.
+  const expensesInPeriodUsd = expensesInPeriod.map((e) => ({
+    ...e,
+    amount_gross: expenseToUsd(e.amount_gross, e),
+    tax_amount: expenseToUsd(e.tax_amount, e),
+  }));
+  const payrollInPeriodUsd = payrollInPeriod.map((p) => ({
+    ...p,
+    total_amount: payrollToUsd(p.total_amount, p),
+  }));
+  const expensesByBucket = { direct: 0, tax: 0, operating: 0 };
+  for (const e of expensesInPeriodUsd) {
+    const bucket = bucketOfCategory(e.category);
+    expensesByBucket[bucket] += e.amount_gross - e.tax_amount;
+  }
+  const payoutsUsdTotal = payouts.reduce(
+    (acc, p) => acc + launchToUsd(p.amount, p.launch_id),
+    0,
+  );
+  const expensesNet = sumExpensesNet(expensesInPeriodUsd);
+  const payrollTotal = sumPayrollTotal(payrollInPeriodUsd);
   const profit = computeProfit({
     revenue: revenue.revenueTotal,
-    operatingExpenses: expensesNet,
+    directCosts: expensesByBucket.direct + payoutsUsdTotal,
+    operatingExpenses: expensesByBucket.operating,
     payroll: payrollTotal,
+    taxes: expensesByBucket.tax,
   });
 
-  // Caja actual = Σ total en bancos.
-  // Cast: computeBankBalances solo lee id + opening_balance del BankRow,
-  // pero el type completo tiene más columnas. Sub-set seguro.
+  // Caja consolidada en USD. Sumo saldo por banco activo separando por
+  // moneda; los ARS se convierten con la tasa org más reciente. Si hay
+  // saldo ARS y no hay tasa, `bankBalanceTotalUsd` queda null y el runway
+  // muestra "—" con hint.
+  const activeBanks = banks.filter((b) => b.active);
   const bankBalancesMap = computeBankBalances(
-    banks as never,
+    activeBanks as never,
     bankMovements.map((m) => ({
       bank_id: m.bank_id,
       amount: m.amount,
       kind: m.kind,
     })),
   );
-  let bankBalanceTotal = 0;
-  for (const b of bankBalancesMap.values()) bankBalanceTotal += b.total;
+  let bankBalanceArsNative = 0;
+  let bankBalanceUsdNative = 0;
+  for (const b of activeBanks) {
+    const bal = bankBalancesMap.get(b.id);
+    const total = bal?.total ?? Number(b.opening_balance);
+    if (b.currency === "USD") bankBalanceUsdNative += total;
+    else bankBalanceArsNative += total;
+  }
+  let bankBalanceTotalUsd: number | null;
+  if (bankBalanceArsNative === 0) {
+    bankBalanceTotalUsd = bankBalanceUsdNative;
+  } else if (orgLatestRate != null) {
+    bankBalanceTotalUsd =
+      bankBalanceUsdNative + bankBalanceArsNative / orgLatestRate;
+  } else {
+    bankBalanceTotalUsd = null;
+  }
+  // ─── Conversión de invoices/transfers a USD para AR/AP consolidados ─
+  // Mismos criterios que /financiero: invoices por currency + fx del mes
+  // del proyecto (fallback org); client_transfers por tasa org del mes
+  // (aproximación — no tienen currency propia).
+  const allInvoicesUsd = allInvoices.map((i) => ({
+    ...i,
+    amount_gross: invoiceToUsd(i.amount_gross, i),
+    tax_amount: invoiceToUsd(i.tax_amount, i),
+  }));
+  const allClientTransfersUsd = allClientTransfers.map((t) => ({
+    ...t,
+    amount: resolveOrgRateForMonth(t.date)
+      ? t.amount / (resolveOrgRateForMonth(t.date) as number)
+      : t.amount,
+  }));
 
   // AR de Kingrow. `favorKingrowBalance` es positivo cuando algún cliente
-  // le debe a Kingrow (clientBalance negativo).
-  const rawClientBalance = clientBalance(allClientTransfers);
+  // le debe a Kingrow (clientBalance negativo). Todo en USD.
+  const rawClientBalance = clientBalance(allClientTransfersUsd);
   const favorKingrowBalance = Math.max(0, -rawClientBalance);
   const ar = computeAccountsReceivable({
-    invoices: allInvoices,
+    invoices: allInvoicesUsd,
     resolveOwnership,
     favorKingrowBalance,
   });
 
-  // Burn rate + runway.
+  // Burn + runway. Burn: TODOS los costos que restan a utilidad neta
+  // (gastos + payroll + payouts) sobre los últimos 3 meses cerrados —
+  // ventana FIJA independiente del ?range. Runway: caja de bancos USD ÷
+  // burn mensual. Reemplaza el snapshot manual de assets — la caja es
+  // derivada en vivo.
+  const burnWindow = lastClosedMonths(3);
+  const burnExpenses = allExpenses
+    .map((e) => ({
+      ...e,
+      amount_gross: expenseToUsd(e.amount_gross, e),
+      tax_amount: expenseToUsd(e.tax_amount, e),
+    }))
+    .filter((e) => inPeriodDate(e.expense_date, burnWindow));
+  const burnPayroll = allPayroll
+    .map((p) => ({ ...p, total_amount: payrollToUsd(p.total_amount, p) }))
+    .filter((p) =>
+      overlapsPeriodDate(p.period_start, p.period_end, burnWindow),
+    );
+  const burnPayoutsUsd = payouts
+    .filter((p) => inPeriodDate(p.paid_at, burnWindow))
+    .reduce((acc, p) => acc + launchToUsd(p.amount, p.launch_id), 0);
   const burnRate = computeBurnRate({
-    expenses: expensesInPeriod,
-    payroll: payrollInPeriod,
-    monthsInWindow: period.monthsInWindow,
+    expenses: burnExpenses,
+    payroll: burnPayroll,
+    monthsInWindow: burnWindow.monthsInWindow,
+    otherCosts: burnPayoutsUsd,
   });
   const runwayClass = classifyRunway({
-    cashOnHand: bankBalanceTotal,
+    cashOnHand: bankBalanceTotalUsd,
     monthlyBurn: burnRate,
     snapshotStale: false,
   });
 
+  // Cash flow real del período en USD. Cada movimiento hereda la moneda
+  // de su banco (banks.currency). Los cobros de ventas ya están en
+  // bank_movements como 'in' cuando entran al banco — sumar `payments`
+  // aparte sería doble conteo.
+  const bankCurrencyById = new Map<string, "ARS" | "USD">();
+  for (const b of banks) bankCurrencyById.set(b.id, b.currency);
+  const bankMovementsInPeriodUsd = bankMovementsInPeriod.map((m) => {
+    const currency = bankCurrencyById.get(m.bank_id) ?? "ARS";
+    if (currency === "USD") return m;
+    const rate = resolveOrgRateForMonth(m.occurred_at);
+    return { ...m, amount: rate != null ? m.amount / rate : m.amount };
+  });
   const cashFlow = computeCashFlow({
-    bankMovements: bankMovementsInPeriod,
+    bankMovements: bankMovementsInPeriodUsd,
   });
 
   // ─── Batch 2: clientes + academia + ops ─────────────────────────────
@@ -435,10 +622,20 @@ export default async function EjecutivoDashboardPage({
   const blockers = (blockersRes.data ?? []) as unknown as BlockerRow[];
 
   // ─── AP (después de tener client_transfers + payroll + expenses) ────
+  // Todo consolidado en USD para ser coherente con AR/utilidad/bancos.
+  const allExpensesUsd = allExpenses.map((e) => ({
+    ...e,
+    amount_gross: expenseToUsd(e.amount_gross, e),
+    tax_amount: expenseToUsd(e.tax_amount, e),
+  }));
+  const allPayrollUsd = allPayroll.map((p) => ({
+    ...p,
+    total_amount: payrollToUsd(p.total_amount, p),
+  }));
   const ap = computeAccountsPayable({
-    expenses: allExpenses,
-    payroll: allPayroll,
-    clientTransfers: allClientTransfers,
+    expenses: allExpensesUsd,
+    payroll: allPayrollUsd,
+    clientTransfers: allClientTransfersUsd,
   });
 
   // ─── Salud de clientes (top 5 en riesgo) ────────────────────────────
@@ -581,7 +778,10 @@ export default async function EjecutivoDashboardPage({
             v: fMoney(profit.netProfit),
             c: profit.netProfit < 0 ? "#F04060" : undefined,
           },
-          { l: "Caja", v: fMoney(bankBalanceTotal) },
+          {
+            l: "Caja",
+            v: bankBalanceTotalUsd == null ? "—" : fMoney(bankBalanceTotalUsd),
+          },
           { l: "Runway", v: runwayLabel, c: runwayColor },
           {
             l: "Salud clientes prom.",
