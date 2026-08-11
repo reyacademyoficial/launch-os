@@ -17,7 +17,13 @@ import { updateSession } from "@/lib/supabase/middleware";
  */
 
 // Paths that don't need a session. Everything else does.
-const PUBLIC_PATHS: readonly string[] = ["/login", "/auth/confirm"];
+// `/api/cron` está acá porque Vercel Cron llega sin cookie de Supabase; el
+// handler valida por su cuenta el header `Authorization: Bearer CRON_SECRET`.
+const PUBLIC_PATHS: readonly string[] = [
+  "/login",
+  "/auth/confirm",
+  "/api/cron",
+];
 
 function isPublic(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
