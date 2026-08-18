@@ -62,6 +62,12 @@ export interface LaunchSettlementInsert {
   owed_to_client: number;
   status: LaunchSettlementStatus;
   /**
+   * Solo NOT NULL cuando la fila es una liquidación complementaria (ver 0130).
+   * Apunta a la liquidación original — en `createSettlement` este campo queda
+   * en null; lo setea `createComplementarySettlement`.
+   */
+  parent_settlement_id: string | null;
+  /**
    * closed_at queda null a propósito.
    *
    * DECISIÓN PENDIENTE (6c): closed_at puede ser
@@ -253,6 +259,7 @@ export async function createSettlement(
     kingrow_retained: breakdown.kingrowRetained,
     owed_to_client: breakdown.owedToClient,
     status: "abierta",
+    parent_settlement_id: null,
     closed_at: null,
   };
 
@@ -283,6 +290,260 @@ export async function createSettlement(
     dryRun: false,
     payload,
     draftsCount,
+    settlementId: inserted.id,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Complementarias — liquidación adicional sobre pagos posteriores al cierre
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Contexto: en Maratón G7 quedaron ~$40M pendientes que van a entrar después
+// de que la liquidación original ya está cerrada. Sin esta función, esos
+// pagos rebotan con `createSettlement` (already-settled) y quedan en un
+// limbo — se cobraron pero no aportan al split.
+//
+// SEMÁNTICA
+//   newlyCollected = Σ payments actuales − Σ collected_total de settlements
+//                    cerrados (liquidada|transferida) de este launch
+//   Si newlyCollected ≤ 0 → nada nuevo para liquidar (`no-new-payments`).
+//
+// SNAPSHOT DE LA COMPLEMENTARIA (derivado de la regla vigente)
+//   - percent_of_collected: se copia tal cual (Kingrow retiene el mismo %).
+//   - fixed_fee_per_launch: 0. El fee de lanzamiento se cobró en la original.
+//   - fixed_fee_per_sale:   0. Las sales originales ya se cobraron una vez.
+//   - min_guarantee:        null. Una complementaria no garantiza piso —
+//                            es un extra por sobre lo ya liquidado.
+//   - applies_on:           'collected'. Una complementaria siempre trabaja
+//                            sobre lo cobrado (aunque la original usara
+//                            'sold', el sold ya está congelado allá).
+//   - name: `{originalName} (complementaria)` para trazabilidad en el snapshot.
+//
+// PARENT LINK
+//   parent_settlement_id = el settlement cerrado más reciente. Si hubiera
+//   varias complementarias previas, la nueva apunta a la última (cadena
+//   liquidación → complementaria 1 → complementaria 2 → ...). Simple, y
+//   preserva el orden temporal.
+//
+// GUARDS
+//   - launch-not-found: mismo que en createSettlement.
+//   - no-rule: necesitamos la regla vigente para snapshotear.
+//   - no-closed-settlement: si NO hay closed settlements, no aplica —
+//     el flujo correcto es createSettlement, no complementaria.
+//   - no-new-payments: newlyCollected ≤ 0 → no hay delta para liquidar.
+
+export type CreateComplementarySettlementFailReason =
+  | "launch-not-found"
+  | "no-rule"
+  | "no-closed-settlement"
+  | "no-new-payments";
+
+export type CreateComplementarySettlementResult =
+  | {
+      ok: true;
+      dryRun: boolean;
+      payload: LaunchSettlementInsert;
+      /** Delta cobrado desde la última liquidación cerrada. Igual a `payload.collected_total`. */
+      newlyCollected: number;
+      /** Σ collected_total de todos los settlements cerrados previos. */
+      previouslyCollected: number;
+      /** Id del settlement cerrado más reciente — parent de la nueva fila. */
+      parentSettlementId: string;
+      /** Solo definido cuando dryRun=false y el insert fue exitoso. */
+      settlementId?: string;
+    }
+  | {
+      ok: false;
+      reason: CreateComplementarySettlementFailReason;
+      detail: string;
+    };
+
+export async function createComplementarySettlement(
+  supabase: AnySupabase,
+  input: CreateSettlementInput,
+): Promise<CreateComplementarySettlementResult> {
+  const dryRun = input.dryRun ?? true;
+
+  // ─── 1) Launch + org (mismo patrón que createSettlement) ─────────────
+  const launchRes = await supabase
+    .from("launches")
+    .select("id, project_id, projects(organization_id)")
+    .eq("id", input.launchId)
+    .maybeSingle();
+
+  if (launchRes.error) {
+    return {
+      ok: false,
+      reason: "launch-not-found",
+      detail: `error consultando launches: ${launchRes.error.message}`,
+    };
+  }
+
+  const launchRow = launchRes.data as unknown as
+    | {
+        id: string;
+        project_id: string;
+        projects: { organization_id: string } | { organization_id: string }[] | null;
+      }
+    | null;
+
+  if (!launchRow) {
+    return {
+      ok: false,
+      reason: "launch-not-found",
+      detail: `no existe launch con id ${input.launchId}`,
+    };
+  }
+
+  const projectId = launchRow.project_id;
+  const organizationId = extractOrgId(launchRow.projects);
+  if (!organizationId) {
+    return {
+      ok: false,
+      reason: "launch-not-found",
+      detail: `launch ${input.launchId} sin proyecto/organización resuelta`,
+    };
+  }
+
+  // ─── 2) Regla vigente (mismo resolver que original) ──────────────────
+  const rule = await resolveActiveRule(supabase, {
+    launchId: input.launchId,
+    projectId,
+  });
+
+  if (!rule) {
+    return {
+      ok: false,
+      reason: "no-rule",
+      detail:
+        `no hay settlement_rule activa para launch ${input.launchId} ` +
+        `ni default (launch_id IS NULL) para project ${projectId}`,
+    };
+  }
+
+  // ─── 3) Guard: debe existir al menos una liquidación cerrada ────────
+  const closedRes = await supabase
+    .from("launch_settlements")
+    .select("id, collected_total, created_at")
+    .eq("launch_id", input.launchId)
+    .in("status", CLOSED_STATUSES)
+    .order("created_at", { ascending: false });
+
+  const closedRows = (closedRes.data ?? []) as Array<{
+    id: string;
+    collected_total: number;
+    created_at: string;
+  }>;
+
+  if (closedRes.error) {
+    return {
+      ok: false,
+      reason: "no-closed-settlement",
+      detail: `error consultando launch_settlements: ${closedRes.error.message}`,
+    };
+  }
+
+  if (closedRows.length === 0) {
+    return {
+      ok: false,
+      reason: "no-closed-settlement",
+      detail:
+        `launch ${input.launchId} no tiene ninguna liquidación cerrada. ` +
+        `Usá createSettlement para crear la primera.`,
+    };
+  }
+
+  const previouslyCollected = closedRows.reduce(
+    (acc, r) => acc + Number(r.collected_total),
+    0,
+  );
+  const parentSettlementId = closedRows[0]!.id;
+
+  // ─── 4) Delta: total actual − previamente liquidado ─────────────────
+  const { collectedTotal: currentTotal } = await computeLaunchAggregates(
+    supabase,
+    input.launchId,
+  );
+  const newlyCollected = currentTotal - previouslyCollected;
+
+  if (newlyCollected <= 0) {
+    return {
+      ok: false,
+      reason: "no-new-payments",
+      detail:
+        `launch ${input.launchId}: total cobrado (${currentTotal}) ≤ ya ` +
+        `liquidado (${previouslyCollected}). Nada nuevo para complementar.`,
+    };
+  }
+
+  // ─── 5) Snapshot derivado — solo percent aplica ──────────────────────
+  const baseSnapshot = toSettlementRuleSnapshot(rule);
+  const complementarySnapshot: SettlementRuleSnapshot = {
+    ...baseSnapshot,
+    name: `${baseSnapshot.name} (complementaria)`,
+    fixed_fee_per_launch: 0,
+    fixed_fee_per_sale: 0,
+    min_guarantee: null,
+    applies_on: "collected",
+  };
+
+  // ─── 6) Motor de split sobre el delta ────────────────────────────────
+  // salesCount=0 porque las sales viejas ya se cobraron una vez; totalSold
+  // se pasa igual a newlyCollected como fallback (applies_on='collected'
+  // no lo usa igual).
+  const inputs: SettlementInputs = {
+    collectedTotal: newlyCollected,
+    totalSold: newlyCollected,
+    salesCount: 0,
+  };
+  const breakdown = computeSettlement(complementarySnapshot, inputs);
+
+  const payload: LaunchSettlementInsert = {
+    organization_id: organizationId,
+    launch_id: input.launchId,
+    project_id: projectId,
+    settlement_rule_snapshot: complementarySnapshot,
+    collected_total: newlyCollected,
+    kingrow_retained: breakdown.kingrowRetained,
+    owed_to_client: breakdown.owedToClient,
+    status: "abierta",
+    parent_settlement_id: parentSettlementId,
+    closed_at: null,
+  };
+
+  if (dryRun) {
+    return {
+      ok: true,
+      dryRun: true,
+      payload,
+      newlyCollected,
+      previouslyCollected,
+      parentSettlementId,
+    };
+  }
+
+  const insertRes = await supabase
+    .from("launch_settlements")
+    .insert(payload as unknown as never)
+    .select("id")
+    .single();
+
+  const inserted = insertRes.data as { id: string } | null;
+  if (insertRes.error || !inserted) {
+    throw new Error(
+      `insert launch_settlements (complementaria) falló: ${
+        insertRes.error?.message ?? "sin data"
+      }`,
+    );
+  }
+
+  return {
+    ok: true,
+    dryRun: false,
+    payload,
+    newlyCollected,
+    previouslyCollected,
+    parentSettlementId,
     settlementId: inserted.id,
   };
 }

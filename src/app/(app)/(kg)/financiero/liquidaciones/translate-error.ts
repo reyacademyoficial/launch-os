@@ -9,7 +9,11 @@
  * que hay que tocar (y los tests fallan si un caso deja de manejarse).
  */
 
-import type { CreateSettlementFailReason } from "@/lib/settlements/create";
+import type {
+  CreateComplementarySettlementFailReason,
+  CreateSettlementFailReason,
+} from "@/lib/settlements/create";
+import type { ReopenSettlementFailReason } from "@/lib/settlements/reopen";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // createSettlement — traduce los `reason` del orquestador (create.ts)
@@ -33,11 +37,69 @@ export function translateCreateSettlementError(
       );
     case "already-settled":
       return (
-        "Este lanzamiento ya tiene una liquidación cerrada. Las liquidaciones " +
-        "complementarias por pagos posteriores todavía no están implementadas " +
-        "— cuando entren pagos nuevos de este lanzamiento, van a quedar sin " +
-        "liquidar hasta que exista esa función."
+        "Este lanzamiento ya tiene una liquidación cerrada. Si hay pagos " +
+        "posteriores sin liquidar, usá la opción de liquidación " +
+        "complementaria en vez de crear una nueva."
       );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// createComplementarySettlement — traduce reasons del orquestador (create.ts)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export function translateComplementarySettlementError(
+  reason: CreateComplementarySettlementFailReason,
+): string {
+  switch (reason) {
+    case "launch-not-found":
+      return "No se encontró el lanzamiento indicado.";
+    case "no-rule":
+      return (
+        "Este lanzamiento (o su proyecto) no tiene una regla de split activa. " +
+        "Configurala primero en Reglas de split."
+      );
+    case "no-closed-settlement":
+      return (
+        "No hay ninguna liquidación cerrada para este lanzamiento. Usá " +
+        "'Crear liquidación' en lugar de complementaria."
+      );
+    case "no-new-payments":
+      return (
+        "No entraron pagos nuevos desde la última liquidación. No hay " +
+        "nada nuevo para complementar."
+      );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// reopenLaunchSettlement — traduce reasons del RPC 0130
+// ═══════════════════════════════════════════════════════════════════════════
+
+export function translateReopenSettlementError(
+  reason: ReopenSettlementFailReason,
+): string {
+  switch (reason) {
+    case "reopen-reason-required":
+      return "Escribí un motivo para reabrir la liquidación.";
+    case "settlement-not-found":
+      return (
+        "La liquidación ya no existe. Alguien puede haberla eliminado — " +
+        "recargá y volvé a intentar."
+      );
+    case "settlement-not-liquidada":
+      return (
+        "Solo se pueden reabrir liquidaciones en estado 'liquidada'. Los " +
+        "borradores no hace falta reabrirlos; las transferidas ya movieron " +
+        "plata y requieren un ajuste manual."
+      );
+    case "settlement-has-bank-movements":
+      return (
+        "Esta liquidación tiene movimientos bancarios linkeados. Desvinculá " +
+        "las transferencias asociadas antes de reabrir."
+      );
+    case "unknown":
+      return "Error desconocido al reabrir la liquidación.";
   }
 }
 

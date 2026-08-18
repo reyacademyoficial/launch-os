@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createSettlement } from "./create";
+import { createComplementarySettlement, createSettlement } from "./create";
 
 /**
  * Fake mínimo del cliente Supabase — soporta solo los métodos que usa
@@ -271,5 +271,178 @@ describe("createSettlement", () => {
     expect(res.payload.kingrow_retained).toBe(8_000); // 100% × cobrado
     expect(res.payload.owed_to_client).toBe(0);
     expect(insertSpy).not.toHaveBeenCalled();
+  });
+
+  it("payload de una liquidación original tiene parent_settlement_id=null", async () => {
+    // Contrato: solo las complementarias setean parent_settlement_id.
+    // Este test blinda contra regresiones si alguien mueve el default.
+    const { supabase } = makeFake({
+      launches: [launchOk],
+      settlement_rules: [ok(activeRule)],
+      launch_settlements: [empty, ok([])],
+      sales: [ok([{ id: "s1", total_amount: 1000 }])],
+      payments: [ok([{ amount: 500 }])],
+    });
+
+    const res = await createSettlement(supabase as never, {
+      launchId: LAUNCH_ID,
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.payload.parent_settlement_id).toBeNull();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// createComplementarySettlement — tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+const externalRule = {
+  ...activeRule,
+  id: "rule-ext",
+  name: "regla externa 30%",
+  percent_of_collected: 30,
+  fixed_fee_per_launch: 5_000, // ← se cobró en la original, NO se re-cobra
+  fixed_fee_per_sale: 100,     // ← idem
+  min_guarantee: 15_000,        // ← idem
+};
+
+describe("createComplementarySettlement", () => {
+  it("no-closed-settlement: sin liquidaciones cerradas previas", async () => {
+    const { supabase, insertSpy } = makeFake({
+      launches: [launchOk],
+      settlement_rules: [ok(externalRule)],
+      // Sin cerradas
+      launch_settlements: [ok([])],
+    });
+
+    const res = await createComplementarySettlement(supabase as never, {
+      launchId: LAUNCH_ID,
+    });
+
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.reason).toBe("no-closed-settlement");
+    expect(insertSpy).not.toHaveBeenCalled();
+  });
+
+  it("no-new-payments: no hay delta cobrado desde la liquidación anterior", async () => {
+    const { supabase, insertSpy } = makeFake({
+      launches: [launchOk],
+      settlement_rules: [ok(externalRule)],
+      // Una cerrada con collected_total=1000
+      launch_settlements: [
+        ok([
+          {
+            id: "prev-1",
+            collected_total: 1000,
+            created_at: "2026-01-01T00:00:00Z",
+          },
+        ]),
+      ],
+      // Total payments actual = 1000 (ya está todo liquidado)
+      sales: [ok([{ id: "s1", total_amount: 1000 }])],
+      payments: [ok([{ amount: 1000 }])],
+    });
+
+    const res = await createComplementarySettlement(supabase as never, {
+      launchId: LAUNCH_ID,
+    });
+
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.reason).toBe("no-new-payments");
+    expect(insertSpy).not.toHaveBeenCalled();
+  });
+
+  it("delta positivo → arma complementaria con solo % sobre lo nuevo", async () => {
+    // Escenario Maratón G7 simplificado:
+    //   - Liquidación original con collected_total=100.000, fee=5.000+100+min
+    //   - Entran nuevos pagos por 40.000
+    //   - La complementaria debe:
+    //     · collected_total = 40.000 (delta)
+    //     · snapshot con fixed_fee_per_launch=0, fixed_fee_per_sale=0,
+    //       min_guarantee=null, applies_on='collected'
+    //     · retención = 30% × 40.000 = 12.000
+    //     · owed_to_client = 40.000 − 12.000 = 28.000
+    //     · parent_settlement_id = 'prev-most-recent'
+    const { supabase, insertSpy } = makeFake({
+      launches: [launchOk],
+      settlement_rules: [ok(externalRule)],
+      launch_settlements: [
+        ok([
+          // Orden desc por created_at — el más reciente es el parent
+          {
+            id: "prev-most-recent",
+            collected_total: 100_000,
+            created_at: "2026-02-01T00:00:00Z",
+          },
+        ]),
+      ],
+      sales: [ok([{ id: "s1", total_amount: 100_000 }])],
+      payments: [ok([{ amount: 100_000 }, { amount: 40_000 }])],
+    });
+
+    const res = await createComplementarySettlement(supabase as never, {
+      launchId: LAUNCH_ID,
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.newlyCollected).toBe(40_000);
+    expect(res.previouslyCollected).toBe(100_000);
+    expect(res.parentSettlementId).toBe("prev-most-recent");
+    expect(res.payload.parent_settlement_id).toBe("prev-most-recent");
+    expect(res.payload.collected_total).toBe(40_000);
+    // 30% × 40.000 = 12.000, sin sumar fixed fees ni min_guarantee
+    expect(res.payload.kingrow_retained).toBe(12_000);
+    expect(res.payload.owed_to_client).toBe(28_000);
+    // El snapshot congelado NO lleva fees ni min_guarantee
+    expect(res.payload.settlement_rule_snapshot.fixed_fee_per_launch).toBe(0);
+    expect(res.payload.settlement_rule_snapshot.fixed_fee_per_sale).toBe(0);
+    expect(res.payload.settlement_rule_snapshot.min_guarantee).toBeNull();
+    expect(res.payload.settlement_rule_snapshot.applies_on).toBe("collected");
+    // El nombre se marca como complementaria para trazabilidad visual
+    expect(res.payload.settlement_rule_snapshot.name).toContain("complementaria");
+    expect(insertSpy).not.toHaveBeenCalled();
+  });
+
+  it("cadena: la nueva complementaria linkea al último cerrado (no al original)", async () => {
+    // Original cerrada + 1 complementaria previa cerrada + nuevo delta.
+    // El parent debe ser la complementaria previa, no el original.
+    const { supabase } = makeFake({
+      launches: [launchOk],
+      settlement_rules: [ok(externalRule)],
+      launch_settlements: [
+        ok([
+          // Desc por created_at — la comp1 es la más reciente
+          {
+            id: "comp-1",
+            collected_total: 20_000,
+            created_at: "2026-03-01T00:00:00Z",
+          },
+          {
+            id: "orig",
+            collected_total: 100_000,
+            created_at: "2026-02-01T00:00:00Z",
+          },
+        ]),
+      ],
+      sales: [ok([{ id: "s1", total_amount: 100_000 }])],
+      // Total actual = 100k + 20k (ya liquidado) + 15k nuevos = 135k
+      payments: [ok([{ amount: 135_000 }])],
+    });
+
+    const res = await createComplementarySettlement(supabase as never, {
+      launchId: LAUNCH_ID,
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.previouslyCollected).toBe(120_000); // 100k + 20k
+    expect(res.newlyCollected).toBe(15_000);
+    expect(res.parentSettlementId).toBe("comp-1");
+    expect(res.payload.kingrow_retained).toBe(4_500); // 30% × 15k
   });
 });

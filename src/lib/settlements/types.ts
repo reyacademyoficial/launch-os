@@ -61,6 +61,12 @@ export interface LaunchSettlementRow {
   status: LaunchSettlementStatus;
   created_at: string;
   closed_at: string | null;
+  /** NOT NULL solo en complementarias (ver 0130). Apunta a la liquidación original. */
+  parent_settlement_id: string | null;
+  /** Auditoría de reapertura (ver 0130). Nullable en filas nunca reabiertas. */
+  reopened_at: string | null;
+  reopened_by: string | null;
+  reopen_reason: string | null;
 }
 
 export interface ClientTransferRow {

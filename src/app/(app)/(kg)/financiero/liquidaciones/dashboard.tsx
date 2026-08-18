@@ -14,8 +14,11 @@ import type { LaunchSettlementInsert } from "@/lib/settlements/create";
 
 import {
   closeLaunchSettlement,
+  commitComplementarySettlement,
   commitCreateSettlement,
+  previewComplementarySettlement,
   previewCreateSettlement,
+  reopenLaunchSettlement,
 } from "./actions";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -86,6 +89,13 @@ export function LiquidacionesDashboard({
   // settlement elegido + fecha elegida. Separados a propósito — son dos
   // flujos con confirmaciones diferentes.
   const [creatingFor, setCreatingFor] = useState<LaunchRow | null>(null);
+  const [complementaryFor, setComplementaryFor] = useState<LaunchRow | null>(
+    null,
+  );
+  const [reopening, setReopening] = useState<{
+    launch: LaunchRow;
+    settlement: SettlementRow;
+  } | null>(null);
   const [closing, setClosing] = useState<{
     launch: LaunchRow;
     settlement: SettlementRow;
@@ -200,6 +210,8 @@ export function LiquidacionesDashboard({
           <LaunchList
             rows={filtered}
             onCreate={(l) => setCreatingFor(l)}
+            onComplementary={(l) => setComplementaryFor(l)}
+            onReopen={(l, s) => setReopening({ launch: l, settlement: s })}
             onClose={(l, s) => setClosing({ launch: l, settlement: s })}
           />
         )}
@@ -209,6 +221,19 @@ export function LiquidacionesDashboard({
         <CreateDrawer
           launch={creatingFor}
           onClose={() => setCreatingFor(null)}
+        />
+      )}
+      {complementaryFor && (
+        <ComplementaryDrawer
+          launch={complementaryFor}
+          onClose={() => setComplementaryFor(null)}
+        />
+      )}
+      {reopening && (
+        <ReopenDrawer
+          launch={reopening.launch}
+          settlement={reopening.settlement}
+          onClose={() => setReopening(null)}
         />
       )}
       {closing && (
@@ -330,10 +355,14 @@ function emptyTitle(filter: FilterKey): string {
 function LaunchList({
   rows,
   onCreate,
+  onComplementary,
+  onReopen,
   onClose,
 }: {
   readonly rows: readonly LaunchRow[];
   readonly onCreate: (l: LaunchRow) => void;
+  readonly onComplementary: (l: LaunchRow) => void;
+  readonly onReopen: (l: LaunchRow, s: SettlementRow) => void;
   readonly onClose: (l: LaunchRow, s: SettlementRow) => void;
 }) {
   return (
@@ -343,6 +372,8 @@ function LaunchList({
           key={r.launchId}
           launch={r}
           onCreate={() => onCreate(r)}
+          onComplementary={() => onComplementary(r)}
+          onReopen={(s) => onReopen(r, s)}
           onClose={(s) => onClose(r, s)}
         />
       ))}
@@ -353,10 +384,14 @@ function LaunchList({
 function LaunchCard({
   launch,
   onCreate,
+  onComplementary,
+  onReopen,
   onClose,
 }: {
   readonly launch: LaunchRow;
   readonly onCreate: () => void;
+  readonly onComplementary: () => void;
+  readonly onReopen: (s: SettlementRow) => void;
   readonly onClose: (s: SettlementRow) => void;
 }) {
   const hasClosed = launch.settlements.some(
@@ -437,6 +472,26 @@ function LaunchCard({
               + Crear liquidación
             </button>
           )}
+          {hasClosed && (
+            <button
+              type="button"
+              onClick={onComplementary}
+              className="kg-focus"
+              title="Liquidar los pagos posteriores al último cierre"
+              style={{
+                padding: "6px 14px",
+                borderRadius: 999,
+                background: "transparent",
+                color: "var(--kg-accent-500)",
+                border: "1px solid var(--kg-accent-500)",
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              + Complementaria
+            </button>
+          )}
         </div>
       </header>
 
@@ -456,6 +511,7 @@ function LaunchCard({
               key={s.id}
               settlement={s}
               onClose={() => onClose(s)}
+              onReopen={() => onReopen(s)}
             />
           ))}
           {hasDraft && hasClosed && (
@@ -481,9 +537,11 @@ function LaunchCard({
 function SettlementLine({
   settlement,
   onClose,
+  onReopen,
 }: {
   readonly settlement: SettlementRow;
   readonly onClose: () => void;
+  readonly onReopen: () => void;
 }) {
   const s = settlement;
   return (
@@ -534,11 +592,33 @@ function SettlementLine({
             Cerrar
           </button>
         )}
+        {s.status === "liquidada" && (
+          <button
+            type="button"
+            onClick={onReopen}
+            className="kg-focus"
+            title="Reabrir la liquidación (solo superadmin). Deshace el auto-devengo al cliente."
+            style={{
+              padding: "5px 12px",
+              borderRadius: 999,
+              background: "transparent",
+              color: "var(--kg-text-2)",
+              border: "1px solid var(--kg-border-subtle)",
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            Reabrir
+          </button>
+        )}
         {/*
           `transferida` se muestra en el listado y en los filtros, pero NO
           se ofrece la transición `liquidada → transferida`. Requiere linkear
           un movimiento bancario real y eso es otro bloque. Ver comentario
-          cabecera de la RPC 0100.
+          cabecera de la RPC 0100. Tampoco se ofrece "Reabrir" desde
+          `transferida` — la plata ya se movió y el flujo es un ajuste
+          contable manual, no una reapertura.
         */}
       </div>
     </div>
@@ -973,6 +1053,343 @@ function CloseDrawer({
           <Callout tone="positive">
             Liquidación cerrada. El ingreso ya se refleja en el dashboard
             financiero.
+          </Callout>
+        )}
+
+        {error && <Callout tone="negative">{error}</Callout>}
+      </div>
+    </Drawer>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Drawer: crear liquidación complementaria (delta cobrado post-cierre)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Mismo flujo que CreateDrawer: preview (dryRun) al abrir, commit al
+// confirmar. La diferencia es que llama a las actions de complementaria
+// y el copy explica que solo se cobra % sobre el delta (sin fixed fees ni
+// min_guarantee — esos ya se cobraron en la original).
+
+function ComplementaryDrawer({
+  launch,
+  onClose,
+}: {
+  readonly launch: LaunchRow;
+  readonly onClose: () => void;
+}) {
+  const [previewState, setPreviewState] = useState<
+    | { kind: "loading" }
+    | {
+        kind: "ok";
+        payload: LaunchSettlementInsert;
+        newlyCollected: number;
+        previouslyCollected: number;
+      }
+    | { kind: "error"; message: string }
+  >({ kind: "loading" });
+  const [committing, startCommit] = useTransition();
+  const [committed, setCommitted] = useState<{ id: string } | null>(null);
+  const [commitError, setCommitError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      const res = await previewComplementarySettlement({
+        launchId: launch.launchId,
+      });
+      if (cancelled) return;
+      if (res.ok) {
+        setPreviewState({
+          kind: "ok",
+          payload: res.payload,
+          newlyCollected: res.newlyCollected,
+          previouslyCollected: res.previouslyCollected,
+        });
+      } else {
+        setPreviewState({ kind: "error", message: res.error });
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [launch.launchId]);
+
+  function handleCommit() {
+    setCommitError(null);
+    startCommit(async () => {
+      const res = await commitComplementarySettlement({
+        launchId: launch.launchId,
+      });
+      if (res.ok) {
+        setCommitted({ id: res.settlementId });
+      } else {
+        setCommitError(res.error);
+      }
+    });
+  }
+
+  return (
+    <Drawer
+      open
+      onClose={onClose}
+      title="Crear liquidación complementaria"
+      subtitle={`${launch.projectName} · ${launch.launchName}`}
+      footer={
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button
+            type="button"
+            onClick={onClose}
+            className="kg-focus"
+            style={{
+              padding: "8px 16px",
+              borderRadius: 999,
+              background: "transparent",
+              border: "1px solid var(--kg-border-subtle)",
+              color: "var(--kg-text-2)",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            {committed ? "Cerrar" : "Cancelar"}
+          </button>
+          {previewState.kind === "ok" && !committed && (
+            <button
+              type="button"
+              onClick={handleCommit}
+              disabled={committing}
+              className="kg-focus"
+              style={{
+                padding: "8px 16px",
+                borderRadius: 999,
+                background: "var(--kg-accent-500)",
+                border: "none",
+                color: "#fff",
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: committing ? "wait" : "pointer",
+                opacity: committing ? 0.7 : 1,
+              }}
+            >
+              {committing ? "Creando…" : "Crear en borrador"}
+            </button>
+          )}
+        </div>
+      }
+    >
+      {previewState.kind === "loading" && (
+        <div className="kg-t6" style={{ color: "var(--kg-text-3)" }}>
+          Calculando el delta cobrado…
+        </div>
+      )}
+
+      {previewState.kind === "error" && (
+        <Callout tone="negative">{previewState.message}</Callout>
+      )}
+
+      {previewState.kind === "ok" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <div
+            className="kg-t6"
+            style={{ color: "var(--kg-text-3)", lineHeight: 1.5 }}
+          >
+            Complementaria sobre <strong>{fMoney(previewState.newlyCollected)}</strong>{" "}
+            de pagos entrados después de la última liquidación (
+            {fMoney(previewState.previouslyCollected)} ya liquidados). Solo se
+            aplica el porcentaje de la regla vigente — los fees fijos y el
+            mínimo garantizado ya se cobraron en la original.
+          </div>
+
+          <Breakdown
+            total={previewState.payload.collected_total}
+            totalLabel="Cobrado nuevo (delta)"
+            parts={[
+              {
+                l: "Kingrow retenido",
+                v: previewState.payload.kingrow_retained,
+              },
+              {
+                l:
+                  launch.ownership === "externa"
+                    ? "A transferir al cliente"
+                    : "Queda para el proyecto propio",
+                v: previewState.payload.owed_to_client,
+              },
+            ]}
+            fmtFn={fMoney}
+          />
+
+          {committed && (
+            <Callout tone="positive">
+              Complementaria creada en borrador. Cerrala desde el listado para
+              devengar los montos.
+            </Callout>
+          )}
+
+          {commitError && <Callout tone="negative">{commitError}</Callout>}
+        </div>
+      )}
+    </Drawer>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Drawer: reabrir liquidación (liquidada → abierta, con motivo)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Solo aparece para `status='liquidada'` (nunca para transferida). Requiere
+// motivo obligatorio (la RPC 0130 rebota si está vacío). Deshace el
+// auto-devengo `a_favor_cliente` que 0100 había insertado — la UI lo avisa
+// para que el operador entienda qué se está tocando.
+
+function ReopenDrawer({
+  launch,
+  settlement,
+  onClose,
+}: {
+  readonly launch: LaunchRow;
+  readonly settlement: SettlementRow;
+  readonly onClose: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [submitting, startSubmit] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  function handleSubmit() {
+    setError(null);
+    startSubmit(async () => {
+      const res = await reopenLaunchSettlement({
+        settlementId: settlement.id,
+        reason,
+      });
+      if (res.ok) setDone(true);
+      else setError(res.error);
+    });
+  }
+
+  const willUnwindTransfer =
+    settlement.owedToClient > 0 && launch.ownership === "externa";
+  const canSubmit = reason.trim().length > 0 && !submitting;
+
+  return (
+    <Drawer
+      open
+      onClose={onClose}
+      title="Reabrir liquidación"
+      subtitle={`${launch.projectName} · ${launch.launchName}`}
+      footer={
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button
+            type="button"
+            onClick={onClose}
+            className="kg-focus"
+            style={{
+              padding: "8px 16px",
+              borderRadius: 999,
+              background: "transparent",
+              border: "1px solid var(--kg-border-subtle)",
+              color: "var(--kg-text-2)",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            {done ? "Cerrar" : "Cancelar"}
+          </button>
+          {!done && (
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={!canSubmit}
+              className="kg-focus"
+              style={{
+                padding: "8px 16px",
+                borderRadius: 999,
+                background: "var(--kg-accent-500)",
+                border: "none",
+                color: "#fff",
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: canSubmit ? "pointer" : "not-allowed",
+                opacity: canSubmit ? 1 : 0.6,
+              }}
+            >
+              {submitting ? "Reabriendo…" : "Confirmar reapertura"}
+            </button>
+          )}
+        </div>
+      }
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <Breakdown
+          total={settlement.collectedTotal}
+          totalLabel="Cobrado (queda igual al reabrir)"
+          parts={[
+            { l: "Kingrow retenido", v: settlement.kingrowRetained },
+            {
+              l:
+                launch.ownership === "externa"
+                  ? "A transferir al cliente"
+                  : "Queda para el proyecto propio",
+              v: settlement.owedToClient,
+            },
+          ]}
+          fmtFn={fMoney}
+        />
+
+        <div>
+          <label
+            htmlFor="reopen-reason"
+            className="kg-t7"
+            style={{ display: "block", color: "var(--kg-text-3)", marginBottom: 6 }}
+          >
+            Motivo (obligatorio)
+          </label>
+          <textarea
+            id="reopen-reason"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={3}
+            placeholder="Ej: la regla estaba mal, hay que recalcular con el porcentaje corregido"
+            className="kg-focus"
+            style={{
+              width: "100%",
+              padding: "9px 12px",
+              borderRadius: "var(--kg-r-8)",
+              background: "var(--kg-surface-2-solid)",
+              border: "1px solid var(--kg-border-subtle)",
+              color: "var(--kg-text-1)",
+              fontSize: 13,
+              fontFamily: "inherit",
+              resize: "vertical",
+            }}
+          />
+          <div
+            className="kg-t7"
+            style={{ color: "var(--kg-text-3)", marginTop: 6, lineHeight: 1.5 }}
+          >
+            Se guarda con el usuario y la fecha en la fila de la liquidación
+            para auditoría.
+          </div>
+        </div>
+
+        {willUnwindTransfer && (
+          <Callout tone="warning">
+            Reabrir va a borrar el devengo automático de{" "}
+            <strong>{fMoney(settlement.owedToClient)}</strong> a favor del
+            cliente (el que 0100 había insertado al cerrar). Si ya se generó
+            una transferencia bancaria linkeada, la reapertura va a rebotar
+            hasta que la desvinculés.
+          </Callout>
+        )}
+
+        {done && (
+          <Callout tone="positive">
+            Liquidación reabierta. Ya la podés recalcular y cerrar de nuevo
+            desde el listado.
           </Callout>
         )}
 

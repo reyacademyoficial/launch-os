@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   translateCloseSettlementError,
+  translateComplementarySettlementError,
   translateCreateSettlementError,
+  translateReopenSettlementError,
 } from "./translate-error";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -33,14 +35,70 @@ describe("translateCreateSettlementError", () => {
     expect(out).toContain("liquidar");
   });
 
-  it("already-settled → menciona que las complementarias no están implementadas", () => {
-    // Copy negociado en el brief: en Maratón G7 va a pasar en cuanto entre
-    // uno de los ~$40M pendientes. El usuario tiene que entender POR QUÉ
-    // ese pago no genera plata nueva en el tablero, no solo que "ya existe".
+  it("already-settled → sugiere usar liquidación complementaria (post-0130)", () => {
+    // El copy cambió cuando 0130 habilitó complementarias: ya no es un
+    // limbo, sino que la acción correcta es explícita.
     const out = translateCreateSettlementError("already-settled");
     expect(out).toContain("cerrada");
     expect(out).toContain("complementaria");
-    expect(out).toContain("todavía no están implementadas");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// translateComplementarySettlementError — cubre todos los reasons de create.ts
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("translateComplementarySettlementError", () => {
+  it("launch-not-found → mensaje sobre el lanzamiento", () => {
+    const out = translateComplementarySettlementError("launch-not-found");
+    expect(out).toContain("lanzamiento");
+  });
+
+  it("no-rule → linkea a Reglas de split (mismo copy que original)", () => {
+    const out = translateComplementarySettlementError("no-rule");
+    expect(out).toContain("regla");
+    expect(out).toContain("Reglas de split");
+  });
+
+  it("no-closed-settlement → redirige a 'Crear liquidación' normal", () => {
+    const out = translateComplementarySettlementError("no-closed-settlement");
+    expect(out).toContain("Crear liquidación");
+  });
+
+  it("no-new-payments → dice que no hay delta", () => {
+    const out = translateComplementarySettlementError("no-new-payments");
+    expect(out).toContain("pagos nuevos");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// translateReopenSettlementError — cubre los 5 reasons de reopen.ts
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("translateReopenSettlementError", () => {
+  it("reopen-reason-required → pide motivo", () => {
+    const out = translateReopenSettlementError("reopen-reason-required");
+    expect(out).toContain("motivo");
+  });
+
+  it("settlement-not-found → mensaje sobre desaparición", () => {
+    const out = translateReopenSettlementError("settlement-not-found");
+    expect(out).toContain("no existe");
+  });
+
+  it("settlement-not-liquidada → explica que solo desde 'liquidada'", () => {
+    const out = translateReopenSettlementError("settlement-not-liquidada");
+    expect(out).toContain("liquidada");
+  });
+
+  it("settlement-has-bank-movements → pide desvincular primero", () => {
+    const out = translateReopenSettlementError("settlement-has-bank-movements");
+    expect(out).toContain("Desvinculá");
+  });
+
+  it("unknown → fallback friendly", () => {
+    const out = translateReopenSettlementError("unknown");
+    expect(out).toContain("Error");
   });
 });
 

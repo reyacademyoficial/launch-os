@@ -790,12 +790,39 @@ bloque propio (Bloque 6 · Integraciones externas).
 No pertenecen a estos módulos pero conviene no perderlas de vista:
 
 - [ ] Porcentajes de split de Maestro Charcutero y Super Instructor Marcos.
-- [ ] Liquidación complementaria: los ~$40M pendientes de Maratón G7 van a rebotar con
-      `already-settled` cuando entren.
-- [ ] Reapertura de liquidaciones: sin definir.
-- [ ] `created_by` en `settlement_rules`.
+      _(Data entry pendiente al 2026-08-18: sin valores confirmados de negocio
+      (percent / fixed fees / min_guarantee / applies_on). Cargar vía
+      `/organizacion/reglas-split/new` cuando aparezcan.)_
+- [x] Liquidación complementaria: los ~$40M pendientes de Maratón G7 van a rebotar con
+      `already-settled` cuando entren. _(Cerrado 2026-08-18: migración 0130
+      agrega `parent_settlement_id` + `createComplementarySettlement` en
+      `src/lib/settlements/create.ts` computa `newlyCollected = total_actual
+      - Σ collected_total previos`. Snapshot derivado: solo `percent_of_collected`
+      aplica; `fixed_fee_per_launch`, `fixed_fee_per_sale` y `min_guarantee` se
+      ponen en 0/null porque ya se cobraron en la original. UI: botón
+      "+ Complementaria" en el card cuando `hasClosed`. Ya no hay limbo — el
+      copy de `already-settled` cambió para sugerir el flujo.)_
+- [x] Reapertura de liquidaciones: sin definir. _(Definido y cerrado
+      2026-08-18: migración 0130 agrega columnas `reopened_at`, `reopened_by`,
+      `reopen_reason` + RPC atómica `reopen_launch_settlement(id, reason)`.
+      Solo desde `status='liquidada'` (no desde `transferida` — la plata ya
+      se movió, es ajuste contable manual). Motivo obligatorio. La RPC borra
+      el `client_transfers a_favor_cliente` auto-creado por 0100, y rebota
+      con `settlement-has-bank-movements` si hay `bank_movement_id` linkeado.
+      Solo superadmin vía `requireRole` en el action. UI: botón "Reabrir"
+      en `SettlementLine` cuando `status='liquidada'`.)_
+- [x] `created_by` en `settlement_rules`. _(Cerrado 2026-08-18: migración 0128
+      agrega columna nullable + `on delete set null`, `rotate_settlement_rule`
+      popula `auth.uid()` en el INSERT sin cambiar signature. SELECTs de 4
+      páginas SSR + tipo `SettlementRuleRow` + fixtures actualizados.)_
 - [ ] `expenses` es org-scope: hoy no se puede saber cuánto cuesta operar cada proyecto.
-- [ ] Fórmulas marcadas `// REVISAR CON CONTADOR`.
+- [ ] Fórmulas marcadas `// REVISAR CON CONTADOR`. _(Parkeado explícito
+      2026-08-18: 8 fórmulas identificadas (7 en `src/lib/finance/kpis.ts`,
+      1 en `src/lib/clients/ltv.ts`) — directCosts vs opex, AP corriente en
+      netWorth, IVA neto vs bruto en AR/AP, cashflow con Σ payments, burn
+      con impuestos/comisiones, runway en meses vs días, Monotributo neto.
+      Todas son decisiones contables, no técnicas — esperan revisión con
+      contador antes de cambiar defaults.)_
 - [x] Gating de sidebar por rol para `/financiero`, `/organizacion` y `/comercial`.
       _(Cerrado 2026-08-07: cada módulo llama `requireRole` en su layout; sidebar
       filtrada por `visibleModulesForRole`; cliente va a `/lanzamientos`, operador

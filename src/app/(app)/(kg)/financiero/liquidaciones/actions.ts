@@ -3,16 +3,20 @@
 import { revalidatePath } from "next/cache";
 
 import {
+  createComplementarySettlement,
   createSettlement,
   type LaunchSettlementInsert,
 } from "@/lib/settlements/create";
+import { reopenLaunchSettlement as reopenRpc } from "@/lib/settlements/reopen";
 import type { LaunchSettlementStatus } from "@/lib/settlements/types";
 import { requireRole } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
 import {
   translateCloseSettlementError,
+  translateComplementarySettlementError,
   translateCreateSettlementError,
+  translateReopenSettlementError,
 } from "./translate-error";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -154,4 +158,127 @@ export async function closeLaunchSettlement(
   revalidatePath("/financiero/liquidaciones");
   revalidatePath("/financiero");
   return { ok: true, settlementId: closed.id, status: closed.status };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Reapertura — RPC atómica 0130 (liquidada → abierta + cleanup)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Solo superadmin (más el bypass de `dev`). La UI oculta el botón para
+// otros roles; este gate es defense-in-depth. La RPC además valida a
+// nivel DB los guards (status, bank_movement, motivo).
+
+export interface ReopenSettlementPayload {
+  readonly settlementId: string;
+  readonly reason: string;
+}
+
+export type ReopenSettlementResult =
+  | { ok: true; settlementId: string }
+  | { ok: false; error: string };
+
+export async function reopenLaunchSettlement(
+  input: ReopenSettlementPayload,
+): Promise<ReopenSettlementResult> {
+  await requireRole("superadmin");
+
+  const supabase = await createClient();
+  const result = await reopenRpc(supabase, {
+    settlementId: input.settlementId,
+    reason: input.reason,
+  });
+
+  if (!result.ok) {
+    return { ok: false, error: translateReopenSettlementError(result.reason) };
+  }
+
+  revalidatePath("/financiero/liquidaciones");
+  revalidatePath("/financiero");
+  return { ok: true, settlementId: result.settlement.id };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Complementaria — preview + commit (delta cobrado sobre lo ya liquidado)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Mismo patrón que createSettlement: preview dryRun, commit escribe.
+// Se llama cuando la UI detecta que existe una liquidación cerrada y
+// hay pagos posteriores a esa cerrada.
+
+export interface PreviewComplementaryPayload {
+  readonly launchId: string;
+}
+
+export type PreviewComplementaryResult =
+  | {
+      ok: true;
+      payload: LaunchSettlementInsert;
+      newlyCollected: number;
+      previouslyCollected: number;
+      parentSettlementId: string;
+    }
+  | { ok: false; error: string };
+
+export async function previewComplementarySettlement(
+  input: PreviewComplementaryPayload,
+): Promise<PreviewComplementaryResult> {
+  await requireRole("superadmin");
+  const supabase = await createClient();
+
+  const result = await createComplementarySettlement(supabase, {
+    launchId: input.launchId,
+    dryRun: true,
+  });
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      error: translateComplementarySettlementError(result.reason),
+    };
+  }
+
+  return {
+    ok: true,
+    payload: result.payload,
+    newlyCollected: result.newlyCollected,
+    previouslyCollected: result.previouslyCollected,
+    parentSettlementId: result.parentSettlementId,
+  };
+}
+
+export interface CommitComplementaryPayload {
+  readonly launchId: string;
+}
+
+export type CommitComplementaryResult =
+  | { ok: true; settlementId: string }
+  | { ok: false; error: string };
+
+export async function commitComplementarySettlement(
+  input: CommitComplementaryPayload,
+): Promise<CommitComplementaryResult> {
+  await requireRole("superadmin");
+  const supabase = await createClient();
+
+  const result = await createComplementarySettlement(supabase, {
+    launchId: input.launchId,
+    dryRun: false,
+  });
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      error: translateComplementarySettlementError(result.reason),
+    };
+  }
+
+  if (!result.settlementId) {
+    return {
+      ok: false,
+      error: "La creación no devolvió un id de liquidación.",
+    };
+  }
+
+  revalidatePath("/financiero/liquidaciones");
+  return { ok: true, settlementId: result.settlementId };
 }
