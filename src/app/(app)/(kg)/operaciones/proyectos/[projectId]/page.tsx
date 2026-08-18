@@ -36,6 +36,24 @@ interface ProjectDbRow {
   readonly due_on: string | null;
   readonly closed_at: string | null;
   readonly notes: string | null;
+  readonly notion_page_id: string | null;
+  readonly notion_workspace_id: string | null;
+  readonly notion_synced_at: string | null;
+}
+
+interface NotionCommentRow {
+  readonly id: string;
+  readonly notion_comment_id: string;
+  readonly notion_user_id: string | null;
+  readonly content_plain: string;
+  readonly created_time: string;
+  readonly updated_time: string;
+}
+
+interface CommentAuthorInfo {
+  readonly notionName: string | null;
+  readonly notionAvatarUrl: string | null;
+  readonly kgPersonId: string | null;
 }
 
 interface PersonDbRow {
@@ -98,7 +116,7 @@ export default async function InternalProjectFichaPage({
     supabase
       .from("internal_projects")
       .select(
-        "id, name, description, status, priority, owner_id, starts_on, due_on, closed_at, notes",
+        "id, name, description, status, priority, owner_id, starts_on, due_on, closed_at, notes, notion_page_id, notion_workspace_id, notion_synced_at",
       )
       .eq("id", projectId)
       .maybeSingle(),
@@ -117,6 +135,59 @@ export default async function InternalProjectFichaPage({
 
   const project = projectRes.data as ProjectDbRow | null;
   if (!project) notFound();
+
+  // ─── Comentarios Notion (solo si el project vino de Notion) ──────────────
+  // Se cachean en internal_project_notion_comments cuando el sync corre.
+  // La ficha los muestra readonly (4d). El write path llega en 4e.
+  const isNotionSourced = project.notion_page_id !== null;
+  const commentsRes = isNotionSourced
+    ? await supabase
+        .from("internal_project_notion_comments")
+        .select(
+          "id, notion_comment_id, notion_user_id, content_plain, created_time, updated_time",
+        )
+        .eq("internal_project_id", projectId)
+        .order("created_time", { ascending: false })
+    : null;
+  const notionComments = (commentsRes?.data ?? []) as unknown as NotionCommentRow[];
+
+  // Resolver notion_user_id → info del autor (nombre Notion + KG person).
+  // Cache local (Map) — evita joins raros de postgrest. Solo tocamos la
+  // tabla notion_users si tenemos IDs para consultar.
+  const authorByNotionUserId = new Map<string, CommentAuthorInfo>();
+  if (
+    isNotionSourced &&
+    project.notion_workspace_id !== null &&
+    notionComments.length > 0
+  ) {
+    const authorIds = Array.from(
+      new Set(
+        notionComments
+          .map((c) => c.notion_user_id)
+          .filter((x): x is string => x !== null),
+      ),
+    );
+    if (authorIds.length > 0) {
+      const authorsRes = await supabase
+        .from("notion_users")
+        .select("notion_user_id, name, avatar_url, kg_person_id")
+        .eq("workspace_id", project.notion_workspace_id)
+        .in("notion_user_id", authorIds);
+      const authors = (authorsRes.data ?? []) as unknown as Array<{
+        notion_user_id: string;
+        name: string | null;
+        avatar_url: string | null;
+        kg_person_id: string | null;
+      }>;
+      for (const a of authors) {
+        authorByNotionUserId.set(a.notion_user_id, {
+          notionName: a.name,
+          notionAvatarUrl: a.avatar_url,
+          kgPersonId: a.kg_person_id,
+        });
+      }
+    }
+  }
 
   const allPeople = (peopleRes.data ?? []) as unknown as PersonDbRow[];
   const ownerName = project.owner_id
@@ -307,6 +378,189 @@ export default async function InternalProjectFichaPage({
           />
         </Panel>
       </div>
+
+      {isNotionSourced && (
+        <Panel title="Comentarios de Notion">
+          <NotionCommentsSection
+            comments={notionComments}
+            authorByNotionUserId={authorByNotionUserId}
+            allPeople={allPeople}
+            syncedAt={project.notion_synced_at}
+          />
+        </Panel>
+      )}
+    </div>
+  );
+}
+
+function NotionCommentsSection({
+  comments,
+  authorByNotionUserId,
+  allPeople,
+  syncedAt,
+}: {
+  readonly comments: readonly NotionCommentRow[];
+  readonly authorByNotionUserId: ReadonlyMap<string, CommentAuthorInfo>;
+  readonly allPeople: readonly PersonDbRow[];
+  readonly syncedAt: string | null;
+}) {
+  if (comments.length === 0) {
+    return (
+      <div
+        style={{
+          fontSize: 13,
+          lineHeight: 1.55,
+          color: "var(--kg-text-3)",
+        }}
+      >
+        No hay comentarios en la page de Notion.{" "}
+        {syncedAt
+          ? `Último sync: ${formatIso(syncedAt)}.`
+          : "Este proyecto todavía no fue sincronizado."}{" "}
+        Los comentarios se traen en cada corrida de "Sincronizar Notion" —
+        escribir desde acá llega en 4e.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {comments.map((c) => {
+        const author = c.notion_user_id
+          ? authorByNotionUserId.get(c.notion_user_id) ?? null
+          : null;
+        const kgPersonName =
+          author?.kgPersonId
+            ? allPeople.find((p) => p.id === author.kgPersonId)?.full_name ?? null
+            : null;
+        const displayName =
+          kgPersonName ?? author?.notionName ?? "Usuario de Notion";
+
+        return (
+          <article
+            key={c.id}
+            style={{
+              display: "flex",
+              gap: 10,
+              alignItems: "flex-start",
+              padding: "10px 12px",
+              borderRadius: "var(--kg-r-10)",
+              border: "1px solid var(--kg-border-subtle)",
+              background: "var(--kg-surface-1)",
+            }}
+          >
+            <Avatar
+              url={author?.notionAvatarUrl ?? null}
+              name={displayName}
+            />
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 0 }}>
+              <header
+                style={{
+                  display: "flex",
+                  gap: 6,
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: "var(--kg-text-1)",
+                  }}
+                >
+                  {displayName}
+                </span>
+                {kgPersonName && (
+                  <span
+                    style={{
+                      fontSize: 10,
+                      padding: "1px 6px",
+                      borderRadius: 999,
+                      background: "var(--kg-positive-500-a10, rgba(80,200,120,0.12))",
+                      color: "var(--kg-positive-500)",
+                      fontWeight: 700,
+                    }}
+                    title="Autor mapeado a una persona de la organización"
+                  >
+                    Kingrow
+                  </span>
+                )}
+                <span
+                  style={{
+                    fontSize: 11,
+                    color: "var(--kg-text-3)",
+                  }}
+                  title={c.created_time}
+                >
+                  · {formatIso(c.created_time)}
+                </span>
+              </header>
+              <div
+                style={{
+                  fontSize: 13,
+                  lineHeight: 1.55,
+                  color: "var(--kg-text-1)",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {c.content_plain || <em style={{ color: "var(--kg-text-3)" }}>(comentario vacío)</em>}
+              </div>
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function Avatar({
+  url,
+  name,
+}: {
+  readonly url: string | null;
+  readonly name: string;
+}) {
+  const initial = (name.trim()[0] ?? "?").toUpperCase();
+  if (url) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={url}
+        alt={name}
+        width={28}
+        height={28}
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: "50%",
+          objectFit: "cover",
+          border: "1px solid var(--kg-border-subtle)",
+          flexShrink: 0,
+        }}
+      />
+    );
+  }
+  return (
+    <div
+      aria-hidden
+      style={{
+        width: 28,
+        height: 28,
+        borderRadius: "50%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "var(--kg-surface-2)",
+        border: "1px solid var(--kg-border-subtle)",
+        color: "var(--kg-text-2)",
+        fontSize: 12,
+        fontWeight: 700,
+        flexShrink: 0,
+      }}
+    >
+      {initial}
     </div>
   );
 }

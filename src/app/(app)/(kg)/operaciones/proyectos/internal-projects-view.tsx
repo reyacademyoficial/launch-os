@@ -109,9 +109,13 @@ export function InternalProjectsView({
           text: "No hay databases habilitadas. Configuralas en /configuracion/notion.",
         });
       } else {
+        const commentsMsg =
+          res.totalCommentsUpserted > 0
+            ? ` · ${res.totalCommentsUpserted} comentario(s) sincronizados`
+            : "";
         setSyncMessage({
           kind: "ok",
-          text: `Sincronizamos ${res.databasesRun} database(s) de ${res.workspacesRun} workspace(s). ${res.totalUpserted} proyecto(s) actualizados.`,
+          text: `Sincronizamos ${res.databasesRun} database(s) de ${res.workspacesRun} workspace(s). ${res.totalUpserted} proyecto(s) actualizados${commentsMsg}.`,
         });
       }
     });

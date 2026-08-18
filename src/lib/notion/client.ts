@@ -75,6 +75,20 @@ export interface NotionPage {
   readonly properties: Record<string, unknown>;
 }
 
+export interface NotionPageComment {
+  readonly id: string;
+  /** Autor del comentario (notion user id). null si Notion no lo expone. */
+  readonly notion_user_id: string | null;
+  /**
+   * Contenido plano — el rich_text de Notion aplanado con `plain_text` de
+   * cada segmento. Suficiente para v1 (display readonly). Mentions llegan
+   * como texto sin resolver (Notion ya inyecta el "@Nombre" en plain_text).
+   */
+  readonly content_plain: string;
+  readonly created_time: string;
+  readonly last_edited_time: string;
+}
+
 /**
  * Schema-ish de una database — solo las propiedades con tipo. Se usa en
  * la UI de config de mapping para poblar los dropdowns "elegí la columna
@@ -286,6 +300,56 @@ export async function listUsers(token: string): Promise<NotionUser[]> {
         email: u.person?.email ?? null,
         avatar_url: u.avatar_url,
         type: u.type,
+      });
+    }
+
+    cursor = data.has_more ? data.next_cursor ?? undefined : undefined;
+  } while (cursor);
+  return out;
+}
+
+/**
+ * GET /v1/comments?block_id={pageId} — trae los comentarios de una page.
+ * Paginado con cursor. Notion trata los comentarios como children del
+ * "block" que es el page id (mismo endpoint que para bloques con hilo).
+ *
+ * Los comentarios de Notion pueden estar anclados a una page ("unresolved
+ * page-level") o a un bloque interno. Este endpoint devuelve solo los
+ * page-level cuando se pasa el page id como block_id — que es lo que la
+ * UI de Notion muestra en el panel de comentarios a la derecha.
+ */
+export async function listPageComments(
+  token: string,
+  pageId: string,
+): Promise<NotionPageComment[]> {
+  const out: NotionPageComment[] = [];
+  let cursor: string | undefined = undefined;
+  do {
+    const qs = new URLSearchParams({ block_id: pageId, page_size: "100" });
+    if (cursor) qs.set("start_cursor", cursor);
+
+    const res = await notionFetch(token, "GET", `/comments?${qs.toString()}`);
+    const data = res as {
+      results: Array<{
+        id: string;
+        created_by?: { id?: string };
+        created_time: string;
+        last_edited_time: string;
+        rich_text?: Array<{ plain_text?: string }>;
+      }>;
+      next_cursor: string | null;
+      has_more: boolean;
+    };
+
+    for (const c of data.results) {
+      const plain =
+        c.rich_text?.map((t) => t.plain_text ?? "").join("") ?? "";
+      out.push({
+        id: c.id,
+        notion_user_id: c.created_by?.id ?? null,
+        content_plain: plain,
+        created_time: c.created_time,
+        last_edited_time: c.last_edited_time,
       });
     }
 

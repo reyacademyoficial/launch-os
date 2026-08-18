@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import {
   listDatabases as apiListDatabases,
+  listPageComments as apiListPageComments,
   listUsers as apiListUsers,
   NotionApiError,
   queryDatabase as apiQueryDatabase,
@@ -658,6 +659,8 @@ export type SyncDatabaseResult =
       fetched: number;
       upserted: number;
       skippedNoTitle: number;
+      commentsUpserted: number;
+      commentsFailed: number;
     }
   | { ok: false; error: string };
 
@@ -793,7 +796,75 @@ export async function syncNotionDatabase(
     upserted = payloads.length;
   }
 
-  await finalizeLog("ok", upserted);
+  // 7) Sync comentarios (4d) — para cada page upserteada, traer los comments
+  //    de Notion y cachearlos en internal_project_notion_comments.
+  //
+  //    Necesitamos el internal_project.id para el FK — el upsert no lo
+  //    devuelve, así que hacemos un select por notion_page_id in [...].
+  //    Errores por page son "partial": seguimos con las demás.
+  let commentsUpserted = 0;
+  let commentsFailed = 0;
+  if (payloads.length > 0) {
+    const pageIds = payloads.map((p) => p.notion_page_id);
+    const projectsRes = await supabase
+      .from("internal_projects")
+      .select("id, notion_page_id")
+      .in("notion_page_id", pageIds);
+    const projectIdByPage = new Map<string, string>();
+    for (const r of (projectsRes.data ?? []) as Array<{
+      id: string;
+      notion_page_id: string;
+    }>) {
+      projectIdByPage.set(r.notion_page_id, r.id);
+    }
+
+    for (const page of pages) {
+      const projectId = projectIdByPage.get(page.id);
+      if (!projectId) continue; // saltó por skippedNoTitle, no upserteado
+
+      let comments: Awaited<ReturnType<typeof apiListPageComments>>;
+      try {
+        comments = await apiListPageComments(ws.secret_token, page.id);
+      } catch {
+        commentsFailed += 1;
+        continue;
+      }
+
+      if (comments.length === 0) continue;
+
+      const commentPayloads = comments.map((c) => ({
+        organization_id: ws.organization_id,
+        internal_project_id: projectId,
+        notion_comment_id: c.id,
+        notion_user_id: c.notion_user_id,
+        content_plain: c.content_plain,
+        created_time: c.created_time,
+        updated_time: c.last_edited_time,
+        synced_at: nowIso,
+      }));
+
+      const { error: cErr } = await supabase
+        .from("internal_project_notion_comments")
+        .upsert(commentPayloads as never, {
+          onConflict: "notion_comment_id",
+        });
+      if (cErr) {
+        commentsFailed += 1;
+        continue;
+      }
+      commentsUpserted += comments.length;
+    }
+  }
+
+  const finalStatus: "ok" | "partial" =
+    commentsFailed > 0 ? "partial" : "ok";
+  await finalizeLog(
+    finalStatus,
+    upserted + commentsUpserted,
+    commentsFailed > 0
+      ? `Fallaron comentarios en ${commentsFailed} page(s).`
+      : undefined,
+  );
   revalidatePath("/operaciones/proyectos");
   revalidatePath("/configuracion/notion");
 
@@ -802,6 +873,8 @@ export async function syncNotionDatabase(
     fetched: pages.length,
     upserted,
     skippedNoTitle,
+    commentsUpserted,
+    commentsFailed,
   };
 }
 
@@ -813,6 +886,7 @@ export type SyncAllResult = {
   workspacesRun: number;
   databasesRun: number;
   totalUpserted: number;
+  totalCommentsUpserted: number;
   errors: ReadonlyArray<{ databaseId: string; error: string }>;
 };
 
@@ -836,10 +910,15 @@ export async function syncAllEnabledNotionDatabases(): Promise<SyncAllResult> {
 
   const errors: Array<{ databaseId: string; error: string }> = [];
   let totalUpserted = 0;
+  let totalCommentsUpserted = 0;
   for (const row of activeRows) {
     const res = await syncNotionDatabase(row.id);
-    if (res.ok) totalUpserted += res.upserted;
-    else errors.push({ databaseId: row.id, error: res.error });
+    if (res.ok) {
+      totalUpserted += res.upserted;
+      totalCommentsUpserted += res.commentsUpserted;
+    } else {
+      errors.push({ databaseId: row.id, error: res.error });
+    }
   }
 
   revalidatePath("/operaciones/proyectos");
@@ -847,6 +926,7 @@ export async function syncAllEnabledNotionDatabases(): Promise<SyncAllResult> {
     workspacesRun,
     databasesRun: activeRows.length,
     totalUpserted,
+    totalCommentsUpserted,
     errors,
   };
 }

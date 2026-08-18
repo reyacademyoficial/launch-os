@@ -96,9 +96,17 @@ function DatabaseCard({
           res.skippedNoTitle > 0
             ? ` (${res.skippedNoTitle} skipped por título vacío)`
             : "";
+        const commentsMsg =
+          res.commentsUpserted > 0
+            ? ` · ${res.commentsUpserted} comentario(s)`
+            : "";
+        const failedMsg =
+          res.commentsFailed > 0
+            ? ` · ${res.commentsFailed} page(s) sin poder traer comentarios`
+            : "";
         setMessage({
-          kind: "ok",
-          text: `Trajimos ${res.fetched} pages, upsertamos ${res.upserted}${skippedMsg}.`,
+          kind: res.commentsFailed > 0 ? "error" : "ok",
+          text: `Trajimos ${res.fetched} pages, upsertamos ${res.upserted}${skippedMsg}${commentsMsg}${failedMsg}.`,
         });
       } else {
         setMessage({ kind: "error", text: res.error });

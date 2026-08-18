@@ -6,7 +6,7 @@
 
 ## Estado (2026-08-18)
 
-**Cerrado en este chat:**
+**Cerrado en chats previos:**
 - ✅ **4a Foundation** — commit `d51c3e0`. Migración 0132 + client TS +
   config UI de workspaces.
 - ✅ **4b Sync users + mapping** — commit `5e8fac8`. Actions + UI en
@@ -14,9 +14,13 @@
 - ✅ **4c Sync projects** — commit `04f19fe`. Property parser + map-page
   + sync engine + UI de databases con mapping form + badges en Ops.
 
+**Cerrado en este chat:**
+- ✅ **4d Comentarios read** — migración 0133 (`internal_project_notion_comments`)
+  + `listPageComments` en el client + fase de sync de comentarios dentro
+  de `syncNotionDatabase` + sección "Comentarios de Notion" readonly en
+  la ficha del `internal_project` (solo cuando `notion_page_id NOT NULL`).
+
 **Pendiente para el próximo chat:**
-- ⏭ **4d** Comentarios read (cache en `internal_project_notion_comments`
-  + display en la ficha del project).
 - ⏭ **4e** Comentarios write desde KG con @mentions.
 - ⏭ **4f** Vercel Cron `/api/cron/notion-sync` cada 15 min con
   sync incremental (`last_edited_time > notion_synced_at`).
@@ -222,15 +226,30 @@ Con users mapeados, ya se puede importar pages como projects.
 - [x] Link "Databases" en la card de cada workspace en la lista de
   workspaces (paralelo al de Usuarios).
 
-### 4d — Comentarios read (siguiente chat)
+### 4d — Comentarios read (este chat)
 
-- [ ] Tabla `internal_project_notion_comments` (cache): `id, project_id
-  fk, notion_comment_id text unique, notion_user_id, content_plain,
-  created_time, updated_time`.
-- [ ] Extender `syncNotionDatabase` para traer comentarios por page.
-- [ ] UI en la ficha del `internal_project`: sección "Comentarios de
-  Notion" con quién comentó (resolviendo notion_user → organization_person
-  si está mapeado).
+- [x] Migración 0133 con tabla `internal_project_notion_comments`
+  (`id, organization_id, internal_project_id fk cascade, notion_comment_id
+  text unique, notion_user_id, content_plain, created_time, updated_time,
+  synced_at`) + RLS `can_edit_organization`.
+- [x] Cliente `listPageComments(token, pageId)` que hace
+  `GET /v1/comments?block_id={pageId}` paginado y aplana `rich_text` a
+  `content_plain`.
+- [x] `syncNotionDatabase` extendido con una fase de comentarios post-upsert
+  de projects: mapea page_id → internal_project_id (select por
+  `.in('notion_page_id', ...)`) e upserta comentarios por
+  `notion_comment_id`. Errores por page son tolerados (`commentsFailed`
+  contador, log queda `partial`).
+- [x] Retornos `SyncDatabaseResult` y `SyncAllResult` extendidos con
+  `commentsUpserted` / `commentsFailed` / `totalCommentsUpserted`.
+  Mensajes de UI (databases-view + internal-projects-view) actualizados.
+- [x] UI ficha `/operaciones/proyectos/[projectId]`: nuevo panel
+  "Comentarios de Notion" (solo visible con `notion_page_id NOT NULL`)
+  con avatar, nombre resuelto por preferencia
+  KG-person→notion-name→fallback, badge "Kingrow" cuando el autor está
+  mapeado a una `organization_person`, fecha de creación y content plano
+  (`whitespace: pre-wrap`). Empty-state explicativo cuando no hay
+  comentarios todavía.
 
 ### 4e — Comentarios write + @mentions (siguiente chat)
 
