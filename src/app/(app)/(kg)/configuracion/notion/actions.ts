@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import {
   listDatabases as apiListDatabases,
+  listUsers as apiListUsers,
   NotionApiError,
   whoAmI as apiWhoAmI,
 } from "@/lib/notion/client";
@@ -254,6 +255,295 @@ export async function discoverNotionDatabases(
     discovered: newOnes.length,
     total: dbs.length,
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// syncNotionUsers — trae users del workspace desde Notion + upsert + auto-match
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Solo persiste users con `type='person'` — bots (integrations) no aportan
+// al mapeo y ensucian la UI. Auto-matching por email lowercased contra
+// `organization_people`: solo pisa `kg_person_id` si el user Notion NO tenía
+// mapping previo (no queremos sobrescribir asignaciones manuales del humano).
+// Loguea la corrida en notion_sync_log.
+
+export type SyncNotionUsersResult =
+  | {
+      ok: true;
+      fetched: number;
+      persons: number;
+      inserted: number;
+      updated: number;
+      autoMatched: number;
+    }
+  | { ok: false; error: string };
+
+export async function syncNotionUsers(
+  workspaceId: string,
+): Promise<SyncNotionUsersResult> {
+  await requireRole("superadmin");
+
+  const supabase = await createClient();
+
+  const wsRes = await supabase
+    .from("notion_workspaces")
+    .select("id, organization_id, secret_token")
+    .eq("id", workspaceId)
+    .maybeSingle();
+
+  const ws = wsRes.data as
+    | { id: string; organization_id: string; secret_token: string }
+    | null;
+  if (wsRes.error || !ws) {
+    return { ok: false, error: "No pudimos encontrar el workspace." };
+  }
+
+  // Log inicial en 'running' — nos permite detectar syncs que colgaron
+  // (updateamos a 'ok' o 'error' al finalizar). El id devuelto es el que
+  // actualizamos al cierre.
+  const startRes = await supabase
+    .from("notion_sync_log")
+    .insert({
+      workspace_id: workspaceId,
+      kind: "users",
+      status: "running",
+    } as never)
+    .select("id")
+    .single();
+  const logRow = startRes.data as { id: string } | null;
+  const logId = logRow?.id ?? null;
+
+  async function finalizeLog(
+    status: "ok" | "error" | "partial",
+    itemsSynced: number,
+    error?: string,
+  ) {
+    if (!logId) return;
+    await supabase
+      .from("notion_sync_log")
+      .update({
+        status,
+        error: error ?? null,
+        items_synced: itemsSynced,
+        completed_at: new Date().toISOString(),
+      } as never)
+      .eq("id", logId);
+  }
+
+  // ─── Fetch de Notion ──────────────────────────────────────────────────
+  let notionUsers: Awaited<ReturnType<typeof apiListUsers>>;
+  try {
+    notionUsers = await apiListUsers(ws.secret_token);
+  } catch (e) {
+    await finalizeLog("error", 0, notionErrorMessage(e));
+    return { ok: false, error: notionErrorMessage(e) };
+  }
+
+  const persons = notionUsers.filter((u) => u.type === "person");
+
+  // ─── Existing mapping — para saber cuáles ya tenían kg_person_id ──────
+  // No queremos pisar mappings manuales del humano con el auto-match. Solo
+  // populamos kg_person_id si estaba null.
+  const existingRes = await supabase
+    .from("notion_users")
+    .select("notion_user_id, kg_person_id")
+    .eq("workspace_id", workspaceId);
+  const existingById = new Map<string, string | null>(
+    ((existingRes.data ?? []) as Array<{
+      notion_user_id: string;
+      kg_person_id: string | null;
+    }>).map((r) => [r.notion_user_id, r.kg_person_id]),
+  );
+
+  // ─── Personas de la org por email (lower) para auto-match ─────────────
+  const peopleRes = await supabase
+    .from("organization_people")
+    .select("id, email, active")
+    .eq("organization_id", ws.organization_id);
+  const people = (peopleRes.data ?? []) as Array<{
+    id: string;
+    email: string | null;
+    active: boolean;
+  }>;
+  const personIdByEmail = new Map<string, string>();
+  for (const p of people) {
+    if (!p.active) continue;
+    const em = (p.email ?? "").trim().toLowerCase();
+    if (em && !personIdByEmail.has(em)) personIdByEmail.set(em, p.id);
+  }
+
+  // ─── Upsert row por row — la cardinalidad es baja (users < 100 típico) ──
+  let inserted = 0;
+  let updated = 0;
+  let autoMatched = 0;
+
+  for (const u of persons) {
+    const existingMapping = existingById.get(u.id);
+    const isNew = !existingById.has(u.id);
+    const emLower = (u.email ?? "").trim().toLowerCase();
+    // Auto-match solo si (a) es fila nueva o (b) existente sin mapping.
+    let resolvedPersonId: string | null | undefined = existingMapping ?? null;
+    if (
+      (isNew || existingMapping == null) &&
+      emLower.length > 0 &&
+      personIdByEmail.has(emLower)
+    ) {
+      resolvedPersonId = personIdByEmail.get(emLower) ?? null;
+      if (resolvedPersonId) autoMatched += 1;
+    }
+
+    const payload = {
+      workspace_id: workspaceId,
+      notion_user_id: u.id,
+      email: u.email,
+      name: u.name,
+      avatar_url: u.avatar_url,
+      kg_person_id: resolvedPersonId,
+    };
+
+    if (isNew) {
+      const { error } = await supabase
+        .from("notion_users")
+        .insert(payload as never);
+      if (error) {
+        await finalizeLog("partial", inserted + updated, error.message);
+        return { ok: false, error: error.message };
+      }
+      inserted += 1;
+    } else {
+      // Update: pisa email/name/avatar (por si cambiaron en Notion). No pisa
+      // kg_person_id si el humano ya lo había mapeado — usamos el resolved
+      // solo si el existing era null.
+      const updatePayload: Record<string, unknown> = {
+        email: u.email,
+        name: u.name,
+        avatar_url: u.avatar_url,
+      };
+      if (existingMapping == null && resolvedPersonId != null) {
+        updatePayload.kg_person_id = resolvedPersonId;
+      }
+      const { error } = await supabase
+        .from("notion_users")
+        .update(updatePayload as never)
+        .eq("workspace_id", workspaceId)
+        .eq("notion_user_id", u.id);
+      if (error) {
+        await finalizeLog("partial", inserted + updated, error.message);
+        return { ok: false, error: error.message };
+      }
+      updated += 1;
+    }
+  }
+
+  await finalizeLog("ok", inserted + updated);
+  revalidatePath(`/configuracion/notion/${workspaceId}/usuarios`);
+  revalidatePath("/configuracion/notion");
+
+  return {
+    ok: true,
+    fetched: notionUsers.length,
+    persons: persons.length,
+    inserted,
+    updated,
+    autoMatched,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// setNotionUserPersonMapping — mapping manual desde la UI
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type SetMappingResult = { ok: true } | { ok: false; error: string };
+
+export async function setNotionUserPersonMapping(
+  workspaceId: string,
+  notionUserId: string,
+  kgPersonId: string | null,
+): Promise<SetMappingResult> {
+  await requireRole("superadmin");
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("notion_users")
+    .update({ kg_person_id: kgPersonId } as never)
+    .eq("workspace_id", workspaceId)
+    .eq("notion_user_id", notionUserId);
+
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/configuracion/notion/${workspaceId}/usuarios`);
+  return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// autoMatchNotionUsers — corre solo el matching por email sin refetch a Notion
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Útil cuando cambian los emails en organization_people después de un sync
+// (ej: se corrigió un typo). No pisa mappings ya definidos por el humano.
+
+export type AutoMatchResult =
+  | { ok: true; matched: number; totalUnmapped: number }
+  | { ok: false; error: string };
+
+export async function autoMatchNotionUsers(
+  workspaceId: string,
+): Promise<AutoMatchResult> {
+  await requireRole("superadmin");
+
+  const supabase = await createClient();
+
+  const wsRes = await supabase
+    .from("notion_workspaces")
+    .select("id, organization_id")
+    .eq("id", workspaceId)
+    .maybeSingle();
+  const ws = wsRes.data as { organization_id: string } | null;
+  if (!ws) return { ok: false, error: "Workspace no encontrado." };
+
+  const unmappedRes = await supabase
+    .from("notion_users")
+    .select("notion_user_id, email")
+    .eq("workspace_id", workspaceId)
+    .is("kg_person_id", null);
+  const unmapped = (unmappedRes.data ?? []) as Array<{
+    notion_user_id: string;
+    email: string | null;
+  }>;
+
+  if (unmapped.length === 0) {
+    return { ok: true, matched: 0, totalUnmapped: 0 };
+  }
+
+  const peopleRes = await supabase
+    .from("organization_people")
+    .select("id, email")
+    .eq("organization_id", ws.organization_id)
+    .eq("active", true);
+  const personIdByEmail = new Map<string, string>();
+  for (const p of (peopleRes.data ?? []) as Array<{
+    id: string;
+    email: string | null;
+  }>) {
+    const em = (p.email ?? "").trim().toLowerCase();
+    if (em && !personIdByEmail.has(em)) personIdByEmail.set(em, p.id);
+  }
+
+  let matched = 0;
+  for (const u of unmapped) {
+    const em = (u.email ?? "").trim().toLowerCase();
+    if (!em) continue;
+    const pid = personIdByEmail.get(em);
+    if (!pid) continue;
+    const { error } = await supabase
+      .from("notion_users")
+      .update({ kg_person_id: pid } as never)
+      .eq("workspace_id", workspaceId)
+      .eq("notion_user_id", u.notion_user_id);
+    if (!error) matched += 1;
+  }
+
+  revalidatePath(`/configuracion/notion/${workspaceId}/usuarios`);
+  return { ok: true, matched, totalUnmapped: unmapped.length };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

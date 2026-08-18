@@ -82,16 +82,30 @@ Migración + config UI mínima + client TS.
 Antes de importar proyectos hay que tener el mapa de usuarios para
 resolver assignees/owners.
 
-- [ ] Action `syncNotionUsers(workspaceId)` que:
+- [x] Action `syncNotionUsers(workspaceId)`:
   - Llama a `listUsers` de la API Notion (paginado).
-  - Upserta en `notion_users` por (workspace_id, notion_user_id).
-  - Auto-matchea con `organization_people` por email lowercased donde
-    la persona todavía no está mapeada.
-- [ ] UI en `/configuracion/notion/[workspaceId]/usuarios`:
-  - Tabla con: notion user (nombre + email + avatar), matcheada con
-    (dropdown de `organization_people` filtradas por org).
-  - Botón "Auto-matchear por email" corre el matching automático.
-  - Botón "Sincronizar usuarios ahora" refetch de Notion.
+  - Filtra `type='person'` (bots no aportan al mapeo).
+  - Upsert por (workspace_id, notion_user_id) — INSERT si es nuevo,
+    UPDATE de email/name/avatar si ya existe.
+  - Auto-matchea por email lowercased contra `organization_people`
+    activas de la org SOLO cuando el kg_person_id está null. Preserva
+    mappings manuales del humano.
+  - Loguea la corrida en `notion_sync_log` con `kind='users'` y status
+    running → ok / partial / error.
+- [x] Action `setNotionUserPersonMapping(workspaceId, notionUserId,
+  kgPersonId | null)` — mapping manual desde el dropdown.
+- [x] Action `autoMatchNotionUsers(workspaceId)` — corre solo el
+  matching por email sin refetch a Notion. Útil cuando cambian emails
+  en Personas después del último sync.
+- [x] UI en `/configuracion/notion/[workspaceId]/usuarios`:
+  - Header con stats: total, mapeados, sin mapear (con tone warning
+    si > 0).
+  - Botones "Sincronizar ahora" y "Auto-matchear por email".
+  - Tabla: avatar + name + email + dropdown de personas activas.
+    Border amarillo en el dropdown cuando la fila está sin mapear.
+  - Optimistic UI: cambio del dropdown persiste inmediato con rollback
+    si el server falla. Badge "✓ guardado" en las filas modificadas.
+  - Link "Usuarios" en cada `WorkspaceRow` que navega acá.
 
 ### 4c — Sync de projects (este chat)
 

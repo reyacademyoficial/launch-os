@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 
 import {
@@ -140,6 +141,13 @@ export function WorkspaceRow({
             flexWrap: "wrap",
           }}
         >
+          <Link
+            href={`/configuracion/notion/${workspace.id}/usuarios`}
+            className="kg-focus"
+            style={{ ...secondaryBtn, textDecoration: "none" }}
+          >
+            Usuarios
+          </Link>
           <button
             type="button"
             onClick={handleDiscover}
