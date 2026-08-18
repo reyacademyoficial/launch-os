@@ -15,6 +15,7 @@ interface ExpenseDbRow {
   readonly description: string;
   readonly category: string | null;
   readonly supplier_id: string | null;
+  readonly project_id: string | null;
   readonly amount_gross: number;
   readonly tax_amount: number;
   readonly currency: string | null;
@@ -24,6 +25,10 @@ interface ExpenseDbRow {
   readonly notes: string | null;
 }
 interface SupplierRow {
+  readonly id: string;
+  readonly name: string;
+}
+interface ProjectRow {
   readonly id: string;
   readonly name: string;
 }
@@ -38,7 +43,7 @@ export async function GET(request: Request) {
   let query = supabase
     .from("expenses")
     .select(
-      "id, description, category, supplier_id, amount_gross, tax_amount, currency, expense_date, due_date, paid_at, notes",
+      "id, description, category, supplier_id, project_id, amount_gross, tax_amount, currency, expense_date, due_date, paid_at, notes",
     )
     .order("expense_date", { ascending: false });
   if (paid === "pagado") query = query.not("paid_at", "is", null);
@@ -59,22 +64,34 @@ export async function GET(request: Request) {
       expenses.map((e) => e.supplier_id).filter((id): id is string => id != null),
     ),
   );
-  const supplierNameById = new Map<string, string>();
-  if (supplierIds.length > 0) {
-    const { data } = await supabase
-      .from("suppliers")
-      .select("id, name")
-      .in("id", supplierIds);
-    for (const s of (data ?? []) as SupplierRow[]) {
-      supplierNameById.set(s.id, s.name);
-    }
-  }
+  const projectIds = Array.from(
+    new Set(
+      expenses.map((e) => e.project_id).filter((id): id is string => id != null),
+    ),
+  );
+
+  const [suppliersRes, projectsRes] = await Promise.all([
+    supplierIds.length > 0
+      ? supabase.from("suppliers").select("id, name").in("id", supplierIds)
+      : Promise.resolve({ data: [] as SupplierRow[] }),
+    projectIds.length > 0
+      ? supabase.from("projects").select("id, name").in("id", projectIds)
+      : Promise.resolve({ data: [] as ProjectRow[] }),
+  ]);
+
+  const supplierNameById = new Map<string, string>(
+    ((suppliersRes.data ?? []) as SupplierRow[]).map((s) => [s.id, s.name]),
+  );
+  const projectNameById = new Map<string, string>(
+    ((projectsRes.data ?? []) as ProjectRow[]).map((p) => [p.id, p.name]),
+  );
 
   const rows: ExpenseExportRow[] = expenses.map((e) => ({
     expenseDate: e.expense_date,
     description: e.description,
     category: e.category,
     supplier: e.supplier_id ? supplierNameById.get(e.supplier_id) ?? "—" : "—",
+    projectName: e.project_id ? projectNameById.get(e.project_id) ?? null : null,
     amountGross: Number(e.amount_gross),
     taxAmount: Number(e.tax_amount),
     amountNet: Number(e.amount_gross) - Number(e.tax_amount),

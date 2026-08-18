@@ -21,6 +21,24 @@ describe("translateExpenseError", () => {
     expect(out).toContain("montos");
   });
 
+  it("23514 details=expense-project-org-mismatch → mensaje sobre proyectos", () => {
+    const out = translateExpenseError({
+      code: "23514",
+      message: "El proyecto no pertenece a la organización del gasto.",
+      details: "expense-project-org-mismatch",
+    });
+    expect(out).toContain("otra organización");
+  });
+
+  it("23514 details=expense-project-not-found → pide recargar la lista", () => {
+    const out = translateExpenseError({
+      code: "23514",
+      message: "El proyecto asociado no existe.",
+      details: "expense-project-not-found",
+    });
+    expect(out).toContain("Recargá");
+  });
+
   it("23503 sobre bank_movement_id → dice recargar", () => {
     // Puede pasar por carrera: alguien borró el bank_movement mientras el
     // form estaba abierto. El mensaje pide recargar en vez de exponer el

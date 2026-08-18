@@ -42,6 +42,29 @@ export function sumExpensesNet(expenses: FinanceExpenseRow[]): number {
   );
 }
 
+/**
+ * Agrupa el neto de expenses por `project_id` (0131). Los gastos org-level
+ * (`project_id = null`) se agregan bajo la clave especial `null` para
+ * exponerlos como "estructura" en el P&L por proyecto — el caller decide
+ * si prorratearlos o mostrarlos aparte.
+ *
+ * Devuelve un Map (no un plain object) para que el caller distinga entre
+ * "sin gasto atribuido" (key ausente) y "cero neto" (key presente con 0).
+ */
+export function sumExpensesNetByProject(
+  expenses: FinanceExpenseRow[],
+): Map<string | null, number> {
+  const map = new Map<string | null, number>();
+  for (const e of expenses) {
+    const net = e.amount_gross - e.tax_amount;
+    // Normalizamos undefined a null — un SELECT que no incluya la columna
+    // devuelve el campo como undefined, pero contablemente es "org-level".
+    const key = e.project_id ?? null;
+    map.set(key, (map.get(key) ?? 0) + net);
+  }
+  return map;
+}
+
 /** Σ total_amount de payroll (ya viene con extras/deducciones aplicadas). */
 export function sumPayrollTotal(payroll: FinancePayrollRow[]): number {
   return payroll.reduce((acc, p) => acc + p.total_amount, 0);

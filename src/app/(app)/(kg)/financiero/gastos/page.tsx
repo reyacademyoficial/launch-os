@@ -44,6 +44,7 @@ interface ExpenseDbRow extends FinanceExpenseRow {
   readonly notes: string | null;
   readonly due_date: string | null;
   readonly transaction_number: string | null;
+  // project_id ya viene por herencia de FinanceExpenseRow (0131).
 }
 
 interface SupplierRow {
@@ -99,7 +100,7 @@ export default async function GastosPage({
   let query = supabase
     .from("expenses")
     .select(
-      "id, description, category, supplier_id, amount_gross, tax_amount, currency, expense_date, due_date, paid_at, bank_movement_id, notes, transaction_number",
+      "id, description, category, supplier_id, project_id, amount_gross, tax_amount, currency, expense_date, due_date, paid_at, bank_movement_id, notes, transaction_number",
     )
     .order("expense_date", { ascending: false });
 
@@ -214,14 +215,43 @@ export default async function GastosPage({
   );
   const banks = (banksRes.data ?? []) as BankRow[];
   const bankById = new Map<string, BankRow>(banks.map((b) => [b.id, b]));
-  const projectIds = Array.from(new Set(banks.map((b) => b.project_id)));
-  const projectsRes =
-    projectIds.length > 0
-      ? await supabase.from("projects").select("id, name").in("id", projectIds)
-      : { data: [] as ProjectNameRow[] };
-  const projectNameById = new Map<string, string>(
-    ((projectsRes.data ?? []) as ProjectNameRow[]).map((p) => [p.id, p.name]),
+
+  // Projects: unión de los referenciados por banks (banks son project-scope
+  // aunque la mayoría de bancos hoy son sin proyecto) y los referenciados
+  // por expenses.project_id (0131). Fetch único con el set unificado.
+  // Además cargamos TODOS los projects de la org como opciones del picker
+  // del drawer de edición — el conjunto es pequeño (decenas), no un
+  // problema traerlos completos.
+  const bankProjectIds = banks.map((b) => b.project_id);
+  const expenseProjectIds = expenses
+    .map((e) => e.project_id)
+    .filter((id): id is string => id != null);
+  const referencedProjectIds = Array.from(
+    new Set([...bankProjectIds, ...expenseProjectIds]),
   );
+
+  const [projectsByRefRes, projectsForPickerRes] = await Promise.all([
+    referencedProjectIds.length > 0
+      ? supabase.from("projects").select("id, name").in("id", referencedProjectIds)
+      : Promise.resolve({ data: [] as ProjectNameRow[] }),
+    // Picker: todos los projects de la org, ordenados por nombre. Sin filtro
+    // por status — pueden querer atribuir a un proyecto pausado/finalizado
+    // (ej: gastos de cierre).
+    supabase
+      .from("projects")
+      .select("id, name")
+      .order("name", { ascending: true }),
+  ]);
+
+  const projectNameById = new Map<string, string>(
+    ((projectsByRefRes.data ?? []) as ProjectNameRow[]).map((p) => [p.id, p.name]),
+  );
+  const projectsForPicker = (projectsForPickerRes.data ?? []) as ProjectNameRow[];
+  // Enriquecer el mapa de nombres con los del picker por si un proyecto de
+  // expense no fue referenciado por ningún bank (caso normal).
+  for (const p of projectsForPicker) {
+    if (!projectNameById.has(p.id)) projectNameById.set(p.id, p.name);
+  }
 
   const totalCount = expenses.length;
   const paged = expenses.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -281,6 +311,10 @@ export default async function GastosPage({
     bankMovementId: e.bank_movement_id,
     notes: e.notes,
     transactionNumber: e.transaction_number,
+    projectId: e.project_id ?? null,
+    projectName: e.project_id
+      ? projectNameById.get(e.project_id) ?? null
+      : null,
     linkedMovements: linkedMovementsByExpenseId.get(e.id) ?? [],
   }));
 
@@ -384,7 +418,7 @@ export default async function GastosPage({
               Exportar Excel
             </a>
             <ImportExpensesButton />
-            <NewExpenseButton />
+            <NewExpenseButton projects={projectsForPicker} />
           </div>
         }
       >
@@ -392,6 +426,7 @@ export default async function GastosPage({
           rows={rows}
           totalCount={totalCount}
           unconciledMovements={unconciledForDrawer}
+          projects={projectsForPicker}
           footerActions={
             <KgPaginator
               page={page}

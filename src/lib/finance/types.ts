@@ -73,6 +73,8 @@ export interface FinanceExpenseRow {
   paid_at: string | null;
   due_date: string | null;
   expense_date: string;
+  /** Atribución opcional a proyecto (0131). NULL = gasto org-level. */
+  project_id: string | null;
 }
 
 /**

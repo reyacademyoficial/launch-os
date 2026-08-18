@@ -14,6 +14,7 @@ import {
   computeProfit,
   computeRunway,
   sumExpensesNet,
+  sumExpensesNetByProject,
   sumPayrollTotal,
 } from "./kpis";
 import type {
@@ -37,6 +38,7 @@ function expense(overrides: Partial<FinanceExpenseRow> = {}): FinanceExpenseRow 
     paid_at: null,
     due_date: null,
     expense_date: "2026-07-01",
+    project_id: null,
     ...overrides,
   };
 }
@@ -117,6 +119,54 @@ describe("sumExpensesNet", () => {
       expense({ amount_gross: 500, tax_amount: 0 }),
     ]);
     expect(total).toBe(1500);
+  });
+});
+
+describe("sumExpensesNetByProject", () => {
+  it("agrupa por project_id: org-level (null) separado de cada proyecto", () => {
+    const map = sumExpensesNetByProject([
+      expense({ amount_gross: 1210, tax_amount: 210, project_id: "proj-A" }),
+      expense({ amount_gross: 500, tax_amount: 0, project_id: "proj-A" }),
+      expense({ amount_gross: 300, tax_amount: 0, project_id: "proj-B" }),
+      // Org-level (SaaS, alquiler, etc.)
+      expense({ amount_gross: 700, tax_amount: 0, project_id: null }),
+    ]);
+    expect(map.get("proj-A")).toBe(1500);
+    expect(map.get("proj-B")).toBe(300);
+    expect(map.get(null)).toBe(700);
+  });
+
+  it("map vacío cuando no hay expenses", () => {
+    const map = sumExpensesNetByProject([]);
+    expect(map.size).toBe(0);
+  });
+
+  it("distingue clave presente con 0 de clave ausente", () => {
+    // Un proyecto con neto 0 (bruto = IVA) todavía aparece — expresa que
+    // "hubo actividad pero neta 0", que es distinto de "sin gasto".
+    const map = sumExpensesNetByProject([
+      expense({ amount_gross: 100, tax_amount: 100, project_id: "proj-X" }),
+    ]);
+    expect(map.has("proj-X")).toBe(true);
+    expect(map.get("proj-X")).toBe(0);
+    expect(map.has("proj-Y")).toBe(false);
+  });
+
+  it("undefined en project_id (SELECT sin la col) cae en null (org-level)", () => {
+    // Defensa contra queries viejas que no incluyeron `project_id` en el
+    // SELECT. Contablemente equivale a "no atribuido" = org-level.
+    const rowWithoutCol = {
+      amount_gross: 500,
+      tax_amount: 0,
+      currency: "ARS" as const,
+      category: null,
+      paid_at: null,
+      due_date: null,
+      expense_date: "2026-07-01",
+      // project_id omitido a propósito → undefined en runtime
+    } as unknown as Parameters<typeof sumExpensesNetByProject>[0][0];
+    const map = sumExpensesNetByProject([rowWithoutCol]);
+    expect(map.get(null)).toBe(500);
   });
 });
 

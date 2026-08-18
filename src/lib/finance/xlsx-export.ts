@@ -172,6 +172,8 @@ export interface ExpenseExportRow {
   readonly dueDate: string | null;
   readonly paidAt: string | null;
   readonly notes: string | null;
+  /** Atribución opcional a proyecto (0131). null = gasto org-level. */
+  readonly projectName: string | null;
 }
 
 export async function buildExpensesWorkbook(
@@ -184,6 +186,7 @@ export async function buildExpensesWorkbook(
     { header: "Descripción", key: "description", width: 34 },
     { header: "Categoría", key: "category", width: 16 },
     { header: "Proveedor", key: "supplier", width: 22 },
+    { header: "Proyecto", key: "project", width: 22 },
     { header: "Bruto", key: "gross", width: 14, style: MONEY_STYLE },
     { header: "IVA", key: "tax", width: 12, style: MONEY_STYLE },
     { header: "Neto", key: "net", width: 14, style: MONEY_STYLE },
@@ -198,6 +201,8 @@ export async function buildExpensesWorkbook(
       description: r.description,
       category: r.category ?? "",
       supplier: r.supplier,
+      // "org-level" para gastos no atribuidos — matchea el label de la UI.
+      project: r.projectName ?? "org-level",
       gross: r.amountGross,
       tax: r.taxAmount,
       net: r.amountNet,

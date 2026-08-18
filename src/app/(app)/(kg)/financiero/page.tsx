@@ -153,7 +153,7 @@ export default async function FinancieroPage({
     supabase
       .from("expenses")
       .select(
-        "amount_gross, tax_amount, currency, category, paid_at, due_date, expense_date",
+        "amount_gross, tax_amount, currency, category, paid_at, due_date, expense_date, project_id",
       ),
     supabase
       .from("payroll")

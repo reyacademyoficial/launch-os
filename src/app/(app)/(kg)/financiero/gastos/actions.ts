@@ -50,6 +50,8 @@ interface ExpensePayload {
   readonly dueDate: string | null;
   readonly notes: string | null;
   readonly transactionNumber: string | null;
+  /** null = gasto org-level (0131). uuid = atribución a proyecto. */
+  readonly projectId: string | null;
 }
 
 function parseExpenseFormData(formData: FormData): ExpensePayload | string {
@@ -99,6 +101,12 @@ function parseExpenseFormData(formData: FormData): ExpensePayload | string {
   const txRaw = String(formData.get("transaction_number") ?? "").trim();
   const transactionNumber = txRaw.length === 0 ? null : txRaw;
 
+  // project_id opcional. El picker manda "" para "sin proyecto" (org-level);
+  // un uuid concreto para atribución. El trigger de 0131 valida coherencia
+  // org-scope — acá solo pasamos el valor.
+  const projectIdRaw = String(formData.get("project_id") ?? "").trim();
+  const projectId = projectIdRaw.length === 0 ? null : projectIdRaw;
+
   return {
     description,
     category,
@@ -109,6 +117,7 @@ function parseExpenseFormData(formData: FormData): ExpensePayload | string {
     dueDate,
     notes,
     transactionNumber,
+    projectId,
   };
 }
 
@@ -145,6 +154,7 @@ export async function createExpense(
   const supabase = await createClient();
   const payload = {
     organization_id: organizationId,
+    project_id: parsed.projectId,
     description: parsed.description,
     category: parsed.category,
     // Todos los satélites en null a propósito — decisión 6c-write.B:
@@ -197,6 +207,7 @@ export async function updateExpense(
 
   const supabase = await createClient();
   const payload = {
+    project_id: parsed.projectId,
     description: parsed.description,
     category: parsed.category,
     amount_gross: parsed.amountGross,

@@ -824,7 +824,17 @@ No pertenecen a estos módulos pero conviene no perderlas de vista:
       agrega columna nullable + `on delete set null`, `rotate_settlement_rule`
       popula `auth.uid()` en el INSERT sin cambiar signature. SELECTs de 4
       páginas SSR + tipo `SettlementRuleRow` + fixtures actualizados.)_
-- [ ] `expenses` es org-scope: hoy no se puede saber cuánto cuesta operar cada proyecto.
+- [x] `expenses` es org-scope: hoy no se puede saber cuánto cuesta operar cada proyecto.
+      _(Cerrado 2026-08-18: migración 0131 agrega `expenses.project_id` NULLABLE
+      referenciando `projects(id)` con `on delete set null`. Trigger de
+      coherencia org-scope (`expenses_project_org_match`) bloquea payloads
+      cross-org. Nuevo selector `sumExpensesNetByProject(expenses) → Map<projectId
+      | null, number>` para agregar por proyecto (org-level bajo la key null).
+      UI: picker "Proyecto" en el drawer de create/edit con opción "Sin proyecto
+      (org-level)", columna "Proyecto" en la vista de Gastos, columna en el
+      export XLSX. SELECTs de expenses en ejecutivo + financiero + gastos +
+      export ahora incluyen `project_id`. El xlsx-import queda como org-level
+      por default — el humano atribuye post-import via edit._
 - [ ] Fórmulas marcadas `// REVISAR CON CONTADOR`. _(Parkeado explícito
       2026-08-18: 8 fórmulas identificadas (7 en `src/lib/finance/kpis.ts`,
       1 en `src/lib/clients/ltv.ts`) — directCosts vs opex, AP corriente en

@@ -11,7 +11,10 @@ import {
 import { fMoney } from "@/lib/finance/format";
 
 import { bulkDeleteExpenses, deleteExpense } from "./actions";
-import { ExpenseFormDrawer } from "./expense-form-drawer";
+import {
+  ExpenseFormDrawer,
+  type ProjectOptionForExpense,
+} from "./expense-form-drawer";
 import {
   LinkPaymentDrawer,
   type UnconciledMovement,
@@ -36,6 +39,10 @@ export interface ExpenseRowData {
   readonly bankMovementId: string | null;
   readonly notes: string | null;
   readonly transactionNumber: string | null;
+  /** Atribución opcional a proyecto (0131). null = gasto org-level. */
+  readonly projectId: string | null;
+  /** Nombre resuelto del proyecto — null si org-level o si no encontrado. */
+  readonly projectName: string | null;
   readonly linkedMovements: ReadonlyArray<{
     readonly movementId: string;
     readonly role: "principal" | "comision" | "otro";
@@ -55,11 +62,14 @@ export function GastosView({
   rows,
   totalCount,
   unconciledMovements,
+  projects,
   footerActions,
 }: {
   readonly rows: readonly ExpenseRowData[];
   readonly totalCount: number;
   readonly unconciledMovements: readonly UnconciledMovement[];
+  /** Proyectos de la org para el picker del drawer de edición (0131). */
+  readonly projects: readonly ProjectOptionForExpense[];
   /** Slot para el paginador — va en la misma fila que "X de Y registros". */
   readonly footerActions?: ReactNode;
 }) {
@@ -174,6 +184,21 @@ export function GastosView({
       },
     },
     { key: "supplier", label: "Proveedor", render: (r) => r.supplier },
+    {
+      key: "project",
+      label: "Proyecto",
+      // Org-level explícito: em-dash con tone tenue para distinguir de datos
+      // faltantes. Un gasto con project_id borrado (proyecto eliminado)
+      // vuelve a org-level automáticamente vía on delete set null.
+      render: (r) =>
+        r.projectName ? (
+          r.projectName
+        ) : (
+          <span style={{ color: "var(--kg-text-3)", fontStyle: "italic" }}>
+            org-level
+          </span>
+        ),
+    },
     {
       key: "gross",
       label: "Bruto",
@@ -327,7 +352,9 @@ export function GastosView({
             dueDate: editingRow.dueDate,
             notes: editingRow.notes,
             transactionNumber: editingRow.transactionNumber,
+            projectId: editingRow.projectId,
           }}
+          projects={projects}
         />
       )}
 

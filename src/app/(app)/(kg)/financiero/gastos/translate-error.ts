@@ -28,6 +28,19 @@ export function translateExpenseError(error: ExpenseErrorLike): string {
     if (message.includes("expenses_tax_within_gross")) {
       return "El IVA no puede superar el monto bruto del gasto.";
     }
+    // Guards del trigger 0131 — validación de coherencia project/org.
+    if (details === "expense-project-org-mismatch") {
+      return (
+        "El proyecto elegido pertenece a otra organización. Elegí uno de " +
+        "los proyectos de tu organización o dejá el gasto como org-level."
+      );
+    }
+    if (details === "expense-project-not-found") {
+      return (
+        "El proyecto elegido ya no existe. Recargá la lista y volvé a " +
+        "intentar."
+      );
+    }
     // Otros CHECK del schema (amount_gross >= 0, tax_amount >= 0)
     return "El gasto no cumple una restricción de validez. Revisá los montos.";
   }

@@ -2,12 +2,19 @@
 
 import { useState } from "react";
 
-import { ExpenseFormDrawer } from "./expense-form-drawer";
+import {
+  ExpenseFormDrawer,
+  type ProjectOptionForExpense,
+} from "./expense-form-drawer";
 
 // Botón "+ Nuevo gasto" + drawer de creación. Vive suelto para poder pasarse
 // como `actions` del Panel (junto al título) y no ocupar una franja aparte
 // dentro de GastosView — mismo criterio que NewInvoiceButton.
-export function NewExpenseButton() {
+export function NewExpenseButton({
+  projects,
+}: {
+  readonly projects: readonly ProjectOptionForExpense[];
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -32,6 +39,7 @@ export function NewExpenseButton() {
         mode="create"
         open={open}
         onClose={() => setOpen(false)}
+        projects={projects}
       />
     </>
   );

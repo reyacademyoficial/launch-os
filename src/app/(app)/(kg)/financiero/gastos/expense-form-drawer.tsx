@@ -43,6 +43,13 @@ export interface ExpenseInitial {
   readonly dueDate?: string | null;
   readonly notes?: string | null;
   readonly transactionNumber?: string | null;
+  /** Atribución opcional a proyecto (0131). null = gasto org-level. */
+  readonly projectId?: string | null;
+}
+
+export interface ProjectOptionForExpense {
+  readonly id: string;
+  readonly name: string;
 }
 
 export interface ExpenseFormDrawerProps {
@@ -50,6 +57,8 @@ export interface ExpenseFormDrawerProps {
   readonly initial?: ExpenseInitial;
   readonly open: boolean;
   readonly onClose: () => void;
+  /** Proyectos de la org disponibles para atribuir. Vacío → oculta el picker. */
+  readonly projects: readonly ProjectOptionForExpense[];
 }
 
 export function ExpenseFormDrawer({
@@ -57,6 +66,7 @@ export function ExpenseFormDrawer({
   initial,
   open,
   onClose,
+  projects,
 }: ExpenseFormDrawerProps) {
   const title = mode === "create" ? "Nuevo gasto" : "Editar gasto";
   const submitLabel = mode === "create" ? "Crear gasto" : "Guardar cambios";
@@ -69,6 +79,7 @@ export function ExpenseFormDrawer({
         initial={initial}
         onClose={onClose}
         submitLabel={submitLabel}
+        projects={projects}
       />
     </Drawer>
   );
@@ -79,11 +90,13 @@ function ExpenseFormBody({
   initial,
   onClose,
   submitLabel,
+  projects,
 }: {
   readonly mode: "create" | "edit";
   readonly initial?: ExpenseInitial;
   readonly onClose: () => void;
   readonly submitLabel: string;
+  readonly projects: readonly ProjectOptionForExpense[];
 }) {
   const isEdit = mode === "edit" && initial?.id;
 
@@ -169,6 +182,31 @@ function ExpenseFormBody({
           ))}
         </select>
       </Field>
+
+      {projects.length > 0 && (
+        <Field label="Proyecto" htmlFor="project_id">
+          <select
+            id="project_id"
+            name="project_id"
+            defaultValue={initial?.projectId ?? ""}
+            style={inputStyle}
+          >
+            <option value="">Sin proyecto (org-level)</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <div
+            className="kg-t7"
+            style={{ color: "var(--kg-text-3)", marginTop: 4, fontSize: 11 }}
+          >
+            SaaS, alquiler, servicios profesionales van sin proyecto. Ads,
+            IA o agencias de un launch específico van al proyecto.
+          </div>
+        </Field>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Field label="Monto bruto" htmlFor="amount_gross" required>
