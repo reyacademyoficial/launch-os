@@ -1,7 +1,73 @@
 # Integración Notion — Sync a `internal_projects`
 
-> Vivo. Se actualiza a medida que se cierran sub-fases. Cuando 4a-4c estén
-> cerradas se hace `d/e/f` en otro chat.
+> Vivo. Se actualiza a medida que se cierran sub-fases.
+
+---
+
+## Estado (2026-08-18)
+
+**Cerrado en este chat:**
+- ✅ **4a Foundation** — commit `d51c3e0`. Migración 0132 + client TS +
+  config UI de workspaces.
+- ✅ **4b Sync users + mapping** — commit `5e8fac8`. Actions + UI en
+  `/configuracion/notion/[wsId]/usuarios`.
+- ✅ **4c Sync projects** — commit `04f19fe`. Property parser + map-page
+  + sync engine + UI de databases con mapping form + badges en Ops.
+
+**Pendiente para el próximo chat:**
+- ⏭ **4d** Comentarios read (cache en `internal_project_notion_comments`
+  + display en la ficha del project).
+- ⏭ **4e** Comentarios write desde KG con @mentions.
+- ⏭ **4f** Vercel Cron `/api/cron/notion-sync` cada 15 min con
+  sync incremental (`last_edited_time > notion_synced_at`).
+
+**Pendiente de PROBAR end-to-end** (bloqueado en que el usuario
+consiga admin del workspace de Notion — al 2026-08-18 estaba
+pidiéndolo; escenario alternativo: OAuth público, ver "Pivot a OAuth"
+más abajo):
+
+1. `/configuracion/notion` → "+ Agregar workspace" → pegar internal
+   integration token → "Probar conexión" (debería devolver el
+   workspace_name) → "Guardar".
+2. En la card del workspace nuevo → click "Descubrir DBs" — debería
+   listar las databases que la integration tiene compartidas.
+3. Click "Usuarios" en la card → "Sincronizar ahora" — deberían aparecer
+   los users type='person' del workspace + auto-match por email para los
+   que ya tienen email en `organization_people`. Los sin match usan el
+   dropdown para asignar manualmente.
+4. Click "Databases" en la card → elegir una DB → "Configurar mapeo":
+   - Elegir `title_prop` (obligatorio — Notion siempre tiene una col
+     type='title').
+   - Configurar `status_prop`/`priority_prop` (opcional) + mapear los
+     option values de Notion a los valores KG.
+   - Elegir `assignee_prop`, `due_prop`, `start_prop`,
+     `description_prop` según necesites.
+   - Guardar.
+5. Volver a la lista de DBs → "Habilitar" la que configuraste → click
+   "Sincronizar" en esa DB → verificar el mensaje de resultado (N
+   fetched, N upserted, N skippedNoTitle).
+6. Ir a `/operaciones/proyectos` — deberían aparecer los pages como
+   internal_projects con badge "Notion" al lado del nombre. Click en el
+   badge abre el page en Notion. Click en "Editar" muestra warning
+   amarillo "los cambios acá se sobreescriben".
+7. Botón "Sincronizar Notion" arriba a la derecha — corre TODAS las DBs
+   enabled de TODOS los workspaces enabled. Devuelve el resumen.
+
+**Pivot a OAuth (si no se consigue admin en Notion):**
+- Escenario: el usuario NO es owner/admin de ninguno de los workspaces
+  que quiere sincronizar → no puede crear una internal integration →
+  necesita OAuth público donde alguien más registra la integration y
+  el usuario la instala en su workspace.
+- Trabajo extra estimado: 4-6h aditivo al final de este bloque:
+  - Registrar Public integration en Notion (owner de UN workspace la
+    crea; puede ser un workspace personal gratis).
+  - Endpoints `/api/notion/oauth/start` + `/api/notion/oauth/callback`.
+  - Env vars `NOTION_OAUTH_CLIENT_ID` + `NOTION_OAUTH_CLIENT_SECRET` +
+    redirect URI whitelist en Notion.
+  - Botón "Conectar con Notion" al lado del form manual — mismo
+    downstream (guarda `access_token` en `notion_workspaces.secret_token`).
+- Toda la infra actual (4a-4c) sirve intacta — solo cambia el modo de
+  obtener el token.
 
 ---
 
