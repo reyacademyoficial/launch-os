@@ -12,6 +12,7 @@ import {
   UTILITY_MODULES,
   visibleModulesForRole,
 } from "./layers";
+import { MiJornadaPanel } from "./mi-jornada-panel";
 import { KgNavItem } from "./nav-item";
 import { KgUserBlock } from "./user-block";
 
@@ -48,6 +49,17 @@ export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
     >
       <div className="px-4 py-5">
         <KgBrand />
+      </div>
+
+      {/*
+        Widget "Mi Jornada" del Anexo A del plan. Server component que se
+        auto-hidea (return null) para users sin persona vinculada — típico
+        de dev / superadmin sin fila en organization_people. Colocado
+        entre el brand y la nav para que sea lo primero que ve alguien
+        que abre el shell.
+      */}
+      <div className="px-3 pb-3">
+        <MiJornadaPanel />
       </div>
 
       <nav className="flex-1 space-y-4 px-3 pb-4">

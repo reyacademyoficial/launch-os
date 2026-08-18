@@ -654,14 +654,17 @@ porque:
 
 ### Lo que queda para el Anexo cuando se retome
 
-- **Componente `MiJornadaPanel`** en el sidebar (KingrowShell) con:
-  - Tareas asignadas al `person_id` con `status ∈ {todo, doing}`.
-  - Ordenadas por `due_on asc nulls last`.
-  - Badge de vencidas (usa `filterOverdueTasks` de `src/lib/ops/overdue.ts`).
-  - Click en tarea → drawer con detalle + acciones rápidas (marcar done, cambiar
-    status, agregar time_entry rápido).
-- **Botón "Trabajé X minutos ahora"** opcional que crea un `time_entries` con
-  `logged_on=today, person_id=me, task_id=selected`.
+- ~~**Componente `MiJornadaPanel`** en el sidebar (KingrowShell)~~ — **CERRADO
+  2026-08-18**: `src/components/kg/mi-jornada-panel.tsx` renderiza en el
+  sidebar entre el brand y la nav. Server component que se auto-hidea
+  (`return null`) si el user no tiene persona vinculada (típico de dev
+  puro). Query directa a `tasks` con `assignee_id = personId`, status IN
+  `{todo, doing}`, `due_on asc nulls last`, LIMIT 6+1. Reutiliza
+  `filterOverdueTasks` para el badge rojo. Click → `/operaciones/tareas`.
+- **Botón "Trabajé X minutos ahora"** — **NO IMPLEMENTADO en v1**.
+  Requiere client component + form + server action. Postergado a
+  iteración futura cuando aparezca uso real del widget que lo justifique.
+  El operador puede cargar time_entries desde `/operaciones/tiempo`.
 
 ### Backfill de `auth_user_id`
 
