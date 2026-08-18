@@ -19,9 +19,15 @@
   + `listPageComments` en el client + fase de sync de comentarios dentro
   de `syncNotionDatabase` + sección "Comentarios de Notion" readonly en
   la ficha del `internal_project` (solo cuando `notion_page_id NOT NULL`).
+- ✅ **4e Comentarios write + @mentions** — `postPageComment` en el client
+  + action `postNotionComment(projectId, contentPlain, mentionedNotionUserIds[])`
+  + composer client component en la ficha con autocomplete solo de
+  notion_users mapeados a `organization_people`. Server prefija el
+  content con `{KG fullName} escribió: ` para preservar autoría visible
+  (los comments de integration aparecen firmados por el bot). Mentions
+  se validan server-side (solo mapeados) para bloquear intentos de spoof.
 
 **Pendiente para el próximo chat:**
-- ⏭ **4e** Comentarios write desde KG con @mentions.
 - ⏭ **4f** Vercel Cron `/api/cron/notion-sync` cada 15 min con
   sync incremental (`last_edited_time > notion_synced_at`).
 
@@ -251,14 +257,37 @@ Con users mapeados, ya se puede importar pages como projects.
   (`whitespace: pre-wrap`). Empty-state explicativo cuando no hay
   comentarios todavía.
 
-### 4e — Comentarios write + @mentions (siguiente chat)
+### 4e — Comentarios write + @mentions (este chat)
 
-- [ ] Action `postNotionComment(projectId, contentPlain, mentionedUserIds[])`.
-- [ ] Al escribir el comentario en KG:
-  - Formar la request Notion con `rich_text` construyendo mentions.
-  - Traducir menciones `@[email]` a `notion_user_id`s usando `notion_users`.
-- [ ] UI de composer con autocomplete de @mentions filtrado por
-  `notion_users` del workspace del proyecto.
+- [x] Cliente `postPageComment(token, pageId, richText)` +
+  tipos `NotionRichTextBlock` (text|mention) y `NotionCommentCreated`.
+- [x] Action `postNotionComment(projectId, contentPlain,
+  mentionedNotionUserIds[])`:
+  - `requireRole("superadmin", "admin", "coordinador", "operador")` (dev
+    entra por bypass) — mismos roles que ven Ops.
+  - Rebota si el project no tiene `notion_page_id`/`notion_workspace_id`
+    o si el workspace está deshabilitado.
+  - Filtra los `mentionedNotionUserIds` server-side: sólo los que
+    (a) existen en `notion_users` del workspace y (b) tienen
+    `kg_person_id NOT NULL`. Los demás se descartan silenciosamente
+    (defensa contra abuso — la UI no debería mandar otros).
+  - Rich text final = `[text "{KG name} escribió: ", text content, text
+    " · cc: ", mention_1, " ", mention_2, ...]`. El prefijo con el
+    `fullName` del `SessionProfile` preserva la firma humana visible
+    en Notion (la API no permite spoofear autoría con internal integs).
+  - Post-Notion: insert local en `internal_project_notion_comments`
+    (`notion_user_id: null` porque quien firma es el bot) para display
+    inmediato en la ficha sin esperar al próximo sync. Errores del
+    insert local no rompen la operación — el próximo sync trae la fila.
+  - `revalidatePath` de la ficha del project.
+- [x] UI `notion-comment-composer.tsx` (client component):
+  textarea + chips de menciones con "×" + dropdown para agregar +
+  botón "Publicar en Notion". El dropdown se puebla con el subset
+  mapeado de `notion_users` que se calcula server-side en la ficha
+  (`kg_person_id IS NOT NULL`, `displayName` = nombre KG si hay,
+  sino nombre Notion). Mensaje ok/error inline debajo del composer.
+- [x] Renderizado en la ficha: composer arriba de la lista de
+  comentarios readonly, ambos dentro del panel "Comentarios de Notion".
 
 ### 4f — Cron (siguiente chat)
 

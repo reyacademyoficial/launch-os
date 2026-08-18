@@ -358,6 +358,50 @@ export async function listPageComments(
   return out;
 }
 
+/**
+ * Rich-text block que Notion acepta en `POST /v1/comments`. Subset del
+ * shape completo — solo lo que usamos: text plano + mention de usuario.
+ */
+export type NotionRichTextBlock =
+  | { readonly type: "text"; readonly text: { readonly content: string } }
+  | {
+      readonly type: "mention";
+      readonly mention: { readonly user: { readonly id: string } };
+    };
+
+export interface NotionCommentCreated {
+  readonly id: string;
+  readonly created_time: string;
+  readonly last_edited_time: string;
+}
+
+/**
+ * POST /v1/comments — crea un comentario a nivel de page. Notion notifica
+ * a los users mencionados dentro del rich_text (bloques `mention.user.id`).
+ * El comentario aparece firmado por el bot de la integration; para
+ * preservar autoría del usuario KG prefijamos el content en el caller.
+ */
+export async function postPageComment(
+  token: string,
+  pageId: string,
+  richText: readonly NotionRichTextBlock[],
+): Promise<NotionCommentCreated> {
+  const res = await notionFetch(token, "POST", "/comments", {
+    parent: { page_id: pageId },
+    rich_text: richText,
+  });
+  const data = res as {
+    id: string;
+    created_time: string;
+    last_edited_time: string;
+  };
+  return {
+    id: data.id,
+    created_time: data.created_time,
+    last_edited_time: data.last_edited_time,
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Interno — fetch con cabeceras + parsing de errores
 // ═══════════════════════════════════════════════════════════════════════════

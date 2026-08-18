@@ -7,10 +7,12 @@ import {
   listPageComments as apiListPageComments,
   listUsers as apiListUsers,
   NotionApiError,
+  postPageComment as apiPostPageComment,
   queryDatabase as apiQueryDatabase,
   retrieveDatabase as apiRetrieveDatabase,
   whoAmI as apiWhoAmI,
   type NotionDatabaseSchema,
+  type NotionRichTextBlock,
 } from "@/lib/notion/client";
 import {
   mapNotionPageToInternalProject,
@@ -929,6 +931,156 @@ export async function syncAllEnabledNotionDatabases(): Promise<SyncAllResult> {
     totalCommentsUpserted,
     errors,
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// postNotionComment (4e) — escribe un comment en Notion y lo cachea local
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Autoría: los comentarios creados vía internal integration aparecen en
+// Notion firmados por el bot. Prefijamos el content con "{KG name} escribió:"
+// para preservar la firma humana visible.
+//
+// Mentions: solo se aceptan `notion_user_id`s que (a) existen en el cache
+// `notion_users` del workspace del proyecto y (b) están mapeados a una
+// `organization_person`. Filtramos server-side: la UI puede mandar cualquier
+// id, pero acá solo dejamos pasar los mapeados (defensa contra abuso).
+//
+// Cache local: después del POST exitoso a Notion, insertamos una fila en
+// `internal_project_notion_comments` para que aparezca inmediato en la
+// ficha sin esperar al próximo sync. `notion_user_id` queda null porque
+// el "autor" técnico es el bot — la persona real está en el prefijo.
+
+export type PostNotionCommentResult =
+  | { ok: true; commentId: string }
+  | { ok: false; error: string };
+
+export async function postNotionComment(
+  projectId: string,
+  contentPlain: string,
+  mentionedNotionUserIds: readonly string[],
+): Promise<PostNotionCommentResult> {
+  const profile = await requireRole(
+    "superadmin",
+    "admin",
+    "coordinador",
+    "operador",
+  );
+
+  const trimmed = contentPlain.trim();
+  if (trimmed.length === 0) {
+    return { ok: false, error: "El comentario no puede estar vacío." };
+  }
+
+  const supabase = await createClient();
+
+  const projRes = await supabase
+    .from("internal_projects")
+    .select("id, organization_id, notion_page_id, notion_workspace_id")
+    .eq("id", projectId)
+    .maybeSingle();
+  const project = projRes.data as
+    | {
+        id: string;
+        organization_id: string;
+        notion_page_id: string | null;
+        notion_workspace_id: string | null;
+      }
+    | null;
+  if (!project) {
+    return { ok: false, error: "Proyecto no encontrado." };
+  }
+  if (!project.notion_page_id || !project.notion_workspace_id) {
+    return {
+      ok: false,
+      error: "Este proyecto no está vinculado a una page de Notion.",
+    };
+  }
+
+  const wsRes = await supabase
+    .from("notion_workspaces")
+    .select("secret_token, enabled")
+    .eq("id", project.notion_workspace_id)
+    .maybeSingle();
+  const ws = wsRes.data as
+    | { secret_token: string; enabled: boolean }
+    | null;
+  if (!ws) return { ok: false, error: "Workspace de Notion no encontrado." };
+  if (!ws.enabled) {
+    return { ok: false, error: "El workspace de Notion está deshabilitado." };
+  }
+
+  // Validar mentions server-side: solo dejamos pasar notion_users mapeados
+  // a organization_people. Devuelve el subset válido (en orden estable
+  // por notion_user_id — el orden visual en el mensaje refleja este subset).
+  let validMentions: Array<{ id: string; name: string | null }> = [];
+  if (mentionedNotionUserIds.length > 0) {
+    const uniqueIds = Array.from(new Set(mentionedNotionUserIds));
+    const usersRes = await supabase
+      .from("notion_users")
+      .select("notion_user_id, name")
+      .eq("workspace_id", project.notion_workspace_id)
+      .in("notion_user_id", uniqueIds)
+      .not("kg_person_id", "is", null);
+    const rows = (usersRes.data ?? []) as Array<{
+      notion_user_id: string;
+      name: string | null;
+    }>;
+    validMentions = rows.map((r) => ({ id: r.notion_user_id, name: r.name }));
+  }
+
+  // Construir rich_text: prefijo de autoría KG + contenido + "cc: @a @b"
+  const authorLabel =
+    profile.fullName?.trim() || profile.email || "Usuario Kingrow";
+  const prefix = `${authorLabel} escribió: `;
+  const richText: NotionRichTextBlock[] = [
+    { type: "text", text: { content: prefix } },
+    { type: "text", text: { content: trimmed } },
+  ];
+  if (validMentions.length > 0) {
+    richText.push({ type: "text", text: { content: " · cc: " } });
+    validMentions.forEach((m, i) => {
+      if (i > 0) richText.push({ type: "text", text: { content: " " } });
+      richText.push({
+        type: "mention",
+        mention: { user: { id: m.id } },
+      });
+    });
+  }
+
+  let created: Awaited<ReturnType<typeof apiPostPageComment>>;
+  try {
+    created = await apiPostPageComment(
+      ws.secret_token,
+      project.notion_page_id,
+      richText,
+    );
+  } catch (e) {
+    return { ok: false, error: notionErrorMessage(e) };
+  }
+
+  // Cache local — armamos el content_plain que representa lo que Notion
+  // recibirá (mentions renderizadas como "@Nombre"). Errores acá no rompen
+  // la operación: el próximo sync trae el comentario de todos modos.
+  const mentionsSuffix =
+    validMentions.length > 0
+      ? ` · cc: ${validMentions.map((m) => `@${m.name ?? "user"}`).join(" ")}`
+      : "";
+  const cachedPlain = `${prefix}${trimmed}${mentionsSuffix}`;
+
+  await supabase.from("internal_project_notion_comments").insert({
+    organization_id: project.organization_id,
+    internal_project_id: project.id,
+    notion_comment_id: created.id,
+    notion_user_id: null,
+    content_plain: cachedPlain,
+    created_time: created.created_time,
+    updated_time: created.last_edited_time,
+    synced_at: new Date().toISOString(),
+  } as never);
+
+  revalidatePath(`/operaciones/proyectos/${projectId}`);
+  return { ok: true, commentId: created.id };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

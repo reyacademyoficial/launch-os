@@ -19,6 +19,10 @@ import {
   type ChecklistItemData,
 } from "./checklists/checklists-section";
 import { EditProjectButton } from "./edit-project-button";
+import {
+  NotionCommentComposer,
+  type MentionableUser,
+} from "./notion-comment-composer";
 
 export const metadata: Metadata = { title: "Proyecto interno · Operaciones" };
 
@@ -190,6 +194,37 @@ export default async function InternalProjectFichaPage({
   }
 
   const allPeople = (peopleRes.data ?? []) as unknown as PersonDbRow[];
+
+  // Usuarios mapeados del workspace para el autocomplete de @mentions del
+  // composer (4e). Sólo mapeados a organization_people — decisión de producto:
+  // no permitir mencionar cuentas de Notion que no están en Kingrow.
+  let mentionableUsers: readonly MentionableUser[] = [];
+  if (isNotionSourced && project.notion_workspace_id !== null) {
+    const mentionablesRes = await supabase
+      .from("notion_users")
+      .select("notion_user_id, name, avatar_url, kg_person_id")
+      .eq("workspace_id", project.notion_workspace_id)
+      .not("kg_person_id", "is", null);
+    const rows = (mentionablesRes.data ?? []) as unknown as Array<{
+      notion_user_id: string;
+      name: string | null;
+      avatar_url: string | null;
+      kg_person_id: string | null;
+    }>;
+    mentionableUsers = rows
+      .map((r) => {
+        const kgName = r.kg_person_id
+          ? allPeople.find((p) => p.id === r.kg_person_id)?.full_name ?? null
+          : null;
+        const displayName = kgName ?? r.name ?? "Usuario de Notion";
+        return {
+          notionUserId: r.notion_user_id,
+          displayName,
+          avatarUrl: r.avatar_url,
+        };
+      })
+      .sort((a, b) => a.displayName.localeCompare(b.displayName, "es"));
+  }
   const ownerName = project.owner_id
     ? allPeople.find((p) => p.id === project.owner_id)?.full_name ?? null
     : null;
@@ -381,12 +416,18 @@ export default async function InternalProjectFichaPage({
 
       {isNotionSourced && (
         <Panel title="Comentarios de Notion">
-          <NotionCommentsSection
-            comments={notionComments}
-            authorByNotionUserId={authorByNotionUserId}
-            allPeople={allPeople}
-            syncedAt={project.notion_synced_at}
-          />
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <NotionCommentComposer
+              projectId={project.id}
+              mentionableUsers={mentionableUsers}
+            />
+            <NotionCommentsSection
+              comments={notionComments}
+              authorByNotionUserId={authorByNotionUserId}
+              allPeople={allPeople}
+              syncedAt={project.notion_synced_at}
+            />
+          </div>
         </Panel>
       )}
     </div>
