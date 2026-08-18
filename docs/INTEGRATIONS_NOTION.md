@@ -293,8 +293,34 @@ Con users mapeados, ya se puede importar pages como projects.
 
 - [ ] Endpoint `/api/cron/notion-sync` con `CRON_SECRET` guard.
 - [ ] Vercel Cron config: cada 15 min corre todos los workspaces enabled.
-- [ ] Sync incremental: query con filtro `last_edited_time > last_sync`
-  para no traer todo cada vez.
+- [ ] Sync incremental: extender `queryDatabase` para aceptar un
+  `filter` por `last_edited_time > notion_synced_at` (por database
+  usamos el MAX de `notion_synced_at` de los projects de esa DB —
+  o simplemente el timestamp del último `notion_sync_log` ok/partial
+  para esa DB, más simple y no requiere query cara).
+
+**Decisiones abiertas para arrancar 4f:**
+
+1. **`vercel.ts` vs `vercel.json`**: el repo hoy no tiene ninguno.
+   El session-start del plugin Vercel recomienda `vercel.ts` (nuevo,
+   tipado, con `@vercel/config`). `vercel.json` clásico funciona
+   idéntico para el cron. Elegir uno al arrancar.
+2. **`CRON_SECRET`**: Vercel manda `Authorization: Bearer <secret>`
+   al hit del cron. Generar con `openssl rand -base64 32`, agregarlo
+   como env var en Vercel (Production + Preview) y en `.env.local`
+   para poder testear con `curl`. Agregar a `.env.example` con el
+   placeholder. El endpoint compara con `process.env.CRON_SECRET` y
+   rebota 401 si no matchea. No commitear el valor real.
+3. **Alcance del cron**: usar el mismo orquestador
+   `syncAllEnabledNotionDatabases()` (ya existe, corre todos los
+   workspaces+DBs enabled). Solo hace falta envolverlo con auth y
+   agregar el filtro incremental.
+4. **Sync incremental — anchor time**: la opción más simple es leer
+   `MAX(started_at)` de `notion_sync_log WHERE database_id = X AND
+   status IN ('ok', 'partial')` como cutoff para el `filter` de
+   `queryDatabase`. Alternativa: `MAX(notion_synced_at)` de los
+   projects de la DB. Preferencia por el log (no depende de que hayan
+   entrado projects; sobrevive a rewrites del schema de projects).
 
 ---
 
