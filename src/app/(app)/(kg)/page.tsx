@@ -37,6 +37,7 @@ import {
   inPeriodDate,
   inPeriodTs,
   lastClosedMonths,
+  lastMonths,
   overlapsPeriodDate,
   resolvePeriod,
 } from "@/lib/finance/period";
@@ -414,6 +415,48 @@ export default async function EjecutivoDashboardPage({
     invoices: invoicesCollectedInPeriodUsd,
     resolveOwnership,
   });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // Tendencia de ingreso — últimos 12 meses cronológicos. Mismo pooling que
+  // /financiero (revenueBuckets): itera sobre las arrays completas, no las
+  // *InPeriod, para tener todos los buckets. Convertimos row-a-row a USD
+  // dentro de cada bucket con los helpers ya definidos (mismo criterio de
+  // ownership que la sección del período).
+  // ═════════════════════════════════════════════════════════════════════════
+  const revenueBuckets = lastMonths(12).map((b) => {
+    const settlementsBucket = allSettlements
+      .filter((s) => inPeriodTs(s.closed_at, b))
+      .filter((s) => ownershipByProject.get(s.project_id) !== "propia")
+      .map((s) => ({
+        ...s,
+        kingrow_retained: launchToUsd(s.kingrow_retained, s.launch_id),
+      }));
+    const invoicesBucket = allInvoices
+      .filter((i) => i.status === "cobrada" && inPeriodTs(i.paid_at, b))
+      .map((i) => ({
+        ...i,
+        amount_gross: invoiceToUsd(i.amount_gross, i),
+        tax_amount: invoiceToUsd(i.tax_amount, i),
+      }));
+    const rev = computeRevenue({
+      settlements: settlementsBucket,
+      invoices: invoicesBucket,
+      resolveOwnership,
+    });
+    return { key: b.key, label: b.label, revenue: rev.revenueTotal };
+  });
+
+  // Delta MoM: último mes cerrado vs anterior. Mismo criterio que
+  // /financiero (compara meses completos, no el en-curso).
+  let revenueDelta: { pct: number; dir: "up" | "down" } | null = null;
+  if (revenueBuckets.length >= 3) {
+    const lastFull = revenueBuckets[revenueBuckets.length - 2];
+    const prevFull = revenueBuckets[revenueBuckets.length - 3];
+    if (lastFull && prevFull && prevFull.revenue > 0) {
+      const pct = (lastFull.revenue - prevFull.revenue) / prevFull.revenue;
+      revenueDelta = { pct: Math.abs(pct), dir: pct >= 0 ? "up" : "down" };
+    }
+  }
 
   // Egresos convertidos a USD y separados en 3 buckets (direct / tax /
   // operating) por category, mismo criterio que /financiero. Payouts al
@@ -884,6 +927,15 @@ export default async function EjecutivoDashboardPage({
         />
       </div>
 
+      {/* Tendencia de ingreso — 12 meses cronológicos */}
+      <Panel title="Tendencia de ingreso (12 meses, USD)">
+        <RevenueTrend
+          buckets={revenueBuckets}
+          delta={revenueDelta}
+          periodLabel={period.label}
+        />
+      </Panel>
+
       {/* Alertas cruzadas */}
       <div
         style={{
@@ -1179,6 +1231,162 @@ function KpiCard({
       </div>
       <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
         {hint}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Tendencia de ingreso — 12 meses cronológicos con delta MoM
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Server component puro. Recibe los buckets ya computados con la misma
+// lógica que /financiero (misma conversión a USD, mismo tratamiento de
+// ownership propia vs externa). Renderiza barras SVG proporcionales al
+// máximo + etiquetas de mes + montos. El último bucket es el mes en curso
+// (parcial) y se dibuja con estilo tenue para distinguirlo de los cerrados.
+//
+// No usa recharts: 12 barras con labels es un caso donde SVG plano es más
+// rápido, más liviano y matchea el look minimalista del resto de KG.
+
+function RevenueTrend({
+  buckets,
+  delta,
+  periodLabel,
+}: {
+  readonly buckets: ReadonlyArray<{
+    readonly key: string;
+    readonly label: string;
+    readonly revenue: number;
+  }>;
+  readonly delta: { readonly pct: number; readonly dir: "up" | "down" } | null;
+  readonly periodLabel: string;
+}) {
+  const values = buckets.map((b) => b.revenue);
+  const max = Math.max(0, ...values);
+  const allZero = values.every((v) => v === 0);
+
+  if (allZero) {
+    return (
+      <EmptyState
+        title="Sin ingresos en los últimos 12 meses"
+        hint="Cuando se cierren liquidaciones o entren facturas cobradas de proyectos propios van a aparecer acá."
+      />
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-end",
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
+        <div className="kg-t7" style={{ color: "var(--kg-text-3)", lineHeight: 1.5 }}>
+          El KPI de arriba muestra el ingreso del período{" "}
+          <strong style={{ color: "var(--kg-text-2)" }}>{periodLabel}</strong>.
+          El gráfico compara todos los meses en el mismo criterio (USD, con
+          la misma conversión FX del dashboard financiero).
+        </div>
+        {delta && (
+          <div
+            className="kg-t7"
+            style={{
+              color: delta.dir === "up" ? "#00D084" : "#F04060",
+              fontWeight: 700,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Último mes cerrado {delta.dir === "up" ? "▲" : "▼"}{" "}
+            {Math.round(delta.pct * 100)}% MoM
+          </div>
+        )}
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: `repeat(${buckets.length}, minmax(0, 1fr))`,
+          gap: 6,
+          alignItems: "end",
+          minHeight: 140,
+        }}
+      >
+        {buckets.map((b, idx) => {
+          const isCurrent = idx === buckets.length - 1;
+          const pct = max > 0 ? Math.max(4, (b.revenue / max) * 100) : 0;
+          return (
+            <div
+              key={b.key}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 6,
+              }}
+              title={`${b.label}: ${fMoney(b.revenue)}`}
+            >
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  color: "var(--kg-text-3)",
+                  fontVariantNumeric: "tabular-nums",
+                  height: 14,
+                }}
+              >
+                {b.revenue > 0 ? fMoney(b.revenue) : ""}
+              </div>
+              <div
+                style={{
+                  width: "100%",
+                  height: 100,
+                  display: "flex",
+                  alignItems: "flex-end",
+                }}
+              >
+                <div
+                  style={{
+                    width: "100%",
+                    height: `${pct}%`,
+                    background: isCurrent
+                      ? "var(--kg-neutral-500)"
+                      : "var(--kg-accent-500)",
+                    opacity: isCurrent ? 0.4 : 0.85,
+                    borderRadius: "4px 4px 0 0",
+                    transition: "height 300ms ease-out",
+                  }}
+                />
+              </div>
+              <div
+                className="kg-t7"
+                style={{
+                  color: isCurrent ? "var(--kg-text-3)" : "var(--kg-text-2)",
+                  fontSize: 10,
+                  textTransform: "capitalize",
+                }}
+              >
+                {b.label}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div
+        className="kg-t7"
+        style={{
+          color: "var(--kg-text-3)",
+          fontSize: 10,
+          opacity: 0.7,
+        }}
+      >
+        El mes en curso está incompleto (barra tenue). Para números finales,
+        mirá el mes anterior cerrado.
       </div>
     </div>
   );

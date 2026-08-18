@@ -500,8 +500,14 @@ todo sin entrar a ningún módulo.
 - [x] KPIs de cabecera: ingreso Kingrow, utilidad neta, caja, runway (todos vía
       selectores existentes). ContextBar + 8 KpiCards en el grid con AR, AP,
       clientes activos, generaciones activas, aprobación/asistencia, ops abiertas.
-- [ ] Tendencia de ingreso (últimos N meses). _(Postergado explícitamente para v1 —
-      el detalle vive en /financiero; acá solo el número del período actual)._
+- [x] Tendencia de ingreso (últimos N meses). _(Cerrado 2026-08-18: nuevo
+      panel `<RevenueTrend>` en el ejecutivo bajo el grid de KpiCards.
+      Reutiliza `lastMonths(12)` y `computeRevenue` con la misma conversión
+      a USD y el mismo filtro de ownership propia/externa que /financiero.
+      12 barras SVG con labels de mes + monto sobre la barra. El mes en
+      curso va en color tenue para distinguirlo de los cerrados. Delta MoM
+      en el header comparando último mes cerrado vs anterior. Data ya
+      estaba fetcheada por la página — cero queries adicionales.)_
 - [x] Salud de clientes: score promedio en el header + panel "Clientes en riesgo"
       con top 5 ordenados por score ascendente, link a ficha del cliente.
 - [x] Resumen de operaciones: panel "Ops crítico" con bloqueadores 7d+, tareas
