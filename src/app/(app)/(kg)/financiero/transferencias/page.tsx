@@ -10,6 +10,11 @@ import { fCount, fMoney } from "@/lib/finance/format";
 import { resolvePeriod, type Period } from "@/lib/finance/period";
 import { createClient } from "@/lib/supabase/server";
 
+import { CommissionActionCell } from "./commission-action-cell";
+import type {
+  TransferLinkedMovement,
+  UnconciledOutMovement,
+} from "./link-commission-drawer";
 import { PendingPanel } from "./pending-panel";
 import type {
   BankOption,
@@ -206,6 +211,124 @@ export default async function TransferenciasPage({
     active: b.active,
   }));
 
+  // ─── Bridge de comisiones vinculadas por transferencia (mig 0129) ─────
+  // Todas las filas de la vista se traen del bridge en un solo query. Cada
+  // movimiento viene con su banco y kind — el drawer los muestra tal cual.
+  interface CtbmRow {
+    readonly client_transfer_id: string;
+    readonly bank_movement_id: string;
+    readonly role: "principal" | "comision" | "otro";
+    readonly bank_movements: {
+      id: string;
+      bank_id: string;
+      kind: "in" | "out";
+      amount: number;
+      occurred_at: string;
+      description: string | null;
+    } | null;
+  }
+  const transferIdsInView = transfers.map((t) => t.id);
+  const ctbmRes =
+    transferIdsInView.length > 0
+      ? await supabase
+          .from("client_transfer_bank_movements")
+          .select(
+            "client_transfer_id, bank_movement_id, role, bank_movements!inner(id, bank_id, kind, amount, occurred_at, description)",
+          )
+          .in("client_transfer_id", transferIdsInView)
+      : { data: [] as CtbmRow[] };
+  const ctbmBankIdSet = new Set<string>();
+  for (const r of (ctbmRes.data ?? []) as unknown as CtbmRow[]) {
+    if (r.bank_movements) ctbmBankIdSet.add(r.bank_movements.bank_id);
+  }
+  // Trae nombres de bancos que aparecen en el bridge (puede haber bancos no
+  // usados por las transferencias directas — los del principal viven en
+  // banksForDrawer, pero comisiones podrían ser de otros bancos).
+  const extraBanksRes =
+    ctbmBankIdSet.size > 0
+      ? await supabase
+          .from("banks")
+          .select("id, name")
+          .in("id", Array.from(ctbmBankIdSet))
+      : { data: [] as Array<{ id: string; name: string }> };
+  const bankNameById = new Map<string, string>();
+  for (const b of banksRes) bankNameById.set(b.id, b.name);
+  for (const b of (extraBanksRes.data ?? []) as Array<{
+    id: string;
+    name: string;
+  }>) {
+    if (!bankNameById.has(b.id)) bankNameById.set(b.id, b.name);
+  }
+  const linkedByTransferId = new Map<string, TransferLinkedMovement[]>();
+  for (const r of (ctbmRes.data ?? []) as unknown as CtbmRow[]) {
+    if (!r.bank_movements) continue;
+    const cur = linkedByTransferId.get(r.client_transfer_id) ?? [];
+    cur.push({
+      movementId: r.bank_movement_id,
+      role: r.role,
+      amount: Number(r.bank_movements.amount),
+      kind: r.bank_movements.kind,
+      occurredAt: r.bank_movements.occurred_at,
+      description: r.bank_movements.description,
+      bankName: bankNameById.get(r.bank_movements.bank_id) ?? "—",
+    });
+    linkedByTransferId.set(r.client_transfer_id, cur);
+  }
+
+  // ─── Movimientos OUT sin conciliar (para vincular como comisión) ──────
+  // "Sin conciliar" acá = no aparece en ninguno de los 4 bridges NI en las
+  // FKs viejas de payroll / client_transfers. Piso de 12 meses (idem gastos).
+  const twelveMonthsAgo = ymdMonthsAgo(12);
+  const [outMovsRes, ibmIdsRes, ebmIdsRes, pbmIdsRes, ctbmAllIdsRes,
+    payFkRes, ctFkRes] = await Promise.all([
+    supabase
+      .from("bank_movements")
+      .select("id, bank_id, amount, occurred_at, description")
+      .eq("kind", "out")
+      .gte("occurred_at", twelveMonthsAgo)
+      .order("occurred_at", { ascending: false }),
+    supabase.from("invoice_bank_movements").select("bank_movement_id"),
+    supabase.from("expense_bank_movements").select("bank_movement_id"),
+    supabase.from("payroll_bank_movements").select("bank_movement_id"),
+    supabase.from("client_transfer_bank_movements").select("bank_movement_id"),
+    supabase
+      .from("payroll")
+      .select("bank_movement_id")
+      .not("bank_movement_id", "is", null),
+    supabase
+      .from("client_transfers")
+      .select("bank_movement_id")
+      .not("bank_movement_id", "is", null),
+  ]);
+  interface OutMovRow {
+    readonly id: string;
+    readonly bank_id: string;
+    readonly amount: number;
+    readonly occurred_at: string;
+    readonly description: string | null;
+  }
+  const outMovs = (outMovsRes.data ?? []) as unknown as OutMovRow[];
+  const linkedForFilter = new Set<string>();
+  for (const arr of [ibmIdsRes.data, ebmIdsRes.data, pbmIdsRes.data, ctbmAllIdsRes.data]) {
+    for (const r of (arr ?? []) as { bank_movement_id: string }[]) {
+      linkedForFilter.add(r.bank_movement_id);
+    }
+  }
+  for (const arr of [payFkRes.data, ctFkRes.data]) {
+    for (const r of (arr ?? []) as { bank_movement_id: string | null }[]) {
+      if (r.bank_movement_id) linkedForFilter.add(r.bank_movement_id);
+    }
+  }
+  const unconciledOutMovements: UnconciledOutMovement[] = outMovs
+    .filter((m) => !linkedForFilter.has(m.id))
+    .map((m) => ({
+      id: m.id,
+      amount: Number(m.amount),
+      occurredAt: m.occurred_at,
+      bankName: bankNameById.get(m.bank_id) ?? "—",
+      description: m.description ?? "",
+    }));
+
   const pendingCount = pendingSettlements.length;
   const pendingTotal = pendingSettlements.reduce(
     (acc, p) => acc + p.pending,
@@ -221,6 +344,7 @@ export default async function TransferenciasPage({
     readonly hasSettlement: boolean;
     readonly hasBankMovement: boolean;
     readonly notes: string;
+    readonly linkedMovements: readonly TransferLinkedMovement[];
   }
   const rows: Row[] = transfers.map((t) => ({
     id: t.id,
@@ -231,6 +355,7 @@ export default async function TransferenciasPage({
     hasSettlement: t.launch_settlement_id != null,
     hasBankMovement: t.bank_movement_id != null,
     notes: t.notes ?? "",
+    linkedMovements: linkedByTransferId.get(t.id) ?? [],
   }));
 
   const columns: Column<Row>[] = [
@@ -273,6 +398,27 @@ export default async function TransferenciasPage({
           <span title={r.notes} style={ellipsis}>
             {r.notes}
           </span>
+        ) : (
+          "—"
+        ),
+    },
+    {
+      // Post 0129 (paso 6b): comisiones bancarias del giro se vinculan al
+      // bridge client_transfer_bank_movements. Solo tiene sentido para
+      // 'transferido' — un devengo ('a_favor_cliente') aún no movió plata.
+      key: "commissions",
+      label: "Comisión",
+      align: "right",
+      render: (r) =>
+        r.direction === "transferido" ? (
+          <CommissionActionCell
+            transferId={r.id}
+            projectName={r.project}
+            amount={r.amount}
+            date={r.date}
+            linkedMovements={r.linkedMovements}
+            unconciledMovements={unconciledOutMovements}
+          />
         ) : (
           "—"
         ),
@@ -425,6 +571,15 @@ function fmtDate(iso: string): string {
     month: "2-digit",
     year: "numeric",
   });
+}
+
+function ymdMonthsAgo(months: number): string {
+  const d = new Date();
+  d.setMonth(d.getMonth() - months);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function DirectionPill({

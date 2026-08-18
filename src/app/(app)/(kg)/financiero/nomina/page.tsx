@@ -9,7 +9,10 @@ import { overlapsPeriodDate, resolvePeriod, type Period } from "@/lib/finance/pe
 import { createClient } from "@/lib/supabase/server";
 
 import { CreatePayrollButton } from "./create-payroll-button";
-import type { UnconciledMovement } from "./link-payment-drawer";
+import type {
+  PayrollLinkedMovement,
+  UnconciledMovement,
+} from "./link-payment-drawer";
 import {
   NominaView,
   type PayrollRowData,
@@ -121,34 +124,45 @@ export default async function NominaPage({
 
   // ─── Bank movements NO conciliados (para el drawer de vincular pago) ──
   //
-  // "No conciliado" = no está vinculado como bank_movement_id de NINGUNA
-  // liquidación de nómina. NO excluimos las movimientos linkeados a expenses
-  // — 1 movimiento puede pagar 1 gasto + 1 sueldo (ej. una transferencia
-  // grande que discrimina), y el schema lo permite (mismo criterio que la
-  // pestaña de gastos).
+  // "No conciliado" = no está vinculado a NINGUNA liquidación de nómina,
+  // ni por la FK vieja (payroll.bank_movement_id) ni por el bridge nuevo
+  // (payroll_bank_movements, mig 0129). NO excluimos movimientos linkeados
+  // a expenses/facturas/transferencias — 1 movimiento puede pagar 1 gasto
+  // + 1 sueldo (ej. una transferencia grande que discrimina), el schema lo
+  // permite y es coherente con la pestaña de gastos.
+  //
+  // Movimientos entrantes (kind='in') también se incluyen: pueden linkearse
+  // como role='comision' u 'otro' (reembolso). El guard de kind vive en la
+  // action linkPayrollToMovement — solo 'principal' exige 'out'.
   //
   // Piso de 12 meses igual que gastos — los pagos frescos son el 99% del uso.
   const twelveMonthsAgo = ymdMonthsAgo(12);
-  const [allMovementsRes, linkedIdsRes] = await Promise.all([
-    supabase
-      .from("bank_movements")
-      .select("id, bank_id, kind, amount, occurred_at, description")
-      .eq("kind", "out")
-      .gte("occurred_at", twelveMonthsAgo)
-      .order("occurred_at", { ascending: false }),
-    supabase
-      .from("payroll")
-      .select("bank_movement_id")
-      .not("bank_movement_id", "is", null),
-  ]);
+  const [allMovementsRes, linkedFkIdsRes, linkedBridgeIdsRes] =
+    await Promise.all([
+      supabase
+        .from("bank_movements")
+        .select("id, bank_id, kind, amount, occurred_at, description")
+        .gte("occurred_at", twelveMonthsAgo)
+        .order("occurred_at", { ascending: false }),
+      supabase
+        .from("payroll")
+        .select("bank_movement_id")
+        .not("bank_movement_id", "is", null),
+      supabase.from("payroll_bank_movements").select("bank_movement_id"),
+    ]);
 
   const allMovements =
     (allMovementsRes.data ?? []) as unknown as BankMovementDbRow[];
   const linkedBankIds = new Set<string>();
-  for (const r of (linkedIdsRes.data ?? []) as {
+  for (const r of (linkedFkIdsRes.data ?? []) as {
     bank_movement_id: string | null;
   }[]) {
     if (r.bank_movement_id) linkedBankIds.add(r.bank_movement_id);
+  }
+  for (const r of (linkedBridgeIdsRes.data ?? []) as {
+    bank_movement_id: string;
+  }[]) {
+    linkedBankIds.add(r.bank_movement_id);
   }
   const unconciled = allMovements.filter((m) => !linkedBankIds.has(m.id));
 
@@ -175,6 +189,63 @@ export default async function NominaPage({
     bankName: bankNameById.get(m.bank_id) ?? "—",
     description: m.description ?? "",
   }));
+
+  // ─── Movimientos ya vinculados por bridge, agrupados por payroll_id ──
+  //
+  // Trae role + montos para que el drawer pueda listarlos y sumar principal
+  // vs comisión. Fetch enriquecido con bank_movements por FK — mismo patrón
+  // que gastos post 0119.
+  interface PbmRow {
+    readonly payroll_id: string;
+    readonly bank_movement_id: string;
+    readonly role: "principal" | "comision" | "otro";
+    readonly bank_movements: {
+      id: string;
+      bank_id: string;
+      kind: "in" | "out";
+      amount: number;
+      occurred_at: string;
+      description: string | null;
+    } | null;
+  }
+  const payrollIdsForBridge = allRows.map((p) => p.id);
+  const pbmRes =
+    payrollIdsForBridge.length > 0
+      ? await supabase
+          .from("payroll_bank_movements")
+          .select(
+            "payroll_id, bank_movement_id, role, bank_movements!inner(id, bank_id, kind, amount, occurred_at, description)",
+          )
+          .in("payroll_id", payrollIdsForBridge)
+      : { data: [] as PbmRow[] };
+  const bridgeBankIds = new Set<string>();
+  for (const r of (pbmRes.data ?? []) as unknown as PbmRow[]) {
+    if (r.bank_movements) bridgeBankIds.add(r.bank_movements.bank_id);
+  }
+  if (bridgeBankIds.size > 0) {
+    const extraBanksRes = await supabase
+      .from("banks")
+      .select("id, name")
+      .in("id", Array.from(bridgeBankIds));
+    for (const b of (extraBanksRes.data ?? []) as BankRow[]) {
+      if (!bankNameById.has(b.id)) bankNameById.set(b.id, b.name);
+    }
+  }
+  const linkedByPayroll = new Map<string, PayrollLinkedMovement[]>();
+  for (const r of (pbmRes.data ?? []) as unknown as PbmRow[]) {
+    if (!r.bank_movements) continue;
+    const cur = linkedByPayroll.get(r.payroll_id) ?? [];
+    cur.push({
+      movementId: r.bank_movement_id,
+      role: r.role,
+      amount: Number(r.bank_movements.amount),
+      kind: r.bank_movements.kind,
+      occurredAt: r.bank_movements.occurred_at,
+      description: r.bank_movements.description,
+      bankName: bankNameById.get(r.bank_movements.bank_id) ?? "—",
+    });
+    linkedByPayroll.set(r.payroll_id, cur);
+  }
 
   // ─── Filtrado en TS por los pills de estado/período ──────────────────
   const filtered = allRows.filter((p) => {
@@ -205,6 +276,7 @@ export default async function NominaPage({
     notes: p.notes,
     paidAt: p.paid_at,
     bankMovementId: p.bank_movement_id,
+    linkedMovements: linkedByPayroll.get(p.id) ?? [],
   }));
 
   function buildHref(overrides: {

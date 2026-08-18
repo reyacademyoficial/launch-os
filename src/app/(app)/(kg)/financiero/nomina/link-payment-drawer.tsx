@@ -12,23 +12,36 @@ import {
 
 import {
   linkPayrollToMovement,
-  unlinkPayrollPayment,
+  unlinkPayrollFromMovement,
   type LinkPayrollResult,
+  type PayrollMovementRole,
 } from "./actions";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Drawer para vincular una liquidación de nómina a un bank_movement out.
+// Drawer para vincular movimientos bancarios a una liquidación de nómina.
 //
-// Copia estructural del `LinkPaymentDrawer` de gastos — el scoring de matches
-// vive en `@/lib/finance/expense-matching` y es agnóstico de la naturaleza
-// del ítem (total + fecha + moneda), así que se reutiliza tal cual.
+// Post 0129 el bridge payroll_bank_movements permite N vínculos con role:
+//   'principal' → el sueldo saliendo del banco (kind='out')
+//   'comision'  → fee bancario del pago del sueldo (kind='out'; ej. Wise,
+//                  transferencia internacional, cash-out de Mercado Pago).
+//                  Es parte del costo real del empleado — se ve en el KPI
+//                  de comisiones bancarias del panel dedicado en /bancos.
+//   'otro'      → ajustes puntuales.
 //
-// Diferencias con el de gastos:
-//   - "Fecha de referencia" del scoring: usamos `dueDate` si está, si no
-//     `periodEnd`. Es cuando "corresponde" pagar el sueldo.
-//   - Guard: bank_movement.kind='in' no puede pagar (mismo que gastos).
-//   - Warning suave si moneda no matchea o diff monto > 5% — no bloquea.
+// Copia estructural del `LinkPaymentDrawer` de gastos (post 0119): el scoring
+// vive en `@/lib/finance/expense-matching` y es agnóstico del ítem (total +
+// fecha + moneda), así que se reutiliza tal cual.
 // ═══════════════════════════════════════════════════════════════════════════
+
+export interface PayrollLinkedMovement {
+  readonly movementId: string;
+  readonly role: PayrollMovementRole;
+  readonly amount: number;
+  readonly kind: "in" | "out";
+  readonly occurredAt: string;
+  readonly description: string | null;
+  readonly bankName: string;
+}
 
 export interface PayrollForLinking {
   readonly id: string;
@@ -40,6 +53,8 @@ export interface PayrollForLinking {
   readonly dueDate: string | null;
   readonly paidAt: string | null;
   readonly bankMovementId: string | null;
+  /** Vínculos existentes vía bridge. */
+  readonly linkedMovements: readonly PayrollLinkedMovement[];
 }
 
 export interface UnconciledMovement extends MovementCandidate {
@@ -58,104 +73,192 @@ export function LinkPaymentDrawer({
   unconciledMovements,
   onClose,
 }: LinkPaymentDrawerProps) {
-  const alreadyLinked =
-    payroll.paidAt != null && payroll.bankMovementId != null;
+  const linked = payroll.linkedMovements;
+  const hasLinked = linked.length > 0;
   return (
     <Drawer
       open
       onClose={onClose}
-      title={alreadyLinked ? "Pago vinculado" : "Vincular pago"}
+      title={hasLinked ? "Vincular más movimientos" : "Vincular pago"}
       subtitle={`${payroll.personName} · ${fmtDate(payroll.periodStart)}–${fmtDate(payroll.periodEnd)}`}
-      width={620}
+      width={720}
     >
-      {alreadyLinked ? (
-        <AlreadyLinked payroll={payroll} onClose={onClose} />
-      ) : (
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        {hasLinked && (
+          <LinkedMovementsList
+            payroll={payroll}
+            movements={linked}
+          />
+        )}
         <PickMovement
           payroll={payroll}
           unconciledMovements={unconciledMovements}
           onClose={onClose}
+          allowClose={!hasLinked}
         />
-      )}
+      </div>
     </Drawer>
   );
 }
 
-// ─── Caso: ya vinculado → ver + desvincular ────────────────────────────────
+// ─── Lista de vínculos existentes con desvincular individual ─────────────
 
-function AlreadyLinked({
+function LinkedMovementsList({
   payroll,
-  onClose,
+  movements,
 }: {
   readonly payroll: PayrollForLinking;
-  readonly onClose: () => void;
+  readonly movements: readonly PayrollLinkedMovement[];
 }) {
-  const [pending, startTransition] = useTransition();
+  const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
 
-  function handleUnlink() {
+  function handleUnlink(movementId: string) {
     setError(null);
+    setPendingId(movementId);
     startTransition(async () => {
-      const res = await unlinkPayrollPayment(payroll.id);
-      if ("ok" in res) onClose();
-      else setError(res.error);
+      const res = await unlinkPayrollFromMovement(payroll.id, movementId);
+      setPendingId(null);
+      if ("error" in res) setError(res.error);
     });
   }
 
+  const principalSum = movements
+    .filter((m) => m.role === "principal")
+    .reduce((acc, m) => acc + m.amount, 0);
+  const commissionSum = movements
+    .filter((m) => m.role === "comision")
+    .reduce((acc, m) => acc + m.amount, 0);
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ fontSize: 13, color: "var(--kg-text-2)", lineHeight: 1.6 }}>
-        Esta liquidación ya está marcada como pagada el{" "}
-        <strong>{fmtDate(payroll.paidAt!)}</strong> y vinculada a un movimiento
-        bancario existente.
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div className="kg-t7" style={{ color: "var(--kg-text-2)", fontWeight: 700 }}>
+        Movimientos vinculados ({movements.length})
       </div>
-      <Callout tone="warning">
-        Si el vínculo es incorrecto, podés desvincularlo. La liquidación vuelve
-        a &quot;impaga&quot; y el movimiento bancario queda libre para vincular a
-        otro pago. Ninguno de los dos se borra.
-      </Callout>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {movements.map((m) => (
+          <div
+            key={m.movementId}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "auto 1fr auto auto",
+              gap: 10,
+              alignItems: "center",
+              padding: "8px 10px",
+              borderRadius: "var(--kg-r-8)",
+              background: "var(--kg-surface-2-solid)",
+              border: "1px solid var(--kg-border-subtle)",
+              fontSize: 12,
+            }}
+          >
+            <RolePill role={m.role} />
+            <span style={{ color: "var(--kg-text-2)" }}>
+              {m.bankName} · {fmtDate(m.occurredAt)}
+              {m.description && (
+                <span style={{ color: "var(--kg-text-3)" }}>
+                  {" · "}
+                  {m.description}
+                </span>
+              )}
+            </span>
+            <span
+              style={{
+                color: m.kind === "in" ? "#00D084" : "#EF4444",
+                fontWeight: 700,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {m.kind === "in" ? "+" : "−"}
+              {fMoney(m.amount)}
+            </span>
+            <button
+              type="button"
+              onClick={() => handleUnlink(m.movementId)}
+              disabled={isPending && pendingId === m.movementId}
+              className="kg-focus"
+              style={{
+                ...secondaryBtn,
+                color: "#EF4444",
+                borderColor: "#EF4444",
+                padding: "3px 10px",
+                fontSize: 10,
+                opacity: isPending && pendingId === m.movementId ? 0.6 : 1,
+              }}
+              title="Desvincular"
+            >
+              {isPending && pendingId === m.movementId ? "…" : "Desvincular"}
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+        Sueldo:{" "}
+        <b style={{ color: "var(--kg-text-1)" }}>{fMoney(principalSum)}</b>
+        {commissionSum > 0 && (
+          <>
+            {" · "}Comisión bancaria:{" "}
+            <b style={{ color: "var(--kg-text-1)" }}>{fMoney(commissionSum)}</b>{" "}
+            <span style={{ color: "var(--kg-text-3)" }}>
+              (
+              {principalSum > 0
+                ? ((commissionSum / principalSum) * 100).toFixed(1)
+                : "—"}
+              % del sueldo)
+            </span>
+          </>
+        )}
+        {" · "}Total liquidación:{" "}
+        <b style={{ color: "var(--kg-text-1)" }}>
+          {fMoney(payroll.totalAmount)}
+        </b>
+      </div>
       {error && <Callout tone="negative">{error}</Callout>}
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-        <button
-          type="button"
-          onClick={onClose}
-          disabled={pending}
-          className="kg-focus"
-          style={secondaryBtn}
-        >
-          Cerrar
-        </button>
-        <button
-          type="button"
-          onClick={handleUnlink}
-          disabled={pending}
-          className="kg-focus"
-          style={{
-            ...primaryBtn,
-            background: "#EF4444",
-            opacity: pending ? 0.7 : 1,
-          }}
-        >
-          {pending ? "Desvinculando…" : "Desvincular pago"}
-        </button>
-      </div>
     </div>
   );
 }
 
-// ─── Caso: sin vincular → seleccionar movimiento ───────────────────────────
+function RolePill({ role }: { readonly role: PayrollMovementRole }) {
+  const spec =
+    role === "principal"
+      ? { bg: "rgba(0,208,132,0.15)", fg: "#00D084" }
+      : role === "comision"
+        ? { bg: "rgba(255,184,0,0.15)", fg: "#FFB800" }
+        : { bg: "rgba(138,138,153,0.15)", fg: "var(--kg-text-2)" };
+  return (
+    <span
+      style={{
+        padding: "1px 8px",
+        borderRadius: 999,
+        background: spec.bg,
+        color: spec.fg,
+        fontSize: 10,
+        fontWeight: 700,
+      }}
+    >
+      {role}
+    </span>
+  );
+}
+
+// ─── Caso: seleccionar movimiento para vincular ──────────────────────────
 
 function PickMovement({
   payroll,
   unconciledMovements,
   onClose,
+  allowClose,
 }: {
   readonly payroll: PayrollForLinking;
   readonly unconciledMovements: readonly UnconciledMovement[];
   readonly onClose: () => void;
+  /** True cuando NO hay linkeados aún — el Cancelar cierra el drawer entero. */
+  readonly allowClose: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedRole, setSelectedRole] =
+    useState<PayrollMovementRole>("principal");
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<LinkPayrollResult | null>(null);
 
@@ -198,9 +301,13 @@ function PickMovement({
       const r = await linkPayrollToMovement(
         payroll.id,
         selected.movement.id,
+        selectedRole,
       );
       setResult(r);
-      if ("ok" in r) onClose();
+      if ("ok" in r) {
+        setSelectedId(null);
+        setQuery("");
+      }
     });
   }
 
@@ -208,7 +315,7 @@ function PickMovement({
     return (
       <EmptyState
         title="No hay movimientos sin conciliar"
-        hint="Cargá el movimiento bancario de salida (el sueldo saliendo del banco) desde Financiero → Movimientos y volvé acá para vincularlo."
+        hint="Cargá el movimiento bancario de salida (el sueldo saliendo del banco) desde Financiero → Movimientos y volvé acá para vincularlo. Después podés agregar la comisión bancaria."
       />
     );
   }
@@ -303,11 +410,55 @@ function PickMovement({
             <div>
               La diferencia de monto es del{" "}
               {(selected.amountDiffPct * 100).toFixed(1)}%. Puede ser un
-              adelanto parcial o una retención — confirmá que sea el pago
-              correcto.
+              adelanto parcial, una retención — o la comisión bancaria del
+              sueldo. Elegí <b>Comisión</b> si es la última.
             </div>
           )}
         </Callout>
+      )}
+
+      {selected && (
+        <div>
+          <div
+            className="kg-t7"
+            style={{ color: "var(--kg-text-3)", marginBottom: 6 }}
+          >
+            Rol del vínculo
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {(["principal", "comision", "otro"] as const).map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => setSelectedRole(r)}
+                className="kg-focus"
+                style={{
+                  padding: "6px 14px",
+                  borderRadius: 999,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  background:
+                    selectedRole === r
+                      ? "var(--kg-accent-500)"
+                      : "transparent",
+                  color:
+                    selectedRole === r ? "#fff" : "var(--kg-text-2)",
+                  border: "1px solid var(--kg-border-subtle)",
+                }}
+                title={
+                  r === "principal"
+                    ? "El sueldo saliendo del banco (exige movimiento kind=out)"
+                    : r === "comision"
+                      ? "Fee bancario del pago del sueldo (transferencia, cash-out). Suma al costo real del empleado."
+                      : "Ajuste u otro movimiento vinculado"
+                }
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+        </div>
       )}
 
       {result && "error" in result && (
@@ -322,7 +473,7 @@ function PickMovement({
           className="kg-focus"
           style={secondaryBtn}
         >
-          Cancelar
+          {allowClose ? "Cancelar" : "Cerrar"}
         </button>
         <button
           type="button"
@@ -334,7 +485,7 @@ function PickMovement({
             opacity: pending || !selected ? 0.6 : 1,
           }}
         >
-          {pending ? "Vinculando…" : "Vincular pago"}
+          {pending ? "Vinculando…" : "Vincular movimiento"}
         </button>
       </div>
 
@@ -412,8 +563,8 @@ function MovementRow({
             <>
               {" "}
               ·{" "}
-              <span style={{ color: "#EF4444" }}>
-                ENTRADA (no puede pagar)
+              <span style={{ color: "#FFB800" }}>
+                ENTRADA (no puede ser principal)
               </span>
             </>
           )}

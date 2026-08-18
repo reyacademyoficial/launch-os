@@ -20,6 +20,13 @@ export type LinkPayrollResult = { ok: true } | { error: string };
 
 export type DeletePayrollResult = { ok: true } | { error: string };
 
+/**
+ * Roles del bridge `payroll_bank_movements` (mig 0129) — mismo shape que
+ * `expense_bank_movements` (0119). Un sueldo se paga con UN principal
+ * (kind='out') + N comisiones bancarias (kind='out') + ajustes ocasionales.
+ */
+export type PayrollMovementRole = "principal" | "comision" | "otro";
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Helpers
 // ═══════════════════════════════════════════════════════════════════════════
@@ -253,10 +260,10 @@ export async function updatePayroll(
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // Mismo criterio que deleteExpense (gastos/actions.ts): si hay link
-// (paid_at + bank_movement_id), el operador tiene que desvincular primero
-// desde "Ver pago". Sin este guard, un borrado silencioso deja el
-// bank_movement huérfano sin traza de la liquidación que lo justificaba —
-// imposible de auditar después.
+// (paid_at + bank_movement_id o bridge no vacío), el operador tiene que
+// desvincular primero desde "Ver pago". Sin este guard, un borrado silencioso
+// deja el bank_movement huérfano sin traza de la liquidación que lo
+// justificaba — imposible de auditar después.
 
 export async function deletePayroll(
   payrollId: string,
@@ -279,7 +286,19 @@ export async function deletePayroll(
     paid_at: string | null;
     bank_movement_id: string | null;
   };
-  if (row.paid_at != null || row.bank_movement_id != null) {
+
+  // Post 0129: el guard también mira el bridge — un sueldo con sólo comisión
+  // linkeada (sin principal) puede tener paid_at=null pero seguir vinculado.
+  const { count: bridgeCount } = await supabase
+    .from("payroll_bank_movements")
+    .select("payroll_id", { count: "exact", head: true })
+    .eq("payroll_id", payrollId);
+
+  if (
+    row.paid_at != null ||
+    row.bank_movement_id != null ||
+    (bridgeCount ?? 0) > 0
+  ) {
     return {
       error:
         "No se puede eliminar: la liquidación está vinculada a un movimiento bancario. " +
@@ -300,77 +319,134 @@ export async function deletePayroll(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// linkPayrollToMovement — vincula una liquidación a un bank_movement out
+// linkPayrollToMovement — inserta fila en payroll_bank_movements (mig 0129)
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Mismo patrón que linkExpenseToPayment (gastos/actions.ts). NO crea el
-// bank_movement — vincula uno existente para evitar duplicar el egreso en el
-// saldo del banco. Al vincular:
-//   - paid_at ← bank_movement.occurred_at
-//   - bank_movement_id ← input
-//   - fila deja de contar como AP en el dashboard financiero
+// Post 0129 la nómina puede tener N movimientos: principal (el sueldo saliendo
+// del banco) + comisión (fee bancario del pago del sueldo, típicamente
+// transferencia al empleado) + otro (ajustes puntuales). El trigger
+// recompute_payroll_paid_at setea paid_at = MAX(occurred_at) de los principales
+// vinculados.
 //
-// Guard duro: solo movimientos kind='out' pueden pagar una liquidación.
+// Guards:
+//   - Misma organización (RLS también lo bloquearía).
+//   - role='principal' requiere kind='out' (un sueldo no se paga con una
+//     entrada).
+//   - role='comision' u 'otro' aceptan cualquier kind.
 
 export async function linkPayrollToMovement(
   payrollId: string,
   bankMovementId: string,
+  role: PayrollMovementRole = "principal",
 ): Promise<LinkPayrollResult> {
+  if (!payrollId || !bankMovementId) {
+    return { error: "Falta payroll_id o bank_movement_id." };
+  }
+
   const supabase = await createClient();
 
-  const bmRes = await supabase
-    .from("bank_movements")
-    .select("id, occurred_at, kind")
-    .eq("id", bankMovementId)
-    .maybeSingle();
-
-  if (bmRes.error) return { error: bmRes.error.message };
-  const bm = bmRes.data as
-    | { id: string; occurred_at: string; kind: "in" | "out" }
+  const [{ data: pRow }, { data: bmRow }] = await Promise.all([
+    supabase
+      .from("payroll")
+      .select("id, organization_id")
+      .eq("id", payrollId)
+      .maybeSingle(),
+    supabase
+      .from("bank_movements")
+      .select("id, kind, organization_id")
+      .eq("id", bankMovementId)
+      .maybeSingle(),
+  ]);
+  const pay = pRow as { id: string; organization_id: string } | null;
+  const bm = bmRow as
+    | { id: string; kind: "in" | "out"; organization_id: string }
     | null;
-  if (!bm) {
+  if (!pay) return { error: "La liquidación ya no existe o no tenés acceso." };
+  if (!bm) return { error: "El movimiento ya no existe o no tenés acceso." };
+  if (pay.organization_id !== bm.organization_id) {
+    return { error: "Nómina y movimiento son de organizaciones distintas." };
+  }
+  if (role === "principal" && bm.kind !== "out") {
     return {
       error:
-        "El movimiento bancario ya no existe. Recargá y volvé a intentar.",
+        "El movimiento elegido es una ENTRADA. Solo las salidas pueden pagar un sueldo (role='principal'). Elegí role='comision' u 'otro' para vincular entradas (reembolsos).",
     };
   }
-  if (bm.kind === "in") {
-    return {
-      error:
-        "El movimiento elegido es una ENTRADA. Solo las salidas pueden pagar un sueldo.",
-    };
-  }
-
-  const payload = {
-    paid_at: bm.occurred_at,
-    bank_movement_id: bm.id,
-  } as never;
 
   const { error } = await supabase
-    .from("payroll")
-    .update(payload)
-    .eq("id", payrollId);
+    .from("payroll_bank_movements")
+    .insert({
+      payroll_id: payrollId,
+      bank_movement_id: bankMovementId,
+      role,
+    } as never);
 
-  if (error) return { error: error.message };
+  if (error) {
+    if (error.code === "23505") {
+      return { error: "Ese movimiento ya está vinculado a esta liquidación." };
+    }
+    return { error: error.message };
+  }
 
   revalidatePath("/financiero/nomina");
   revalidatePath("/financiero/movimientos");
+  revalidatePath("/financiero/bancos");
   revalidatePath("/financiero");
   return { ok: true };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// unlinkPayrollPayment — deshace la vinculación (sin borrar la liquidación)
+// unlinkPayrollFromMovement — borra fila del bridge; trigger recomputa paid_at
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function unlinkPayrollFromMovement(
+  payrollId: string,
+  bankMovementId: string,
+): Promise<LinkPayrollResult> {
+  if (!payrollId || !bankMovementId) {
+    return { error: "Falta payroll_id o bank_movement_id." };
+  }
+
+  const supabase = await createClient();
+
+  const { error } = await supabase
+    .from("payroll_bank_movements")
+    .delete()
+    .eq("payroll_id", payrollId)
+    .eq("bank_movement_id", bankMovementId);
+
+  if (error) return { error: error.message };
+
+  revalidatePath("/financiero/nomina");
+  revalidatePath("/financiero/movimientos");
+  revalidatePath("/financiero/bancos");
+  revalidatePath("/financiero");
+  return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// unlinkPayrollPayment — compat shim: borra TODO el bridge del sueldo
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Único camino de corrección para una conciliación equivocada. La liquidación
-// vuelve a "impaga" (paid_at=null, bank_movement_id=null) y el movimiento
-// queda libre para vincular con otro pago. Ninguno se borra.
+// La firma vieja no tomaba movementId. El trigger recompute_payroll_paid_at
+// al quedar el bridge vacío limpia paid_at. Además limpia la FK vieja
+// `payroll.bank_movement_id` (que la UI legacy pudiera haber seteado) para
+// que la fila quede consistentemente "impaga".
 
 export async function unlinkPayrollPayment(
   payrollId: string,
 ): Promise<LinkPayrollResult> {
   const supabase = await createClient();
+
+  const { error: bridgeErr } = await supabase
+    .from("payroll_bank_movements")
+    .delete()
+    .eq("payroll_id", payrollId);
+  if (bridgeErr) return { error: bridgeErr.message };
+
+  // Compat con la col vieja: si venía seteada por la UI legacy, la limpiamos
+  // también. Con bridge vacío, el trigger ya no toca paid_at (regla del 0129),
+  // así que el UPDATE explícito es lo que garantiza el estado impago.
   const payload = {
     paid_at: null,
     bank_movement_id: null,
@@ -385,6 +461,7 @@ export async function unlinkPayrollPayment(
 
   revalidatePath("/financiero/nomina");
   revalidatePath("/financiero/movimientos");
+  revalidatePath("/financiero/bancos");
   revalidatePath("/financiero");
   return { ok: true };
 }

@@ -40,12 +40,14 @@ export type MovementConciliation =
   | {
       readonly kind: "payroll";
       readonly id: string;
+      readonly role: "principal" | "comision" | "otro";
       readonly label: string;
       readonly amount: number;
     }
   | {
       readonly kind: "transfer";
       readonly id: string;
+      readonly role: "principal" | "comision" | "otro";
       readonly label: string;
       readonly amount: number;
     };
@@ -569,10 +571,7 @@ function typeLabel(kind: MovementConciliation["kind"]): string {
 
 function describe(c: MovementConciliation): string {
   const base = `${typeLabel(c.kind)}: ${c.label}`;
-  if (c.kind === "invoice" || c.kind === "expense") {
-    return c.role === "principal" ? base : `${base} (${c.role})`;
-  }
-  return base;
+  return c.role === "principal" ? base : `${base} (${c.role})`;
 }
 
 function describeShort(c: MovementConciliation): string {

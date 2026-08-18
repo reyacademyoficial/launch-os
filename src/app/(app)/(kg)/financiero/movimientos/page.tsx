@@ -387,6 +387,11 @@ export default async function MovimientosPage({
  * Devuelve el set de ids de movimientos que ya están linkeados a AL MENOS
  * una factura / gasto / nómina / transferencia. Alimenta el filtro
  * "Sin conciliar" y el contador global de la ContextBar.
+ *
+ * Post 0129: consulta los 4 bridges (invoice/expense/payroll/transfer)
+ * Y las FKs viejas de payroll/client_transfers (mientras haya rows con
+ * la col vieja seteada pre-migración; el bridge las tiene backfilleadas
+ * pero la col vieja no se limpia).
  */
 async function loadLinkedMovementIds(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -395,36 +400,45 @@ async function loadLinkedMovementIds(
   const linked = new Set<string>();
   if (movementIds.length === 0) return linked;
 
-  const [invRes, expRes, payRes, ctRes] = await Promise.all([
-    supabase
-      .from("invoice_bank_movements")
-      .select("bank_movement_id")
-      .in("bank_movement_id", movementIds),
-    supabase
-      .from("expense_bank_movements")
-      .select("bank_movement_id")
-      .in("bank_movement_id", movementIds),
-    supabase
-      .from("payroll")
-      .select("bank_movement_id")
-      .in("bank_movement_id", movementIds),
-    supabase
-      .from("client_transfers")
-      .select("bank_movement_id")
-      .in("bank_movement_id", movementIds),
-  ]);
+  const [invRes, expRes, pbmRes, ctbmRes, payFkRes, ctFkRes] =
+    await Promise.all([
+      supabase
+        .from("invoice_bank_movements")
+        .select("bank_movement_id")
+        .in("bank_movement_id", movementIds),
+      supabase
+        .from("expense_bank_movements")
+        .select("bank_movement_id")
+        .in("bank_movement_id", movementIds),
+      supabase
+        .from("payroll_bank_movements")
+        .select("bank_movement_id")
+        .in("bank_movement_id", movementIds),
+      supabase
+        .from("client_transfer_bank_movements")
+        .select("bank_movement_id")
+        .in("bank_movement_id", movementIds),
+      supabase
+        .from("payroll")
+        .select("bank_movement_id")
+        .in("bank_movement_id", movementIds),
+      supabase
+        .from("client_transfers")
+        .select("bank_movement_id")
+        .in("bank_movement_id", movementIds),
+    ]);
 
-  for (const r of (invRes.data ?? []) as { bank_movement_id: string }[]) {
-    linked.add(r.bank_movement_id);
+  for (const res of [invRes, expRes, pbmRes, ctbmRes]) {
+    for (const r of (res.data ?? []) as { bank_movement_id: string }[]) {
+      linked.add(r.bank_movement_id);
+    }
   }
-  for (const r of (expRes.data ?? []) as { bank_movement_id: string }[]) {
-    linked.add(r.bank_movement_id);
-  }
-  for (const r of (payRes.data ?? []) as { bank_movement_id: string | null }[]) {
-    if (r.bank_movement_id) linked.add(r.bank_movement_id);
-  }
-  for (const r of (ctRes.data ?? []) as { bank_movement_id: string | null }[]) {
-    if (r.bank_movement_id) linked.add(r.bank_movement_id);
+  for (const res of [payFkRes, ctFkRes]) {
+    for (const r of (res.data ?? []) as {
+      bank_movement_id: string | null;
+    }[]) {
+      if (r.bank_movement_id) linked.add(r.bank_movement_id);
+    }
   }
   return linked;
 }
@@ -456,7 +470,33 @@ async function loadConciliations(
       amount_gross: number;
     } | null;
   }
-  interface PayRow {
+  interface PayBridgeRow {
+    readonly bank_movement_id: string;
+    readonly payroll_id: string;
+    readonly role: "principal" | "comision" | "otro";
+    readonly payroll: {
+      id: string;
+      total_amount: number;
+      period_start: string;
+      period_end: string;
+      person_id: string;
+    } | null;
+  }
+  interface CtBridgeRow {
+    readonly bank_movement_id: string;
+    readonly client_transfer_id: string;
+    readonly role: "principal" | "comision" | "otro";
+    readonly client_transfers: {
+      id: string;
+      amount: number;
+      project_id: string;
+      launch_settlement_id: string | null;
+    } | null;
+  }
+  // Filas ligadas por FK vieja (pre-bridge) — se preservan hasta que la col
+  // se limpie en migración posterior. Un movimiento puede estar SOLO en la
+  // col vieja si nunca pasó por el bridge.
+  interface PayFkRow {
     readonly id: string;
     readonly bank_movement_id: string;
     readonly total_amount: number;
@@ -464,7 +504,7 @@ async function loadConciliations(
     readonly period_end: string;
     readonly person_id: string;
   }
-  interface CtRow {
+  interface CtFkRow {
     readonly id: string;
     readonly bank_movement_id: string;
     readonly amount: number;
@@ -472,28 +512,41 @@ async function loadConciliations(
     readonly launch_settlement_id: string | null;
   }
 
-  const [invRes, expRes, payRes, ctRes] = await Promise.all([
-    supabase
-      .from("invoice_bank_movements")
-      .select(
-        "bank_movement_id, invoice_id, role, invoices!inner(invoice_number, amount_gross)",
-      )
-      .in("bank_movement_id", movementIds),
-    supabase
-      .from("expense_bank_movements")
-      .select(
-        "bank_movement_id, expense_id, role, expenses!inner(description, amount_gross)",
-      )
-      .in("bank_movement_id", movementIds),
-    supabase
-      .from("payroll")
-      .select("id, bank_movement_id, total_amount, period_start, period_end, person_id")
-      .in("bank_movement_id", movementIds),
-    supabase
-      .from("client_transfers")
-      .select("id, bank_movement_id, amount, project_id, launch_settlement_id")
-      .in("bank_movement_id", movementIds),
-  ]);
+  const [invRes, expRes, payBridgeRes, ctBridgeRes, payFkRes, ctFkRes] =
+    await Promise.all([
+      supabase
+        .from("invoice_bank_movements")
+        .select(
+          "bank_movement_id, invoice_id, role, invoices!inner(invoice_number, amount_gross)",
+        )
+        .in("bank_movement_id", movementIds),
+      supabase
+        .from("expense_bank_movements")
+        .select(
+          "bank_movement_id, expense_id, role, expenses!inner(description, amount_gross)",
+        )
+        .in("bank_movement_id", movementIds),
+      supabase
+        .from("payroll_bank_movements")
+        .select(
+          "bank_movement_id, payroll_id, role, payroll!inner(id, total_amount, period_start, period_end, person_id)",
+        )
+        .in("bank_movement_id", movementIds),
+      supabase
+        .from("client_transfer_bank_movements")
+        .select(
+          "bank_movement_id, client_transfer_id, role, client_transfers!inner(id, amount, project_id, launch_settlement_id)",
+        )
+        .in("bank_movement_id", movementIds),
+      supabase
+        .from("payroll")
+        .select("id, bank_movement_id, total_amount, period_start, period_end, person_id")
+        .in("bank_movement_id", movementIds),
+      supabase
+        .from("client_transfers")
+        .select("id, bank_movement_id, amount, project_id, launch_settlement_id")
+        .in("bank_movement_id", movementIds),
+    ]);
 
   function push(mvId: string, c: MovementConciliation) {
     const cur = out.get(mvId) ?? [];
@@ -520,9 +573,51 @@ async function loadConciliations(
     });
   }
 
-  // Nómina: resolvemos nombre de la persona a partir del person_id.
-  const payRows = (payRes.data ?? []) as unknown as PayRow[];
-  const personIds = Array.from(new Set(payRows.map((p) => p.person_id)));
+  // Nómina: unimos bridge + FK vieja, con dedupe por (mvId, payrollId) —
+  // el bridge tiene role, la FK vieja no (se asume 'principal'). El dedupe
+  // previene doble render cuando el backfill del 0129 dejó las dos rutas.
+  const payBridgeRows = (payBridgeRes.data ?? []) as unknown as PayBridgeRow[];
+  const payFkRows = (payFkRes.data ?? []) as unknown as PayFkRow[];
+  const payloadByMvPay = new Map<
+    string,
+    {
+      mvId: string;
+      payrollId: string;
+      role: "principal" | "comision" | "otro";
+      totalAmount: number;
+      periodStart: string;
+      periodEnd: string;
+      personId: string;
+    }
+  >();
+  for (const r of payBridgeRows) {
+    if (!r.payroll) continue;
+    payloadByMvPay.set(`${r.bank_movement_id}:${r.payroll_id}`, {
+      mvId: r.bank_movement_id,
+      payrollId: r.payroll.id,
+      role: r.role,
+      totalAmount: Number(r.payroll.total_amount),
+      periodStart: r.payroll.period_start,
+      periodEnd: r.payroll.period_end,
+      personId: r.payroll.person_id,
+    });
+  }
+  for (const r of payFkRows) {
+    const key = `${r.bank_movement_id}:${r.id}`;
+    if (payloadByMvPay.has(key)) continue; // ya vino por bridge
+    payloadByMvPay.set(key, {
+      mvId: r.bank_movement_id,
+      payrollId: r.id,
+      role: "principal",
+      totalAmount: Number(r.total_amount),
+      periodStart: r.period_start,
+      periodEnd: r.period_end,
+      personId: r.person_id,
+    });
+  }
+  const personIds = Array.from(
+    new Set(Array.from(payloadByMvPay.values()).map((p) => p.personId)),
+  );
   const personNameById = new Map<string, string>();
   if (personIds.length > 0) {
     const { data } = await supabase
@@ -533,18 +628,53 @@ async function loadConciliations(
       personNameById.set(p.id, p.full_name);
     }
   }
-  for (const r of payRows) {
-    push(r.bank_movement_id, {
+  for (const p of payloadByMvPay.values()) {
+    push(p.mvId, {
       kind: "payroll",
-      id: r.id,
-      label: `${personNameById.get(r.person_id) ?? "—"} · ${fmtShort(r.period_start)}–${fmtShort(r.period_end)}`,
-      amount: Number(r.total_amount),
+      id: p.payrollId,
+      role: p.role,
+      label: `${personNameById.get(p.personId) ?? "—"} · ${fmtShort(p.periodStart)}–${fmtShort(p.periodEnd)}`,
+      amount: p.totalAmount,
     });
   }
 
-  // Transferencia a cliente: resolvemos nombre del proyecto.
-  const ctRows = (ctRes.data ?? []) as unknown as CtRow[];
-  const ctProjectIds = Array.from(new Set(ctRows.map((c) => c.project_id)));
+  // Transferencia a cliente: mismo dedupe (bridge + FK vieja).
+  const ctBridgeRows = (ctBridgeRes.data ?? []) as unknown as CtBridgeRow[];
+  const ctFkRows = (ctFkRes.data ?? []) as unknown as CtFkRow[];
+  const ctByMvCt = new Map<
+    string,
+    {
+      mvId: string;
+      ctId: string;
+      role: "principal" | "comision" | "otro";
+      amount: number;
+      projectId: string;
+    }
+  >();
+  for (const r of ctBridgeRows) {
+    if (!r.client_transfers) continue;
+    ctByMvCt.set(`${r.bank_movement_id}:${r.client_transfer_id}`, {
+      mvId: r.bank_movement_id,
+      ctId: r.client_transfers.id,
+      role: r.role,
+      amount: Number(r.client_transfers.amount),
+      projectId: r.client_transfers.project_id,
+    });
+  }
+  for (const r of ctFkRows) {
+    const key = `${r.bank_movement_id}:${r.id}`;
+    if (ctByMvCt.has(key)) continue;
+    ctByMvCt.set(key, {
+      mvId: r.bank_movement_id,
+      ctId: r.id,
+      role: "principal",
+      amount: Number(r.amount),
+      projectId: r.project_id,
+    });
+  }
+  const ctProjectIds = Array.from(
+    new Set(Array.from(ctByMvCt.values()).map((c) => c.projectId)),
+  );
   const ctProjectNameById = new Map<string, string>();
   if (ctProjectIds.length > 0) {
     const { data } = await supabase
@@ -555,12 +685,13 @@ async function loadConciliations(
       ctProjectNameById.set(p.id, p.name);
     }
   }
-  for (const r of ctRows) {
-    push(r.bank_movement_id, {
+  for (const c of ctByMvCt.values()) {
+    push(c.mvId, {
       kind: "transfer",
-      id: r.id,
-      label: `Transferencia a ${ctProjectNameById.get(r.project_id) ?? "cliente"}`,
-      amount: Number(r.amount),
+      id: c.ctId,
+      role: c.role,
+      label: `Transferencia a ${ctProjectNameById.get(c.projectId) ?? "cliente"}`,
+      amount: c.amount,
     });
   }
 

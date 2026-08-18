@@ -8,6 +8,7 @@ import { fMoney } from "@/lib/finance/format";
 import { deletePayroll } from "./actions";
 import {
   LinkPaymentDrawer,
+  type PayrollLinkedMovement,
   type UnconciledMovement,
 } from "./link-payment-drawer";
 import {
@@ -36,6 +37,8 @@ export interface PayrollRowData {
   readonly notes: string | null;
   readonly paidAt: string | null;
   readonly bankMovementId: string | null;
+  /** Movimientos vinculados vía bridge (payroll_bank_movements, mig 0129). */
+  readonly linkedMovements: readonly PayrollLinkedMovement[];
 }
 
 export function NominaView({
@@ -128,6 +131,7 @@ export function NominaView({
             dueDate: linkingRow.dueDate,
             paidAt: linkingRow.paidAt,
             bankMovementId: linkingRow.bankMovementId,
+            linkedMovements: linkingRow.linkedMovements,
           }}
           unconciledMovements={unconciledMovements}
           onClose={() => setLinkingId(null)}
@@ -170,7 +174,11 @@ function RowActions({
   readonly onEdit: () => void;
   readonly onLink: () => void;
 }) {
-  const linked = row.paidAt != null && row.bankMovementId != null;
+  // Post 0129: la fila puede tener vínculos vía bridge (nuevo) o vía la FK
+  // vieja (backwards compat). Cualquiera de las dos cuenta como "vinculada".
+  const linked =
+    row.linkedMovements.length > 0 ||
+    (row.paidAt != null && row.bankMovementId != null);
   const [deletePending, startDelete] = useTransition();
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
