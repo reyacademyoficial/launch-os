@@ -51,17 +51,6 @@ export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
         <KgBrand />
       </div>
 
-      {/*
-        Widget "Mi Jornada" del Anexo A del plan. Server component que se
-        auto-hidea (return null) para users sin persona vinculada — típico
-        de dev / superadmin sin fila en organization_people. Colocado
-        entre el brand y la nav para que sea lo primero que ve alguien
-        que abre el shell.
-      */}
-      <div className="px-3 pb-3">
-        <MiJornadaPanel />
-      </div>
-
       <nav className="flex-1 space-y-4 px-3 pb-4">
         {LAYERS.map((layer) => {
           const modules = visibleModulesForRole(layer.modules, profile.role);
@@ -132,6 +121,17 @@ export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
           </LayerGroup>
         )}
       </nav>
+
+      {/*
+        Widget "Mi Jornada" del Anexo A del plan. Server component que se
+        auto-hidea (return null) para users sin persona vinculada — típico
+        de dev / superadmin sin fila en organization_people. Va justo arriba
+        del user block porque es una vista personal — el operador la lee
+        junto con su bloque de usuario, no arriba de todo.
+      */}
+      <div className="px-3 pb-3">
+        <MiJornadaPanel />
+      </div>
 
       <div className="border-t px-3 py-3" style={{ borderColor: "var(--kg-border-subtle)" }}>
         <KgUserBlock profile={profile} />
