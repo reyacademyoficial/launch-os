@@ -49,7 +49,7 @@ export default async function ConfigDistribucionPage() {
     supabase
       .from("settlement_rules")
       .select(
-        "id, organization_id, project_id, launch_id, name, percent_of_collected, fixed_fee_per_launch, fixed_fee_per_sale, min_guarantee, applies_on, active, created_at, updated_at",
+        "id, organization_id, project_id, launch_id, name, percent_of_collected, fixed_fee_per_launch, fixed_fee_per_sale, min_guarantee, applies_on, active, created_at, updated_at, created_by",
       )
       .eq("active", true),
   ]);

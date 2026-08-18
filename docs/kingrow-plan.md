@@ -243,12 +243,12 @@ devuelve ese valor y pinta badge `"Manual"`. Volver a null → automático.
 
 ### 1.5 Verificación al cerrar
 
-- [ ] Cargar al menos 3 clientes reales, atar 1-2 projects existentes a cada uno.
-- [ ] Los 6 forms (clients, health, nps, tickets, renewals, upsells) devuelven a la
+- [x] Cargar al menos 3 clientes reales, atar 1-2 projects existentes a cada uno.
+- [x] Los 6 forms (clients, health, nps, tickets, renewals, upsells) devuelven a la
       ficha del cliente sin recargar completo.
-- [ ] Health score = 100 para un cliente feliz reciente, 0 para uno abandonado.
-- [ ] LTV coincide con Financiero (sumado sobre los projects atados al cliente).
-- [ ] Un ticket con `project_id` seteado a un project de otro cliente rebota con el
+- [x] Health score = 100 para un cliente feliz reciente, 0 para uno abandonado.
+- [x] LTV coincide con Financiero (sumado sobre los projects atados al cliente).
+- [x] Un ticket con `project_id` seteado a un project de otro cliente rebota con el
       mensaje del trigger (verifica el guard de coherencia de 0110).
 
 > Notas del bloque Clientes:
@@ -349,15 +349,15 @@ Con las decisiones de §2.0. Los ítems marcan commits atómicos, no filas de ta
 
 ### 2.5 Verificación al cerrar
 
-- [ ] Cargar 1-2 proyectos internos reales.
-- [ ] Cargar 10+ tareas con distintos assignees, algunas con `due_on` en el pasado
+- [x] Cargar 1-2 proyectos internos reales.
+- [x] Cargar 10+ tareas con distintos assignees, algunas con `due_on` en el pasado
       para verificar el marcado visual de "Vencida".
-- [ ] Vincular al menos 2 personas a usuarios distintos (self + otra); entrar como
+- [x] Vincular al menos 2 personas a usuarios distintos (self + otra); entrar como
       operador y verificar que solo se ven las propias; entrar como superadmin y
       verificar que se ven todas + toggle "Mis tareas" funciona.
-- [ ] Un bloqueador abierto y otro resuelto.
-- [ ] Time entries de al menos 2 personas en la misma ventana.
-- [ ] El dashboard muestra números coherentes con las tablas.
+- [x] Un bloqueador abierto y otro resuelto.
+- [x] Time entries de al menos 2 personas en la misma ventana.
+- [x] El dashboard muestra números coherentes con las tablas.
 
 > Notas del bloque Operaciones:
 > _(completar durante el trabajo)_
@@ -465,11 +465,11 @@ antes.
 
 ### 3.6 Verificación al cerrar
 
-- [ ] Crear 1 producto en Rey Academy + curso + cohorte + 5 alumnos.
-- [ ] 3 alumnos vía "Venta LaunchOS" con sale asociada, 2 vía "Manual".
-- [ ] Marcar asistencia masiva en 1 clase.
-- [ ] Emitir 2 certificados manualmente.
-- [ ] KPIs coherentes.
+- [x] Crear 1 producto en Rey Academy + curso + cohorte + 5 alumnos.
+- [x] 3 alumnos vía "Venta LaunchOS" con sale asociada, 2 vía "Manual".
+- [x] Marcar asistencia masiva en 1 clase.
+- [x] Emitir 2 certificados manualmente.
+- [x] KPIs coherentes.
 
 > Notas del bloque Academia:
 > _(completar durante el trabajo)_
@@ -530,7 +530,7 @@ el umbral de vencido a 3 días"). Estimación cuando se retome: 8-15h.
 
 ### 4.5 Verificación al cerrar
 
-- [ ] Los números coinciden con los módulos originales (spot check en 5 KPIs).
+- [x] Los números coinciden con los módulos originales (spot check en 5 KPIs).
 - [x] Roles no autorizados no llegan por URL (`requireRole` en el head del page).
 - [x] Estados vacíos correctos si algún módulo aún no tiene datos (empty state
       dedicado en cada panel).
@@ -616,13 +616,13 @@ Nueva sección `(kg)/configuracion/` con tabs según rol:
 
 ## Verificación transversal (cada bloque antes de cerrar)
 
-- [ ] `tsc --noEmit` en 0.
-- [ ] Suite completa sin regresiones.
-- [ ] Tests de la lógica nueva que no sea presentación.
-- [ ] Prueba de rol: los roles fuera de la lista blanca no llegan por URL.
-- [ ] Estados vacíos correctos incluso con datos reales cargados.
-- [ ] Ninguna escritura fuera de las server actions declaradas.
-- [ ] Ningún cálculo duplicado de algo que ya existe en otro selector.
+- [x] `tsc --noEmit` en 0.
+- [x] Suite completa sin regresiones.
+- [x] Tests de la lógica nueva que no sea presentación.
+- [x] Prueba de rol: los roles fuera de la lista blanca no llegan por URL.
+- [x] Estados vacíos correctos incluso con datos reales cargados.
+- [x] Ninguna escritura fuera de las server actions declaradas.
+- [x] Ningún cálculo duplicado de algo que ya existe en otro selector.
 
 ---
 
