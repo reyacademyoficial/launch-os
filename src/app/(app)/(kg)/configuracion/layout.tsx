@@ -33,6 +33,7 @@ export default async function ConfiguracionLayout({
             href: "/configuracion/distribucion",
             label: "Distribución de ingresos",
           },
+          { href: "/configuracion/notion", label: "Notion" },
         ]
       : []),
   ];
