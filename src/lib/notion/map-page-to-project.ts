@@ -1,0 +1,138 @@
+/**
+ * Función pura que traduce una NotionPage a un shape listo para upsert en
+ * `internal_projects`. Toda la lógica de sync que NO toca DB vive acá para
+ * poder testearla sin fake de Supabase.
+ *
+ * INPUTS
+ *   - page (raw properties de Notion)
+ *   - map (property_map de notion_databases parseado)
+ *   - assigneeToKgPerson: resolver que dado un notion_user_id devuelve el
+ *     kg_person_id mapeado (o null). Precomputado del caller para evitar
+ *     N queries a notion_users por page.
+ *   - context (organization_id + workspace_id + database_id)
+ *
+ * OUTPUT
+ *   { ok, payload } o { ok: false, reason } — el sync decide qué hacer.
+ *   Solo rebota si el título es null (name es NOT NULL en el DB).
+ */
+
+import type { NotionPage } from "./client";
+import {
+  applyValueMap,
+  parseDateStart,
+  parsePeople,
+  parseRichText,
+  parseSelect,
+  parseTitle,
+} from "./property-parser";
+import type {
+  KgPriority,
+  KgStatus,
+  NotionPropertyMap,
+} from "./property-map";
+
+export interface InternalProjectUpsertPayload {
+  organization_id: string;
+  name: string;
+  description: string | null;
+  status: KgStatus;
+  priority: KgPriority;
+  owner_id: string | null;
+  starts_on: string | null;
+  due_on: string | null;
+  notion_page_id: string;
+  notion_database_id: string;
+  notion_workspace_id: string;
+  notion_synced_at: string;
+}
+
+export type MapResult =
+  | { ok: true; payload: InternalProjectUpsertPayload }
+  | { ok: false; reason: "missing-title" | "invalid-map" };
+
+export interface MapContext {
+  readonly organizationId: string;
+  readonly workspaceId: string;
+  readonly databaseId: string;
+  /**
+   * Notion user id → KG organization_people.id (o null si no mapeado o si
+   * la persona ya no está en la org). Precomputado del sync.
+   */
+  readonly assigneeToKgPerson: (notionUserId: string) => string | null;
+  /** Timestamp del sync — se guarda en `notion_synced_at`. */
+  readonly nowIso: string;
+}
+
+export function mapNotionPageToInternalProject(
+  page: NotionPage,
+  map: NotionPropertyMap,
+  ctx: MapContext,
+): MapResult {
+  const name = parseTitle(page.properties, map.title_prop);
+  if (!name) {
+    return { ok: false, reason: "missing-title" };
+  }
+
+  // Status: aplicamos map con fallback a 'backlog'. Si el humano no
+  // configuró status_prop, todo entra como 'backlog' — decisión razonable
+  // para pages recién importados que después el operador triage.
+  const status: KgStatus = map.status_prop
+    ? applyValueMap<KgStatus>(
+        parseSelect(page.properties, map.status_prop),
+        map.status_map ?? {},
+        "backlog",
+      )
+    : "backlog";
+
+  const priority: KgPriority = map.priority_prop
+    ? applyValueMap<KgPriority>(
+        parseSelect(page.properties, map.priority_prop),
+        map.priority_map ?? {},
+        "med",
+      )
+    : "med";
+
+  // Assignee: tomamos el primer people. Notion permite múltiples pero
+  // internal_projects tiene un solo owner_id. El sync ignora los demás; si
+  // el humano necesita ver los otros co-owners tendría que verlos en Notion.
+  let ownerId: string | null = null;
+  if (map.assignee_prop) {
+    const people = parsePeople(page.properties, map.assignee_prop);
+    for (const nu of people) {
+      const kg = ctx.assigneeToKgPerson(nu);
+      if (kg) {
+        ownerId = kg;
+        break;
+      }
+    }
+  }
+
+  const dueOn = map.due_prop
+    ? parseDateStart(page.properties, map.due_prop)
+    : null;
+  const startsOn = map.start_prop
+    ? parseDateStart(page.properties, map.start_prop)
+    : null;
+
+  const description = map.description_prop
+    ? parseRichText(page.properties, map.description_prop)
+    : null;
+
+  return {
+    ok: true,
+    payload: {
+      organization_id: ctx.organizationId,
+      name,
+      description,
+      status,
+      priority,
+      owner_id: ownerId,
+      starts_on: startsOn,
+      due_on: dueOn,
+      notion_page_id: page.id,
+      notion_database_id: ctx.databaseId,
+      notion_workspace_id: ctx.workspaceId,
+      notion_synced_at: ctx.nowIso,
+    },
+  };
+}

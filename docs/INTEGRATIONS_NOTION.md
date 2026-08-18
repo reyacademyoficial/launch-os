@@ -111,55 +111,50 @@ resolver assignees/owners.
 
 Con users mapeados, ya se puede importar pages como projects.
 
-- [ ] UI en `/configuracion/notion/[workspaceId]/databases`:
-  - Lista de DBs descubiertas del workspace con toggle enabled + botón
-    "Configurar mapeo" por DB.
-  - Form de mapping por DB (guardado en `notion_databases.property_map`
-    como jsonb):
-    ```
-    {
-      "title_prop": "Name",         // (por default el título de Notion)
-      "status_prop": "Status",       // nombre de la col en Notion
-      "status_map": {                // valores Notion → valores KG
-        "Not started": "backlog",
-        "In progress": "active",
-        "Paused": "paused",
-        "Done": "done",
-        "Archived": "archived"
-      },
-      "priority_prop": "Priority",   // opcional
-      "priority_map": {
-        "Low": "low", "Medium": "med", "High": "high", "Urgent": "urgent"
-      },
-      "assignee_prop": "Assignee",   // People property
-      "due_prop": "Due",             // Date property
-      "start_prop": "Start",         // Date property (opcional)
-      "description_source": "body"   // "body" | "property:Description"
-    }
-    ```
-- [ ] Action `syncNotionDatabase(databaseId)` que:
-  - Paginado sobre `queryDatabase`.
-  - Por cada page mapea a shape `internal_project`:
-    - `name` = title extraído del title_prop
-    - `status` = status_map[valor de status_prop] con fallback a 'backlog'
-    - `priority` = priority_map[valor] con fallback a 'med'
-    - `owner_id` = `notion_users.kg_person_id` matcheado por assignee
-    - `due_on`, `starts_on` del date props
-    - `description` = body si description_source='body', sino el prop
-    - `notion_page_id` = page.id (upsert key)
-    - `notion_database_id`, `notion_workspace_id` metadata
-    - `notion_synced_at` = now()
-    - `organization_id` = derivado del workspace
-  - Upsert en `internal_projects` por `notion_page_id`.
-  - Log en `notion_sync_log`.
-- [ ] UI de proyectos:
-  - Badge "Notion" en la card del proyecto sincronizado.
-  - Link al page de Notion desde la card.
-  - Warning en el drawer de edit: "Este proyecto se sincroniza desde
-    Notion. Los cambios que hagas acá se van a sobreescribir en el
-    próximo sync."
-- [ ] Botón "Sincronizar Notion" en `/operaciones/proyectos` que corre
-  todas las DBs enabled de todos los workspaces enabled.
+- [x] Client Notion: `retrieveDatabase(token, dbId)` para traer el schema
+  con properties + options (para poblar los dropdowns del form de
+  mapping).
+- [x] `src/lib/notion/property-parser.ts` — pures: `parseTitle`,
+  `parseRichText`, `parseSelect` (soporta type='select' y 'status'),
+  `parsePeople`, `parseDateStart`, `applyValueMap`. 22 tests.
+- [x] `src/lib/notion/property-map.ts` — shape del `property_map` jsonb
+  + parser defensivo (`parsePropertyMap`) + serializer. Descarta valores
+  KG inválidos silenciosa (previene romper CHECKs del schema).
+- [x] `src/lib/notion/map-page-to-project.ts` — función pura
+  `mapNotionPageToInternalProject(page, map, ctx)`. Rebota con
+  reason='missing-title' si no hay título (name es NOT NULL). Fallbacks
+  a 'backlog'/'med' cuando el map no incluye el valor. Toma el primer
+  assignee mapeado. 8 tests.
+- [x] UI `/configuracion/notion/[workspaceId]/databases`:
+  - Lista de DBs descubiertas con toggle enabled + link "Configurar mapeo".
+  - No permite habilitar sin mapping guardado.
+  - Botón "Sincronizar" por DB (sync manual solo de esa DB, útil para
+    testing).
+- [x] UI `/configuracion/notion/[workspaceId]/databases/[databaseId]`:
+  - Form dinámico con dropdowns filtrados por type esperado (title/
+    select/status/people/date/rich_text).
+  - Cuando el usuario elige status/priority_prop aparecen los options
+    reales de esa columna con dropdown para elegir el valor KG.
+  - Guarda vía `saveNotionDatabaseMapping`.
+- [x] Actions nuevas (superadmin/dev): `setNotionDatabaseEnabled`,
+  `retrieveNotionDatabaseSchema`, `saveNotionDatabaseMapping`,
+  `syncNotionDatabase` (una DB), `syncAllEnabledNotionDatabases`
+  (orquestador para el botón de Ops).
+- [x] Sync engine:
+  - Log inicial 'running' → 'ok/error/partial' al finalizar.
+  - Precomputa map notion_user_id → kg_person_id (evita N queries).
+  - Upsert en `internal_projects` con `onConflict: notion_page_id`
+    (usa el UNIQUE parcial de 0132). Los projects nativos KG
+    (notion_page_id NULL) NO se tocan.
+- [x] UI de `/operaciones/proyectos`:
+  - Badge "Notion" al lado del nombre con link al page de Notion
+    (target=_blank).
+  - Botón "Sincronizar Notion" arriba a la derecha con mensaje de
+    resultado (workspaces sincronizados, DBs, upserts, errores).
+  - Warning amarillo en el drawer de edit cuando el project tiene
+    notion_page_id: "Los cambios acá se sobreescriben en el próximo sync".
+- [x] Link "Databases" en la card de cada workspace en la lista de
+  workspaces (paralelo al de Usuarios).
 
 ### 4d — Comentarios read (siguiente chat)
 

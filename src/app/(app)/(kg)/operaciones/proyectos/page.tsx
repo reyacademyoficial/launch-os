@@ -55,6 +55,8 @@ interface ProjectDbRow {
   readonly due_on: string | null;
   readonly closed_at: string | null;
   readonly notes: string | null;
+  readonly notion_page_id: string | null;
+  readonly notion_synced_at: string | null;
 }
 
 interface PersonDbRow {
@@ -82,7 +84,7 @@ export default async function ProyectosInternosPage({
     supabase
       .from("internal_projects")
       .select(
-        "id, name, description, status, priority, owner_id, starts_on, due_on, closed_at, notes",
+        "id, name, description, status, priority, owner_id, starts_on, due_on, closed_at, notes, notion_page_id, notion_synced_at",
       )
       .order("status", { ascending: true })
       .order("due_on", { ascending: true, nullsFirst: false })
@@ -160,6 +162,8 @@ export default async function ProyectosInternosPage({
       notes: p.notes,
       progressPct,
       openTasksCount: open,
+      notionPageId: p.notion_page_id,
+      notionSyncedAt: p.notion_synced_at,
     };
   });
 

@@ -52,6 +52,8 @@ export interface ProjectInitial {
   readonly startsOn: string | null;
   readonly dueOn: string | null;
   readonly notes: string | null;
+  /** Si viene de Notion (0132), pintamos un warning arriba del form. */
+  readonly notionPageId?: string | null;
 }
 
 export function InternalProjectFormDrawer({
@@ -144,11 +146,31 @@ function ProjectFormBody({
     });
   }
 
+  const isNotionSynced = isEdit && !!initial?.notionPageId;
+
   return (
     <form
       action={formAction}
       style={{ display: "flex", flexDirection: "column", gap: 16 }}
     >
+      {isNotionSynced && (
+        <div
+          style={{
+            padding: "10px 14px",
+            borderRadius: "var(--kg-r-8)",
+            background: "rgba(255,184,0,0.10)",
+            border: "1px solid #FFB800",
+            color: "#FFB800",
+            fontSize: 12,
+            lineHeight: 1.5,
+          }}
+        >
+          <strong>Este proyecto se sincroniza desde Notion.</strong> Los
+          cambios que hagas acá van a ser sobreescritos en el próximo sync.
+          Editá el page en Notion para que persistan.
+        </div>
+      )}
+
       <Field label="Nombre" htmlFor="name" required>
         <input
           id="name"

@@ -148,6 +148,13 @@ export function WorkspaceRow({
           >
             Usuarios
           </Link>
+          <Link
+            href={`/configuracion/notion/${workspace.id}/databases`}
+            className="kg-focus"
+            style={{ ...secondaryBtn, textDecoration: "none" }}
+          >
+            Databases
+          </Link>
           <button
             type="button"
             onClick={handleDiscover}

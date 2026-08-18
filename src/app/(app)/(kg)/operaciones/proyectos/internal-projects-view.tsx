@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useTransition } from "react";
 
 import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { StatusPill } from "@/components/kg/status-pill";
+
+import { syncAllEnabledNotionDatabases } from "../../configuracion/notion/actions";
 
 import {
   InternalProjectFormDrawer,
@@ -38,6 +40,9 @@ export interface InternalProjectRowData {
   /** % de tareas del proyecto en status='done' sobre el total. Null si no tiene tareas. */
   readonly progressPct: number | null;
   readonly openTasksCount: number;
+  /** Si viene de Notion (0132), el id del page. Null para projects nativos KG. */
+  readonly notionPageId: string | null;
+  readonly notionSyncedAt: string | null;
 }
 
 const STATUS_LABEL: Record<Status, string> = {
@@ -81,6 +86,36 @@ export function InternalProjectsView({
 }) {
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [syncing, startSync] = useTransition();
+  const [syncMessage, setSyncMessage] = useState<
+    { kind: "ok" | "error"; text: string } | null
+  >(null);
+
+  function handleSyncNotion() {
+    setSyncMessage(null);
+    startSync(async () => {
+      const res = await syncAllEnabledNotionDatabases();
+      if (res.errors.length > 0) {
+        setSyncMessage({
+          kind: "error",
+          text: `Sincronización con errores: ${res.errors.length} database(s) fallaron. Últimos: ${res.errors
+            .slice(-2)
+            .map((e) => e.error)
+            .join("; ")}`,
+        });
+      } else if (res.databasesRun === 0) {
+        setSyncMessage({
+          kind: "ok",
+          text: "No hay databases habilitadas. Configuralas en /configuracion/notion.",
+        });
+      } else {
+        setSyncMessage({
+          kind: "ok",
+          text: `Sincronizamos ${res.databasesRun} database(s) de ${res.workspacesRun} workspace(s). ${res.totalUpserted} proyecto(s) actualizados.`,
+        });
+      }
+    });
+  }
 
   const editing =
     editingId != null ? rows.find((r) => r.id === editingId) ?? null : null;
@@ -95,6 +130,7 @@ export function InternalProjectsView({
         startsOn: editing.startsOn,
         dueOn: editing.dueOn,
         notes: editing.notes,
+        notionPageId: editing.notionPageId,
       }
     : undefined;
 
@@ -104,18 +140,21 @@ export function InternalProjectsView({
       label: "Proyecto",
       render: (r) => (
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <Link
-            href={`/operaciones/proyectos/${r.id}`}
-            className="kg-focus"
-            style={{
-              color: "var(--kg-text-1)",
-              textDecoration: "none",
-              fontWeight: 600,
-              fontSize: 13,
-            }}
-          >
-            {r.name}
-          </Link>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Link
+              href={`/operaciones/proyectos/${r.id}`}
+              className="kg-focus"
+              style={{
+                color: "var(--kg-text-1)",
+                textDecoration: "none",
+                fontWeight: 600,
+                fontSize: 13,
+              }}
+            >
+              {r.name}
+            </Link>
+            {r.notionPageId && <NotionBadge pageId={r.notionPageId} />}
+          </div>
           {r.description && (
             <div
               className="kg-t7"
@@ -201,15 +240,57 @@ export function InternalProjectsView({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="kg-focus"
-          style={primaryBtn}
-        >
-          + Nuevo proyecto
-        </button>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
+        {syncMessage ? (
+          <div
+            style={{
+              padding: "6px 12px",
+              borderRadius: "var(--kg-r-8)",
+              background:
+                syncMessage.kind === "ok"
+                  ? "rgba(0,208,132,0.10)"
+                  : "rgba(239,68,68,0.10)",
+              border: `1px solid ${syncMessage.kind === "ok" ? "#00D084" : "#EF4444"}`,
+              color: syncMessage.kind === "ok" ? "#00D084" : "#EF4444",
+              fontSize: 11,
+              lineHeight: 1.4,
+              flex: 1,
+              minWidth: 200,
+            }}
+          >
+            {syncMessage.text}
+          </div>
+        ) : (
+          <div />
+        )}
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            type="button"
+            onClick={handleSyncNotion}
+            disabled={syncing}
+            className="kg-focus"
+            style={secondaryBtn}
+            title="Trae todos los pages de todas las databases habilitadas de Notion"
+          >
+            {syncing ? "Sincronizando Notion…" : "Sincronizar Notion"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            className="kg-focus"
+            style={primaryBtn}
+          >
+            + Nuevo proyecto
+          </button>
+        </div>
       </div>
 
       <KgDataTable
@@ -239,6 +320,45 @@ export function InternalProjectsView({
   );
 }
 
+function NotionBadge({ pageId }: { readonly pageId: string }) {
+  // Notion espera el page id sin guiones en el URL. La API los devuelve
+  // con guiones (uuid formato), así que los sacamos para linkear.
+  const href = `https://www.notion.so/${pageId.replace(/-/g, "")}`;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="kg-focus"
+      title="Abrir el page en Notion. Los cambios se sincronizan desde allá — editar en KG lo pisa el próximo sync."
+      style={{
+        padding: "2px 8px",
+        borderRadius: 999,
+        background: "rgba(138,138,153,0.15)",
+        color: "var(--kg-text-2)",
+        fontSize: 10,
+        fontWeight: 700,
+        textDecoration: "none",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          width: 4,
+          height: 4,
+          borderRadius: 999,
+          background: "var(--kg-text-3)",
+          display: "inline-block",
+        }}
+      />
+      Notion
+    </a>
+  );
+}
+
 function formatDate(ymd: string): string {
   try {
     return new Date(`${ymd}T12:00:00Z`).toLocaleDateString("es-AR", {
@@ -260,6 +380,18 @@ const primaryBtn: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 700,
   cursor: "pointer",
+};
+
+const secondaryBtn: React.CSSProperties = {
+  padding: "8px 16px",
+  borderRadius: 999,
+  background: "transparent",
+  border: "1px solid var(--kg-border-subtle)",
+  color: "var(--kg-text-2)",
+  fontSize: 12,
+  fontWeight: 700,
+  cursor: "pointer",
+  whiteSpace: "nowrap",
 };
 
 const rowBtn: React.CSSProperties = {

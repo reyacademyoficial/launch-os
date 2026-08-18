@@ -75,6 +75,22 @@ export interface NotionPage {
   readonly properties: Record<string, unknown>;
 }
 
+/**
+ * Schema-ish de una database — solo las propiedades con tipo. Se usa en
+ * la UI de config de mapping para poblar los dropdowns "elegí la columna
+ * que representa el status/priority/...".
+ */
+export interface NotionDatabaseSchema {
+  readonly id: string;
+  readonly title_plain: string;
+  readonly properties: ReadonlyArray<{
+    readonly name: string;
+    readonly type: string;
+    /** Solo definido para type='select' / 'multi_select' / 'status'. */
+    readonly options: ReadonlyArray<{ readonly name: string }>;
+  }>;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Endpoints
 // ═══════════════════════════════════════════════════════════════════════════
@@ -133,6 +149,54 @@ export async function listDatabases(token: string): Promise<NotionDatabase[]> {
     cursor = data.has_more ? data.next_cursor ?? undefined : undefined;
   } while (cursor);
   return out;
+}
+
+/**
+ * GET /v1/databases/:id — devuelve el schema de la database, con las
+ * propiedades y opciones de cada select/multi_select/status. Se usa en el
+ * form de configuración de mapping para saber qué columnas existen y con
+ * qué valores.
+ */
+export async function retrieveDatabase(
+  token: string,
+  databaseId: string,
+): Promise<NotionDatabaseSchema> {
+  const res = await notionFetch(token, "GET", `/databases/${databaseId}`);
+  const data = res as {
+    id: string;
+    title?: Array<{ plain_text?: string }>;
+    properties: Record<
+      string,
+      {
+        name?: string;
+        type: string;
+        select?: { options?: Array<{ name: string }> };
+        multi_select?: { options?: Array<{ name: string }> };
+        status?: { options?: Array<{ name: string }> };
+      }
+    >;
+  };
+
+  const props: NotionDatabaseSchema["properties"][number][] = [];
+  for (const [name, spec] of Object.entries(data.properties)) {
+    const opts =
+      spec.select?.options ??
+      spec.multi_select?.options ??
+      spec.status?.options ??
+      [];
+    props.push({
+      name: spec.name ?? name,
+      type: spec.type,
+      options: opts.map((o) => ({ name: o.name })),
+    });
+  }
+
+  return {
+    id: data.id,
+    title_plain:
+      data.title?.map((t) => t.plain_text ?? "").join("") || "(sin título)",
+    properties: props,
+  };
 }
 
 /**
