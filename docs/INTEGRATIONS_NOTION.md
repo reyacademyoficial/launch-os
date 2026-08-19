@@ -123,8 +123,9 @@ más abajo):
      anteriores al anchor del run anterior).
    - Editar una page en Notion → volver a hitear → ese page debería
      aparecer en el sync (upserted=1) y sus comments re-sincronizarse.
-   - En Vercel prod se dispara solo cada 15 min por el schedule del
-     `vercel.json`.
+   - En Vercel prod (Hobby) se dispara 1 vez al día por el schedule
+     `15 11 * * *`. Para más frecuencia: upgradear a Pro y volver
+     a `*/15 * * * *`, o gatillar externamente (GH Actions, cron-job.org).
 
 **Pivot a OAuth (si no se consigue admin en Notion):**
 - Escenario: el usuario NO es owner/admin de ninguno de los workspaces
@@ -366,8 +367,16 @@ Con users mapeados, ya se puede importar pages como projects.
   por DB (`MAX(started_at)` del último `notion_sync_log` ok/partial)
   y aplica un Notion timestamp filter
   `last_edited_time on_or_after {anchor}` al query.
-- [x] Registrado en `vercel.json`: `"*/15 * * * *"` para
-  `/api/cron/notion-sync`. `CRON_SECRET` ya estaba en `.env.example`.
+- [x] Registrado en `vercel.json`: `"15 11 * * *"` para
+  `/api/cron/notion-sync` (diario, 11:15 UTC = 08:15 UTC-3, 15 min
+  después de `sync-integrations` para no solaparse). El plan Hobby
+  de Vercel sólo permite crons diarios — si el proyecto pasa a Pro
+  se puede bajar a `*/15 * * * *`. Mientras tanto, el botón manual
+  "Sincronizar Notion" en Ops cubre el gap. Alternativas para
+  gatillar el endpoint más seguido sin upgradear: GitHub Actions
+  scheduled workflow, cron-job.org, EasyCron — hitear
+  `GET /api/cron/notion-sync` con el header `Authorization: Bearer
+  {CRON_SECRET}`. `CRON_SECRET` ya estaba en `.env.example`.
 - [x] Botón manual "Sincronizar Notion" en Ops sigue haciendo full
   sync (comportamiento intacto — el runner pasa `sinceIso: undefined`
   cuando no se pide incremental).
