@@ -22,6 +22,11 @@ export interface ContextBarStat {
  * Fondo SÓLIDO: al ser sticky, si el fondo es semitransparente el contenido
  * scrolleado se ve borrosamente por detrás — se percibía como "pisar la
  * información". Con --kg-surface-1-solid la barra tapa limpio.
+ *
+ * z-index 20: tiene que quedar POR DEBAJO del drawer mobile (z-40) y de su
+ * backdrop (z-30) para que en mobile no pise el menú al abrirse. Solo necesita
+ * ganarle al contenido scrolleado del `<main>` (headers sticky de tablas van
+ * en z-1), así que 20 sobra.
  */
 export function ContextBar({
   icon,
@@ -39,7 +44,7 @@ export function ContextBar({
       style={{
         position: "sticky",
         top,
-        zIndex: 40,
+        zIndex: 20,
         background: "var(--kg-surface-1-solid)",
         borderRadius: "var(--kg-r-16)",
         border: "1px solid var(--kg-border-subtle)",
