@@ -6,7 +6,9 @@ import { NotificationBell } from "@/components/notifications/notification-bell";
 import type { Theme } from "@/lib/theme";
 
 import { SidebarToggle } from "../dashboard/sidebar-toggle";
+import { IconFilter } from "./icons";
 import { resolveActive } from "./layers";
+import { usePageMenuActions, usePageMenuState } from "./page-menu";
 import { KgThemeToggle } from "./theme-toggle";
 
 /**
@@ -40,9 +42,45 @@ export function KgTopbar({ theme }: { readonly theme: Theme }) {
         </div>
       </div>
       <div className="ml-auto flex items-center gap-2">
+        <FiltersButton />
         <NotificationBell />
         <KgThemeToggle theme={theme} />
       </div>
     </header>
+  );
+}
+
+/**
+ * Botón "Filtros" — mobile-only. Solo aparece cuando la página en curso
+ * registró un nodo de filtros con `useRegisterPageFilters`. Abre el
+ * `PageMenuSheet` de la shell.
+ */
+function FiltersButton() {
+  const { filterGroups } = usePageMenuState();
+  const { openSheet } = usePageMenuActions();
+  if (filterGroups.length === 0) return null;
+  return (
+    <button
+      type="button"
+      onClick={openSheet}
+      aria-label="Abrir filtros"
+      className="kg-focus md:hidden"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "6px 10px",
+        borderRadius: 999,
+        background: "var(--kg-surface-2-solid)",
+        border: "1px solid var(--kg-border-subtle)",
+        color: "var(--kg-text-1)",
+        fontSize: 12,
+        fontWeight: 700,
+        cursor: "pointer",
+      }}
+    >
+      <IconFilter size={14} />
+      <span>Filtros</span>
+    </button>
   );
 }

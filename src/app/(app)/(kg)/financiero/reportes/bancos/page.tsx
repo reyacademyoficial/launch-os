@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { ContextBar } from "@/components/kg/context-bar";
 import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { IconFin } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { Panel } from "@/components/kg/panel";
 import { listBanks, listBankMovements } from "@/lib/banks/list";
 import {
@@ -214,21 +215,25 @@ export default async function ReporteBancosPage({
       />
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <RangePills
-          presets={RANGE_PRESETS}
-          activePreset={isCustom ? null : rangeParam === "custom" ? null : rangeParam}
-          activeFrom={period?.fromYmd ?? null}
-          activeTo={period?.toYmd ?? null}
-          baseHref="/financiero/reportes/bancos"
-        />
-        <a
-          href={exportXlsxHref}
-          className="kg-focus"
-          style={ghostBtnLg}
-          title="Exportar el reporte a Excel"
-        >
-          Exportar Excel
-        </a>
+        <KgPageFilters>
+          <RangePills
+            presets={RANGE_PRESETS}
+            activePreset={isCustom ? null : rangeParam === "custom" ? null : rangeParam}
+            activeFrom={period?.fromYmd ?? null}
+            activeTo={period?.toYmd ?? null}
+            baseHref="/financiero/reportes/bancos"
+          />
+        </KgPageFilters>
+        <span className="hidden md:contents">
+          <a
+            href={exportXlsxHref}
+            className="kg-focus"
+            style={ghostBtnLg}
+            title="Exportar el reporte a Excel"
+          >
+            Exportar Excel
+          </a>
+        </span>
         <a
           href={exportPdfHref}
           target="_blank"

@@ -107,7 +107,8 @@
       "Bash(echo \"TSC_EXIT=$?\")",
       "Bash(grep -E \"src[\\\\\\\\/]\")",
       "Bash(echo \"TSC exit: $?\")",
-      "Bash(echo \"ESLINT exit: $?\")"
+      "Bash(echo \"ESLINT exit: $?\")",
+      "Bash(echo \"TSC EXIT: $?\")"
     ]
   }
 }

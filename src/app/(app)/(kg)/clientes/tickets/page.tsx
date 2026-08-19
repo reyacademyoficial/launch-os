@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconCli } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
@@ -251,46 +252,48 @@ export default async function TicketsPage({
         ]}
       />
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <KgParamPills
-          ariaLabel="Filtrar por estado"
-          options={STATUS_FILTER_OPTIONS.map((o) => ({
-            label: o.label,
-            href: buildHref({ status: o.value }),
-            active: statusFilter === o.value,
-          }))}
-        />
-        <KgParamPills
-          ariaLabel="Filtrar por prioridad"
-          options={PRIORITY_OPTIONS.map((o) => ({
-            label: o.label,
-            href: buildHref({ priority: o.value }),
-            active:
-              (priorityFilter ?? "todas") === o.value,
-          }))}
-        />
-        {clientIdFilter && (
-          <a
-            href={buildHref({ clientId: null })}
-            className="kg-focus"
-            style={{
-              padding: "6px 12px",
-              borderRadius: 999,
-              background: "transparent",
-              border: "1px solid var(--kg-border-subtle)",
-              color: "var(--kg-text-2)",
-              fontSize: 11,
-              fontWeight: 700,
-              textDecoration: "none",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-            }}
-          >
-            Cliente: {clientNameById.get(clientIdFilter) ?? "—"} ✕
-          </a>
-        )}
-      </div>
+      <KgPageFilters>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <KgParamPills
+            ariaLabel="Filtrar por estado"
+            options={STATUS_FILTER_OPTIONS.map((o) => ({
+              label: o.label,
+              href: buildHref({ status: o.value }),
+              active: statusFilter === o.value,
+            }))}
+          />
+          <KgParamPills
+            ariaLabel="Filtrar por prioridad"
+            options={PRIORITY_OPTIONS.map((o) => ({
+              label: o.label,
+              href: buildHref({ priority: o.value }),
+              active:
+                (priorityFilter ?? "todas") === o.value,
+            }))}
+          />
+          {clientIdFilter && (
+            <a
+              href={buildHref({ clientId: null })}
+              className="kg-focus"
+              style={{
+                padding: "6px 12px",
+                borderRadius: 999,
+                background: "transparent",
+                border: "1px solid var(--kg-border-subtle)",
+                color: "var(--kg-text-2)",
+                fontSize: 11,
+                fontWeight: 700,
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              Cliente: {clientNameById.get(clientIdFilter) ?? "—"} ✕
+            </a>
+          )}
+        </div>
+      </KgPageFilters>
 
       <Panel title="Tickets">
         <TicketsView

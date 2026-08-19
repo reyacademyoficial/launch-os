@@ -17,6 +17,7 @@ import { ContextBar } from "@/components/kg/context-bar";
 import { EmptyState } from "@/components/kg/empty-state";
 import { HeroKpi, type HeroKpiTone } from "@/components/kg/hero-kpi";
 import { IconFin } from "@/components/kg/icons";
+import { useRegisterPageFilters } from "@/components/kg/page-menu";
 import { Panel } from "@/components/kg/panel";
 import { ProvenanceDrawer } from "@/components/kg/provenance-drawer";
 import { SectionHeader } from "@/components/kg/section-header";
@@ -168,6 +169,20 @@ function span(n: number): { gridColumn: string } {
 export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboardData }) {
   const [open, setOpen] = useState<ProvenanceKey | null>(null);
 
+  // Registra el PeriodPicker en el bottom-sheet mobile de la shell. En desktop
+  // se renderiza inline (abajo). El nodo se memoiza para que el efecto no
+  // vuelva a firear en cada render — solo cuando cambian las fechas del rango.
+  const mobileFilters = useMemo(
+    () => (
+      <PeriodPicker
+        fromYmd={data.period.rangeStart}
+        toYmd={data.period.rangeEnd}
+      />
+    ),
+    [data.period.rangeStart, data.period.rangeEnd],
+  );
+  useRegisterPageFilters(mobileFilters);
+
   const openDetail = useMemo(() => {
     if (!open) return null;
     switch (open) {
@@ -266,10 +281,14 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
         ]}
       />
 
-      {/* ═════════════════════ Selector de período ═════════════════════ */}
+      {/*
+        Selector de período. Desktop-only: en mobile el PeriodPicker vive
+        dentro del bottom-sheet (registrado arriba con useRegisterPageFilters)
+        para que la topbar mobile no se llene. Ver `src/components/kg/page-menu`.
+      */}
       <div
+        className="hidden md:flex"
         style={{
-          display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
           gap: 12,

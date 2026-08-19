@@ -163,6 +163,14 @@ export function IconMenu(props: IconProps) {
   );
 }
 
+export function IconFilter(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3 5h18l-7 9v5l-4 2v-7L3 5Z" />
+    </Svg>
+  );
+}
+
 export function IconLogout(props: IconProps) {
   return (
     <Svg {...props}>

@@ -7,6 +7,7 @@ import { ContextBar } from "@/components/kg/context-bar";
 import { Drawer } from "@/components/kg/drawer";
 import { EmptyState } from "@/components/kg/empty-state";
 import { IconFin } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { Panel } from "@/components/kg/panel";
 import { fCount, fMoney } from "@/lib/finance/format";
 import type { LaunchSettlementStatus } from "@/lib/settlements/types";
@@ -178,26 +179,30 @@ export function LiquidacionesDashboard({
           justifyContent: "space-between",
         }}
       >
-        <FilterPills current={filter} onChange={setFilter} rows={rows} />
-        <a
-          href="/api/financiero/liquidaciones/export"
-          className="kg-focus"
-          style={{
-            padding: "6px 14px",
-            borderRadius: 999,
-            background: "transparent",
-            border: "1px solid var(--kg-border-subtle)",
-            color: "var(--kg-text-2)",
-            fontSize: 12,
-            fontWeight: 700,
-            textDecoration: "none",
-            display: "inline-flex",
-            alignItems: "center",
-          }}
-          title="Exportar todas las liquidaciones a Excel"
-        >
-          Exportar Excel
-        </a>
+        <KgPageFilters>
+          <FilterPills current={filter} onChange={setFilter} rows={rows} />
+        </KgPageFilters>
+        <span className="hidden md:contents">
+          <a
+            href="/api/financiero/liquidaciones/export"
+            className="kg-focus"
+            style={{
+              padding: "6px 14px",
+              borderRadius: 999,
+              background: "transparent",
+              border: "1px solid var(--kg-border-subtle)",
+              color: "var(--kg-text-2)",
+              fontSize: 12,
+              fontWeight: 700,
+              textDecoration: "none",
+              display: "inline-flex",
+              alignItems: "center",
+            }}
+            title="Exportar todas las liquidaciones a Excel"
+          >
+            Exportar Excel
+          </a>
+        </span>
       </div>
 
       <Panel title="Lanzamientos y liquidaciones">

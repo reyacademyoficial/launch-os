@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconFin } from "@/components/kg/icons";
 import { KgPaginator } from "@/components/kg/paginator";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount, fMoney } from "@/lib/finance/format";
@@ -374,49 +375,53 @@ export default async function GastosPage({
         ]}
       />
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <KgParamPills
-          ariaLabel="Filtrar por estado de pago"
-          options={PAID_OPTIONS.map((o) => ({
-            label: o.label,
-            href: buildHref({ paid: o.value, page: 1 }),
-            active: paidParam === o.value,
-          }))}
-        />
-        <RangePills
-          presets={RANGE_PRESETS}
-          activePreset={isCustom ? null : rangeParam === "custom" ? null : rangeParam}
-          activeFrom={period?.fromYmd ?? null}
-          activeTo={period?.toYmd ?? null}
-          baseHref="/financiero/gastos"
-        />
-      </div>
+      <KgPageFilters>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <KgParamPills
+            ariaLabel="Filtrar por estado de pago"
+            options={PAID_OPTIONS.map((o) => ({
+              label: o.label,
+              href: buildHref({ paid: o.value, page: 1 }),
+              active: paidParam === o.value,
+            }))}
+          />
+          <RangePills
+            presets={RANGE_PRESETS}
+            activePreset={isCustom ? null : rangeParam === "custom" ? null : rangeParam}
+            activeFrom={period?.fromYmd ?? null}
+            activeTo={period?.toYmd ?? null}
+            baseHref="/financiero/gastos"
+          />
+        </div>
+      </KgPageFilters>
 
       <Panel
         title="Gastos"
         pad={false}
         actions={
           <div style={{ display: "inline-flex", gap: 8 }}>
-            <a
-              href={buildExportHref(paidParam, rangeParam, fromParam, toParam)}
-              className="kg-focus"
-              style={{
-                padding: "6px 14px",
-                borderRadius: 999,
-                background: "transparent",
-                border: "1px solid var(--kg-border-subtle)",
-                color: "var(--kg-text-2)",
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: "pointer",
-                textDecoration: "none",
-                display: "inline-flex",
-                alignItems: "center",
-              }}
-              title="Exportar la vista actual a Excel"
-            >
-              Exportar Excel
-            </a>
+            <span className="hidden md:contents">
+              <a
+                href={buildExportHref(paidParam, rangeParam, fromParam, toParam)}
+                className="kg-focus"
+                style={{
+                  padding: "6px 14px",
+                  borderRadius: 999,
+                  background: "transparent",
+                  border: "1px solid var(--kg-border-subtle)",
+                  color: "var(--kg-text-2)",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  textDecoration: "none",
+                  display: "inline-flex",
+                  alignItems: "center",
+                }}
+                title="Exportar la vista actual a Excel"
+              >
+                Exportar Excel
+              </a>
+            </span>
             <ImportExpensesButton />
             <NewExpenseButton projects={projectsForPicker} />
           </div>

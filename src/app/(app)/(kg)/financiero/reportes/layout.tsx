@@ -1,4 +1,5 @@
-import { KgTabsBar, type TabItem } from "@/components/kg/tabs-bar";
+import { KgModuleNav } from "@/components/kg/module-nav";
+import type { TabItem } from "@/components/kg/tabs-bar";
 
 /**
  * Sub-nav de Reportes: cambiar de reporte sin salir del área. Se apoya en el
@@ -17,7 +18,7 @@ export default function ReportesLayout({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <KgTabsBar items={tabs} />
+      <KgModuleNav items={tabs} />
       {children}
     </div>
   );

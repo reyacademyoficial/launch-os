@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconFin } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgPaginator } from "@/components/kg/paginator";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
@@ -304,57 +305,61 @@ export default async function MovimientosPage({
         ]}
       />
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <KgParamPills
-          ariaLabel="Filtrar por tipo"
-          options={KIND_OPTIONS.map((o) => ({
-            label: o.label,
-            href: buildHref({ kind: o.value, page: 1 }),
-            active: kindParam === o.value,
-          }))}
-        />
-        <KgParamPills
-          ariaLabel="Filtrar por estado de conciliación"
-          options={CONCIL_OPTIONS.map((o) => ({
-            label: o.label,
-            href: buildHref({ concil: o.value, page: 1 }),
-            active: concilParam === o.value,
-          }))}
-        />
-        <RangePills
-          presets={RANGE_PRESETS}
-          activePreset={isCustom ? null : rangeParam === "custom" ? null : rangeParam}
-          activeFrom={period?.fromYmd ?? null}
-          activeTo={period?.toYmd ?? null}
-          baseHref="/financiero/movimientos"
-        />
-      </div>
+      <KgPageFilters>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <KgParamPills
+            ariaLabel="Filtrar por tipo"
+            options={KIND_OPTIONS.map((o) => ({
+              label: o.label,
+              href: buildHref({ kind: o.value, page: 1 }),
+              active: kindParam === o.value,
+            }))}
+          />
+          <KgParamPills
+            ariaLabel="Filtrar por estado de conciliación"
+            options={CONCIL_OPTIONS.map((o) => ({
+              label: o.label,
+              href: buildHref({ concil: o.value, page: 1 }),
+              active: concilParam === o.value,
+            }))}
+          />
+          <RangePills
+            presets={RANGE_PRESETS}
+            activePreset={isCustom ? null : rangeParam === "custom" ? null : rangeParam}
+            activeFrom={period?.fromYmd ?? null}
+            activeTo={period?.toYmd ?? null}
+            baseHref="/financiero/movimientos"
+          />
+        </div>
+      </KgPageFilters>
 
       <Panel
         title="Ingresos y egresos bancarios"
         pad={false}
         actions={
           <div style={{ display: "inline-flex", gap: 8 }}>
-            <a
-              href={buildExportHref(kindParam, rangeParam, fromParam, toParam)}
-              className="kg-focus"
-              style={{
-                padding: "6px 14px",
-                borderRadius: 999,
-                background: "transparent",
-                border: "1px solid var(--kg-border-subtle)",
-                color: "var(--kg-text-2)",
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: "pointer",
-                textDecoration: "none",
-                display: "inline-flex",
-                alignItems: "center",
-              }}
-              title="Exportar la vista actual a Excel"
-            >
-              Exportar Excel
-            </a>
+            <span className="hidden md:contents">
+              <a
+                href={buildExportHref(kindParam, rangeParam, fromParam, toParam)}
+                className="kg-focus"
+                style={{
+                  padding: "6px 14px",
+                  borderRadius: 999,
+                  background: "transparent",
+                  border: "1px solid var(--kg-border-subtle)",
+                  color: "var(--kg-text-2)",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  textDecoration: "none",
+                  display: "inline-flex",
+                  alignItems: "center",
+                }}
+                title="Exportar la vista actual a Excel"
+              >
+                Exportar Excel
+              </a>
+            </span>
             <ImportMovementsButton banks={banksForDrawer} />
             <NewMovementButton banks={banksForDrawer} />
           </div>

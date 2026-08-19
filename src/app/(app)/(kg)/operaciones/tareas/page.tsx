@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ContextBar } from "@/components/kg/context-bar";
 import { EmptyState } from "@/components/kg/empty-state";
 import { IconOps } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { resolveCurrentPersonId } from "@/lib/ops/current-person";
@@ -260,62 +261,64 @@ export default async function TareasPage({
         ]}
       />
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        {canSeeAll && (
+      <KgPageFilters>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {canSeeAll && (
+            <KgParamPills
+              ariaLabel="Alcance"
+              options={[
+                {
+                  label: "Todas",
+                  href: buildHref({ scope: "all" }),
+                  active: scope === "all",
+                },
+                {
+                  label: "Mis tareas",
+                  href: buildHref({ scope: "mine" }),
+                  active: scope === "mine",
+                },
+              ]}
+            />
+          )}
           <KgParamPills
-            ariaLabel="Alcance"
-            options={[
-              {
-                label: "Todas",
-                href: buildHref({ scope: "all" }),
-                active: scope === "all",
-              },
-              {
-                label: "Mis tareas",
-                href: buildHref({ scope: "mine" }),
-                active: scope === "mine",
-              },
-            ]}
+            ariaLabel="Filtrar por estado"
+            options={STATUS_FILTER_OPTIONS.map((o) => ({
+              label: o.label,
+              href: buildHref({ status: o.value }),
+              active: statusFilter === o.value,
+            }))}
           />
-        )}
-        <KgParamPills
-          ariaLabel="Filtrar por estado"
-          options={STATUS_FILTER_OPTIONS.map((o) => ({
-            label: o.label,
-            href: buildHref({ status: o.value }),
-            active: statusFilter === o.value,
-          }))}
-        />
-        <KgParamPills
-          ariaLabel="Filtrar por prioridad"
-          options={PRIORITY_OPTIONS.map((o) => ({
-            label: o.label,
-            href: buildHref({ priority: o.value }),
-            active: (priorityFilter ?? "todas") === o.value,
-          }))}
-        />
-        {projectIdFilter && (
-          <a
-            href={buildHref({ projectId: null })}
-            className="kg-focus"
-            style={{
-              padding: "6px 12px",
-              borderRadius: 999,
-              background: "transparent",
-              border: "1px solid var(--kg-border-subtle)",
-              color: "var(--kg-text-2)",
-              fontSize: 11,
-              fontWeight: 700,
-              textDecoration: "none",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-            }}
-          >
-            Proyecto: {projectNameById.get(projectIdFilter) ?? "—"} ✕
-          </a>
-        )}
-      </div>
+          <KgParamPills
+            ariaLabel="Filtrar por prioridad"
+            options={PRIORITY_OPTIONS.map((o) => ({
+              label: o.label,
+              href: buildHref({ priority: o.value }),
+              active: (priorityFilter ?? "todas") === o.value,
+            }))}
+          />
+          {projectIdFilter && (
+            <a
+              href={buildHref({ projectId: null })}
+              className="kg-focus"
+              style={{
+                padding: "6px 12px",
+                borderRadius: 999,
+                background: "transparent",
+                border: "1px solid var(--kg-border-subtle)",
+                color: "var(--kg-text-2)",
+                fontSize: 11,
+                fontWeight: 700,
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              Proyecto: {projectNameById.get(projectIdFilter) ?? "—"} ✕
+            </a>
+          )}
+        </div>
+      </KgPageFilters>
 
       <Panel title={scope === "mine" ? "Mis tareas" : "Tareas"}>
         {showPersonMissing ? (

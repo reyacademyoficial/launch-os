@@ -1,6 +1,7 @@
 import { requireRole } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { KgTabsBar, type TabItem } from "@/components/kg/tabs-bar";
+import { KgModuleNav } from "@/components/kg/module-nav";
+import type { TabItem } from "@/components/kg/tabs-bar";
 
 /**
  * Layout del módulo Academia.
@@ -37,7 +38,7 @@ export default async function AcademiaLayout({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <KgTabsBar items={tabs} />
+      <KgModuleNav items={tabs} />
       {!hasPropias && <NoPropiaProjectsBanner />}
       {children}
     </div>

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconCli } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { computeNps } from "@/lib/clients/health";
@@ -154,37 +155,39 @@ export default async function NpsPage({
         ]}
       />
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <KgParamPills
-          ariaLabel="Filtrar por período"
-          options={RANGE_OPTIONS.map((o) => ({
-            label: o.label,
-            href: buildHref({ range: o.value }),
-            active: rangeFilter === o.value,
-          }))}
-        />
-        {clientIdFilter && (
-          <a
-            href={buildHref({ clientId: null })}
-            className="kg-focus"
-            style={{
-              padding: "6px 12px",
-              borderRadius: 999,
-              background: "transparent",
-              border: "1px solid var(--kg-border-subtle)",
-              color: "var(--kg-text-2)",
-              fontSize: 11,
-              fontWeight: 700,
-              textDecoration: "none",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-            }}
-          >
-            Cliente: {clientNameById.get(clientIdFilter) ?? "—"} ✕
-          </a>
-        )}
-      </div>
+      <KgPageFilters>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <KgParamPills
+            ariaLabel="Filtrar por período"
+            options={RANGE_OPTIONS.map((o) => ({
+              label: o.label,
+              href: buildHref({ range: o.value }),
+              active: rangeFilter === o.value,
+            }))}
+          />
+          {clientIdFilter && (
+            <a
+              href={buildHref({ clientId: null })}
+              className="kg-focus"
+              style={{
+                padding: "6px 12px",
+                borderRadius: 999,
+                background: "transparent",
+                border: "1px solid var(--kg-border-subtle)",
+                color: "var(--kg-text-2)",
+                fontSize: 11,
+                fontWeight: 700,
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              Cliente: {clientNameById.get(clientIdFilter) ?? "—"} ✕
+            </a>
+          )}
+        </div>
+      </KgPageFilters>
 
       <Panel title="Respuestas NPS">
         <NpsView

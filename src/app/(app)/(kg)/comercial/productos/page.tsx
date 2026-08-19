@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconOrg } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
@@ -117,22 +118,24 @@ export default async function ProductosPage({
         ]}
       />
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <KgParamPills
-          ariaLabel="Filtrar por estado"
-          options={ACTIVE_OPTIONS.map((o) => ({
-            label: o.label,
-            href: buildHref({ state: o.value, project: projectFilter }),
-            active: activeParam === o.value,
-          }))}
-        />
-        {projectPillOptions.length > 1 && (
+      <KgPageFilters>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <KgParamPills
-            ariaLabel="Filtrar por proyecto"
-            options={projectPillOptions}
+            ariaLabel="Filtrar por estado"
+            options={ACTIVE_OPTIONS.map((o) => ({
+              label: o.label,
+              href: buildHref({ state: o.value, project: projectFilter }),
+              active: activeParam === o.value,
+            }))}
           />
-        )}
-      </div>
+          {projectPillOptions.length > 1 && (
+            <KgParamPills
+              ariaLabel="Filtrar por proyecto"
+              options={projectPillOptions}
+            />
+          )}
+        </div>
+      </KgPageFilters>
 
       <Panel title="Catálogo de productos" pad={false}>
         <ProductosView

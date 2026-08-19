@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { ContextBar } from "@/components/kg/context-bar";
 import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { IconFin } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { listBanks } from "@/lib/banks/list";
@@ -474,43 +475,47 @@ export default async function TransferenciasPage({
           justifyContent: "space-between",
         }}
       >
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <KgParamPills
-            ariaLabel="Filtrar por dirección"
-            options={DIRECTION_OPTIONS.map((o) => ({
-              label: o.label,
-              href: buildHref({ direction: o.value }),
-              active: directionParam === o.value,
-            }))}
-          />
-          <KgParamPills
-            ariaLabel="Filtrar por período"
-            options={RANGE_OPTIONS.map((o) => ({
-              label: o.label,
-              href: buildHref({ range: o.value }),
-              active: rangeParam === o.value,
-            }))}
-          />
-        </div>
-        <a
-          href={buildExportHref(directionParam, rangeParam)}
-          className="kg-focus"
-          style={{
-            padding: "6px 14px",
-            borderRadius: 999,
-            background: "transparent",
-            border: "1px solid var(--kg-border-subtle)",
-            color: "var(--kg-text-2)",
-            fontSize: 12,
-            fontWeight: 700,
-            textDecoration: "none",
-            display: "inline-flex",
-            alignItems: "center",
-          }}
-          title="Exportar la vista actual a Excel"
-        >
-          Exportar Excel
-        </a>
+        <KgPageFilters>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <KgParamPills
+              ariaLabel="Filtrar por dirección"
+              options={DIRECTION_OPTIONS.map((o) => ({
+                label: o.label,
+                href: buildHref({ direction: o.value }),
+                active: directionParam === o.value,
+              }))}
+            />
+            <KgParamPills
+              ariaLabel="Filtrar por período"
+              options={RANGE_OPTIONS.map((o) => ({
+                label: o.label,
+                href: buildHref({ range: o.value }),
+                active: rangeParam === o.value,
+              }))}
+            />
+          </div>
+        </KgPageFilters>
+        <span className="hidden md:contents">
+          <a
+            href={buildExportHref(directionParam, rangeParam)}
+            className="kg-focus"
+            style={{
+              padding: "6px 14px",
+              borderRadius: 999,
+              background: "transparent",
+              border: "1px solid var(--kg-border-subtle)",
+              color: "var(--kg-text-2)",
+              fontSize: 12,
+              fontWeight: 700,
+              textDecoration: "none",
+              display: "inline-flex",
+              alignItems: "center",
+            }}
+            title="Exportar la vista actual a Excel"
+          >
+            Exportar Excel
+          </a>
+        </span>
       </div>
 
       <Panel title="Cuenta corriente con clientes externos" pad={false}>

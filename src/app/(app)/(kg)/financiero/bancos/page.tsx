@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconFin } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { computeBankBalances } from "@/lib/banks/balance";
@@ -469,16 +470,18 @@ export default async function BancosPage({
         ]}
       />
 
-      <div style={{ display: "flex", gap: 10 }}>
-        <KgParamPills
-          ariaLabel="Filtrar por estado"
-          options={ACTIVE_OPTIONS.map((o) => ({
-            label: o.label,
-            href: buildHref(o.value),
-            active: activeParam === o.value,
-          }))}
-        />
-      </div>
+      <KgPageFilters>
+        <div style={{ display: "flex", gap: 10 }}>
+          <KgParamPills
+            ariaLabel="Filtrar por estado"
+            options={ACTIVE_OPTIONS.map((o) => ({
+              label: o.label,
+              href: buildHref(o.value),
+              active: activeParam === o.value,
+            }))}
+          />
+        </div>
+      </KgPageFilters>
 
       <Panel
         title="Bancos de Kingrow"
@@ -489,29 +492,31 @@ export default async function BancosPage({
       </Panel>
 
       {/* ─── Panel de comisiones bancarias ─────────────────────────────── */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 10,
-          marginTop: 8,
-        }}
-      >
-        <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
-          Comisiones del período:{" "}
-          <strong style={{ color: "var(--kg-text-1)" }}>
-            {feesPeriod.label}
-          </strong>
+      <KgPageFilters>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+            marginTop: 8,
+          }}
+        >
+          <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+            Comisiones del período:{" "}
+            <strong style={{ color: "var(--kg-text-1)" }}>
+              {feesPeriod.label}
+            </strong>
+          </div>
+          <RangePills
+            presets={FEES_RANGE_PRESETS}
+            activePreset={feesIsCustom ? null : (rangeParam as "mes-actual" | "mes-anterior" | "90d" | null) ?? "mes-actual"}
+            activeFrom={feesPeriod.fromYmd}
+            activeTo={feesPeriod.toYmd}
+            baseHref="/financiero/bancos"
+          />
         </div>
-        <RangePills
-          presets={FEES_RANGE_PRESETS}
-          activePreset={feesIsCustom ? null : (rangeParam as "mes-actual" | "mes-anterior" | "90d" | null) ?? "mes-actual"}
-          activeFrom={feesPeriod.fromYmd}
-          activeTo={feesPeriod.toYmd}
-          baseHref="/financiero/bancos"
-        />
-      </div>
+      </KgPageFilters>
       <BankFeesPanel data={bankFees} periodLabel={feesPeriod.label} />
     </div>
   );

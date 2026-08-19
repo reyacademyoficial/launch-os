@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconAca } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
@@ -329,15 +330,17 @@ export default async function EstudiantesPage({
         ]}
       />
 
-      <KgParamPills
-        ariaLabel="Filtrar por estado"
-        options={SHOW_OPTIONS.map((o) => ({
-          label:
-            o.badge && o.badge > 0 ? `${o.label} (${o.badge})` : o.label,
-          href: buildHref(o.value),
-          active: show === o.value,
-        }))}
-      />
+      <KgPageFilters>
+        <KgParamPills
+          ariaLabel="Filtrar por estado"
+          options={SHOW_OPTIONS.map((o) => ({
+            label:
+              o.badge && o.badge > 0 ? `${o.label} (${o.badge})` : o.label,
+            href: buildHref(o.value),
+            active: show === o.value,
+          }))}
+        />
+      </KgPageFilters>
 
       {show === "pending" ? (
         <Panel title="Compradores pendientes de alta">

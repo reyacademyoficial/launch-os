@@ -452,6 +452,10 @@ html[data-theme="light"] {
   from { transform: translateX(100%); }
   to { transform: none; }
 }
+@keyframes kg-sheet-up {
+  from { transform: translateY(100%); }
+  to { transform: none; }
+}
 @keyframes kg-shim {
   0% { background-position: -320px 0; }
   100% { background-position: 320px 0; }

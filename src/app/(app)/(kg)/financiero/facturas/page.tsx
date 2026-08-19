@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconFin } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgPaginator } from "@/components/kg/paginator";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
@@ -510,23 +511,25 @@ export default async function FacturasPage({
         ]}
       />
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <KgParamPills
-          ariaLabel="Filtrar por estado"
-          options={STATUS_OPTIONS.map((o) => ({
-            label: o.label,
-            href: buildHref({ status: o.value, page: 1 }),
-            active: statusParam === o.value,
-          }))}
-        />
-        <RangePills
-          presets={RANGE_PRESETS}
-          activePreset={isCustom || rangeParam === "custom" ? null : rangeParam}
-          activeFrom={period?.fromYmd ?? null}
-          activeTo={period?.toYmd ?? null}
-          baseHref="/financiero/facturas"
-        />
-      </div>
+      <KgPageFilters>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <KgParamPills
+            ariaLabel="Filtrar por estado"
+            options={STATUS_OPTIONS.map((o) => ({
+              label: o.label,
+              href: buildHref({ status: o.value, page: 1 }),
+              active: statusParam === o.value,
+            }))}
+          />
+          <RangePills
+            presets={RANGE_PRESETS}
+            activePreset={isCustom || rangeParam === "custom" ? null : rangeParam}
+            activeFrom={period?.fromYmd ?? null}
+            activeTo={period?.toYmd ?? null}
+            baseHref="/financiero/facturas"
+          />
+        </div>
+      </KgPageFilters>
 
       <Panel
         title="Facturas emitidas"

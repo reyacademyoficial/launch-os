@@ -22,7 +22,7 @@ export function ImportExpensesButton() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="kg-focus"
+        className="kg-focus hidden md:inline-block"
         style={{
           padding: "6px 14px",
           borderRadius: 999,

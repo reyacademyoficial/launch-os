@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconOps } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
@@ -193,14 +194,16 @@ export default async function ProyectosInternosPage({
         ]}
       />
 
-      <KgParamPills
-        ariaLabel="Filtrar por estado"
-        options={STATUS_FILTER_OPTIONS.map((o) => ({
-          label: o.label,
-          href: buildHref(o.value),
-          active: statusFilter === o.value,
-        }))}
-      />
+      <KgPageFilters>
+        <KgParamPills
+          ariaLabel="Filtrar por estado"
+          options={STATUS_FILTER_OPTIONS.map((o) => ({
+            label: o.label,
+            href: buildHref(o.value),
+            active: statusFilter === o.value,
+          }))}
+        />
+      </KgPageFilters>
 
       <Panel title="Proyectos internos">
         <InternalProjectsView

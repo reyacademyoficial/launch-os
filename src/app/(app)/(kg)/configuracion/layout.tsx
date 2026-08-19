@@ -1,6 +1,7 @@
 "use server";
 
-import { KgTabsBar, type TabItem } from "@/components/kg/tabs-bar";
+import { KgModuleNav } from "@/components/kg/module-nav";
+import type { TabItem } from "@/components/kg/tabs-bar";
 import { requireSessionProfile } from "@/lib/supabase/auth";
 
 /**
@@ -40,7 +41,7 @@ export default async function ConfiguracionLayout({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <KgTabsBar items={tabs} />
+      <KgModuleNav items={tabs} />
       {children}
     </div>
   );

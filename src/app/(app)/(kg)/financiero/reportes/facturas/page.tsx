@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { ContextBar } from "@/components/kg/context-bar";
 import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { IconFin } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount, fMoney } from "@/lib/finance/format";
@@ -279,29 +280,33 @@ export default async function ReporteFacturasPage({
       />
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <KgParamPills
-          ariaLabel="Filtrar por estado"
-          options={STATUS_OPTIONS.map((o) => ({
-            label: o.label,
-            href: buildHref({ status: o.value, page: 1 }),
-            active: statusParam === o.value,
-          }))}
-        />
-        <RangePills
-          presets={RANGE_PRESETS}
-          activePreset={isCustom ? null : rangeParam === "custom" ? null : rangeParam}
-          activeFrom={period?.fromYmd ?? null}
-          activeTo={period?.toYmd ?? null}
-          baseHref="/financiero/reportes/facturas"
-        />
-        <a
-          href={exportXlsxHref}
-          className="kg-focus"
-          style={ghostBtnLg}
-          title="Exportar el reporte a Excel"
-        >
-          Exportar Excel
-        </a>
+        <KgPageFilters>
+          <KgParamPills
+            ariaLabel="Filtrar por estado"
+            options={STATUS_OPTIONS.map((o) => ({
+              label: o.label,
+              href: buildHref({ status: o.value, page: 1 }),
+              active: statusParam === o.value,
+            }))}
+          />
+          <RangePills
+            presets={RANGE_PRESETS}
+            activePreset={isCustom ? null : rangeParam === "custom" ? null : rangeParam}
+            activeFrom={period?.fromYmd ?? null}
+            activeTo={period?.toYmd ?? null}
+            baseHref="/financiero/reportes/facturas"
+          />
+        </KgPageFilters>
+        <span className="hidden md:contents">
+          <a
+            href={exportXlsxHref}
+            className="kg-focus"
+            style={ghostBtnLg}
+            title="Exportar el reporte a Excel"
+          >
+            Exportar Excel
+          </a>
+        </span>
         <a
           href={exportPdfHref}
           target="_blank"
@@ -315,10 +320,12 @@ export default async function ReporteFacturasPage({
       </div>
 
       {projectPills.length > 1 && (
-        <KgParamPills
-          ariaLabel="Filtrar por proyecto"
-          options={projectPills}
-        />
+        <KgPageFilters>
+          <KgParamPills
+            ariaLabel="Filtrar por proyecto"
+            options={projectPills}
+          />
+        </KgPageFilters>
       )}
 
       <Panel title="Totales por estado y moneda" pad>

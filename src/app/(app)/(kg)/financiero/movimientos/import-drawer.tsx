@@ -28,7 +28,7 @@ export function ImportMovementsButton({
         type="button"
         onClick={() => setOpen(true)}
         disabled={disabled}
-        className="kg-focus"
+        className="kg-focus hidden md:inline-block"
         style={{
           padding: "6px 14px",
           borderRadius: 999,

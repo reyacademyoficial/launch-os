@@ -1,5 +1,6 @@
 import { requireRole } from "@/lib/supabase/auth";
-import { KgTabsBar, type TabItem } from "@/components/kg/tabs-bar";
+import { KgModuleNav } from "@/components/kg/module-nav";
+import type { TabItem } from "@/components/kg/tabs-bar";
 
 /**
  * Layout del módulo Operaciones. Envuelve el dashboard + las 5 pestañas de
@@ -35,7 +36,7 @@ export default async function OperacionesLayout({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <KgTabsBar items={tabs} />
+      <KgModuleNav items={tabs} />
       {children}
     </div>
   );
