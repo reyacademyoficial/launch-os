@@ -88,32 +88,6 @@ export default async function ConfiguracionNotionPage() {
         >
           Sincronización con Notion
         </h2>
-        <p
-          className="kg-t7"
-          style={{ color: "var(--kg-text-3)", lineHeight: 1.5, margin: 0 }}
-        >
-          Cada workspace de Notion se conecta con una integration propia.
-          Los pages de sus databases aterrizan como <strong>proyectos internos
-          de Operaciones</strong> — las tareas y bloqueadores concretos se
-          cargan nativos en Kingrow bajo cada proyecto sincronizado.
-        </p>
-        <p
-          className="kg-t7"
-          style={{ color: "var(--kg-text-3)", lineHeight: 1.5, margin: 0 }}
-        >
-          El paso a paso para obtener el token está en{" "}
-          <code
-            style={{
-              padding: "1px 6px",
-              borderRadius: 4,
-              background: "var(--kg-surface-2-solid)",
-              fontSize: 11,
-            }}
-          >
-            docs/INTEGRATIONS_NOTION.md
-          </code>
-          .
-        </p>
       </header>
 
       {rows.length === 0 ? (
@@ -128,8 +102,8 @@ export default async function ConfiguracionNotionPage() {
             lineHeight: 1.5,
           }}
         >
-          Todavía no conectaste ningún workspace de Notion. Usá el formulario
-          de abajo con el token de tu integration para arrancar.
+          Todavía no conectaste ningún Espacio de Notion. Usá el formulario
+          de abajo con el token de tu integración para arrancar.
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -143,7 +117,7 @@ export default async function ConfiguracionNotionPage() {
               letterSpacing: 0.4,
             }}
           >
-            Workspaces conectados
+            Espacios conectados
           </h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {rows.map((w) => (
@@ -164,7 +138,7 @@ export default async function ConfiguracionNotionPage() {
             letterSpacing: 0.4,
           }}
         >
-          Agregar workspace
+          Agregar nuevo espacio
         </h3>
         <AddWorkspaceForm />
       </div>
