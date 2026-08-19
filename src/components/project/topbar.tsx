@@ -2,27 +2,25 @@ import Link from "next/link";
 
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import type { ProjectListItem } from "@/lib/projects/list";
-import type { SessionProfile } from "@/lib/supabase/auth";
 import type { Theme } from "@/lib/theme";
 
 import { ProjectSwitcher } from "../dashboard/project-switcher";
 import { SidebarToggle } from "../dashboard/sidebar-toggle";
-import { UserMenu } from "../dashboard/user-menu";
 import { IconArrowLeft } from "../kg/icons";
+import { KgThemeToggle } from "../kg/theme-toggle";
 
 /**
  * ProjectShell · Topbar.
  *
  * Suma un botón "← Kingrow" al principio para volver al shell de la
- * plataforma. El resto es idéntico al topbar viejo (project switcher,
- * notification bell, user menu con theme + config + logout).
+ * plataforma. A la derecha: notification bell + toggle de tema (mismo que
+ * Kingrow). El acceso a cuenta/config/logout ahora vive en el `KgUserBlock`
+ * al pie del sidebar — no queremos duplicar la superficie.
  */
 export function ProjectTopbar({
-  profile,
   projects,
   theme,
 }: {
-  readonly profile: SessionProfile;
   readonly projects: readonly ProjectListItem[];
   readonly theme: Theme;
 }) {
@@ -39,7 +37,7 @@ export function ProjectTopbar({
       <ProjectSwitcher projects={projects} />
       <div className="ml-auto flex items-center gap-2">
         <NotificationBell />
-        <UserMenu profile={profile} theme={theme} />
+        <KgThemeToggle theme={theme} />
       </div>
     </header>
   );

@@ -153,7 +153,7 @@ export function NotificationBell() {
         <div
           role="menu"
           aria-orientation="vertical"
-          className="absolute right-0 top-full z-40 mt-2 w-80 overflow-hidden rounded-md border border-border bg-bg-elevated shadow-card"
+          className="absolute right-0 top-full z-50 mt-2 w-80 overflow-hidden rounded-md border border-border bg-bg-elevated shadow-card"
         >
           <div className="flex items-center justify-between border-b border-border px-3 py-2">
             <span className="text-sm font-semibold text-fg">Notificaciones</span>

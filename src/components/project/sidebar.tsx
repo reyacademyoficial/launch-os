@@ -2,6 +2,7 @@ import type { SessionProfile } from "@/lib/supabase/auth";
 
 import { NavGroup } from "../dashboard/nav-group";
 import { NavLink } from "../dashboard/nav-link";
+import { KgUserBlock } from "../kg/user-block";
 
 /**
  * ProjectShell · Sidebar scoped al proyecto activo.
@@ -23,16 +24,18 @@ export function ProjectSidebar({ profile }: { readonly profile: SessionProfile }
   const isOperador = profile.role === "operador";
   return (
     <aside
-      className="flex w-60 shrink-0 flex-col overflow-y-auto border-r border-border bg-bg-elevated px-4 py-6"
+      className="flex w-60 shrink-0 flex-col overflow-y-auto border-r border-border bg-bg-elevated"
     >
-      <div className="mb-6 px-2">
-        <span className="text-base font-bold text-accent">Launch OS</span>
-        <div className="mt-0.5 text-[10px] uppercase tracking-wider text-fg-subtle">
-          Vista del proyecto
+      <div className="px-4 pb-2 pt-6">
+        <div className="px-2">
+          <span className="text-base font-bold text-accent">Launch OS</span>
+          <div className="mt-0.5 text-[10px] uppercase tracking-wider text-fg-subtle">
+            Vista del proyecto
+          </div>
         </div>
       </div>
 
-      <nav className="space-y-1">
+      <nav className="flex-1 space-y-1 px-4 pb-4 pt-4">
         {!isOperador && (
           <NavLink scopedSuffix="" exact>
             Overview
@@ -55,6 +58,10 @@ export function ProjectSidebar({ profile }: { readonly profile: SessionProfile }
         {/* Calculadora — herramienta transversal, accede desde el contexto de proyecto */}
         <NavLink href="/calculadora">Calculadora</NavLink>
       </nav>
+
+      <div className="border-t border-border px-3 py-3">
+        <KgUserBlock profile={profile} />
+      </div>
     </aside>
   );
 }

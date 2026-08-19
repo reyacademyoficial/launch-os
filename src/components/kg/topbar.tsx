@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 
+import { NotificationBell } from "@/components/notifications/notification-bell";
 import type { Theme } from "@/lib/theme";
 
 import { SidebarToggle } from "../dashboard/sidebar-toggle";
@@ -39,6 +40,7 @@ export function KgTopbar({ theme }: { readonly theme: Theme }) {
         </div>
       </div>
       <div className="ml-auto flex items-center gap-2">
+        <NotificationBell />
         <KgThemeToggle theme={theme} />
       </div>
     </header>
