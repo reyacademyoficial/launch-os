@@ -81,7 +81,7 @@ export default async function ProjectCobrosPage({
     listPaymentModalities(projectId),
     listProductsForProject(projectId),
     listCommissionRules(projectId),
-    listPaymentMethods(projectId),
+    listPaymentMethods(),
     listTeamMembersForProject(projectId),
     listLaunchesForProject(projectId),
     listBanks(),

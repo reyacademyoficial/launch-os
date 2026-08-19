@@ -47,7 +47,7 @@ export default async function LaunchesPage({
     userCanEditLaunchesIn(projectId),
     listAggregatesForProject(projectId),
     getKanbanSalesAggregatesForProject(projectId),
-    listPaymentMethods(projectId),
+    listPaymentMethods(),
     listBanks(),
     loadProjectFxRates(supabase, projectId),
   ]);

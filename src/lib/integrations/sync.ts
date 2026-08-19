@@ -180,14 +180,18 @@ export async function syncLaunch(
     };
   }
   if (launch.closed_at !== null) {
-    return await recordTerminalRun(
-      service,
-      input,
-      launch,
-      "config_missing",
-      "El lanzamiento está cerrado. Reabrilo para sincronizar.",
-      { cause: "launch_closed" },
-    );
+    // Launch cerrado: NO insertamos run ni disparamos notif. Antes acá
+    // caíamos en `recordTerminalRun('config_missing')` — eso spameaba una
+    // notif "Falta configuración" con body "El lanzamiento está cerrado" cada
+    // vez que alguien apretaba el botón. Con 300 launches cerrados en el
+    // historial cualquier retry en loop llena la campanita. El toast del
+    // caller (triggerSync) sigue mostrando el mensaje.
+    return {
+      runId: "",
+      status: "config_missing",
+      rowsWritten: 0,
+      errorMessage: "El lanzamiento está cerrado. Reabrilo para sincronizar.",
+    };
   }
   if (!launch.date_start || !launch.date_end) {
     return await recordTerminalRun(

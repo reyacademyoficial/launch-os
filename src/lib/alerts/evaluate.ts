@@ -76,6 +76,12 @@ export async function evaluateAlertsForLaunch(launchId: string): Promise<void> {
       | (LaunchRow & { projects: { name: string } | null })
       | null;
     if (!launch) return;
+    // Launch cerrado: nada que evaluar. Actualmente solo entramos acá desde
+    // `finalizeRun` en success (que a su vez solo corre sobre launches abiertos
+    // porque `syncLaunch` lo bloquea), pero defensivo — si en algún futuro
+    // otro path invoca `evaluateAlertsForLaunch`, evitamos disparar alertas
+    // fantasma sobre historia congelada.
+    if (launch.closed_at !== null) return;
     const projectName = launch.projects?.name ?? "Proyecto";
     const launchName = launch.name ?? "Lanzamiento";
 

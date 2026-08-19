@@ -71,7 +71,7 @@ export default async function OverviewPage({
     userCanEditLaunchesIn(projectId),
     listAggregatesForProject(projectId),
     getKanbanSalesAggregatesForProject(projectId),
-    listPaymentMethods(projectId),
+    listPaymentMethods(),
     listBanks(),
     loadProjectFxRates(supabase, projectId),
   ]);

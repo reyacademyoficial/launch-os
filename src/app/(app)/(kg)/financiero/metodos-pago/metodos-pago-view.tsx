@@ -9,13 +9,10 @@ import { deletePaymentMethod, setPaymentMethodActive } from "./actions";
 import {
   PaymentMethodFormDrawer,
   type BankOption,
-  type ProjectOption,
 } from "./payment-method-form-drawer";
 
 export interface PaymentMethodRowData {
   readonly id: string;
-  readonly projectId: string;
-  readonly projectName: string;
   readonly name: string;
   readonly bankId: string | null;
   readonly bankName: string | null;
@@ -33,12 +30,10 @@ export interface PaymentMethodRowData {
 export function MetodosPagoView({
   rows,
   totalCount,
-  projects,
   banks,
 }: {
   readonly rows: readonly PaymentMethodRowData[];
   readonly totalCount: number;
-  readonly projects: readonly ProjectOption[];
   readonly banks: readonly BankOption[];
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -47,7 +42,6 @@ export function MetodosPagoView({
     : null;
 
   const columns: Column<PaymentMethodRowData>[] = [
-    { key: "project", label: "Proyecto", render: (r) => r.projectName },
     { key: "name", label: "Método", render: (r) => r.name },
     {
       key: "bank",
@@ -112,7 +106,7 @@ export function MetodosPagoView({
         rowKey={(r) => r.id}
         totalCount={totalCount}
         emptyTitle="No hay métodos de pago cargados"
-        emptyHint="Cada proyecto configura sus métodos: transferencia, Stripe, Mercado Pago, efectivo… El banco elegido recibe los cobros que entran por ese método."
+        emptyHint="El catálogo es de Kingrow: cada método (transferencia, Stripe, Mercado Pago, efectivo…) baja a todos los proyectos. El banco elegido recibe los cobros que entran por ese método."
         maxBodyHeight="calc(100vh - 280px)"
       />
 
@@ -121,11 +115,9 @@ export function MetodosPagoView({
           mode="edit"
           open
           onClose={() => setEditingId(null)}
-          projects={projects}
           banks={banks}
           initial={{
             id: editingRow.id,
-            projectId: editingRow.projectId,
             name: editingRow.name,
             bankId: editingRow.bankId,
             currency: editingRow.currency,

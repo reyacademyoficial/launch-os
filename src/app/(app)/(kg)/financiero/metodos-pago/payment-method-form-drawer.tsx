@@ -14,15 +14,9 @@ import {
 // ═══════════════════════════════════════════════════════════════════════════
 // Drawer compartido create / edit — mismo patrón que BankFormDrawer.
 //
-// En edición el projectId QUEDA FIJO (no se puede cambiar; ver comentario
-// en updatePaymentMethod). Igual mando el value en el form para que el
-// action lo tenga en el payload, pero renderizamos disabled y con nota.
+// Post 0134 el catálogo es org-scope (Kingrow): no hay selector de proyecto.
+// Un método creado acá cae disponible para todos los proyectos de la org.
 // ═══════════════════════════════════════════════════════════════════════════
-
-export interface ProjectOption {
-  readonly id: string;
-  readonly name: string;
-}
 
 export interface BankOption {
   readonly id: string;
@@ -33,7 +27,6 @@ export interface BankOption {
 
 export interface PaymentMethodInitial {
   readonly id?: string;
-  readonly projectId?: string;
   readonly name?: string;
   readonly bankId?: string | null;
   /** Solo relevante para métodos sin banco. */
@@ -43,7 +36,6 @@ export interface PaymentMethodInitial {
 export interface PaymentMethodFormDrawerProps {
   readonly mode: "create" | "edit";
   readonly initial?: PaymentMethodInitial;
-  readonly projects: readonly ProjectOption[];
   readonly banks: readonly BankOption[];
   readonly open: boolean;
   readonly onClose: () => void;
@@ -63,7 +55,6 @@ export function PaymentMethodFormDrawer(props: PaymentMethodFormDrawerProps) {
 function FormBody({
   mode,
   initial,
-  projects,
   banks,
   onClose,
 }: PaymentMethodFormDrawerProps) {
@@ -118,38 +109,6 @@ function FormBody({
       action={formAction}
       style={{ display: "flex", flexDirection: "column", gap: 16 }}
     >
-      <Field label="Proyecto" htmlFor="project_id" required>
-        <select
-          id="project_id"
-          name="project_id"
-          required
-          defaultValue={initial?.projectId ?? ""}
-          disabled={isEdit ? true : false}
-          style={{
-            ...inputStyle,
-            opacity: isEdit ? 0.7 : 1,
-            cursor: isEdit ? "not-allowed" : "auto",
-          }}
-        >
-          {!isEdit && <option value="">Elegí un proyecto…</option>}
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-        {isEdit && (
-          <div
-            className="kg-t7"
-            style={{ color: "var(--kg-text-3)", marginTop: 6 }}
-          >
-            No se puede cambiar el proyecto de un método existente. Si hace
-            falta, desactivá este método y creá uno nuevo en el proyecto
-            correcto.
-          </div>
-        )}
-      </Field>
-
       <Field label="Nombre" htmlFor="name" required>
         <input
           id="name"
@@ -165,7 +124,7 @@ function FormBody({
           className="kg-t7"
           style={{ color: "var(--kg-text-3)", marginTop: 6 }}
         >
-          Único por proyecto.
+          Único en Kingrow. Este método baja a todos los proyectos.
         </div>
       </Field>
 

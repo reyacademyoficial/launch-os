@@ -7,8 +7,7 @@ import { Panel } from "@/components/kg/panel";
 import { listBanks } from "@/lib/banks/list";
 import { fCount } from "@/lib/finance/format";
 import { effectiveCurrency, fmtArs, fmtUsd } from "@/lib/money";
-import { listAllPaymentMethods } from "@/lib/payment-methods/list";
-import { listAccessibleProjects } from "@/lib/projects/list";
+import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { createClient } from "@/lib/supabase/server";
 
 import {
@@ -16,15 +15,13 @@ import {
   type PaymentMethodRowData,
 } from "./metodos-pago-view";
 import { NewPaymentMethodButton } from "./new-method-button";
-import type {
-  BankOption,
-  ProjectOption,
-} from "./payment-method-form-drawer";
+import type { BankOption } from "./payment-method-form-drawer";
 
 export const metadata: Metadata = { title: "Métodos de pago · Financiero" };
 
 // Métodos de pago son estructurales, no eventos — sin filtro de período.
-// Filtro por estado (activos/inactivos/todos) + filtro por proyecto.
+// Filtro por estado (activos/inactivos/todos). Post 0134 el catálogo es
+// org-scope: no hay filtro por proyecto (bajan a todos igual).
 type ActiveParam = "activos" | "inactivos" | "todos";
 
 const ACTIVE_OPTIONS: ReadonlyArray<{ value: ActiveParam; label: string }> = [
@@ -56,17 +53,12 @@ export default async function MetodosPagoPage({
 }) {
   const sp = await searchParams;
   const activeParam = parseActive(sp.state);
-  const projectFilter =
-    typeof sp.project === "string" && sp.project.trim().length > 0
-      ? sp.project
-      : null;
 
   const supabase = await createClient();
 
-  const [methods, banks, projects, paymentsRes] = await Promise.all([
-    listAllPaymentMethods(),
+  const [methods, banks, paymentsRes] = await Promise.all([
+    listPaymentMethods(),
     listBanks(),
-    listAccessibleProjects(),
     // Cobros por método (con link a factura si existe).
     supabase
       .from("payments")
@@ -148,24 +140,19 @@ export default async function MetodosPagoPage({
     }
   }
 
-  const projectById = new Map(projects.map((p) => [p.id, p]));
   const bankById = new Map(banks.map((b) => [b.id, b]));
 
   // ─── Filtrar + serializar ─────────────────────────────────────────────
   const filtered = methods.filter((m) => {
     if (activeParam === "activos" && !m.active) return false;
     if (activeParam === "inactivos" && m.active) return false;
-    if (projectFilter && m.project_id !== projectFilter) return false;
     return true;
   });
 
   const rows: PaymentMethodRowData[] = filtered.map((m) => {
-    const project = projectById.get(m.project_id);
     const bank = m.bank_id ? bankById.get(m.bank_id) ?? null : null;
     return {
       id: m.id,
-      projectId: m.project_id,
-      projectName: project?.name ?? "—",
       name: m.name,
       bankId: m.bank_id,
       bankName: bank?.name ?? null,
@@ -190,33 +177,12 @@ export default async function MetodosPagoPage({
   const withoutBank = rows.filter((r) => !r.bankId).length;
 
   // ─── Opciones para el drawer ──────────────────────────────────────────
-  const projectsForDrawer: ProjectOption[] = projects.map((p) => ({
-    id: p.id,
-    name: p.name,
-  }));
   const banksForDrawer: BankOption[] = banks.map((b) => ({
     id: b.id,
     name: b.name,
     currency: b.currency,
     active: b.active,
   }));
-
-  // ─── Pills de proyecto (filtro) ────────────────────────────────────────
-  const projectsWithMethods = new Set(methods.map((m) => m.project_id));
-  const projectPillOptions = [
-    {
-      label: "Todos los proyectos",
-      href: buildHref({ state: activeParam, project: null }),
-      active: projectFilter == null,
-    },
-    ...projects
-      .filter((p) => projectsWithMethods.has(p.id))
-      .map((p) => ({
-        label: p.name,
-        href: buildHref({ state: activeParam, project: p.id }),
-        active: projectFilter === p.id,
-      })),
-  ];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -240,32 +206,20 @@ export default async function MetodosPagoPage({
           ariaLabel="Filtrar por estado"
           options={ACTIVE_OPTIONS.map((o) => ({
             label: o.label,
-            href: buildHref({ state: o.value, project: projectFilter }),
+            href: buildHref({ state: o.value }),
             active: activeParam === o.value,
           }))}
         />
-        {projectPillOptions.length > 1 && (
-          <KgParamPills
-            ariaLabel="Filtrar por proyecto"
-            options={projectPillOptions}
-          />
-        )}
       </div>
 
       <Panel
         title="Métodos de pago"
         pad={false}
-        actions={
-          <NewPaymentMethodButton
-            projects={projectsForDrawer}
-            banks={banksForDrawer}
-          />
-        }
+        actions={<NewPaymentMethodButton banks={banksForDrawer} />}
       >
         <MetodosPagoView
           rows={rows}
           totalCount={totalCount}
-          projects={projectsForDrawer}
           banks={banksForDrawer}
         />
       </Panel>
@@ -279,13 +233,9 @@ function parseActive(v: string | string[] | undefined): ActiveParam {
   return (allowed as string[]).includes(v) ? (v as ActiveParam) : "activos";
 }
 
-function buildHref(overrides: {
-  state: ActiveParam;
-  project: string | null;
-}): string {
+function buildHref(overrides: { state: ActiveParam }): string {
   const params = new URLSearchParams();
   if (overrides.state !== "activos") params.set("state", overrides.state);
-  if (overrides.project) params.set("project", overrides.project);
   const qs = params.toString();
   return qs ? `/financiero/metodos-pago?${qs}` : "/financiero/metodos-pago";
 }

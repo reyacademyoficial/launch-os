@@ -77,7 +77,7 @@ export default async function ProjectSalesPage({
     listPaymentModalities(projectId),
     listProductsForProject(projectId),
     listCommissionRules(projectId),
-    listPaymentMethods(projectId),
+    listPaymentMethods(),
     listTeamMembersForProject(projectId),
     listLaunchesForProject(projectId),
     listBanks(),

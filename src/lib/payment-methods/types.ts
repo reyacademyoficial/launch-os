@@ -3,12 +3,14 @@
  * NO confundir con `PaymentModalityRow` (contado / N cuotas), que es la
  * variable que define la regla de comisión. Método es información contable.
  *
- * Mismo patrón CRUD/RLS que `products`: project-scoped, active flag para
- * preservar histórico al "borrar".
+ * Post 0134: catálogo org-scope. Los proyectos consumen el mismo listado
+ * (mismo criterio que banks post 0101). `project_id` sigue nullable en el
+ * schema por si aparece un caso legítimo project-exclusive; hoy queda NULL.
  */
 export interface PaymentMethodRow {
   id: string;
-  project_id: string;
+  organization_id: string;
+  project_id: string | null;
   name: string;
   active: boolean;
   /**

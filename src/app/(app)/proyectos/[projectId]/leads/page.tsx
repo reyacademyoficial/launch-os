@@ -117,7 +117,7 @@ export default async function LeadsPage({
     listPaymentModalities(projectId),
     listProductsForProject(projectId),
     listCommissionRules(projectId),
-    listPaymentMethods(projectId),
+    listPaymentMethods(),
     listBanks(),
     loadProjectFxRates(supabase, projectId),
   ]);

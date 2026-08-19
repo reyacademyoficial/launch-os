@@ -2,7 +2,7 @@
  * Traductor de errores Postgres para payment_methods.
  *
  * Casos cubiertos:
- *   - 23505 unique_violation → nombre duplicado dentro del proyecto.
+ *   - 23505 unique_violation → nombre duplicado dentro de la org (post 0134).
  *   - 23503 FK — típicamente al borrar un método con cobros (payments tiene
  *     ON DELETE RESTRICT sobre payment_method_id). Mensaje empuja al toggle
  *     active en vez del delete para preservar histórico.
@@ -23,7 +23,7 @@ export function translatePaymentMethodError(
     error.message ?? "Error desconocido al guardar el método de pago.";
 
   if (code === "23505") {
-    return "Ya existe un método con ese nombre en el proyecto.";
+    return "Ya existe un método con ese nombre en Kingrow.";
   }
   if (code === "23503") {
     // Casi seguro que es el RESTRICT de payments.payment_method_id.

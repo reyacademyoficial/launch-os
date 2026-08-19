@@ -3,14 +3,14 @@ import { describe, expect, it } from "vitest";
 import { translatePaymentMethodError } from "./translate-error";
 
 describe("translatePaymentMethodError", () => {
-  it("23505 → dice unique dentro del proyecto", () => {
-    // El unique del schema es (project_id, name).
+  it("23505 → dice unique dentro de la org", () => {
+    // Post 0134 el unique del schema es (organization_id, name).
     const out = translatePaymentMethodError({
       code: "23505",
       message: "duplicate key value violates unique constraint",
     });
     expect(out.toLowerCase()).toContain("ya existe");
-    expect(out).toContain("proyecto");
+    expect(out).toContain("Kingrow");
   });
 
   it("23503 con mención de payments → empuja a desactivar", () => {

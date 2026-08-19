@@ -104,7 +104,10 @@
       "Bash(ls src/lib/integrations/__fixtures__/)",
       "Bash(echo \"---exit=$?---\")",
       "Bash(grep -iE \"create.*function.*can_edit_org|as \\\\$\\\\$\")",
-      "Bash(echo \"TSC_EXIT=$?\")"
+      "Bash(echo \"TSC_EXIT=$?\")",
+      "Bash(grep -E \"src[\\\\\\\\/]\")",
+      "Bash(echo \"TSC exit: $?\")",
+      "Bash(echo \"ESLINT exit: $?\")"
     ]
   }
 }

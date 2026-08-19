@@ -2,23 +2,27 @@
 
 import { revalidatePath } from "next/cache";
 
+import { resolveCurrentOrganizationId } from "@/lib/organization/current";
 import { requireRole } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
 import { translatePaymentMethodError } from "./translate-error";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Server actions para payment_methods desde Kingrow — org-wide con selector
-// de proyecto en el drawer.
+// Server actions para payment_methods — post 0134, org-scope.
 //
-// El schema sigue project-scope (0043 + 0044): cada método pertenece a UN
-// proyecto y opcionalmente a un banco de Kingrow. Con RLS project-scope,
-// superadmin ve todos por is_kingrow_admin() → esto se acepta como scope
-// efectivo en Kingrow.
+// El shape del payload es intencionalmente chico:
+//   - name (obligatorio, único por org)
+//   - bank_id (opcional; hereda moneda del banco cuando está seteado)
+//   - currency (obligatorio SÓLO si no hay bank_id)
+//
+// NO exponemos `project_id` en el form. Sigue nullable en el schema (0134)
+// por si aparece un caso legítimo project-exclusive; el flujo estándar no lo
+// llena.
 //
 // Delete: PERMITIDO condicionalmente. El schema tiene payments.payment_method_id
 // ON DELETE RESTRICT — si hay cobros, la DB rechaza y translate-error empuja
-// al toggle active. Coincide con la política de LaunchOS actual.
+// al toggle active.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export type CreatePaymentMethodState =
@@ -33,7 +37,6 @@ export type SetPaymentMethodActiveResult = { ok: true } | { error: string };
 export type DeletePaymentMethodResult = { ok: true } | { error: string };
 
 interface PaymentMethodPayload {
-  readonly projectId: string;
   readonly name: string;
   readonly bankId: string | null;
   /**
@@ -45,9 +48,6 @@ interface PaymentMethodPayload {
 }
 
 function parseFormData(formData: FormData): PaymentMethodPayload | string {
-  const projectId = String(formData.get("project_id") ?? "").trim();
-  if (projectId.length === 0) return "Elegí un proyecto.";
-
   const name = String(formData.get("name") ?? "").trim();
   if (name.length === 0) return "El nombre del método es obligatorio.";
 
@@ -63,7 +63,7 @@ function parseFormData(formData: FormData): PaymentMethodPayload | string {
     currency = raw;
   }
 
-  return { projectId, name, bankId, currency };
+  return { name, bankId, currency };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -79,6 +79,19 @@ export async function createPaymentMethod(
   const parsed = parseFormData(formData);
   if (typeof parsed === "string") return { error: parsed };
 
+  let organizationId: string | null;
+  try {
+    organizationId = await resolveCurrentOrganizationId();
+  } catch (e) {
+    return {
+      error:
+        e instanceof Error ? e.message : "Error resolviendo la organización.",
+    };
+  }
+  if (!organizationId) {
+    return { error: "No pudimos resolver tu organización. Revisá tus permisos." };
+  }
+
   const supabase = await createClient();
 
   // Sanity check del bank_id si viene: existe a nivel org (RLS ya filtra).
@@ -92,7 +105,8 @@ export async function createPaymentMethod(
   }
 
   const payload = {
-    project_id: parsed.projectId,
+    organization_id: organizationId,
+    project_id: null,
     name: parsed.name,
     bank_id: parsed.bankId,
     currency: parsed.currency,
@@ -109,23 +123,13 @@ export async function createPaymentMethod(
   const created = data as { id: string } | null;
   if (!created) return { error: "El insert no devolvió fila." };
 
-  revalidatePath("/financiero/metodos-pago");
-  revalidatePath("/financiero/bancos");
-  revalidatePath("/financiero");
-  // Preservamos revalidación de la ruta LaunchOS de leads porque el dropdown
-  // de método de pago se lee ahí al cargar cobros.
-  revalidatePath(`/proyectos/${parsed.projectId}/leads`);
+  revalidateAllViews();
   return { ok: true, methodId: created.id };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// updatePaymentMethod — el projectId NO se puede cambiar
+// updatePaymentMethod
 // ═══════════════════════════════════════════════════════════════════════════
-//
-// Cambiar el proyecto de un método rompería la relación con los cobros
-// históricos (payments.payment_method_id apunta a este método, y los payments
-// son del proyecto original). Si aparece la necesidad, se hace "borrar el
-// viejo + crear nuevo" — mismo criterio que updateBankMovement con bank_id.
 
 export async function updatePaymentMethod(
   methodId: string,
@@ -152,7 +156,6 @@ export async function updatePaymentMethod(
     name: parsed.name,
     bank_id: parsed.bankId,
     currency: parsed.currency,
-    // project_id NO se toca — ver comentario.
   } as never;
 
   const { error } = await supabase
@@ -162,10 +165,7 @@ export async function updatePaymentMethod(
 
   if (error) return { error: translatePaymentMethodError(error) };
 
-  revalidatePath("/financiero/metodos-pago");
-  revalidatePath("/financiero/bancos");
-  revalidatePath("/financiero");
-  revalidatePath(`/proyectos/${parsed.projectId}/leads`);
+  revalidateAllViews();
   return { ok: true };
 }
 
@@ -193,8 +193,7 @@ export async function setPaymentMethodActive(
 
   if (error) return { error: translatePaymentMethodError(error) };
 
-  revalidatePath("/financiero/metodos-pago");
-  revalidatePath("/financiero");
+  revalidateAllViews();
   return { ok: true };
 }
 
@@ -219,7 +218,19 @@ export async function deletePaymentMethod(
 
   if (error) return { error: translatePaymentMethodError(error) };
 
-  revalidatePath("/financiero/metodos-pago");
-  revalidatePath("/financiero");
+  revalidateAllViews();
   return { ok: true };
+}
+
+// ─── helpers ────────────────────────────────────────────────────────────────
+// El catálogo ahora baja a todos los proyectos: revalidar sólo Kingrow deja
+// stale los dropdowns de sale-modal/cobros en cada proyecto. Como no sabemos
+// el projectId acá (org-scope), revalidamos por tag/paths compartidos: la
+// próxima navegación a cualquier proyecto refetchea la lista con el server
+// component. La revalidación explícita de `/proyectos` cubre el layout.
+function revalidateAllViews() {
+  revalidatePath("/financiero/metodos-pago");
+  revalidatePath("/financiero/bancos");
+  revalidatePath("/financiero");
+  revalidatePath("/proyectos", "layout");
 }

@@ -75,7 +75,7 @@ export default async function LaunchKpiPage({
     listMessagesDailyForLaunch(launchId),
     listRecentRuns(launchId, 20),
     loadProjectFxRates(supabase, projectId),
-    listPaymentMethods(projectId),
+    listPaymentMethods(),
     listBanks(),
   ]);
 
