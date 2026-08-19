@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { ContextBarFiltersButton } from "./context-bar-filters-button";
 import { StateDot } from "./state-dot";
 import { toneOf } from "./tone";
 
@@ -78,6 +79,12 @@ export function ContextBar({
         >
           {title}
         </span>
+        {/*
+          Botón "Filtros" mobile-only. Se auto-oculta cuando la página no
+          registró filtros. Va junto al título para quedar visible en la
+          primera fila del ContextBar aunque los stats wrappeen abajo.
+        */}
+        <ContextBarFiltersButton />
       </div>
       <div
         style={{
