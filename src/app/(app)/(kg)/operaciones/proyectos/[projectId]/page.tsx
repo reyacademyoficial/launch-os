@@ -297,13 +297,7 @@ export default async function InternalProjectFichaPage({
         ]}
       />
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
-          gap: 16,
-        }}
-      >
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Panel title="Datos del proyecto">
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {project.description && (

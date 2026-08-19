@@ -240,13 +240,7 @@ export default async function OperacionesDashboardPage({
         />
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 3fr) minmax(0, 2fr)",
-          gap: 16,
-        }}
-      >
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <Panel title="Productividad por persona">
           {productivityRows.length === 0 ? (
             <EmptyState

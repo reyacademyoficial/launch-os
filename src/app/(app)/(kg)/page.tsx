@@ -937,13 +937,7 @@ export default async function EjecutivoDashboardPage({
       </Panel>
 
       {/* Alertas cruzadas */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
-          gap: 16,
-        }}
-      >
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Panel title="Clientes en riesgo">
           {clientsAtRisk.length === 0 ? (
             <EmptyState

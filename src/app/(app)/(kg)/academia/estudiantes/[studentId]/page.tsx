@@ -240,13 +240,7 @@ export default async function StudentFichaPage({
         ]}
       />
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) minmax(0, 2fr)",
-          gap: 16,
-        }}
-      >
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
         <Panel title="Datos del estudiante">
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <FieldRow label="Proyecto" value={projectName ?? "—"} />
