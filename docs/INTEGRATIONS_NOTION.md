@@ -4,7 +4,7 @@
 
 ---
 
-## Estado (2026-08-18)
+## Estado (2026-08-19)
 
 **Cerrado en chats previos:**
 - ✅ **4a Foundation** — commit `d51c3e0`. Migración 0132 + client TS +
@@ -13,23 +13,59 @@
   `/configuracion/notion/[wsId]/usuarios`.
 - ✅ **4c Sync projects** — commit `04f19fe`. Property parser + map-page
   + sync engine + UI de databases con mapping form + badges en Ops.
+- ✅ **4d Comentarios read** — commit `58d969e`. Migración 0133
+  (`internal_project_notion_comments`) + `listPageComments` en el
+  client + fase de sync de comentarios dentro de `syncNotionDatabase`
+  + sección "Comentarios de Notion" readonly en la ficha del
+  `internal_project` (solo cuando `notion_page_id NOT NULL`).
+- ✅ **4e Comentarios write + @mentions** — commit `3dedec2`.
+  `postPageComment` en el client + action `postNotionComment(projectId,
+  contentPlain, mentionedNotionUserIds[])` + composer client component
+  en la ficha con autocomplete solo de notion_users mapeados a
+  `organization_people`. Server prefija el content con `{KG fullName}
+  escribió: ` para preservar autoría visible (los comments de
+  integration aparecen firmados por el bot). Mentions se validan
+  server-side (solo mapeados) para bloquear intentos de spoof.
 
 **Cerrado en este chat:**
-- ✅ **4d Comentarios read** — migración 0133 (`internal_project_notion_comments`)
-  + `listPageComments` en el client + fase de sync de comentarios dentro
-  de `syncNotionDatabase` + sección "Comentarios de Notion" readonly en
-  la ficha del `internal_project` (solo cuando `notion_page_id NOT NULL`).
-- ✅ **4e Comentarios write + @mentions** — `postPageComment` en el client
-  + action `postNotionComment(projectId, contentPlain, mentionedNotionUserIds[])`
-  + composer client component en la ficha con autocomplete solo de
-  notion_users mapeados a `organization_people`. Server prefija el
-  content con `{KG fullName} escribió: ` para preservar autoría visible
-  (los comments de integration aparecen firmados por el bot). Mentions
-  se validan server-side (solo mapeados) para bloquear intentos de spoof.
+- ✅ **4f Cron** — endpoint `GET /api/cron/notion-sync` con guard de
+  `CRON_SECRET` (mismo secret que `sync-integrations`, ver `.env.example`).
+  Refactor: el core del sync se extrajo a `src/lib/notion/sync-runner.ts`
+  (`runNotionDatabaseSync` + `runAllEnabledNotionDatabases` + helper
+  `computeIncrementalAnchor`). Las server actions `syncNotionDatabase`
+  y `syncAllEnabledNotionDatabases` ahora son wrappers finos
+  (requireRole + createClient + delegate + revalidate). El cron
+  usa `createServiceClient()` para bypassear RLS y pide
+  `{ incremental: true }`, que calcula por DB el
+  `MAX(started_at)` del último log ok/partial y aplica el filter
+  `last_edited_time on_or_after {anchor}` al query a Notion.
+  Registrado en `vercel.json` con schedule `*/15 * * * *`.
 
-**Pendiente para el próximo chat:**
-- ⏭ **4f** Vercel Cron `/api/cron/notion-sync` cada 15 min con
-  sync incremental (`last_edited_time > notion_synced_at`).
+**Decisiones tomadas en 4f (respondiendo a las abiertas del chat previo):**
+
+1. `vercel.json` — el repo ya lo tenía para `sync-integrations`; se
+   agregó una segunda entrada al array `crons`. Migrar a `vercel.ts`
+   quedó como scope creep no justificado.
+2. `CRON_SECRET` reutilizado — ya está declarado en `.env.example` y
+   configurado en el proyecto Vercel; no es necesario un secret
+   separado por cron.
+3. Alcance = `syncAllEnabledNotionDatabases` con `incremental: true`.
+4. Anchor = `MAX(started_at)` del último log ok/partial de esa DB —
+   preferido sobre `notion_synced_at` de projects porque sobrevive a
+   futuros rewrites del schema y funciona en primer run (no depende
+   de que ya hayan entrado projects).
+
+**Limitación conocida del incremental** (documentada en `sync-runner.ts`):
+el filter de Notion por `last_edited_time` no detecta pages que sólo
+recibieron **comentarios nuevos** — los comentarios no bumpean el
+`last_edited_time` de la page. El cron pierde esos comments hasta que
+la page reciba un edit de propiedad. Fallback: el botón manual
+"Sincronizar Notion" en Ops corre full-sync y recupera todo.
+
+**Pendiente para próximos chats:**
+- Nada del bloque Notion. El siguiente ítem del backlog es lo que ya
+  arrastra el plan: soft-delete de pages borradas en Notion + lock
+  contra syncs concurrentes sobre la misma DB (ver "Riesgos" al final).
 
 **Pendiente de PROBAR end-to-end** (bloqueado en que el usuario
 consiga admin del workspace de Notion — al 2026-08-18 estaba
@@ -62,6 +98,33 @@ más abajo):
    amarillo "los cambios acá se sobreescriben".
 7. Botón "Sincronizar Notion" arriba a la derecha — corre TODAS las DBs
    enabled de TODOS los workspaces enabled. Devuelve el resumen.
+8. Abrir un project en `/operaciones/proyectos/[id]` con `notion_page_id
+   NOT NULL` → panel "Comentarios de Notion" al pie:
+   - Si en Notion ya hay comentarios en esa page, deberían aparecer
+     listados (avatar + nombre resuelto por preferencia KG-person →
+     notion-name → fallback + badge "Kingrow" cuando está mapeado).
+   - Escribir en el composer + agregar 1-2 chips de mentions →
+     "Publicar en Notion". En Notion, el comment aparece firmado por el
+     bot con el prefijo `{tu nombre KG} escribió: ` y las @menciones al
+     final. Los mencionados reciben notif nativa de Notion.
+   - Verificar que el comment aparece inmediato en el panel local sin
+     esperar al próximo sync (cache local que la action escribe).
+9. **Cron `/api/cron/notion-sync`** — testeo con `curl` (asegurate de
+   tener `CRON_SECRET` en `.env.local`):
+   ```bash
+   curl -H "Authorization: Bearer $CRON_SECRET" \
+     http://localhost:3000/api/cron/notion-sync
+   ```
+   - Sin header → `401 unauthorized`.
+   - Con header correcto → JSON con `startedAt/finishedAt/workspacesRun/
+     databasesRun/totalUpserted/totalCommentsUpserted/errors`.
+   - Primera corrida = full sync (no hay log previo). Segunda corrida
+     inmediata = 0 pages fetched (todos los `last_edited_time` son
+     anteriores al anchor del run anterior).
+   - Editar una page en Notion → volver a hitear → ese page debería
+     aparecer en el sync (upserted=1) y sus comments re-sincronizarse.
+   - En Vercel prod se dispara solo cada 15 min por el schedule del
+     `vercel.json`.
 
 **Pivot a OAuth (si no se consigue admin en Notion):**
 - Escenario: el usuario NO es owner/admin de ninguno de los workspaces
@@ -289,38 +352,25 @@ Con users mapeados, ya se puede importar pages como projects.
 - [x] Renderizado en la ficha: composer arriba de la lista de
   comentarios readonly, ambos dentro del panel "Comentarios de Notion".
 
-### 4f — Cron (siguiente chat)
+### 4f — Cron (este chat)
 
-- [ ] Endpoint `/api/cron/notion-sync` con `CRON_SECRET` guard.
-- [ ] Vercel Cron config: cada 15 min corre todos los workspaces enabled.
-- [ ] Sync incremental: extender `queryDatabase` para aceptar un
-  `filter` por `last_edited_time > notion_synced_at` (por database
-  usamos el MAX de `notion_synced_at` de los projects de esa DB —
-  o simplemente el timestamp del último `notion_sync_log` ok/partial
-  para esa DB, más simple y no requiere query cara).
-
-**Decisiones abiertas para arrancar 4f:**
-
-1. **`vercel.ts` vs `vercel.json`**: el repo hoy no tiene ninguno.
-   El session-start del plugin Vercel recomienda `vercel.ts` (nuevo,
-   tipado, con `@vercel/config`). `vercel.json` clásico funciona
-   idéntico para el cron. Elegir uno al arrancar.
-2. **`CRON_SECRET`**: Vercel manda `Authorization: Bearer <secret>`
-   al hit del cron. Generar con `openssl rand -base64 32`, agregarlo
-   como env var en Vercel (Production + Preview) y en `.env.local`
-   para poder testear con `curl`. Agregar a `.env.example` con el
-   placeholder. El endpoint compara con `process.env.CRON_SECRET` y
-   rebota 401 si no matchea. No commitear el valor real.
-3. **Alcance del cron**: usar el mismo orquestador
-   `syncAllEnabledNotionDatabases()` (ya existe, corre todos los
-   workspaces+DBs enabled). Solo hace falta envolverlo con auth y
-   agregar el filtro incremental.
-4. **Sync incremental — anchor time**: la opción más simple es leer
-   `MAX(started_at)` de `notion_sync_log WHERE database_id = X AND
-   status IN ('ok', 'partial')` como cutoff para el `filter` de
-   `queryDatabase`. Alternativa: `MAX(notion_synced_at)` de los
-   projects de la DB. Preferencia por el log (no depende de que hayan
-   entrado projects; sobrevive a rewrites del schema de projects).
+- [x] Endpoint `GET /api/cron/notion-sync` con guard `Authorization:
+  Bearer $CRON_SECRET` (mismo secret que `sync-integrations`).
+- [x] Refactor: sync core movido a `src/lib/notion/sync-runner.ts`
+  (`runNotionDatabaseSync` + `runAllEnabledNotionDatabases` + helper
+  `computeIncrementalAnchor`). Actions server (`syncNotionDatabase` +
+  `syncAllEnabledNotionDatabases`) reducidas a wrappers finos que
+  hacen `requireRole → createClient → runner → revalidatePath`.
+- [x] Cron corre con `createServiceClient()` (bypassea RLS — no hay
+  sesión de usuario) + `{ incremental: true }` que calcula el anchor
+  por DB (`MAX(started_at)` del último `notion_sync_log` ok/partial)
+  y aplica un Notion timestamp filter
+  `last_edited_time on_or_after {anchor}` al query.
+- [x] Registrado en `vercel.json`: `"*/15 * * * *"` para
+  `/api/cron/notion-sync`. `CRON_SECRET` ya estaba en `.env.example`.
+- [x] Botón manual "Sincronizar Notion" en Ops sigue haciendo full
+  sync (comportamiento intacto — el runner pasa `sinceIso: undefined`
+  cuando no se pide incremental).
 
 ---
 
