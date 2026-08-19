@@ -23,10 +23,12 @@ export function ContextBarFiltersButton() {
       type="button"
       onClick={openSheet}
       aria-label="Abrir filtros"
-      className="kg-focus md:hidden"
+      // OJO: `display` NO va en el inline style porque un inline style pisa a
+      // la clase `md:hidden` (los inline styles siempre ganan sobre clases).
+      // El display lo maneja Tailwind: `inline-flex` en mobile, `hidden` en
+      // md+ — así el botón realmente desaparece en desktop.
+      className="kg-focus inline-flex items-center md:hidden"
       style={{
-        display: "inline-flex",
-        alignItems: "center",
         gap: 6,
         padding: "6px 10px",
         borderRadius: 999,

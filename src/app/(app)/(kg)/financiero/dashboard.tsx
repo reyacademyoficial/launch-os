@@ -150,21 +150,19 @@ type ProvenanceKey =
   | "equity";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Layout del bento — 12 col, gap 20, alignItems start. Responsive vía CSS.
-// El artefacto lo hacía con `useEffect + resize listener`; lo evitamos:
-// grid-template-columns con clamp/media queries mantiene el server component
-// funcional y no fuerza rehydrate innecesario.
+// Layout del bento — responsive con clases Tailwind por fila. Antes era un
+// grid de 12 col rígido con inline style + `span(n)`; en mobile cada card
+// terminaba ocupando 1/12 del ancho (~25-30px) y todo se rompía.
+//
+// El nuevo esquema arma un grid por fila con los breakpoints propios de esa
+// fila. Cada card no necesita `col-span-*` explícito — es el grid el que
+// define cuántas columnas hay a cada ancho:
+//   · Row 1 (HeroKpi × 4)    → 1 / 2 / 4 (base / sm / lg)
+//   · Row 2 (P&L + Trend)    → 1 (base) / 12 con `lg:col-span-5|7`
+//   · Row 3 (SupportKpi × 6) → 1 / 2 / 3 / 6 (base / sm / md / lg)
+//   · Row 4 (Liq + Egr)      → mismo esquema que Row 2 (span 7|5 en lg)
+//   · Row 5 (Balance)        → siempre full width; subgrid interno 1 / md:2
 // ═══════════════════════════════════════════════════════════════════════════
-const gridStyle = {
-  display: "grid",
-  gridTemplateColumns: "repeat(12, minmax(0, 1fr))",
-  gap: 20,
-  alignItems: "start" as const,
-};
-
-function span(n: number): { gridColumn: string } {
-  return { gridColumn: `span ${n}` };
-}
 
 export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboardData }) {
   const [open, setOpen] = useState<ProvenanceKey | null>(null);
@@ -304,65 +302,57 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
       </div>
 
       {/* ═════════════════════ Fila 1 · HeroKpi × 4 ═════════════════════ */}
-      <div style={gridStyle}>
-        <div style={span(3)}>
-          <HeroKpi
-            label="Ingreso de Kingrow"
-            value={data.revenue.value}
-            format={fMoney}
-            sub={`Liquidaciones externas + facturas cobradas propias · ${data.period.label}`}
-            tone="positive"
-            featured
-            spark={shownRevenueTrend.map((b) => b.revenue)}
-            delta={data.revenueSeries.delta?.value}
-            deltaDir={data.revenueSeries.delta?.dir}
-            onOpen={() => setOpen("revenue")}
+      <div className="grid grid-cols-1 items-start gap-5 sm:grid-cols-2 lg:grid-cols-4">
+        <HeroKpi
+          label="Ingreso de Kingrow"
+          value={data.revenue.value}
+          format={fMoney}
+          sub={`Liquidaciones externas + facturas cobradas propias · ${data.period.label}`}
+          tone="positive"
+          featured
+          spark={shownRevenueTrend.map((b) => b.revenue)}
+          delta={data.revenueSeries.delta?.value}
+          deltaDir={data.revenueSeries.delta?.dir}
+          onOpen={() => setOpen("revenue")}
+        />
+        <HeroKpi
+          label="Utilidad neta"
+          value={data.netProfit.value}
+          format={fMoney}
+          sub={
+            data.margin != null ? `Margen neto ${fPct(data.margin)}` : "Sin ingresos en el período"
+          }
+          tone={netTone}
+          onOpen={() => setOpen("netProfit")}
+        />
+        {data.banks.bankCount === 0 ? (
+          <EmptyKpiCard
+            label="Bancos"
+            hint="Registrá bancos activos en Financiero → Bancos para ver el saldo consolidado."
           />
-        </div>
-        <div style={span(3)}>
+        ) : (
           <HeroKpi
-            label="Utilidad neta"
-            value={data.netProfit.value}
-            format={fMoney}
-            sub={
-              data.margin != null ? `Margen neto ${fPct(data.margin)}` : "Sin ingresos en el período"
-            }
-            tone={netTone}
-            onOpen={() => setOpen("netProfit")}
+            label="Bancos"
+            value={data.banks.totalUsd ?? Number.NaN}
+            format={fmtUsd}
+            sub={banksSubtitle(data.banks)}
+            tone="neutral"
+            help="Saldo consolidado en USD de todos los bancos activos. Se calcula en runtime: saldo inicial + cobros (por método de pago vinculado al banco) + movimientos manuales (ingresos − egresos). Los bancos en ARS se convierten con la última tasa mensual cargada a nivel organización."
           />
-        </div>
-        <div style={span(3)}>
-          {data.banks.bankCount === 0 ? (
-            <EmptyKpiCard
-              label="Bancos"
-              hint="Registrá bancos activos en Financiero → Bancos para ver el saldo consolidado."
-            />
-          ) : (
-            <HeroKpi
-              label="Bancos"
-              value={data.banks.totalUsd ?? Number.NaN}
-              format={fmtUsd}
-              sub={banksSubtitle(data.banks)}
-              tone="neutral"
-              help="Saldo consolidado en USD de todos los bancos activos. Se calcula en runtime: saldo inicial + cobros (por método de pago vinculado al banco) + movimientos manuales (ingresos − egresos). Los bancos en ARS se convierten con la última tasa mensual cargada a nivel organización."
-            />
-          )}
-        </div>
-        <div style={span(3)}>
-          <HeroKpi
-            label="Runway"
-            value={data.runway.months ?? 0}
-            format={(n) => (data.runway.months == null ? "—" : fMonths(n))}
-            sub={runwaySubtitle(data.runway.reason, data.burn)}
-            tone={runwayTone}
-            help="Runway = Caja consolidada de bancos ÷ Burn mensual. Caja = suma de saldos de todos los bancos activos en USD (ARS convertido con la tasa mensual). Burn = promedio mensual de gastos operativos + costos directos (publicidad + comisiones) + nómina + impuestos de los últimos 3 meses calendario cerrados. El mes en curso se excluye para no subestimar el burn. Muestra '—' cuando no hay gastos en la ventana o falta tasa FX para consolidar bancos, '0 meses' cuando la caja se agotó."
-          />
-        </div>
+        )}
+        <HeroKpi
+          label="Runway"
+          value={data.runway.months ?? 0}
+          format={(n) => (data.runway.months == null ? "—" : fMonths(n))}
+          sub={runwaySubtitle(data.runway.reason, data.burn)}
+          tone={runwayTone}
+          help="Runway = Caja consolidada de bancos ÷ Burn mensual. Caja = suma de saldos de todos los bancos activos en USD (ARS convertido con la tasa mensual). Burn = promedio mensual de gastos operativos + costos directos (publicidad + comisiones) + nómina + impuestos de los últimos 3 meses calendario cerrados. El mes en curso se excluye para no subestimar el burn. Muestra '—' cuando no hay gastos en la ventana o falta tasa FX para consolidar bancos, '0 meses' cuando la caja se agotó."
+        />
       </div>
 
       {/* ═════════════════════ Fila 2 · P&L (5) + Tendencia (7) ═════════════════════ */}
-      <div style={gridStyle}>
-        <div style={span(5)}>
+      <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-12">
+        <div className="lg:col-span-5">
           <Panel title="Estado de resultados">
             {data.revenue.value === 0 &&
             data.plParts.every((p) => p.v === 0) ? (
@@ -380,7 +370,7 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
             )}
           </Panel>
         </div>
-        <div style={span(7)}>
+        <div className="lg:col-span-7">
           <Panel title="Tendencia de facturación (12 meses)">
             {shownRevenueTrend.length < 2 ? (
               <EmptyState
@@ -450,71 +440,59 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
       </div>
 
       {/* ═════════════════════ Fila 3 · SupportKpi × 6 ═════════════════════ */}
-      <div style={gridStyle}>
-        <div style={span(2)}>
-          <SupportKpi
-            label="Flujo de caja"
-            value={data.cashFlow.value}
-            format={fMoneyK}
-            tone={cfTone}
-            onOpen={() => setOpen("cashFlow")}
-          />
-        </div>
-        <div style={span(2)}>
-          <SupportKpi
-            label="Margen neto"
-            value={data.margin ?? Number.NaN}
-            format={fPct}
-            tone={marginTone}
-            help="Margen neto = Utilidad neta ÷ Ingresos. Qué porcentaje del ingreso queda como ganancia después de restar todos los costos (gastos operativos + costos directos + nómina + impuestos). Ej: 20% = por cada US$100 que entran, US$20 quedan como utilidad. Bajo 0% significa que estás perdiendo plata en el período. Muestra '—' cuando no hay ingresos (división por cero)."
-          />
-        </div>
-        <div style={span(2)}>
-          <SupportKpi
-            label="Por cobrar"
-            value={data.ar.value}
-            format={fMoneyK}
-            tone={data.ar.value > 0 ? "warning" : "neutral"}
-            onOpen={() => setOpen("ar")}
-          />
-        </div>
-        <div style={span(2)}>
-          <SupportKpi
-            label="Por pagar"
-            value={data.ap.value}
-            format={fMoneyK}
-            tone={data.ap.value > 0 ? "negative" : "neutral"}
-            onOpen={() => setOpen("ap")}
-          />
-        </div>
-        <div style={span(2)}>
-          <SupportKpi
-            label="Patrimonio neto"
-            value={data.equity.value}
-            format={fMoneyK}
-            tone={data.equity.value >= 0 ? "positive" : "negative"}
-            onOpen={() => setOpen("equity")}
-          />
-        </div>
-        <div style={span(2)}>
-          {/*
-            Burn mensual. Antes se leía en el subtítulo del Runway, pero
-            ese sub solo lo muestra cuando `reason === 'ok'`. En los otros
-            dos estados (stale-snapshot, no-burn-data) el burn desaparecía
-            de la pantalla — justo cuando más importa saber cuánto se está
-            gastando. Está siempre visible acá.
-            Facturación del grupo (que ocupaba este slot) pasa al StatRow.
-            Regla 6b-rev: en las tarjetas, plata de Kingrow; en el StatRow,
-            volumen del grupo.
-          */}
-          <SupportKpi
-            label="Burn mensual"
-            value={data.burn}
-            format={fMoneyK}
-            tone={data.burn > 0 ? "warning" : "neutral"}
-            help="Promedio mensual de todos los costos que restan a la utilidad neta — gastos operativos + costos directos (publicidad + comisiones al equipo) + nómina + impuestos — sobre los últimos 3 meses calendario cerrados (ventana fija; el mes en curso queda excluido). Alimenta el cálculo del Runway. Si acabás de cargar gastos con fecha del mes en curso, no van a aparecer acá hasta el mes siguiente — usá la fecha del devengo (cuándo se generó el servicio), no la del pago."
-          />
-        </div>
+      <div className="grid grid-cols-1 items-start gap-5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
+        <SupportKpi
+          label="Flujo de caja"
+          value={data.cashFlow.value}
+          format={fMoneyK}
+          tone={cfTone}
+          onOpen={() => setOpen("cashFlow")}
+        />
+        <SupportKpi
+          label="Margen neto"
+          value={data.margin ?? Number.NaN}
+          format={fPct}
+          tone={marginTone}
+          help="Margen neto = Utilidad neta ÷ Ingresos. Qué porcentaje del ingreso queda como ganancia después de restar todos los costos (gastos operativos + costos directos + nómina + impuestos). Ej: 20% = por cada US$100 que entran, US$20 quedan como utilidad. Bajo 0% significa que estás perdiendo plata en el período. Muestra '—' cuando no hay ingresos (división por cero)."
+        />
+        <SupportKpi
+          label="Por cobrar"
+          value={data.ar.value}
+          format={fMoneyK}
+          tone={data.ar.value > 0 ? "warning" : "neutral"}
+          onOpen={() => setOpen("ar")}
+        />
+        <SupportKpi
+          label="Por pagar"
+          value={data.ap.value}
+          format={fMoneyK}
+          tone={data.ap.value > 0 ? "negative" : "neutral"}
+          onOpen={() => setOpen("ap")}
+        />
+        <SupportKpi
+          label="Patrimonio neto"
+          value={data.equity.value}
+          format={fMoneyK}
+          tone={data.equity.value >= 0 ? "positive" : "negative"}
+          onOpen={() => setOpen("equity")}
+        />
+        {/*
+          Burn mensual. Antes se leía en el subtítulo del Runway, pero
+          ese sub solo lo muestra cuando `reason === 'ok'`. En los otros
+          dos estados (stale-snapshot, no-burn-data) el burn desaparecía
+          de la pantalla — justo cuando más importa saber cuánto se está
+          gastando. Está siempre visible acá.
+          Facturación del grupo (que ocupaba este slot) pasa al StatRow.
+          Regla 6b-rev: en las tarjetas, plata de Kingrow; en el StatRow,
+          volumen del grupo.
+        */}
+        <SupportKpi
+          label="Burn mensual"
+          value={data.burn}
+          format={fMoneyK}
+          tone={data.burn > 0 ? "warning" : "neutral"}
+          help="Promedio mensual de todos los costos que restan a la utilidad neta — gastos operativos + costos directos (publicidad + comisiones al equipo) + nómina + impuestos — sobre los últimos 3 meses calendario cerrados (ventana fija; el mes en curso queda excluido). Alimenta el cálculo del Runway. Si acabás de cargar gastos con fecha del mes en curso, no van a aparecer acá hasta el mes siguiente — usá la fecha del devengo (cuándo se generó el servicio), no la del pago."
+        />
       </div>
 
       {/* ═════════════════════ StatRow (nivel 3) ═════════════════════
@@ -544,8 +522,8 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
       />
 
       {/* ═════════════════════ Fila 4 · Liquidaciones (7) + Egresos (5) ═════════════════════ */}
-      <div style={gridStyle}>
-        <div style={span(7)}>
+      <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-12">
+        <div className="lg:col-span-7">
           <Panel title="Liquidaciones por lanzamiento (período)">
             {data.launchSettlements.length === 0 ? (
               <EmptyState
@@ -570,7 +548,7 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
             )}
           </Panel>
         </div>
-        <div style={span(5)}>
+        <div className="lg:col-span-5">
           <Panel title="Estructura de egresos">
             {data.expenseCategories.length === 0 ? (
               <EmptyState
@@ -590,35 +568,31 @@ export function FinancieroDashboard({ data }: { readonly data: FinancieroDashboa
       </div>
 
       {/* ═════════════════════ Fila 5 · Balance general ═════════════════════ */}
-      <div style={gridStyle}>
-        <div style={span(12)}>
-          <Panel title="Balance general">
-            {data.equity.parts.every((p) => p.v === 0) ? (
-              <EmptyState
-                title="Sin activos ni pasivos registrados"
-                hint="El patrimonio neto se calcula como Σ activos activos − Σ pasivos vigentes − AP corriente."
-              />
-            ) : (
-              <div style={{ display: "grid", gap: 20, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
-                <Breakdown
-                  total={data.equity.value}
-                  totalLabel="Patrimonio neto"
-                  parts={data.equity.parts}
-                  fmtFn={fMoney}
-                />
-                <SectionHeader
-                  icon={<IconFin size={14} />}
-                  title="Composición"
-                  stats={[
-                    { l: "Activos", v: fMoneyK(sumPositive(data.equity.parts)) },
-                    { l: "Pasivos", v: fMoneyK(sumNegative(data.equity.parts)) },
-                  ]}
-                />
-              </div>
-            )}
-          </Panel>
-        </div>
-      </div>
+      <Panel title="Balance general">
+        {data.equity.parts.every((p) => p.v === 0) ? (
+          <EmptyState
+            title="Sin activos ni pasivos registrados"
+            hint="El patrimonio neto se calcula como Σ activos activos − Σ pasivos vigentes − AP corriente."
+          />
+        ) : (
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+            <Breakdown
+              total={data.equity.value}
+              totalLabel="Patrimonio neto"
+              parts={data.equity.parts}
+              fmtFn={fMoney}
+            />
+            <SectionHeader
+              icon={<IconFin size={14} />}
+              title="Composición"
+              stats={[
+                { l: "Activos", v: fMoneyK(sumPositive(data.equity.parts)) },
+                { l: "Pasivos", v: fMoneyK(sumNegative(data.equity.parts)) },
+              ]}
+            />
+          </div>
+        )}
+      </Panel>
 
       {openDetail && (
         <ProvenanceDrawer
