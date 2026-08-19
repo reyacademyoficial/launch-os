@@ -27,6 +27,14 @@ import { KgUserBlock } from "./user-block";
  *     capa arriba.
  *   - UserBlock al pie del todo (sticky sensación visual, sin sticky real).
  *
+ * Layout de scroll: el `<aside>` NO scrollea. Solo scrollea el `<nav>` de
+ * módulos (via `flex-1 min-h-0 overflow-y-auto`), así el brand arriba y el
+ * bloque MiJornada + UserBlock abajo quedan fijos incluso cuando la lista
+ * es larga (roles como dev, que ven capa Sistema + Dev + Utilidades, se
+ * llevaban toda la altura y perdían el user block sin scrollear). `min-h-0`
+ * es la clave — sin él, el flex-1 no puede achicarse por debajo del height
+ * del contenido y el overflow interno nunca se activa.
+ *
  * El menú se deriva del rol en el SERVIDOR: si un rol no debería ver algo,
  * el ítem no se emite. Cliente NO llega acá — el cross-guard de (app)/layout
  * lo salta a /portal antes de renderizar este shell.
@@ -41,17 +49,17 @@ export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
 
   return (
     <aside
-      className="kg-glass flex h-full w-[236px] shrink-0 flex-col overflow-y-auto border-r"
+      className="kg-glass flex h-full w-[236px] shrink-0 flex-col border-r"
       style={{
         background: "var(--kg-bg-base)",
         borderColor: "var(--kg-border-subtle)",
       }}
     >
-      <div className="px-4 py-5">
+      <div className="shrink-0 px-4 py-5">
         <KgBrand />
       </div>
 
-      <nav className="flex-1 space-y-4 px-3 pb-4">
+      <nav className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 pb-4">
         {LAYERS.map((layer) => {
           const modules = visibleModulesForRole(layer.modules, profile.role);
           if (modules.length === 0) return null;
@@ -127,13 +135,17 @@ export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
         auto-hidea (return null) para users sin persona vinculada — típico
         de dev / superadmin sin fila en organization_people. Va justo arriba
         del user block porque es una vista personal — el operador la lee
-        junto con su bloque de usuario, no arriba de todo.
+        junto con su bloque de usuario, no arriba de todo. `shrink-0` para
+        que no compita con el nav scrolleable por altura.
       */}
-      <div className="px-3 pb-3">
+      <div className="shrink-0 px-3 pb-3">
         <MiJornadaPanel />
       </div>
 
-      <div className="border-t px-3 py-3" style={{ borderColor: "var(--kg-border-subtle)" }}>
+      <div
+        className="shrink-0 border-t px-3 py-3"
+        style={{ borderColor: "var(--kg-border-subtle)" }}
+      >
         <KgUserBlock profile={profile} />
       </div>
     </aside>
