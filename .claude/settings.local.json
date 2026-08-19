@@ -102,7 +102,9 @@
       "Bash(rm src/lib/integrations/ghl.test.ts src/lib/integrations/__fixtures__/ghl/appointments_happy.json src/lib/integrations/__fixtures__/ghl/conversations_happy.json src/lib/integrations/__fixtures__/ghl/empty.json)",
       "Bash(ls src/lib/integrations/__fixtures__/ghl/)",
       "Bash(ls src/lib/integrations/__fixtures__/)",
-      "Bash(echo \"---exit=$?---\")"
+      "Bash(echo \"---exit=$?---\")",
+      "Bash(grep -iE \"create.*function.*can_edit_org|as \\\\$\\\\$\")",
+      "Bash(echo \"TSC_EXIT=$?\")"
     ]
   }
 }
