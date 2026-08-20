@@ -52,6 +52,16 @@ export interface NotionDatabase {
   readonly id: string;
   readonly title_plain: string;
   readonly last_edited_time: string;
+  /** URL pública en Notion — sirve para "Abrir en Notion" en la UI. */
+  readonly url: string | null;
+  /** Emoji del ícono (si tiene). Null si custom-image o sin ícono. */
+  readonly icon_emoji: string | null;
+  /**
+   * Padre según el API de Notion. `workspace` = la DB vive en la raíz del
+   * workspace. `page_id` / `database_id` = está anidada dentro de otro objeto.
+   */
+  readonly parent_type: "workspace" | "page_id" | "database_id" | null;
+  readonly parent_id: string | null;
 }
 
 export interface NotionUser {
@@ -146,17 +156,45 @@ export async function listDatabases(token: string): Promise<NotionDatabase[]> {
         id: string;
         title?: Array<{ plain_text?: string }>;
         last_edited_time: string;
+        url?: string;
+        icon?: { type: string; emoji?: string } | null;
+        parent?: {
+          type: "workspace" | "page_id" | "database_id" | "block_id";
+          page_id?: string;
+          database_id?: string;
+          block_id?: string;
+          workspace?: boolean;
+        };
       }>;
       next_cursor: string | null;
       has_more: boolean;
     };
 
     for (const db of data.results) {
+      const parentType =
+        db.parent?.type === "workspace"
+          ? "workspace"
+          : db.parent?.type === "page_id"
+            ? "page_id"
+            : db.parent?.type === "database_id"
+              ? "database_id"
+              : null;
+      const parentId =
+        db.parent?.type === "page_id"
+          ? db.parent.page_id ?? null
+          : db.parent?.type === "database_id"
+            ? db.parent.database_id ?? null
+            : null;
       out.push({
         id: db.id,
         title_plain:
           db.title?.map((t) => t.plain_text ?? "").join("") || "(sin título)",
         last_edited_time: db.last_edited_time,
+        url: db.url ?? null,
+        icon_emoji:
+          db.icon?.type === "emoji" ? db.icon.emoji ?? null : null,
+        parent_type: parentType,
+        parent_id: parentId,
       });
     }
 
@@ -211,6 +249,49 @@ export async function retrieveDatabase(
       data.title?.map((t) => t.plain_text ?? "").join("") || "(sin título)",
     properties: props,
   };
+}
+
+/**
+ * Resuelve el título de un padre — page o database — con una llamada.
+ * Se usa para poblar `parent_title` en `notion_databases` (breadcrumb en UI).
+ * Devuelve null si el objeto no existe o no tiene título accesible; nunca
+ * tira: los errores se capturan y logan al log del caller (no queremos que
+ * un padre inaccesible aborte todo el discover).
+ */
+export async function retrieveParentTitle(
+  token: string,
+  parentType: "page_id" | "database_id",
+  parentId: string,
+): Promise<string | null> {
+  try {
+    if (parentType === "database_id") {
+      const res = await notionFetch(token, "GET", `/databases/${parentId}`);
+      const data = res as {
+        title?: Array<{ plain_text?: string }>;
+      };
+      const t = data.title?.map((x) => x.plain_text ?? "").join("") ?? "";
+      return t || null;
+    }
+    // parent_type === 'page_id' — el título vive en properties como una prop
+    // de type 'title'. Puede llamarse "Name", "Title", o lo que el user haya
+    // puesto, así que iteramos las properties buscando el shape de title.
+    const res = await notionFetch(token, "GET", `/pages/${parentId}`);
+    const data = res as {
+      properties?: Record<
+        string,
+        { type?: string; title?: Array<{ plain_text?: string }> }
+      >;
+    };
+    for (const prop of Object.values(data.properties ?? {})) {
+      if (prop.type === "title" && prop.title) {
+        const t = prop.title.map((x) => x.plain_text ?? "").join("");
+        if (t) return t;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**

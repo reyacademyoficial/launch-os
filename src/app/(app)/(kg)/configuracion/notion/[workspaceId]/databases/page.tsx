@@ -29,7 +29,9 @@ export default async function NotionDatabasesPage({
 
   const dbsRes = await supabase
     .from("notion_databases")
-    .select("id, notion_id, name, enabled, property_map, updated_at")
+    .select(
+      "id, notion_id, name, enabled, property_map, updated_at, notion_url, icon, parent_type, parent_title",
+    )
     .eq("workspace_id", workspaceId)
     .order("name", { ascending: true });
 
@@ -41,6 +43,10 @@ export default async function NotionDatabasesPage({
       enabled: boolean;
       property_map: Record<string, unknown> | null;
       updated_at: string;
+      notion_url: string | null;
+      icon: string | null;
+      parent_type: string | null;
+      parent_title: string | null;
     }>
   ).map((r) => ({
     id: r.id,
@@ -49,6 +55,10 @@ export default async function NotionDatabasesPage({
     enabled: r.enabled,
     hasMapping: !!(r.property_map && (r.property_map as { title_prop?: string }).title_prop),
     updatedAt: r.updated_at,
+    notionUrl: r.notion_url,
+    icon: r.icon,
+    parentType: r.parent_type,
+    parentTitle: r.parent_title,
   }));
 
   return (

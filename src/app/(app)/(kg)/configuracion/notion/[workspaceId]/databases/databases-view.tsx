@@ -15,6 +15,10 @@ export interface DatabaseRow {
   readonly enabled: boolean;
   readonly hasMapping: boolean;
   readonly updatedAt: string;
+  readonly notionUrl: string | null;
+  readonly icon: string | null;
+  readonly parentType: string | null;
+  readonly parentTitle: string | null;
 }
 
 /**
@@ -159,13 +163,46 @@ function DatabaseCard({
                 display: "inline-block",
               }}
             />
+            {row.icon && (
+              <span aria-hidden style={{ fontSize: 14, lineHeight: 1 }}>
+                {row.icon}
+              </span>
+            )}
             {row.name}
           </div>
           <div
             className="kg-t7"
-            style={{ color: "var(--kg-text-3)", fontSize: 11 }}
+            style={{
+              color: "var(--kg-text-3)",
+              fontSize: 11,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              flexWrap: "wrap",
+            }}
           >
-            {row.hasMapping ? "Mapeo configurado" : "Sin mapeo"} · Notion ID:{" "}
+            <span>{formatParent(row.parentType, row.parentTitle)}</span>
+            <span aria-hidden>·</span>
+            <span>{row.hasMapping ? "Mapeo configurado" : "Sin mapeo"}</span>
+            {row.notionUrl && (
+              <>
+                <span aria-hidden>·</span>
+                <a
+                  href={row.notionUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="kg-focus"
+                  style={{
+                    color: "var(--kg-text-2)",
+                    textDecoration: "underline",
+                    textUnderlineOffset: 2,
+                  }}
+                >
+                  Abrir en Notion ↗
+                </a>
+              </>
+            )}
+            <span aria-hidden>·</span>
             <code style={{ fontSize: 10 }}>{row.notionId.slice(0, 8)}…</code>
           </div>
         </div>
@@ -233,6 +270,31 @@ function DatabaseCard({
       )}
     </article>
   );
+}
+
+/**
+ * Renderiza el breadcrumb del padre. Casos:
+ *  - parent_type=workspace → "Raíz del workspace"
+ *  - page_id + title       → "En página: X"
+ *  - database_id + title   → "En database: X"
+ *  - page/db_id sin title  → "En página / En database" (fallback si la
+ *                             resolución del título falló)
+ *  - null/desconocido      → "Ubicación desconocida" (DB descubierta antes
+ *                             de la migración 0136; correr Descubrir DBs
+ *                             de nuevo lo completa).
+ */
+function formatParent(
+  parentType: string | null,
+  parentTitle: string | null,
+): string {
+  if (parentType === "workspace") return "Raíz del workspace";
+  if (parentType === "page_id") {
+    return parentTitle ? `En página: ${parentTitle}` : "En página";
+  }
+  if (parentType === "database_id") {
+    return parentTitle ? `En database: ${parentTitle}` : "En database";
+  }
+  return "Ubicación desconocida — volvé a descubrir DBs";
 }
 
 const secondaryBtn: React.CSSProperties = {

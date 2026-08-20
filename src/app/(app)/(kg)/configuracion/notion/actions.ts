@@ -8,6 +8,7 @@ import {
   NotionApiError,
   postPageComment as apiPostPageComment,
   retrieveDatabase as apiRetrieveDatabase,
+  retrieveParentTitle as apiRetrieveParentTitle,
   whoAmI as apiWhoAmI,
   type NotionDatabaseSchema,
   type NotionRichTextBlock,
@@ -234,31 +235,74 @@ export async function discoverNotionDatabases(
   );
 
   // Split entre nuevas (INSERT con defaults enabled=false + property_map={})
-  // y ya conocidas (UPDATE solo del nombre para preservar enabled + mapping
-  // configurado por el usuario). Un upsert masivo pisaría los defaults, por
-  // eso lo separamos en dos operaciones explícitas.
+  // y ya conocidas (UPDATE de metadata visual + nombre para preservar
+  // enabled + mapping configurado por el usuario). Un upsert masivo pisaría
+  // los defaults, por eso lo separamos en dos operaciones explícitas.
   const newOnes = dbs.filter((d) => !existing.has(d.id));
   const existingOnes = dbs.filter((d) => existing.has(d.id));
 
+  // Resolver `parent_title` para cada padre único con una sola llamada.
+  // Muchos DBs pueden compartir el mismo teamspace/page padre — sin cache
+  // el discover haría N llamadas redundantes.
+  const secretToken = ws.secret_token;
+  const parentCache = new Map<string, string | null>();
+  async function resolveParentTitle(
+    parentType: "page_id" | "database_id" | null,
+    parentId: string | null,
+  ): Promise<string | null> {
+    if (!parentType || !parentId) return null;
+    const cacheKey = `${parentType}:${parentId}`;
+    if (parentCache.has(cacheKey)) return parentCache.get(cacheKey) ?? null;
+    const title = await apiRetrieveParentTitle(
+      secretToken,
+      parentType,
+      parentId,
+    );
+    parentCache.set(cacheKey, title);
+    return title;
+  }
+
   if (newOnes.length > 0) {
+    const rows = [];
+    for (const d of newOnes) {
+      const parentTitle =
+        d.parent_type === "page_id" || d.parent_type === "database_id"
+          ? await resolveParentTitle(d.parent_type, d.parent_id)
+          : null;
+      rows.push({
+        workspace_id: workspaceId,
+        notion_id: d.id,
+        name: d.title_plain,
+        notion_url: d.url,
+        icon: d.icon_emoji,
+        parent_type: d.parent_type,
+        parent_id: d.parent_id,
+        parent_title: parentTitle,
+      });
+    }
     const { error: insErr } = await supabase
       .from("notion_databases")
-      .insert(
-        newOnes.map((d) => ({
-          workspace_id: workspaceId,
-          notion_id: d.id,
-          name: d.title_plain,
-        })) as never,
-      );
+      .insert(rows as never);
     if (insErr) return { ok: false, error: insErr.message };
   }
 
-  // Actualizar nombre por si el usuario renombró en Notion. Iteramos:
-  // pocas DBs típicas (< 20 por workspace), no vale la pena batch update.
+  // Actualizar metadata visual y nombre por si algo cambió en Notion.
+  // Iteramos: pocas DBs típicas (< 20 por workspace), no vale batch update.
   for (const d of existingOnes) {
+    const parentTitle =
+      d.parent_type === "page_id" || d.parent_type === "database_id"
+        ? await resolveParentTitle(d.parent_type, d.parent_id)
+        : null;
     await supabase
       .from("notion_databases")
-      .update({ name: d.title_plain } as never)
+      .update({
+        name: d.title_plain,
+        notion_url: d.url,
+        icon: d.icon_emoji,
+        parent_type: d.parent_type,
+        parent_id: d.parent_id,
+        parent_title: parentTitle,
+      } as never)
       .eq("workspace_id", workspaceId)
       .eq("notion_id", d.id);
   }
