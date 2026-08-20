@@ -225,8 +225,8 @@ export async function updateProject(
 // deleteProject — hard delete con guard duro
 //
 // Bloqueado si tiene tasks o time_entries: son datos de auditoría. El
-// operador debería archivar (status='archived') en vez. checklists +
-// blockers cascadeacan sin drama.
+// operador debería marcar como 'listo' en vez. checklists + blockers
+// cascadeacan sin drama.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export async function deleteProject(

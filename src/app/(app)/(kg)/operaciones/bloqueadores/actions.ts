@@ -17,7 +17,7 @@ import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 // SÍ está permitido (resolver sin registrar quién). El drawer refleja
 // esto: resolved_by solo se muestra si resolved_at está seteado.
 //
-// NO hay sync automático con tasks.status='blocked' — decisión del schema.
+// NO hay sync automático con tasks.status='bloqueado' — decisión del schema.
 // El operador puede sugerirlo desde la UI ("¿marcar la tarea como
 // bloqueada también?"), pero no se fuerza.
 // ═══════════════════════════════════════════════════════════════════════════

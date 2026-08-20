@@ -142,12 +142,22 @@ interface CertificateRowLite {
 }
 
 interface InternalProjectRow {
-  readonly status: "backlog" | "active" | "paused" | "done" | "archived";
+  readonly status:
+    | "sin_empezar"
+    | "en_proceso"
+    | "bloqueado"
+    | "alerta_maxima"
+    | "listo";
 }
 
 interface TaskRow {
   readonly id: string;
-  readonly status: "todo" | "doing" | "blocked" | "done" | "cancelled";
+  readonly status:
+    | "sin_empezar"
+    | "en_proceso"
+    | "bloqueado"
+    | "alerta_maxima"
+    | "listo";
   readonly assignee_id: string | null;
   readonly due_on: string | null;
 }
@@ -168,15 +178,17 @@ interface ClientRiskRow {
 }
 
 const OPEN_INTERNAL_STATUSES = new Set<InternalProjectRow["status"]>([
-  "backlog",
-  "active",
-  "paused",
+  "sin_empezar",
+  "en_proceso",
+  "bloqueado",
+  "alerta_maxima",
 ]);
 
 const OPEN_TASK_STATUSES = new Set<TaskRow["status"]>([
-  "todo",
-  "doing",
-  "blocked",
+  "sin_empezar",
+  "en_proceso",
+  "bloqueado",
+  "alerta_maxima",
 ]);
 
 const COHORT_LABEL = {
