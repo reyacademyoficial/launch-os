@@ -185,7 +185,7 @@ export default async function MetodosPagoPage({
   }));
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconFin size={16} />}
         title="Métodos de pago"
@@ -215,6 +215,7 @@ export default async function MetodosPagoPage({
       <Panel
         title="Métodos de pago"
         pad={false}
+        fillHeight
         actions={<NewPaymentMethodButton banks={banksForDrawer} />}
       >
         <MetodosPagoView

@@ -358,7 +358,7 @@ export default async function GastosPage({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconFin size={16} />}
         title="Gastos"
@@ -405,6 +405,7 @@ export default async function GastosPage({
       <Panel
         title="Gastos"
         pad={false}
+        fillHeight
         actions={
           <div style={{ display: "inline-flex", gap: 8 }}>
             <span className="hidden md:contents">

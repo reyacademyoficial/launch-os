@@ -225,7 +225,7 @@ export default async function ProyectosInternosPage({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconOps size={16} />}
         title="Proyectos internos"

@@ -293,7 +293,7 @@ export default async function NominaPage({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconFin size={16} />}
         title="Nómina"
@@ -331,6 +331,7 @@ export default async function NominaPage({
       <Panel
         title="Nómina"
         pad={false}
+        fillHeight
         actions={<CreatePayrollButton people={activePeopleForForm} />}
       >
         <NominaView

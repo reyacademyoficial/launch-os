@@ -87,7 +87,7 @@ export default async function PasivosPage({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconFin size={16} />}
         title="Pasivos"
@@ -111,6 +111,7 @@ export default async function PasivosPage({
       <Panel
         title="Pasivos"
         pad={false}
+        fillHeight
         actions={<NewLiabilityButton />}
       >
         <PasivosView rows={rows} totalCount={totalCount} />

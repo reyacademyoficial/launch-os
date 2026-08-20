@@ -91,7 +91,7 @@ export default async function ActivosPage({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconFin size={16} />}
         title="Activos"
@@ -117,6 +117,7 @@ export default async function ActivosPage({
       <Panel
         title="Activos"
         pad={false}
+        fillHeight
         actions={<NewAssetButton />}
       >
         <ActivosView rows={rows} totalCount={totalCount} />

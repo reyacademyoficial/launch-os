@@ -500,7 +500,7 @@ export default async function FacturasPage({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconFin size={16} />}
         title="Facturas"
@@ -541,6 +541,7 @@ export default async function FacturasPage({
       <Panel
         title="Facturas emitidas"
         pad={false}
+        fillHeight
         actions={
           <NewInvoiceButton
             projects={projectOptions}
