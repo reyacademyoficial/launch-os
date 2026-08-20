@@ -30,22 +30,28 @@ export const metadata: Metadata = { title: "Tareas · Operaciones" };
 //
 // Filtros extras:
 //   ?status=abiertas|cerradas|todas   default abiertas
-//   ?priority=urgent|high|med|low     opcional
+//   ?priority=alta|media|baja         opcional
 //   ?projectId=<uuid>                 opcional
 //
 // Marcado de vencidas: precomputado server-side (isOverdue = due_on <
 // today AND status abierta). El view lo pinta como dot rojo + badge.
 // ═══════════════════════════════════════════════════════════════════════════
 
-type Status = "todo" | "doing" | "blocked" | "done" | "cancelled";
-type Priority = "low" | "med" | "high" | "urgent";
+type Status =
+  | "sin_empezar"
+  | "en_proceso"
+  | "bloqueado"
+  | "alerta_maxima"
+  | "listo";
+type Priority = "alta" | "media" | "baja";
 type Scope = "mine" | "all";
 type StatusFilter = "abiertas" | "cerradas" | "todas";
 
 const OPEN_STATUSES: ReadonlySet<Status> = new Set([
-  "todo",
-  "doing",
-  "blocked",
+  "sin_empezar",
+  "en_proceso",
+  "bloqueado",
+  "alerta_maxima",
 ]);
 
 const CAN_SEE_ALL_ROLES: ReadonlySet<Role> = new Set(["superadmin", "dev"]);
@@ -64,10 +70,9 @@ const PRIORITY_OPTIONS: ReadonlyArray<{
   label: string;
 }> = [
   { value: "todas", label: "Todas" },
-  { value: "urgent", label: "Urgentes" },
-  { value: "high", label: "Alta" },
-  { value: "med", label: "Media" },
-  { value: "low", label: "Baja" },
+  { value: "alta", label: "Alta" },
+  { value: "media", label: "Media" },
+  { value: "baja", label: "Baja" },
 ];
 
 interface TaskDbRow {
@@ -86,7 +91,7 @@ interface TaskDbRow {
 interface ProjectDbRow {
   readonly id: string;
   readonly name: string;
-  readonly status: "backlog" | "active" | "paused" | "done" | "archived";
+  readonly status: Status;
 }
 
 interface PersonDbRow {
@@ -139,7 +144,7 @@ export default async function TareasPage({
     supabase
       .from("internal_projects")
       .select("id, name, status")
-      .neq("status", "archived")
+      .neq("status", "listo")
       .order("name", { ascending: true }),
     supabase
       .from("organization_people")
@@ -206,8 +211,10 @@ export default async function TareasPage({
   const overdueCount = openTasks.filter(
     (t) => t.due_on != null && t.due_on < today,
   ).length;
+  // "Urgentes" en la contabilidad = status='alerta_maxima' (la señal más
+  // fuerte que Notion pinta). Ver Anexo A del plan sobre el mapeo Notion.
   const urgentOpenCount = openTasks.filter(
-    (t) => t.priority === "urgent",
+    (t) => t.status === "alerta_maxima",
   ).length;
 
   function buildHref(overrides: {
@@ -381,7 +388,7 @@ function parsePriority(
   v: string | string[] | undefined,
 ): Priority | null {
   if (typeof v !== "string") return null;
-  const allowed: Priority[] = ["low", "med", "high", "urgent"];
+  const allowed: Priority[] = ["alta", "media", "baja"];
   return (allowed as string[]).includes(v) ? (v as Priority) : null;
 }
 

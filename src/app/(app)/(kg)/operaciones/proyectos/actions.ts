@@ -6,35 +6,35 @@ import { resolveCurrentOrganizationId } from "@/lib/organization/current";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CRUD de internal_projects (bloque 5 · 0090).
+// CRUD de internal_projects (bloque 5 · 0090 + 0137 status alineado a Notion).
 //
-// El schema no impone invariante entre status ∈ {done, archived} ↔
-// closed_at. La app lo maneja transparentemente (mismo patrón que
-// tickets.resolved_at y tasks.completed_at cuando lleguen):
-//   - Nuevo status done|archived sin closed_at previo → se setea now().
-//   - Vuelve a un status abierto (backlog|active|paused) → closed_at null.
-//   - status done|archived con closed_at ya seteado → se preserva.
+// El schema no impone invariante entre status='listo' ↔ closed_at. La app
+// lo maneja transparentemente (mismo patrón que tickets.resolved_at y
+// tasks.completed_at):
+//   - Nuevo status listo sin closed_at previo → se setea now().
+//   - Vuelve a un status abierto → closed_at null.
+//   - status listo con closed_at ya seteado → se preserva.
 // El operador no ve el campo — es contexto de reporting.
 //
-// DELETE con guard duro: si tiene tasks o time_entries se rechaza y se
-// sugiere archivar (status='archived'). checklists + blockers cascade —
-// son sub-estructura pura del proyecto. Alineado con Clientes.
+// DELETE con guard duro: si tiene tasks o time_entries se rechaza. El
+// operador debería marcar como listo si quiere sacarlo de vista. checklists +
+// blockers cascade — son sub-estructura pura del proyecto. Alineado con Clientes.
 // ═══════════════════════════════════════════════════════════════════════════
 
 const STATUSES = [
-  "backlog",
-  "active",
-  "paused",
-  "done",
-  "archived",
+  "sin_empezar",
+  "en_proceso",
+  "bloqueado",
+  "alerta_maxima",
+  "listo",
 ] as const;
 
-const PRIORITIES = ["low", "med", "high", "urgent"] as const;
+const PRIORITIES = ["alta", "media", "baja"] as const;
 
 type Status = (typeof STATUSES)[number];
 type Priority = (typeof PRIORITIES)[number];
 
-const CLOSED_STATUSES: ReadonlySet<Status> = new Set(["done", "archived"]);
+const CLOSED_STATUSES: ReadonlySet<Status> = new Set(["listo"]);
 
 export type CreateProjectState =
   | { ok: true; projectId: string }
@@ -263,7 +263,7 @@ export async function deleteProject(
     return {
       error:
         `No se puede eliminar: el proyecto tiene ${deps.join(" y ")} colgadas. ` +
-        "Archivalo (cambiar status a 'Archivado') si querés sacarlo de vista sin perder historial.",
+        "Marcalo como 'Listo' si querés sacarlo de vista sin perder historial.",
     };
   }
 

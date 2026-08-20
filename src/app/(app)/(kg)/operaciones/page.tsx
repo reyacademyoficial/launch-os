@@ -48,7 +48,12 @@ const RANGE_OPTIONS: ReadonlyArray<{
 
 interface ProjectRow {
   readonly id: string;
-  readonly status: "backlog" | "active" | "paused" | "done" | "archived";
+  readonly status:
+    | "sin_empezar"
+    | "en_proceso"
+    | "bloqueado"
+    | "alerta_maxima"
+    | "listo";
 }
 
 interface BlockerRow {
@@ -61,9 +66,10 @@ interface BlockerRow {
 }
 
 const OPEN_PROJECT_STATUSES = new Set<ProjectRow["status"]>([
-  "backlog",
-  "active",
-  "paused",
+  "sin_empezar",
+  "en_proceso",
+  "bloqueado",
+  "alerta_maxima",
 ]);
 
 export default async function OperacionesDashboardPage({
@@ -138,7 +144,11 @@ export default async function OperacionesDashboardPage({
     OPEN_PROJECT_STATUSES.has(p.status),
   ).length;
   const openTasksCount = tasks.filter(
-    (t) => t.status === "todo" || t.status === "doing" || t.status === "blocked",
+    (t) =>
+      t.status === "sin_empezar" ||
+      t.status === "en_proceso" ||
+      t.status === "bloqueado" ||
+      t.status === "alerta_maxima",
   ).length;
   const totalMinutesRange = Array.from(minutesByPerson.values()).reduce(
     (a, m) => a + m,
@@ -213,7 +223,7 @@ export default async function OperacionesDashboardPage({
         <KpiCard
           label={`Throughput (${rangeDays}d)`}
           value={fCount(throughput.completed)}
-          hint={`${throughput.cancelled} canceladas · avg ${throughput.avgCycleDays == null ? "—" : throughput.avgCycleDays.toFixed(1)}d ciclo`}
+          hint={`avg ${throughput.avgCycleDays == null ? "—" : throughput.avgCycleDays.toFixed(1)}d ciclo`}
         />
         <KpiCard
           label={`Horas registradas (${rangeDays}d)`}

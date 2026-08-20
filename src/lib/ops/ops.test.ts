@@ -21,8 +21,8 @@ function task(overrides: Partial<OpsTaskRow> = {}): OpsTaskRow {
   return {
     id: "task-x",
     assignee_id: null,
-    status: "todo",
-    priority: "med",
+    status: "sin_empezar",
+    priority: "media",
     due_on: null,
     completed_at: null,
     created_at: "2026-07-01T00:00:00Z",
@@ -41,13 +41,13 @@ function entry(overrides: Partial<OpsTimeEntryRow> = {}): OpsTimeEntryRow {
 // ══════════════════ isTaskOpen ══════════════════
 
 describe("isTaskOpen", () => {
-  it("todo/doing/blocked son abiertas; done/cancelled no", () => {
+  it("sin_empezar/en_proceso/bloqueado/alerta_maxima abiertas; listo no", () => {
     const cases: [TaskStatus, boolean][] = [
-      ["todo", true],
-      ["doing", true],
-      ["blocked", true],
-      ["done", false],
-      ["cancelled", false],
+      ["sin_empezar", true],
+      ["en_proceso", true],
+      ["bloqueado", true],
+      ["alerta_maxima", true],
+      ["listo", false],
     ];
     for (const [status, expected] of cases) {
       expect(isTaskOpen(status)).toBe(expected);
@@ -62,7 +62,7 @@ describe("filterOverdueTasks", () => {
 
   it("tarea abierta con due_on < today es overdue", () => {
     const overdue = filterOverdueTasks(
-      [task({ id: "a", status: "todo", due_on: "2026-07-27" })],
+      [task({ id: "a", status: "sin_empezar", due_on: "2026-07-27" })],
       today,
     );
     expect(overdue).toHaveLength(1);
@@ -71,7 +71,7 @@ describe("filterOverdueTasks", () => {
 
   it("empatar due_on = today NO es overdue (vence hoy)", () => {
     const overdue = filterOverdueTasks(
-      [task({ id: "a", status: "todo", due_on: today })],
+      [task({ id: "a", status: "sin_empezar", due_on: today })],
       today,
     );
     expect(overdue).toHaveLength(0);
@@ -79,10 +79,7 @@ describe("filterOverdueTasks", () => {
 
   it("tarea CERRADA con due_on pasado NO es overdue (ya salió)", () => {
     const overdue = filterOverdueTasks(
-      [
-        task({ id: "a", status: "done", due_on: "2026-07-01" }),
-        task({ id: "b", status: "cancelled", due_on: "2026-07-01" }),
-      ],
+      [task({ id: "a", status: "listo", due_on: "2026-07-01" })],
       today,
     );
     expect(overdue).toHaveLength(0);
@@ -90,7 +87,7 @@ describe("filterOverdueTasks", () => {
 
   it("due_on = null nunca es overdue (sin vencimiento)", () => {
     const overdue = filterOverdueTasks(
-      [task({ status: "todo", due_on: null })],
+      [task({ status: "sin_empezar", due_on: null })],
       today,
     );
     expect(overdue).toHaveLength(0);
@@ -99,11 +96,11 @@ describe("filterOverdueTasks", () => {
   it("mezcla: solo cuenta las que cumplen ambas condiciones", () => {
     const overdue = filterOverdueTasks(
       [
-        task({ id: "ok", status: "doing", due_on: "2026-07-27" }),
-        task({ id: "closed", status: "done", due_on: "2026-07-27" }),
-        task({ id: "no-due", status: "todo", due_on: null }),
-        task({ id: "future", status: "todo", due_on: "2026-08-15" }),
-        task({ id: "blocked-ok", status: "blocked", due_on: "2026-07-01" }),
+        task({ id: "ok", status: "en_proceso", due_on: "2026-07-27" }),
+        task({ id: "closed", status: "listo", due_on: "2026-07-27" }),
+        task({ id: "no-due", status: "sin_empezar", due_on: null }),
+        task({ id: "future", status: "sin_empezar", due_on: "2026-08-15" }),
+        task({ id: "blocked-ok", status: "bloqueado", due_on: "2026-07-01" }),
       ],
       today,
     );
@@ -119,10 +116,10 @@ describe("filterDueSoonTasks", () => {
   it("ventana 7 días incluye today y today+7 (bordes inclusivos)", () => {
     const soon = filterDueSoonTasks(
       [
-        task({ id: "today", status: "todo", due_on: "2026-07-28" }),
-        task({ id: "last", status: "todo", due_on: "2026-08-04" }),   // +7
-        task({ id: "beyond", status: "todo", due_on: "2026-08-05" }), // +8
-        task({ id: "past", status: "todo", due_on: "2026-07-27" }),
+        task({ id: "today", status: "sin_empezar", due_on: "2026-07-28" }),
+        task({ id: "last", status: "sin_empezar", due_on: "2026-08-04" }),   // +7
+        task({ id: "beyond", status: "sin_empezar", due_on: "2026-08-05" }), // +8
+        task({ id: "past", status: "sin_empezar", due_on: "2026-07-27" }),
       ],
       today,
       7,
@@ -132,7 +129,7 @@ describe("filterDueSoonTasks", () => {
 
   it("windowDays < 0 devuelve vacío (no vale ventana negativa)", () => {
     const soon = filterDueSoonTasks(
-      [task({ status: "todo", due_on: "2026-07-28" })],
+      [task({ status: "sin_empezar", due_on: "2026-07-28" })],
       today,
       -1,
     );
@@ -141,7 +138,7 @@ describe("filterDueSoonTasks", () => {
 
   it("tarea CERRADA no entra aunque tenga due_on en ventana", () => {
     const soon = filterDueSoonTasks(
-      [task({ status: "done", due_on: "2026-07-29" })],
+      [task({ status: "listo", due_on: "2026-07-29" })],
       today,
       7,
     );
@@ -163,14 +160,14 @@ describe("computeLoadByPerson", () => {
       ],
       tasks: [
         // Ana: 2 abiertas, 1 overdue, 1 dueSoon (empate=hoy)
-        task({ id: "a1", assignee_id: "ana", status: "todo", due_on: "2026-07-26" }), // overdue
-        task({ id: "a2", assignee_id: "ana", status: "doing", due_on: "2026-07-28" }), // dueSoon (hoy)
+        task({ id: "a1", assignee_id: "ana", status: "sin_empezar", due_on: "2026-07-26" }), // overdue
+        task({ id: "a2", assignee_id: "ana", status: "en_proceso", due_on: "2026-07-28" }), // dueSoon (hoy)
         // Bob: 3 abiertas — 0 overdue, 1 dueSoon en 7 días
-        task({ id: "b1", assignee_id: "bob", status: "todo", due_on: null }),
-        task({ id: "b2", assignee_id: "bob", status: "blocked", due_on: "2026-08-10" }),
-        task({ id: "b3", assignee_id: "bob", status: "doing", due_on: "2026-07-30" }), // dueSoon
+        task({ id: "b1", assignee_id: "bob", status: "sin_empezar", due_on: null }),
+        task({ id: "b2", assignee_id: "bob", status: "bloqueado", due_on: "2026-08-10" }),
+        task({ id: "b3", assignee_id: "bob", status: "en_proceso", due_on: "2026-07-30" }), // dueSoon
         // Cerradas no cuentan
-        task({ id: "closed", assignee_id: "ana", status: "done", due_on: "2026-07-01" }),
+        task({ id: "closed", assignee_id: "ana", status: "listo", due_on: "2026-07-01" }),
       ],
     });
 
@@ -202,8 +199,8 @@ describe("computeLoadByPerson", () => {
       today,
       people: [person({ id: "ana", full_name: "Ana" })],
       tasks: [
-        task({ assignee_id: null, status: "todo" }),
-        task({ assignee_id: null, status: "todo", due_on: "2026-07-01" }),
+        task({ assignee_id: null, status: "sin_empezar" }),
+        task({ assignee_id: null, status: "sin_empezar", due_on: "2026-07-01" }),
       ],
     });
     expect(load[0]!.open).toBe(0);
@@ -216,9 +213,9 @@ describe("computeLoadByPerson", () => {
       dueSoonWindowDays: 1,
       people: [person({ id: "ana", full_name: "Ana" })],
       tasks: [
-        task({ assignee_id: "ana", status: "todo", due_on: "2026-07-28" }), // hoy
-        task({ assignee_id: "ana", status: "todo", due_on: "2026-07-29" }), // mañana
-        task({ assignee_id: "ana", status: "todo", due_on: "2026-07-30" }), // pasado
+        task({ assignee_id: "ana", status: "sin_empezar", due_on: "2026-07-28" }), // hoy
+        task({ assignee_id: "ana", status: "sin_empezar", due_on: "2026-07-29" }), // mañana
+        task({ assignee_id: "ana", status: "sin_empezar", due_on: "2026-07-30" }), // pasado
       ],
     });
     expect(load[0]!.open).toBe(3);
@@ -229,11 +226,10 @@ describe("computeLoadByPerson", () => {
 describe("countUnassignedOpenTasks", () => {
   it("cuenta abiertas sin assignee, ignora cerradas y las que sí tienen dueño", () => {
     const n = countUnassignedOpenTasks([
-      task({ assignee_id: null, status: "todo" }),
-      task({ assignee_id: null, status: "blocked" }),
-      task({ assignee_id: "ana", status: "todo" }),      // tiene dueño
-      task({ assignee_id: null, status: "done" }),        // cerrada
-      task({ assignee_id: null, status: "cancelled" }),   // cerrada
+      task({ assignee_id: null, status: "sin_empezar" }),
+      task({ assignee_id: null, status: "bloqueado" }),
+      task({ assignee_id: "ana", status: "sin_empezar" }), // tiene dueño
+      task({ assignee_id: null, status: "listo" }),        // cerrada
     ]);
     expect(n).toBe(2);
   });
@@ -264,20 +260,17 @@ describe("computeThroughput", () => {
   const from = "2026-07-01T00:00:00Z";
   const to = "2026-07-31T23:59:59Z";
 
-  it("cuenta done y cancelled dentro de [from,to], promedia ciclo solo de done", () => {
+  it("cuenta listo dentro de [from,to] y promedia el ciclo", () => {
     const t = computeThroughput({
       from, to,
       tasks: [
-        task({ status: "done", created_at: "2026-07-01T00:00:00Z",
+        task({ status: "listo", created_at: "2026-07-01T00:00:00Z",
                completed_at: "2026-07-05T00:00:00Z" }),   // 4 días
-        task({ status: "done", created_at: "2026-07-10T00:00:00Z",
+        task({ status: "listo", created_at: "2026-07-10T00:00:00Z",
                completed_at: "2026-07-12T00:00:00Z" }),   // 2 días
-        task({ status: "cancelled", created_at: "2026-07-01T00:00:00Z",
-               completed_at: "2026-07-15T00:00:00Z" }),   // no suma a avg
       ],
     });
     expect(t.completed).toBe(2);
-    expect(t.cancelled).toBe(1);
     expect(t.avgCycleDays).toBe(3); // (4+2)/2
   });
 
@@ -285,16 +278,15 @@ describe("computeThroughput", () => {
     const t = computeThroughput({
       from, to,
       tasks: [
-        task({ status: "done", created_at: "2026-06-01T00:00:00Z",
+        task({ status: "listo", created_at: "2026-06-01T00:00:00Z",
                completed_at: "2026-06-15T00:00:00Z" }),  // FUERA
-        task({ status: "done", created_at: "2026-08-01T00:00:00Z",
+        task({ status: "listo", created_at: "2026-08-01T00:00:00Z",
                completed_at: "2026-08-15T00:00:00Z" }),  // FUERA
-        task({ status: "done", created_at: "2026-07-01T00:00:00Z",
+        task({ status: "listo", created_at: "2026-07-01T00:00:00Z",
                completed_at: "2026-07-05T00:00:00Z" }),   // dentro
       ],
     });
     expect(t.completed).toBe(1);
-    expect(t.cancelled).toBe(0);
     expect(t.avgCycleDays).toBe(4);
   });
 
@@ -302,24 +294,23 @@ describe("computeThroughput", () => {
     const t = computeThroughput({
       from, to,
       tasks: [
-        task({ status: "todo", completed_at: null }),
-        task({ status: "doing", completed_at: null }),
+        task({ status: "sin_empezar", completed_at: null }),
+        task({ status: "en_proceso", completed_at: null }),
       ],
     });
     expect(t.completed).toBe(0);
     expect(t.avgCycleDays).toBeNull();
   });
 
-  it("0 done → avgCycleDays null (no NaN)", () => {
+  it("0 listo → avgCycleDays null (no NaN)", () => {
     const t = computeThroughput({
       from, to,
       tasks: [
-        task({ status: "cancelled", created_at: "2026-07-01T00:00:00Z",
-               completed_at: "2026-07-05T00:00:00Z" }),
+        task({ status: "sin_empezar", created_at: "2026-07-01T00:00:00Z",
+               completed_at: null }),
       ],
     });
     expect(t.completed).toBe(0);
-    expect(t.cancelled).toBe(1);
     expect(t.avgCycleDays).toBeNull();
   });
 
@@ -327,9 +318,9 @@ describe("computeThroughput", () => {
     const t = computeThroughput({
       from, to,
       tasks: [
-        task({ status: "done", created_at: "2026-07-10T00:00:00Z",
+        task({ status: "listo", created_at: "2026-07-10T00:00:00Z",
                completed_at: "2026-07-05T00:00:00Z" }),   // negativo, se ignora
-        task({ status: "done", created_at: "2026-07-01T00:00:00Z",
+        task({ status: "listo", created_at: "2026-07-01T00:00:00Z",
                completed_at: "2026-07-11T00:00:00Z" }),   // 10 días
       ],
     });

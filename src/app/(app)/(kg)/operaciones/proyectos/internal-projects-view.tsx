@@ -22,8 +22,13 @@ import {
 // solo Editar; el archivado se hace desde el drawer cambiando status.
 // ═══════════════════════════════════════════════════════════════════════════
 
-type Status = "backlog" | "active" | "paused" | "done" | "archived";
-type Priority = "low" | "med" | "high" | "urgent";
+type Status =
+  | "sin_empezar"
+  | "en_proceso"
+  | "bloqueado"
+  | "alerta_maxima"
+  | "listo";
+type Priority = "alta" | "media" | "baja";
 
 export interface InternalProjectRowData {
   readonly id: string;
@@ -37,7 +42,7 @@ export interface InternalProjectRowData {
   readonly dueOn: string | null;
   readonly closedAt: string | null;
   readonly notes: string | null;
-  /** % de tareas del proyecto en status='done' sobre el total. Null si no tiene tareas. */
+  /** % de tareas del proyecto en status='listo' sobre el total. Null si no tiene tareas. */
   readonly progressPct: number | null;
   readonly openTasksCount: number;
   /** Si viene de Notion (0132), el id del page. Null para projects nativos KG. */
@@ -46,33 +51,31 @@ export interface InternalProjectRowData {
 }
 
 const STATUS_LABEL: Record<Status, string> = {
-  backlog: "Backlog",
-  active: "Activo",
-  paused: "En pausa",
-  done: "Hecho",
-  archived: "Archivado",
+  sin_empezar: "Sin empezar",
+  en_proceso: "En proceso",
+  bloqueado: "Bloqueado",
+  alerta_maxima: "Alerta máxima",
+  listo: "Listo",
 };
 
 const STATUS_TONE: Record<Status, string> = {
-  backlog: "var(--kg-neutral-500)",
-  active: "var(--kg-positive-500)",
-  paused: "var(--kg-warning-500)",
-  done: "var(--kg-accent-500)",
-  archived: "var(--kg-neutral-500)",
+  sin_empezar: "var(--kg-neutral-500)",
+  en_proceso: "var(--kg-accent-500)",
+  bloqueado: "var(--kg-warning-500)",
+  alerta_maxima: "var(--kg-negative-500)",
+  listo: "var(--kg-positive-500)",
 };
 
 const PRIORITY_LABEL: Record<Priority, string> = {
-  low: "Baja",
-  med: "Media",
-  high: "Alta",
-  urgent: "Urgente",
+  alta: "Alta",
+  media: "Media",
+  baja: "Baja",
 };
 
 const PRIORITY_TONE: Record<Priority, string> = {
-  low: "var(--kg-neutral-500)",
-  med: "var(--kg-neutral-500)",
-  high: "var(--kg-warning-500)",
-  urgent: "var(--kg-negative-500)",
+  alta: "var(--kg-warning-500)",
+  media: "var(--kg-neutral-500)",
+  baja: "var(--kg-neutral-500)",
 };
 
 export function InternalProjectsView({

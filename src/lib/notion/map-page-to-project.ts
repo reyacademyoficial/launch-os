@@ -73,24 +73,24 @@ export function mapNotionPageToInternalProject(
     return { ok: false, reason: "missing-title" };
   }
 
-  // Status: aplicamos map con fallback a 'backlog'. Si el humano no
-  // configuró status_prop, todo entra como 'backlog' — decisión razonable
-  // para pages recién importados que después el operador triage.
+  // Status: aplicamos map con fallback a 'sin_empezar'. Si el humano no
+  // configuró status_prop, todo entra como 'sin_empezar' — decisión
+  // razonable para pages recién importados que después el operador triage.
   const status: KgStatus = map.status_prop
     ? applyValueMap<KgStatus>(
         parseSelect(page.properties, map.status_prop),
         map.status_map ?? {},
-        "backlog",
+        "sin_empezar",
       )
-    : "backlog";
+    : "sin_empezar";
 
   const priority: KgPriority = map.priority_prop
     ? applyValueMap<KgPriority>(
         parseSelect(page.properties, map.priority_prop),
         map.priority_map ?? {},
-        "med",
+        "media",
       )
-    : "med";
+    : "media";
 
   // Assignee: tomamos el primer people. Notion permite múltiples pero
   // internal_projects tiene un solo owner_id. El sync ignora los demás; si

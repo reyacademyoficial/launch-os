@@ -5,28 +5,32 @@
  * FILOSOFÍA
  *   El único campo obligatorio es `title_prop` — cualquier internal_project
  *   necesita un name. El resto es opcional; el sync usa fallbacks razonables
- *   cuando no está seteado ('backlog' para status, 'med' para priority,
+ *   cuando no está seteado ('sin_empezar' para status, 'media' para priority,
  *   null para owner_id/due_on/starts_on/description).
  *
  * Los `*_map` son diccionarios directos Notion→KG. Validados al guardar el
  * mapping para prevenir valores que rompan los CHECKs del schema.
  */
 
-export type KgStatus = "backlog" | "active" | "paused" | "done" | "archived";
-export type KgPriority = "low" | "med" | "high" | "urgent";
+export type KgStatus =
+  | "sin_empezar"
+  | "en_proceso"
+  | "bloqueado"
+  | "alerta_maxima"
+  | "listo";
+export type KgPriority = "alta" | "media" | "baja";
 
 export const KG_STATUSES: readonly KgStatus[] = [
-  "backlog",
-  "active",
-  "paused",
-  "done",
-  "archived",
+  "sin_empezar",
+  "en_proceso",
+  "bloqueado",
+  "alerta_maxima",
+  "listo",
 ];
 export const KG_PRIORITIES: readonly KgPriority[] = [
-  "low",
-  "med",
-  "high",
-  "urgent",
+  "alta",
+  "media",
+  "baja",
 ];
 
 export interface NotionPropertyMap {

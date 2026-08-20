@@ -163,7 +163,7 @@ export function MappingForm({
       {statusProp && statusOptions.length > 0 && (
         <ValueMappingBlock
           title="Mapear valores de status Notion → KG"
-          hint="Valores en Notion sin mapear caen en 'backlog' al sincronizar."
+          hint="Valores en Notion sin mapear caen en 'sin_empezar' al sincronizar."
           notionOptions={statusOptions.map((o) => o.name)}
           kgValues={KG_STATUSES}
           currentMap={statusMap}
@@ -191,7 +191,7 @@ export function MappingForm({
       {priorityProp && priorityOptions.length > 0 && (
         <ValueMappingBlock
           title="Mapear valores de prioridad Notion → KG"
-          hint="Valores sin mapear caen en 'med'."
+          hint="Valores sin mapear caen en 'media'."
           notionOptions={priorityOptions.map((o) => o.name)}
           kgValues={KG_PRIORITIES}
           currentMap={priorityMap}

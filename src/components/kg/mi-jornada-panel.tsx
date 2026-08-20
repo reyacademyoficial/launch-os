@@ -1,41 +1,58 @@
 import Link from "next/link";
 
 import { resolveCurrentPersonId } from "@/lib/ops/current-person";
-import { filterOverdueTasks } from "@/lib/ops/overdue";
-import type { OpsTaskRow, TaskPriority, TaskStatus } from "@/lib/ops/types";
 import { createClient } from "@/lib/supabase/server";
 
 /**
- * KG · MiJornadaPanel — resumen compacto en el sidebar de las tareas
- * abiertas del usuario logueado.
+ * KG · MiJornadaPanel — resumen compacto en el sidebar de los proyectos
+ * sincronizados desde Notion (0132-0138) que le pertenecen al usuario logueado.
  *
- * DISEÑO (v2 — resumen, no lista)
- *   - Server component. Resuelve `person_id` vía `auth_user_id` (0111).
- *   - Si el user no tiene persona vinculada → devuelve null (widget invisible).
- *   - Muestra 1-3 líneas de contador según lo que haya:
- *       · Total abiertas: siempre.
- *       · Vencidas: solo si > 0 (rojo).
- *       · Urgentes: solo si > 0 (amarillo). Excluye las vencidas para no
- *         doble-contar la señal.
- *   - "Ver todas →" siempre linkea a /operaciones/tareas.
- *   - Si no hay ninguna abierta: "Sin tareas pendientes ✓".
+ * DISEÑO (v3 — Notion-first)
+ *   El sync trae TODOS los proyectos de las databases habilitadas y persiste
+ *   `owner_id` en cada uno (mapeado desde el assignee de Notion vía
+ *   notion_users.kg_person_id). Este widget filtra por `owner_id = mi persona`
+ *   y por `notion_page_id IS NOT NULL` para ver "mis tareas de Notion".
+ *
+ *   Muestra hasta 3 contadores según haya:
+ *     · Urgente: status='alerta_maxima' O derived atrasado
+ *       (due_on < hoy AND status abierto). Notion es fuente de verdad para el
+ *       status, por eso "atrasado" NO se persiste — se deriva al leer.
+ *     · Altas: priority='alta'. Notion sólo tiene alta/media/baja (mapeadas
+ *       en 0137/0138).
+ *     · Sin empezar: status='sin_empezar'.
+ *   Las líneas overlapean (un proyecto puede caer en las 3) — cada línea es
+ *   una vista independiente.
+ *
+ *   Si el user no tiene persona vinculada, el widget no se muestra.
+ *   Si tiene 0 proyectos abiertos, muestra empty state.
  *
  * PERFORMANCE
- *   La query usa el índice parcial `tasks_assignee_open_idx` (0092) —
- *   assignee_id + status IN abiertos. Solo trae los campos necesarios para
- *   contar (id, priority, due_on, status). Sin límite: un operador con
- *   500 tareas abiertas es un caso que expone un problema mayor de
- *   backlog, no algo que optimizar acá.
+ *   Una sola query por render: `internal_projects` con filtros por owner +
+ *   notion_page_id NOT NULL + status abierto. Estimación: < 100 rows por
+ *   persona, no vale paginar. Trae solo los campos necesarios.
  */
 
-const OPEN_STATUSES: readonly TaskStatus[] = ["todo", "doing"];
+type ProjectStatus =
+  | "sin_empezar"
+  | "en_proceso"
+  | "bloqueado"
+  | "alerta_maxima"
+  | "listo";
 
-interface TaskCountRow {
+type ProjectPriority = "alta" | "media" | "baja";
+
+const OPEN_STATUSES: readonly ProjectStatus[] = [
+  "sin_empezar",
+  "en_proceso",
+  "bloqueado",
+  "alerta_maxima",
+];
+
+interface NotionProjectRow {
   readonly id: string;
-  readonly status: TaskStatus;
-  readonly priority: TaskPriority;
+  readonly status: ProjectStatus;
+  readonly priority: ProjectPriority;
   readonly due_on: string | null;
-  readonly assignee_id: string | null;
 }
 
 export async function MiJornadaPanel() {
@@ -44,25 +61,28 @@ export async function MiJornadaPanel() {
 
   const supabase = await createClient();
   const { data } = await supabase
-    .from("tasks")
-    .select("id, status, priority, due_on, assignee_id")
-    .eq("assignee_id", personId)
+    .from("internal_projects")
+    .select("id, status, priority, due_on")
+    .eq("owner_id", personId)
+    .not("notion_page_id", "is", null)
     .in("status", [...OPEN_STATUSES]);
 
-  const rows = (data ?? []) as TaskCountRow[];
+  const rows = (data ?? []) as NotionProjectRow[];
   const total = rows.length;
 
   const today = todayYmd();
-  const overdueIds = new Set(
-    filterOverdueTasks(rows.map(toOpsRow), today).map((t) => t.id),
-  );
-  const overdue = overdueIds.size;
-  // Urgentes NO vencidas: la vencida ya se muestra como línea propia, no
-  // sumarla también acá porque son señales distintas (vencimiento vs
-  // priority=urgent asignada por el operador).
-  const urgent = rows.filter(
-    (t) => t.priority === "urgent" && !overdueIds.has(t.id),
-  ).length;
+
+  // Urgente = alerta_maxima explícito O atrasado derivado. Usamos un Set de
+  // ids para no doble-contar un proyecto que sea AMBAS cosas.
+  const urgentIds = new Set<string>();
+  for (const r of rows) {
+    if (r.status === "alerta_maxima") urgentIds.add(r.id);
+    else if (r.due_on != null && r.due_on < today) urgentIds.add(r.id);
+  }
+  const urgentCount = urgentIds.size;
+
+  const altaCount = rows.filter((r) => r.priority === "alta").length;
+  const sinEmpezarCount = rows.filter((r) => r.status === "sin_empezar").length;
 
   return (
     <div
@@ -77,23 +97,15 @@ export async function MiJornadaPanel() {
       }}
     >
       <div
+        className="kg-t7"
         style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
+          color: "var(--kg-text-3)",
+          fontWeight: 700,
+          textTransform: "uppercase",
+          letterSpacing: 0.3,
         }}
       >
-        <div
-          className="kg-t7"
-          style={{
-            color: "var(--kg-text-3)",
-            fontWeight: 700,
-            textTransform: "uppercase",
-            letterSpacing: 0.3,
-          }}
-        >
-          Mi jornada
-        </div>
+        Mi jornada
       </div>
 
       {total === 0 ? (
@@ -105,7 +117,7 @@ export async function MiJornadaPanel() {
             fontSize: 11,
           }}
         >
-          Sin tareas pendientes ✓
+          Sin proyectos pendientes ✓
         </div>
       ) : (
         <div
@@ -117,33 +129,32 @@ export async function MiJornadaPanel() {
             lineHeight: 1.35,
           }}
         >
-          <div style={{ color: "var(--kg-text-1)" }}>
-            <strong style={{ fontVariantNumeric: "tabular-nums" }}>
-              {total}
-            </strong>{" "}
-            {plural(total, "tarea abierta", "tareas abiertas")}
-          </div>
-          {overdue > 0 && (
-            <div style={{ color: "#F04060", fontWeight: 600 }}>
-              <span style={{ fontVariantNumeric: "tabular-nums" }}>
-                {overdue}
-              </span>{" "}
-              {plural(overdue, "vencida", "vencidas")}
-            </div>
+          {urgentCount > 0 && (
+            <CounterLine
+              n={urgentCount}
+              label={plural(urgentCount, "urgente", "urgentes")}
+              color="#F04060"
+            />
           )}
-          {urgent > 0 && (
-            <div style={{ color: "#FFB800", fontWeight: 600 }}>
-              <span style={{ fontVariantNumeric: "tabular-nums" }}>
-                {urgent}
-              </span>{" "}
-              {plural(urgent, "urgente", "urgentes")}
-            </div>
+          {altaCount > 0 && (
+            <CounterLine
+              n={altaCount}
+              label={plural(altaCount, "alta", "altas")}
+              color="#FFB800"
+            />
+          )}
+          {sinEmpezarCount > 0 && (
+            <CounterLine
+              n={sinEmpezarCount}
+              label="sin empezar"
+              color="var(--kg-text-1)"
+            />
           )}
         </div>
       )}
 
       <Link
-        href="/operaciones/tareas"
+        href="/operaciones/proyectos"
         className="kg-focus"
         style={{
           color: "var(--kg-text-2)",
@@ -153,36 +164,40 @@ export async function MiJornadaPanel() {
           marginTop: 2,
         }}
       >
-        Ver todas →
+        Ver todo →
       </Link>
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Helpers
+// Sub-componentes / helpers
 // ═══════════════════════════════════════════════════════════════════════════
+
+function CounterLine({
+  n,
+  label,
+  color,
+}: {
+  readonly n: number;
+  readonly label: string;
+  readonly color: string;
+}) {
+  return (
+    <div style={{ color, fontWeight: color === "var(--kg-text-1)" ? 400 : 600 }}>
+      <span style={{ fontVariantNumeric: "tabular-nums" }}>{n}</span>{" "}
+      {label}
+    </div>
+  );
+}
 
 function plural(n: number, singular: string, plural: string): string {
   return n === 1 ? singular : plural;
 }
 
 function todayYmd(): string {
-  // Argentina TZ para matchear /operaciones/tareas (calendario laboral).
+  // Argentina TZ — matchea /operaciones/proyectos (calendario laboral).
   return new Date().toLocaleDateString("en-CA", {
     timeZone: "America/Argentina/Buenos_Aires",
   });
-}
-
-function toOpsRow(t: TaskCountRow): OpsTaskRow {
-  return {
-    id: t.id,
-    assignee_id: t.assignee_id,
-    status: t.status,
-    priority: t.priority,
-    due_on: t.due_on,
-    // Campos que filterOverdueTasks no lee pero sí requiere el tipo.
-    completed_at: null,
-    created_at: "",
-  };
 }

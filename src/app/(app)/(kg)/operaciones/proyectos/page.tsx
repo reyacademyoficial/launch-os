@@ -21,12 +21,17 @@ export const metadata: Metadata = { title: "Proyectos internos · Operaciones" }
 //
 // Filtros por searchParams:
 //   ?status=activos|cerrados|todos    default activos
-//                                      (activos = backlog + active + paused;
-//                                       cerrados = done + archived)
+//                                      (activos = todo lo que no es 'listo';
+//                                       cerrados = 'listo')
 // ═══════════════════════════════════════════════════════════════════════════
 
-type Status = "backlog" | "active" | "paused" | "done" | "archived";
-type Priority = "low" | "med" | "high" | "urgent";
+type Status =
+  | "sin_empezar"
+  | "en_proceso"
+  | "bloqueado"
+  | "alerta_maxima"
+  | "listo";
+type Priority = "alta" | "media" | "baja";
 
 type StatusFilter = "activos" | "cerrados" | "todos";
 
@@ -40,9 +45,10 @@ const STATUS_FILTER_OPTIONS: ReadonlyArray<{
 ];
 
 const OPEN_STATUSES: ReadonlySet<Status> = new Set([
-  "backlog",
-  "active",
-  "paused",
+  "sin_empezar",
+  "en_proceso",
+  "bloqueado",
+  "alerta_maxima",
 ]);
 
 interface ProjectDbRow {
@@ -68,7 +74,7 @@ interface PersonDbRow {
 
 interface TaskProgressRow {
   readonly internal_project_id: string | null;
-  readonly status: "todo" | "doing" | "blocked" | "done" | "cancelled";
+  readonly status: Status;
 }
 
 export default async function ProyectosInternosPage({
@@ -124,13 +130,12 @@ export default async function ProyectosInternosPage({
       t.internal_project_id,
       (tasksTotalByProject.get(t.internal_project_id) ?? 0) + 1,
     );
-    if (t.status === "done") {
+    if (t.status === "listo") {
       tasksDoneByProject.set(
         t.internal_project_id,
         (tasksDoneByProject.get(t.internal_project_id) ?? 0) + 1,
       );
-    }
-    if (t.status === "todo" || t.status === "doing" || t.status === "blocked") {
+    } else if (OPEN_STATUSES.has(t.status)) {
       tasksOpenByProject.set(
         t.internal_project_id,
         (tasksOpenByProject.get(t.internal_project_id) ?? 0) + 1,
@@ -171,8 +176,10 @@ export default async function ProyectosInternosPage({
   const totalCount = allProjects.length;
   const openCount = allProjects.filter((p) => OPEN_STATUSES.has(p.status))
     .length;
-  const pausedCount = allProjects.filter((p) => p.status === "paused").length;
-  const backlogCount = allProjects.filter((p) => p.status === "backlog").length;
+  const blockedCount = allProjects.filter((p) => p.status === "bloqueado").length;
+  const notStartedCount = allProjects.filter(
+    (p) => p.status === "sin_empezar",
+  ).length;
 
   function buildHref(nextStatus: StatusFilter): string {
     const params = new URLSearchParams();
@@ -189,8 +196,8 @@ export default async function ProyectosInternosPage({
         stats={[
           { l: "Total", v: fCount(totalCount) },
           { l: "Abiertos", v: fCount(openCount) },
-          { l: "En pausa", v: fCount(pausedCount) },
-          { l: "Backlog", v: fCount(backlogCount) },
+          { l: "Bloqueados", v: fCount(blockedCount) },
+          { l: "Sin empezar", v: fCount(notStartedCount) },
         ]}
       />
 

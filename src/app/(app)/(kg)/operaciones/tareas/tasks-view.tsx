@@ -24,8 +24,13 @@ import {
 // venció?").
 // ═══════════════════════════════════════════════════════════════════════════
 
-type Status = "todo" | "doing" | "blocked" | "done" | "cancelled";
-type Priority = "low" | "med" | "high" | "urgent";
+type Status =
+  | "sin_empezar"
+  | "en_proceso"
+  | "bloqueado"
+  | "alerta_maxima"
+  | "listo";
+type Priority = "alta" | "media" | "baja";
 
 export interface TaskRowData {
   readonly id: string;
@@ -45,33 +50,31 @@ export interface TaskRowData {
 }
 
 const STATUS_LABEL: Record<Status, string> = {
-  todo: "Por hacer",
-  doing: "En curso",
-  blocked: "Bloqueada",
-  done: "Hecha",
-  cancelled: "Cancelada",
+  sin_empezar: "Sin empezar",
+  en_proceso: "En proceso",
+  bloqueado: "Bloqueada",
+  alerta_maxima: "Alerta máxima",
+  listo: "Listo",
 };
 
 const STATUS_TONE: Record<Status, string> = {
-  todo: "var(--kg-neutral-500)",
-  doing: "var(--kg-accent-500)",
-  blocked: "var(--kg-warning-500)",
-  done: "var(--kg-positive-500)",
-  cancelled: "var(--kg-neutral-500)",
+  sin_empezar: "var(--kg-neutral-500)",
+  en_proceso: "var(--kg-accent-500)",
+  bloqueado: "var(--kg-warning-500)",
+  alerta_maxima: "var(--kg-negative-500)",
+  listo: "var(--kg-positive-500)",
 };
 
 const PRIORITY_LABEL: Record<Priority, string> = {
-  low: "Baja",
-  med: "Media",
-  high: "Alta",
-  urgent: "Urgente",
+  alta: "Alta",
+  media: "Media",
+  baja: "Baja",
 };
 
 const PRIORITY_TONE: Record<Priority, string> = {
-  low: "var(--kg-neutral-500)",
-  med: "var(--kg-neutral-500)",
-  high: "var(--kg-warning-500)",
-  urgent: "var(--kg-negative-500)",
+  alta: "var(--kg-warning-500)",
+  media: "var(--kg-neutral-500)",
+  baja: "var(--kg-neutral-500)",
 };
 
 export function TasksView({

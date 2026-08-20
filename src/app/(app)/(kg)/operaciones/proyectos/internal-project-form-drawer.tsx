@@ -19,22 +19,26 @@ import {
 // El owner es opcional (proyecto sin dueño OK — el owner se asigna después).
 // ═══════════════════════════════════════════════════════════════════════════
 
-type Status = "backlog" | "active" | "paused" | "done" | "archived";
-type Priority = "low" | "med" | "high" | "urgent";
+type Status =
+  | "sin_empezar"
+  | "en_proceso"
+  | "bloqueado"
+  | "alerta_maxima"
+  | "listo";
+type Priority = "alta" | "media" | "baja";
 
 const STATUS_OPTIONS: ReadonlyArray<{ value: Status; label: string }> = [
-  { value: "backlog", label: "Backlog" },
-  { value: "active", label: "Activo" },
-  { value: "paused", label: "En pausa" },
-  { value: "done", label: "Hecho" },
-  { value: "archived", label: "Archivado" },
+  { value: "sin_empezar", label: "Sin empezar" },
+  { value: "en_proceso", label: "En proceso" },
+  { value: "bloqueado", label: "Bloqueado" },
+  { value: "alerta_maxima", label: "Alerta máxima" },
+  { value: "listo", label: "Listo" },
 ];
 
 const PRIORITY_OPTIONS: ReadonlyArray<{ value: Priority; label: string }> = [
-  { value: "low", label: "Baja" },
-  { value: "med", label: "Media" },
-  { value: "high", label: "Alta" },
-  { value: "urgent", label: "Urgente" },
+  { value: "alta", label: "Alta" },
+  { value: "media", label: "Media" },
+  { value: "baja", label: "Baja" },
 ];
 
 export interface OwnerOption {
@@ -132,7 +136,7 @@ function ProjectFormBody({
     if (!isEdit || !initial) return;
     const ok = window.confirm(
       `¿Eliminar el proyecto "${initial.name}"? ` +
-        "Esta acción no se puede deshacer. Si tiene tareas o registros de tiempo colgados va a rebotar — usá Archivar en su lugar.",
+        "Esta acción no se puede deshacer. Si tiene tareas o registros de tiempo colgados va a rebotar — marcalo como 'Listo' en su lugar.",
     );
     if (!ok) return;
     setDeleteError(null);
@@ -201,7 +205,7 @@ function ProjectFormBody({
           <select
             id="status"
             name="status"
-            defaultValue={initial?.status ?? "backlog"}
+            defaultValue={initial?.status ?? "sin_empezar"}
             style={inputStyle}
           >
             {STATUS_OPTIONS.map((o) => (
@@ -215,7 +219,7 @@ function ProjectFormBody({
           <select
             id="priority"
             name="priority"
-            defaultValue={initial?.priority ?? "med"}
+            defaultValue={initial?.priority ?? "media"}
             style={inputStyle}
           >
             {PRIORITY_OPTIONS.map((o) => (

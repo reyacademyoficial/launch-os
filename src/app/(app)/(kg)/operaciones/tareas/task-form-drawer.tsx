@@ -19,22 +19,26 @@ import {
 // sin dueño es válida (ad-hoc, "revisar factura pendiente").
 // ═══════════════════════════════════════════════════════════════════════════
 
-type Status = "todo" | "doing" | "blocked" | "done" | "cancelled";
-type Priority = "low" | "med" | "high" | "urgent";
+type Status =
+  | "sin_empezar"
+  | "en_proceso"
+  | "bloqueado"
+  | "alerta_maxima"
+  | "listo";
+type Priority = "alta" | "media" | "baja";
 
 const STATUS_OPTIONS: ReadonlyArray<{ value: Status; label: string }> = [
-  { value: "todo", label: "Por hacer" },
-  { value: "doing", label: "En curso" },
-  { value: "blocked", label: "Bloqueada" },
-  { value: "done", label: "Hecha" },
-  { value: "cancelled", label: "Cancelada" },
+  { value: "sin_empezar", label: "Sin empezar" },
+  { value: "en_proceso", label: "En proceso" },
+  { value: "bloqueado", label: "Bloqueada" },
+  { value: "alerta_maxima", label: "Alerta máxima" },
+  { value: "listo", label: "Listo" },
 ];
 
 const PRIORITY_OPTIONS: ReadonlyArray<{ value: Priority; label: string }> = [
-  { value: "low", label: "Baja" },
-  { value: "med", label: "Media" },
-  { value: "high", label: "Alta" },
-  { value: "urgent", label: "Urgente" },
+  { value: "alta", label: "Alta" },
+  { value: "media", label: "Media" },
+  { value: "baja", label: "Baja" },
 ];
 
 export interface ProjectOptionForTask {
@@ -144,7 +148,7 @@ function TaskFormBody({
     if (state && "ok" in state && state.ok) onClose();
   }, [state, onClose]);
 
-  const [status, setStatus] = useState<Status>(initial?.status ?? "todo");
+  const [status, setStatus] = useState<Status>(initial?.status ?? "sin_empezar");
 
   return (
     <form
@@ -196,7 +200,7 @@ function TaskFormBody({
           <select
             id="priority"
             name="priority"
-            defaultValue={initial?.priority ?? "med"}
+            defaultValue={initial?.priority ?? "media"}
             style={inputStyle}
           >
             {PRIORITY_OPTIONS.map((o) => (

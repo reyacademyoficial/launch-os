@@ -6,11 +6,11 @@ import { resolveCurrentOrganizationId } from "@/lib/organization/current";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CRUD de tasks (bloque 5 · 0092).
+// CRUD de tasks (bloque 5 · 0092 + 0138 status/priority alineados a Notion).
 //
-// El schema no tiene invariante entre status ∈ {done, cancelled} ↔
-// completed_at. La app lo maneja transparentemente:
-//   - Nuevo status done|cancelled sin completed_at previo → se setea now().
+// El schema no tiene invariante entre status='listo' ↔ completed_at. La app
+// lo maneja transparentemente:
+//   - Nuevo status listo sin completed_at previo → se setea now().
 //   - Vuelve a un status abierto → completed_at pasa a null.
 //   - Cerrada con completed_at ya seteado → se preserva.
 // Mismo patrón que tickets.resolved_at y internal_projects.closed_at.
@@ -20,13 +20,19 @@ import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 // con task_id null). Confirm client-side.
 // ═══════════════════════════════════════════════════════════════════════════
 
-const STATUSES = ["todo", "doing", "blocked", "done", "cancelled"] as const;
-const PRIORITIES = ["low", "med", "high", "urgent"] as const;
+const STATUSES = [
+  "sin_empezar",
+  "en_proceso",
+  "bloqueado",
+  "alerta_maxima",
+  "listo",
+] as const;
+const PRIORITIES = ["alta", "media", "baja"] as const;
 
 type Status = (typeof STATUSES)[number];
 type Priority = (typeof PRIORITIES)[number];
 
-const CLOSED_STATUSES: ReadonlySet<Status> = new Set(["done", "cancelled"]);
+const CLOSED_STATUSES: ReadonlySet<Status> = new Set(["listo"]);
 
 export type CreateTaskState =
   | { ok: true; taskId: string }

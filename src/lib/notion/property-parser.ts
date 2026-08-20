@@ -8,7 +8,7 @@
  * DEFENSIVAS
  *   - Todos los helpers devuelven `null` (o `[]` para arrays) cuando la
  *     propiedad no existe o el tipo no matchea. Nunca throw. El caller
- *     decide si usar un default (ej: status → 'backlog') o descartar la fila.
+ *     decide si usar un default (ej: status → 'sin_empezar') o descartar la fila.
  *   - Notion permite que la misma propiedad venga con `type` distinto entre
  *     páginas (raro, pero posible cuando se cambia el schema y no se
  *     migran pages viejos). Los helpers matchean por type esperado y
@@ -108,9 +108,9 @@ export function parseDateStart(
 
 /**
  * Aplica el mapa Notion→KG con fallback. Si el valor Notion no está en el
- * mapa, devuelve el fallback (típicamente 'backlog' para status, 'med' para
- * priority). Case-sensitive: los nombres en el mapa deben matchear
- * exactamente como los devuelve la API.
+ * mapa, devuelve el fallback (típicamente 'sin_empezar' para status,
+ * 'media' para priority). Case-sensitive: los nombres en el mapa deben
+ * matchear exactamente como los devuelve la API.
  */
 export function applyValueMap<T extends string>(
   notionValue: string | null,

@@ -17,14 +17,24 @@
 // Tareas (`tasks` 0092)
 // ═══════════════════════════════════════════════════════════════════════════
 
-export type TaskStatus = "todo" | "doing" | "blocked" | "done" | "cancelled";
-export type TaskPriority = "low" | "med" | "high" | "urgent";
+export type TaskStatus =
+  | "sin_empezar"
+  | "en_proceso"
+  | "bloqueado"
+  | "alerta_maxima"
+  | "listo";
+export type TaskPriority = "alta" | "media" | "baja";
 
-/** Estados en los que la tarea sigue "abierta" (consume atención). */
+/**
+ * Estados en los que la tarea sigue "abierta" (consume atención). El único
+ * estado cerrado es 'listo' — desde 0138 colapsamos 'done' y 'cancelled' en
+ * un solo terminal para alinear con Notion.
+ */
 export const OPEN_TASK_STATUSES: readonly TaskStatus[] = [
-  "todo",
-  "doing",
-  "blocked",
+  "sin_empezar",
+  "en_proceso",
+  "bloqueado",
+  "alerta_maxima",
 ] as const;
 
 export function isTaskOpen(status: TaskStatus): boolean {

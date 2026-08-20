@@ -37,11 +37,11 @@ describe("mapNotionPageToInternalProject", () => {
       title_prop: "Name",
       status_prop: "Status",
       status_map: {
-        "In progress": "active",
-        Done: "done",
+        "In progress": "en_proceso",
+        Done: "listo",
       },
       priority_prop: "Priority",
-      priority_map: { Alta: "high" },
+      priority_map: { Alta: "alta" },
       assignee_prop: "Owner",
       due_prop: "Due",
       start_prop: "Start",
@@ -75,8 +75,8 @@ describe("mapNotionPageToInternalProject", () => {
       organization_id: ORG,
       name: "Rediseño roadmap",
       description: "Detalle largo del proyecto.",
-      status: "active",
-      priority: "high",
+      status: "en_proceso",
+      priority: "alta",
       owner_id: "kg-person-1",
       starts_on: "2026-08-01",
       due_on: "2026-09-01",
@@ -100,9 +100,9 @@ describe("mapNotionPageToInternalProject", () => {
     expect(res.reason).toBe("missing-title");
   });
 
-  it("sin status_prop configurado → cae a 'backlog' silencioso", () => {
+  it("sin status_prop configurado → cae a 'sin_empezar' silencioso", () => {
     // Escenario: el humano no configuró el mapping de status. Todos los
-    // pages entran como backlog para que el operador triage después.
+    // pages entran como sin_empezar para que el operador triage después.
     const map: NotionPropertyMap = { title_prop: "Name" };
     const page = makePage({
       Name: { type: "title", title: [{ plain_text: "Tarea suelta" }] },
@@ -110,18 +110,18 @@ describe("mapNotionPageToInternalProject", () => {
     const res = mapNotionPageToInternalProject(page, map, makeCtx());
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.payload.status).toBe("backlog");
-    expect(res.payload.priority).toBe("med");
+    expect(res.payload.status).toBe("sin_empezar");
+    expect(res.payload.priority).toBe("media");
   });
 
-  it("status en Notion no está en el map → fallback 'backlog'", () => {
-    // El operador configuró map con "In progress"→"active" pero la page
-    // tiene "Blocked" que no está mapeado. Cae a backlog en vez de meter
-    // un valor que rompa el CHECK del schema.
+  it("status en Notion no está en el map → fallback 'sin_empezar'", () => {
+    // El operador configuró map con "In progress"→"en_proceso" pero la page
+    // tiene "Blocked" que no está mapeado. Cae a sin_empezar en vez de
+    // meter un valor que rompa el CHECK del schema.
     const map: NotionPropertyMap = {
       title_prop: "Name",
       status_prop: "Status",
-      status_map: { "In progress": "active" },
+      status_map: { "In progress": "en_proceso" },
     };
     const page = makePage({
       Name: { type: "title", title: [{ plain_text: "X" }] },
@@ -130,7 +130,7 @@ describe("mapNotionPageToInternalProject", () => {
     const res = mapNotionPageToInternalProject(page, map, makeCtx());
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.payload.status).toBe("backlog");
+    expect(res.payload.status).toBe("sin_empezar");
   });
 
   it("assignee sin mapping a KG persona → owner_id null", () => {
