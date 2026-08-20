@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { resolveCurrentPersonId } from "@/lib/ops/current-person";
 import { resolveCurrentOrganizationId } from "@/lib/organization/current";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
@@ -58,6 +59,11 @@ interface TaskPayload {
   readonly internalProjectId: string | null;
   readonly assigneeId: string | null;
   readonly dueOn: string | null;
+  readonly isRecurring: boolean;
+  /** 0=domingo … 6=sábado. Null si !isRecurring. */
+  readonly recurrenceDays: number[] | null;
+  /** Duración fija estimada. Null si !isRecurring o no se cargó. */
+  readonly estimatedMinutes: number | null;
 }
 
 function parseTaskFormData(formData: FormData): TaskPayload | string {
@@ -87,6 +93,37 @@ function parseTaskFormData(formData: FormData): TaskPayload | string {
     return "La fecha de vencimiento no es válida.";
   }
 
+  const isRecurring = formData.get("is_recurring") === "on";
+
+  let recurrenceDays: number[] | null = null;
+  let estimatedMinutes: number | null = null;
+
+  if (isRecurring) {
+    const rawDays = formData.getAll("recurrence_days");
+    const parsedDays: number[] = [];
+    for (const v of rawDays) {
+      const n = Number(String(v));
+      if (!Number.isInteger(n) || n < 0 || n > 6) {
+        return "Días de recurrencia inválidos.";
+      }
+      if (!parsedDays.includes(n)) parsedDays.push(n);
+    }
+    if (parsedDays.length === 0) {
+      return "Elegí al menos un día de la semana para la tarea diaria.";
+    }
+    parsedDays.sort((a, b) => a - b);
+    recurrenceDays = parsedDays;
+
+    const minsRaw = String(formData.get("estimated_minutes") ?? "").trim();
+    if (minsRaw.length > 0) {
+      const mins = Number(minsRaw);
+      if (!Number.isInteger(mins) || mins <= 0 || mins > 24 * 60) {
+        return "La duración estimada debe ser un entero de minutos entre 1 y 1440.";
+      }
+      estimatedMinutes = mins;
+    }
+  }
+
   return {
     title,
     description,
@@ -95,6 +132,9 @@ function parseTaskFormData(formData: FormData): TaskPayload | string {
     internalProjectId,
     assigneeId,
     dueOn,
+    isRecurring,
+    recurrenceDays,
+    estimatedMinutes,
   };
 }
 
@@ -137,6 +177,9 @@ export async function createTask(
     assignee_id: parsed.assigneeId,
     due_on: parsed.dueOn,
     completed_at: completedAt,
+    is_recurring: parsed.isRecurring,
+    recurrence_days: parsed.recurrenceDays,
+    estimated_minutes: parsed.estimatedMinutes,
   } as never;
 
   const { data, error } = await supabase
@@ -201,6 +244,9 @@ export async function updateTask(
     assignee_id: parsed.assigneeId,
     due_on: parsed.dueOn,
     completed_at: completedAt,
+    is_recurring: parsed.isRecurring,
+    recurrence_days: parsed.recurrenceDays,
+    estimated_minutes: parsed.estimatedMinutes,
   } as never;
 
   const { error } = await supabase
@@ -252,4 +298,98 @@ export async function deleteTask(
     revalidatePath("/operaciones/proyectos");
   }
   return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// toggleTaskCompletionForToday — click directo (sin confirm)
+//
+// Insert si no existía fila para (task_id, on_date=hoy); delete si existía.
+// UNIQUE(task_id, on_date) evita duplicados. Toggle es idempotente contra
+// double-click porque el .maybeSingle previo decide la rama.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type ToggleTaskCompletionResult =
+  | { ok: true; nowCompleted: boolean }
+  | { error: string };
+
+export async function toggleTaskCompletionForToday(
+  taskId: string,
+): Promise<ToggleTaskCompletionResult> {
+  if (!taskId) return { error: "Falta el id de la tarea." };
+
+  const supabase = await createSupabaseClient();
+
+  const { data: taskRow, error: taskErr } = await supabase
+    .from("tasks")
+    .select("id, organization_id, is_recurring, internal_project_id")
+    .eq("id", taskId)
+    .maybeSingle();
+
+  if (taskErr) return { error: taskErr.message };
+  const task = taskRow as {
+    id: string;
+    organization_id: string;
+    is_recurring: boolean;
+    internal_project_id: string | null;
+  } | null;
+
+  if (!task) return { error: "La tarea no existe o no tenés acceso." };
+  if (!task.is_recurring) {
+    return { error: "Sólo las tareas diarias se marcan día por día." };
+  }
+
+  const today = todayYmd();
+
+  const { data: existing } = await supabase
+    .from("task_completions")
+    .select("id")
+    .eq("task_id", taskId)
+    .eq("on_date", today)
+    .maybeSingle();
+
+  const existingId = (existing as { id: string } | null)?.id ?? null;
+
+  if (existingId) {
+    const { error: delErr } = await supabase
+      .from("task_completions")
+      .delete()
+      .eq("id", existingId);
+    if (delErr) return { error: delErr.message };
+
+    revalidatePath("/operaciones/tareas");
+    revalidatePath("/operaciones");
+    if (task.internal_project_id) {
+      revalidatePath(`/operaciones/proyectos/${task.internal_project_id}`);
+    }
+    return { ok: true, nowCompleted: false };
+  }
+
+  const personId = await resolveCurrentPersonId();
+
+  const insertPayload = {
+    organization_id: task.organization_id,
+    task_id: taskId,
+    on_date: today,
+    completed_by: personId,
+  } as never;
+
+  const { error: insErr } = await supabase
+    .from("task_completions")
+    .insert(insertPayload);
+  if (insErr) return { error: insErr.message };
+
+  revalidatePath("/operaciones/tareas");
+  revalidatePath("/operaciones");
+  if (task.internal_project_id) {
+    revalidatePath(`/operaciones/proyectos/${task.internal_project_id}`);
+  }
+  return { ok: true, nowCompleted: true };
+}
+
+function todayYmd(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }

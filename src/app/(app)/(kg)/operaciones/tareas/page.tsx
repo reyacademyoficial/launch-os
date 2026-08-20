@@ -86,6 +86,14 @@ interface TaskDbRow {
   readonly due_on: string | null;
   readonly completed_at: string | null;
   readonly created_at: string;
+  readonly is_recurring: boolean;
+  readonly recurrence_days: number[] | null;
+  readonly estimated_minutes: number | null;
+}
+
+interface TaskCompletionDbRow {
+  readonly task_id: string;
+  readonly on_date: string;
 }
 
 interface ProjectDbRow {
@@ -127,7 +135,7 @@ export default async function TareasPage({
   const tasksQuery = supabase
     .from("tasks")
     .select(
-      "id, title, description, status, priority, internal_project_id, assignee_id, due_on, completed_at, created_at",
+      "id, title, description, status, priority, internal_project_id, assignee_id, due_on, completed_at, created_at, is_recurring, recurrence_days, estimated_minutes",
     )
     .order("due_on", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: false });
@@ -173,6 +181,32 @@ export default async function TareasPage({
     .map((p) => ({ id: p.id, fullName: p.full_name }));
 
   const today = todayYmd();
+  const todayWeekday = new Date(`${today}T12:00:00Z`).getUTCDay(); // 0..6, dom=0
+
+  // Historial de completions: fetch en un round-trip para todos los task_id
+  // recurrentes. Filtramos por task_id ∈ recurrentes para no traer basura.
+  const recurringTaskIds = allTasks
+    .filter((t) => t.is_recurring)
+    .map((t) => t.id);
+
+  const completionsRes =
+    recurringTaskIds.length === 0
+      ? { data: [] as TaskCompletionDbRow[] }
+      : await supabase
+          .from("task_completions")
+          .select("task_id, on_date")
+          .in("task_id", recurringTaskIds)
+          .order("on_date", { ascending: false });
+
+  const allCompletions = (completionsRes.data ??
+    []) as unknown as TaskCompletionDbRow[];
+
+  const completionsByTask = new Map<string, string[]>();
+  for (const c of allCompletions) {
+    const list = completionsByTask.get(c.task_id);
+    if (list) list.push(c.on_date);
+    else completionsByTask.set(c.task_id, [c.on_date]);
+  }
 
   const filtered = allTasks.filter((t) => {
     if (statusFilter === "abiertas" && !OPEN_STATUSES.has(t.status))
@@ -185,26 +219,41 @@ export default async function TareasPage({
     return true;
   });
 
-  const rows: TaskRowData[] = filtered.map((t) => ({
-    id: t.id,
-    title: t.title,
-    description: t.description,
-    status: t.status,
-    priority: t.priority,
-    internalProjectId: t.internal_project_id,
-    internalProjectName: t.internal_project_id
-      ? projectNameById.get(t.internal_project_id) ?? null
-      : null,
-    assigneeId: t.assignee_id,
-    assigneeName: t.assignee_id
-      ? personNameById.get(t.assignee_id) ?? null
-      : null,
-    dueOn: t.due_on,
-    completedAt: t.completed_at,
-    createdAt: t.created_at,
-    isOverdue:
-      t.due_on != null && t.due_on < today && OPEN_STATUSES.has(t.status),
-  }));
+  const rows: TaskRowData[] = filtered.map((t) => {
+    const completions = completionsByTask.get(t.id) ?? [];
+    const completedToday = completions.length > 0 && completions[0] === today;
+    const recursToday =
+      t.is_recurring &&
+      Array.isArray(t.recurrence_days) &&
+      t.recurrence_days.includes(todayWeekday);
+    return {
+      id: t.id,
+      title: t.title,
+      description: t.description,
+      status: t.status,
+      priority: t.priority,
+      internalProjectId: t.internal_project_id,
+      internalProjectName: t.internal_project_id
+        ? projectNameById.get(t.internal_project_id) ?? null
+        : null,
+      assigneeId: t.assignee_id,
+      assigneeName: t.assignee_id
+        ? personNameById.get(t.assignee_id) ?? null
+        : null,
+      dueOn: t.due_on,
+      completedAt: t.completed_at,
+      createdAt: t.created_at,
+      isOverdue:
+        t.due_on != null && t.due_on < today && OPEN_STATUSES.has(t.status),
+      isRecurring: t.is_recurring,
+      recurrenceDays: t.recurrence_days,
+      estimatedMinutes: t.estimated_minutes,
+      recursToday,
+      completedToday,
+      completionsCount: completions.length,
+      recentCompletions: completions.slice(0, 3),
+    };
+  });
 
   // Stats sobre TODAS las tareas del scope activo (no filtradas por pills).
   const openTasks = allTasks.filter((t) => OPEN_STATUSES.has(t.status));

@@ -3,7 +3,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { ContextBar } from "@/components/kg/context-bar";
-import { EmptyState } from "@/components/kg/empty-state";
 import { IconOps } from "@/components/kg/icons";
 import { Panel } from "@/components/kg/panel";
 import { StatusPill } from "@/components/kg/status-pill";
@@ -23,6 +22,19 @@ import {
   NotionCommentComposer,
   type MentionableUser,
 } from "./notion-comment-composer";
+import {
+  ProjectBlockersSection,
+  type ProjectBlockerRow,
+} from "./project-blockers-section";
+import {
+  ProjectTasksSection,
+  type ProjectTaskRow,
+} from "./project-tasks-section";
+import {
+  ProjectTimeSection,
+  type ProjectTimeBreakdown,
+  type ProjectTimeEntry,
+} from "./project-time-section";
 
 export const metadata: Metadata = { title: "Proyecto interno · Operaciones" };
 
@@ -119,7 +131,7 @@ export default async function InternalProjectFichaPage({
 
   const supabase = await createClient();
 
-  const [projectRes, peopleRes, checklistsRes] = await Promise.all([
+  const [projectRes, peopleRes, checklistsRes, tasksRes] = await Promise.all([
     supabase
       .from("internal_projects")
       .select(
@@ -138,6 +150,16 @@ export default async function InternalProjectFichaPage({
       .select("id, title")
       .eq("internal_project_id", projectId)
       .order("created_at", { ascending: true }),
+    // Tareas del proyecto — usadas por la sub-sección "Tareas" y como
+    // filtro para blockers/time_entries que cuelgan de tareas.
+    supabase
+      .from("tasks")
+      .select(
+        "id, title, description, status, priority, assignee_id, due_on, completed_at, is_recurring, recurrence_days, estimated_minutes",
+      )
+      .eq("internal_project_id", projectId)
+      .order("due_on", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: false }),
   ]);
 
   const project = projectRes.data as ProjectDbRow | null;
@@ -271,6 +293,221 @@ export default async function InternalProjectFichaPage({
     items: itemsByChecklist.get(c.id) ?? [],
   }));
 
+  // ─── Tareas + blockers + time_entries del proyecto ──────────────────────
+  //
+  // Tres fuentes que se consumen en tres sub-secciones distintas:
+  //   1) `tasksRows` — todas las tareas del proyecto (abiertas + cerradas).
+  //   2) `blockerRows` — abiertos del proyecto Y de las tareas del proyecto.
+  //      "de las tareas": operador quiere ver todos los frenos en un lugar.
+  //   3) `timeRows`   — cargas de tiempo al proyecto O a sus tareas.
+  //
+  // Blockers y time dependen de los ids de tareas → segundo batch encadenado.
+
+  interface TaskDbRow {
+    readonly id: string;
+    readonly title: string;
+    readonly description: string | null;
+    readonly status:
+      | "sin_empezar"
+      | "en_proceso"
+      | "bloqueado"
+      | "alerta_maxima"
+      | "listo";
+    readonly priority: "alta" | "media" | "baja";
+    readonly assignee_id: string | null;
+    readonly due_on: string | null;
+    readonly completed_at: string | null;
+    readonly is_recurring: boolean;
+    readonly recurrence_days: number[] | null;
+    readonly estimated_minutes: number | null;
+  }
+  const tasksRows = (tasksRes.data ?? []) as unknown as TaskDbRow[];
+  const taskIds = tasksRows.map((t) => t.id);
+  const taskTitleById = new Map<string, string>();
+  for (const t of tasksRows) taskTitleById.set(t.id, t.title);
+  const personNameById = new Map<string, string>();
+  for (const p of allPeople) personNameById.set(p.id, p.full_name);
+
+  const today = todayYmd();
+
+  // Batch 2 — blockers + time_entries. Uso .or() para el where compuesto
+  // sobre task_id + internal_project_id. Si el proyecto todavía no tiene
+  // tareas, la parte de "task_id in (…)" se skippea (evita generar un IN
+  // con lista vacía que es error en PostgREST).
+  const blockersProjectFilter = `internal_project_id.eq.${projectId}`;
+  const blockersFilter =
+    taskIds.length > 0
+      ? `${blockersProjectFilter},task_id.in.(${taskIds.join(",")})`
+      : blockersProjectFilter;
+
+  const timeProjectFilter = `internal_project_id.eq.${projectId}`;
+  const timeFilter =
+    taskIds.length > 0
+      ? `${timeProjectFilter},task_id.in.(${taskIds.join(",")})`
+      : timeProjectFilter;
+
+  interface BlockerDbRow {
+    readonly id: string;
+    readonly task_id: string | null;
+    readonly internal_project_id: string | null;
+    readonly reason: string;
+    readonly opened_at: string;
+    readonly resolved_at: string | null;
+  }
+
+  interface TimeEntryDbRow {
+    readonly id: string;
+    readonly person_id: string;
+    readonly task_id: string | null;
+    readonly minutes: number;
+    readonly logged_on: string;
+    readonly notes: string | null;
+  }
+
+  const [blockersRes, timeRes] = await Promise.all([
+    supabase
+      .from("blockers")
+      .select("id, task_id, internal_project_id, reason, opened_at, resolved_at")
+      .or(blockersFilter)
+      .is("resolved_at", null)
+      .order("opened_at", { ascending: true }),
+    supabase
+      .from("time_entries")
+      .select("id, person_id, task_id, minutes, logged_on, notes")
+      .or(timeFilter)
+      .order("logged_on", { ascending: false }),
+  ]);
+
+  const blockerRows = (blockersRes.data ?? []) as unknown as BlockerDbRow[];
+  const timeEntryRows = (timeRes.data ?? []) as unknown as TimeEntryDbRow[];
+
+  // ─── Sub-sección: Tareas ────────────────────────────────────────────────
+  // Completions para las tareas recurrentes del proyecto (contador +
+  // últimas 3 fechas). Un round-trip separado, sólo si hay recurrentes.
+  const recurringTaskIds = tasksRows
+    .filter((t) => t.is_recurring)
+    .map((t) => t.id);
+  const projectCompletionsRes =
+    recurringTaskIds.length === 0
+      ? { data: [] as { task_id: string; on_date: string }[] }
+      : await supabase
+          .from("task_completions")
+          .select("task_id, on_date")
+          .in("task_id", recurringTaskIds)
+          .order("on_date", { ascending: false });
+  const projectCompletions = (projectCompletionsRes.data ?? []) as unknown as {
+    task_id: string;
+    on_date: string;
+  }[];
+  const completionsByTask = new Map<string, string[]>();
+  for (const c of projectCompletions) {
+    const arr = completionsByTask.get(c.task_id);
+    if (arr) arr.push(c.on_date);
+    else completionsByTask.set(c.task_id, [c.on_date]);
+  }
+
+  const projectTasks: ProjectTaskRow[] = tasksRows.map((t) => {
+    const completions = completionsByTask.get(t.id) ?? [];
+    return {
+      id: t.id,
+      title: t.title,
+      description: t.description,
+      status: t.status,
+      priority: t.priority,
+      assigneeId: t.assignee_id,
+      assigneeName: t.assignee_id
+        ? personNameById.get(t.assignee_id) ?? null
+        : null,
+      dueOn: t.due_on,
+      completedAt: t.completed_at,
+      isOverdue:
+        t.due_on != null &&
+        t.due_on < today &&
+        t.status !== "listo",
+      isRecurring: t.is_recurring,
+      recurrenceDays: t.recurrence_days,
+      estimatedMinutes: t.estimated_minutes,
+      completionsCount: completions.length,
+      recentCompletions: completions.slice(0, 3),
+    };
+  });
+  const totalOpen = projectTasks.filter((t) => t.status !== "listo").length;
+  const totalDone = projectTasks.filter((t) => t.status === "listo").length;
+
+  // ─── Sub-sección: Bloqueadores ──────────────────────────────────────────
+  const nowMs = Date.now();
+  const projectBlockers: ProjectBlockerRow[] = blockerRows.map((b) => {
+    const isTask = b.task_id != null;
+    const parentLabel = isTask
+      ? taskTitleById.get(b.task_id!) ?? "Tarea eliminada"
+      : project.name;
+    const openedMs = new Date(b.opened_at).getTime();
+    const daysOpen = Math.max(
+      0,
+      Math.floor((nowMs - openedMs) / 86_400_000),
+    );
+    return {
+      id: b.id,
+      parentKind: isTask ? "task" : "project",
+      parentLabel,
+      reason: b.reason,
+      openedAt: b.opened_at,
+      daysOpen,
+    };
+  });
+
+  // ─── Sub-sección: Tiempo ────────────────────────────────────────────────
+  const timeByPerson = new Map<string, number>();
+  let totalMinutes = 0;
+  for (const e of timeEntryRows) {
+    totalMinutes += e.minutes;
+    timeByPerson.set(
+      e.person_id,
+      (timeByPerson.get(e.person_id) ?? 0) + e.minutes,
+    );
+  }
+  const perPerson: ProjectTimeBreakdown[] = Array.from(
+    timeByPerson.entries(),
+  )
+    .map(([pid, minutes]) => ({
+      personId: pid,
+      personName: personNameById.get(pid) ?? "—",
+      minutes,
+    }))
+    .sort((a, b) => b.minutes - a.minutes);
+
+  const recentTime: ProjectTimeEntry[] = timeEntryRows.slice(0, 8).map((e) => ({
+    id: e.id,
+    personName: personNameById.get(e.person_id) ?? "—",
+    minutes: e.minutes,
+    loggedOn: e.logged_on,
+    taskTitle: e.task_id ? taskTitleById.get(e.task_id) ?? null : null,
+    notes: e.notes,
+  }));
+
+  // ─── Opciones para los drawers (scoped a este proyecto) ─────────────────
+  const activePeople = allPeople.filter((p) => p.active);
+  const singleProjectOption = [{ id: project.id, name: project.name }];
+  const tasksForDrawer = projectTasks
+    .filter((t) => t.status !== "listo")
+    .map((t) => ({ id: t.id, title: t.title }));
+  const tasksForBlockerDrawer = projectTasks
+    .filter((t) => t.status !== "listo")
+    .map((t) => ({
+      id: t.id,
+      title: t.title,
+      projectName: project.name,
+    }));
+  const peopleForDrawer = activePeople.map((p) => ({
+    id: p.id,
+    fullName: p.full_name,
+    active: p.active,
+  }));
+  const peopleForBlockerDrawer = activePeople.map((p) => ({
+    id: p.id,
+    fullName: p.full_name,
+  }));
+
   const owners: OwnerOption[] = allPeople
     .filter((p) => p.active)
     .map((p) => ({ id: p.id, fullName: p.full_name }));
@@ -374,10 +611,16 @@ export default async function InternalProjectFichaPage({
         </Panel>
 
         <Panel title="Tareas del proyecto">
-          <EmptyState
-            icon={<IconOps size={22} />}
-            title="Sub-sección en construcción"
-            hint="En el próximo commit acá van las tareas del proyecto (top 5 con status/priority) + link a /operaciones/tareas filtrado por este proyecto."
+          <ProjectTasksSection
+            projectId={project.id}
+            rows={projectTasks}
+            totalOpen={totalOpen}
+            totalDone={totalDone}
+            projects={singleProjectOption.map((p) => ({
+              id: p.id,
+              name: p.name,
+            }))}
+            assignees={peopleForBlockerDrawer}
           />
         </Panel>
       </div>
@@ -390,10 +633,12 @@ export default async function InternalProjectFichaPage({
         }}
       >
         <Panel title="Bloqueadores">
-          <EmptyState
-            icon={<IconOps size={22} />}
-            title="Sub-sección en construcción"
-            hint="Bloqueos abiertos vinculados a este proyecto (excluye los que cuelgan de sus tareas — esos aparecen dentro de cada tarea)."
+          <ProjectBlockersSection
+            projectId={project.id}
+            rows={projectBlockers}
+            tasksForDrawer={tasksForBlockerDrawer}
+            projectsForDrawer={singleProjectOption}
+            peopleForDrawer={peopleForBlockerDrawer}
           />
         </Panel>
         <Panel title="Checklists">
@@ -403,10 +648,14 @@ export default async function InternalProjectFichaPage({
           />
         </Panel>
         <Panel title="Tiempo dedicado">
-          <EmptyState
-            icon={<IconOps size={22} />}
-            title="Sub-sección en construcción"
-            hint="Suma de minutos por persona en time_entries atados a este proyecto (directo o vía sus tareas)."
+          <ProjectTimeSection
+            projectId={project.id}
+            totalMinutes={totalMinutes}
+            perPerson={perPerson}
+            recent={recentTime}
+            peopleForDrawer={peopleForDrawer}
+            tasksForDrawer={tasksForDrawer}
+            projectsForDrawer={singleProjectOption}
           />
         </Panel>
       </div>
@@ -644,6 +893,13 @@ function formatDate(ymd: string): string {
   } catch {
     return ymd.slice(0, 10);
   }
+}
+
+function todayYmd(): string {
+  // Argentina TZ — mismo criterio que el resto de Ops (calendario laboral).
+  return new Date().toLocaleDateString("en-CA", {
+    timeZone: "America/Argentina/Buenos_Aires",
+  });
 }
 
 function formatIso(iso: string): string {

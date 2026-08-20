@@ -6,7 +6,7 @@ import { useState, useTransition } from "react";
 import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { StatusPill } from "@/components/kg/status-pill";
 
-import { deleteTask } from "./actions";
+import { deleteTask, toggleTaskCompletionForToday } from "./actions";
 import {
   TaskFormDrawer,
   type AssigneeOptionForTask,
@@ -47,6 +47,15 @@ export interface TaskRowData {
   readonly createdAt: string;
   /** Precomputado server-side: due_on < today y status abierta. */
   readonly isOverdue: boolean;
+  readonly isRecurring: boolean;
+  readonly recurrenceDays: readonly number[] | null;
+  readonly estimatedMinutes: number | null;
+  /** True si hoy es un día de recurrencia (según recurrenceDays y hoy). */
+  readonly recursToday: boolean;
+  /** True si ya existe una completion para hoy. */
+  readonly completedToday: boolean;
+  readonly completionsCount: number;
+  readonly recentCompletions: readonly string[];
 }
 
 const STATUS_LABEL: Record<Status, string> = {
@@ -112,6 +121,11 @@ export function TasksView({
         assigneeId: editing.assigneeId,
         dueOn: editing.dueOn,
         completedAt: editing.completedAt,
+        isRecurring: editing.isRecurring,
+        recurrenceDays: editing.recurrenceDays,
+        estimatedMinutes: editing.estimatedMinutes,
+        completionsCount: editing.completionsCount,
+        recentCompletions: editing.recentCompletions,
       }
     : undefined;
 
@@ -123,6 +137,14 @@ export function TasksView({
     setError(null);
     startTransition(async () => {
       const result = await deleteTask(row.id);
+      if ("error" in result) setError(result.error);
+    });
+  }
+
+  function handleToggleToday(row: TaskRowData) {
+    setError(null);
+    startTransition(async () => {
+      const result = await toggleTaskCompletionForToday(row.id);
       if ("error" in result) setError(result.error);
     });
   }
@@ -220,6 +242,57 @@ export function TasksView({
           );
         }
         return formatDate(r.dueOn);
+      },
+    },
+    {
+      key: "today",
+      label: "Hoy",
+      render: (r) => {
+        if (!r.isRecurring) {
+          return <span style={{ color: "var(--kg-text-3)" }}>—</span>;
+        }
+        if (!r.recursToday) {
+          return (
+            <span
+              className="kg-t7"
+              style={{ color: "var(--kg-text-3)" }}
+              title="La tarea diaria no se ejecuta hoy"
+            >
+              N/A
+            </span>
+          );
+        }
+        return (
+          <label
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              cursor: pending ? "wait" : "pointer",
+              userSelect: "none",
+            }}
+            title={r.completedToday ? "Marcada hoy · click para desmarcar" : "Marcar como hecha hoy"}
+          >
+            <input
+              type="checkbox"
+              checked={r.completedToday}
+              disabled={pending}
+              onChange={() => handleToggleToday(r)}
+            />
+            <span
+              className="kg-t7"
+              style={{
+                color: r.completedToday
+                  ? "var(--kg-positive-500)"
+                  : "var(--kg-text-3)",
+                fontWeight: r.completedToday ? 700 : 500,
+              }}
+            >
+              {r.completedToday ? "Hecha" : "Pendiente"}
+              {r.estimatedMinutes != null && ` · ${r.estimatedMinutes}′`}
+            </span>
+          </label>
+        );
       },
     },
     {

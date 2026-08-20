@@ -65,16 +65,23 @@ interface PersonDbRow {
   readonly active: boolean;
 }
 
+type OpStatus =
+  | "sin_empezar"
+  | "en_proceso"
+  | "bloqueado"
+  | "alerta_maxima"
+  | "listo";
+
 interface TaskDbRow {
   readonly id: string;
   readonly title: string;
-  readonly status: "todo" | "doing" | "blocked" | "done" | "cancelled";
+  readonly status: OpStatus;
 }
 
 interface ProjectDbRow {
   readonly id: string;
   readonly name: string;
-  readonly status: "backlog" | "active" | "paused" | "done" | "archived";
+  readonly status: OpStatus;
 }
 
 export default async function TiempoPage({
@@ -135,12 +142,12 @@ export default async function TiempoPage({
     supabase
       .from("tasks")
       .select("id, title, status")
-      .not("status", "in", "(done,cancelled)")
+      .neq("status", "listo")
       .order("title", { ascending: true }),
     supabase
       .from("internal_projects")
       .select("id, name, status")
-      .neq("status", "archived")
+      .neq("status", "listo")
       .order("name", { ascending: true }),
   ]);
 

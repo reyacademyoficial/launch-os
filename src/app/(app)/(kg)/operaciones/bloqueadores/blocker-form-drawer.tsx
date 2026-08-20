@@ -58,6 +58,8 @@ export function BlockerFormDrawer({
   projects,
   people,
   initial,
+  presetParentKind,
+  presetParentId,
 }: {
   readonly mode: "create" | "edit";
   readonly open: boolean;
@@ -66,6 +68,9 @@ export function BlockerFormDrawer({
   readonly projects: readonly ProjectOptionForBlocker[];
   readonly people: readonly PersonOptionForBlocker[];
   readonly initial?: BlockerInitial;
+  /** Solo aplica en create — presetea la selección de parent al abrir. */
+  readonly presetParentKind?: "task" | "project";
+  readonly presetParentId?: string;
 }) {
   if (!open) return null;
   const title = mode === "create" ? "Nuevo bloqueador" : "Editar bloqueador";
@@ -77,6 +82,8 @@ export function BlockerFormDrawer({
         projects={projects}
         people={people}
         initial={initial}
+        presetParentKind={presetParentKind}
+        presetParentId={presetParentId}
         onClose={onClose}
       />
     </Drawer>
@@ -89,6 +96,8 @@ function BlockerFormBody({
   projects,
   people,
   initial,
+  presetParentKind,
+  presetParentId,
   onClose,
 }: {
   readonly mode: "create" | "edit";
@@ -96,6 +105,8 @@ function BlockerFormBody({
   readonly projects: readonly ProjectOptionForBlocker[];
   readonly people: readonly PersonOptionForBlocker[];
   readonly initial?: BlockerInitial;
+  readonly presetParentKind?: "task" | "project";
+  readonly presetParentId?: string;
   readonly onClose: () => void;
 }) {
   const isEdit = mode === "edit" && initial != null;
@@ -129,9 +140,11 @@ function BlockerFormBody({
   }, [state, onClose]);
 
   const [parentKind, setParentKind] = useState<"task" | "project">(
-    initial?.parentKind ?? "task",
+    initial?.parentKind ?? presetParentKind ?? "task",
   );
-  const [parentId, setParentId] = useState<string>(initial?.parentId ?? "");
+  const [parentId, setParentId] = useState<string>(
+    initial?.parentId ?? presetParentId ?? "",
+  );
   const [isResolved, setIsResolved] = useState<boolean>(
     initial?.resolvedAt != null,
   );

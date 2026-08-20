@@ -61,7 +61,26 @@ export interface TaskInitial {
   readonly assigneeId: string | null;
   readonly dueOn: string | null;
   readonly completedAt: string | null;
+  readonly isRecurring: boolean;
+  /** 0=domingo … 6=sábado */
+  readonly recurrenceDays: readonly number[] | null;
+  readonly estimatedMinutes: number | null;
+  /** Total histórico de días completados. */
+  readonly completionsCount: number;
+  /** Últimas 3 fechas completadas (YYYY-MM-DD), más reciente primero. */
+  readonly recentCompletions: readonly string[];
 }
+
+// L=lunes … D=domingo. `value` = Date.getDay() (0=dom).
+const WEEKDAY_OPTIONS: ReadonlyArray<{ value: number; label: string }> = [
+  { value: 1, label: "L" },
+  { value: 2, label: "M" },
+  { value: 3, label: "X" },
+  { value: 4, label: "J" },
+  { value: 5, label: "V" },
+  { value: 6, label: "S" },
+  { value: 0, label: "D" },
+];
 
 export function TaskFormDrawer({
   mode,
@@ -149,6 +168,23 @@ function TaskFormBody({
   }, [state, onClose]);
 
   const [status, setStatus] = useState<Status>(initial?.status ?? "sin_empezar");
+  const [isRecurring, setIsRecurring] = useState<boolean>(
+    initial?.isRecurring ?? false,
+  );
+  const initialDays = useMemo(
+    () => new Set<number>(initial?.recurrenceDays ?? []),
+    [initial?.recurrenceDays],
+  );
+  const [recurrenceDays, setRecurrenceDays] = useState<Set<number>>(initialDays);
+
+  function toggleDay(day: number) {
+    setRecurrenceDays((prev) => {
+      const next = new Set(prev);
+      if (next.has(day)) next.delete(day);
+      else next.add(day);
+      return next;
+    });
+  }
 
   return (
     <form
@@ -263,6 +299,143 @@ function TaskFormBody({
         />
       </Field>
 
+      {/* ─── Recurrencia diaria ────────────────────────────────────────────── */}
+      <div
+        style={{
+          padding: "12px 14px",
+          borderRadius: "var(--kg-r-8)",
+          background: "var(--kg-surface-2-solid)",
+          border: "1px solid var(--kg-border-subtle)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+        }}
+      >
+        <label
+          htmlFor="is_recurring"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            cursor: "pointer",
+            color: "var(--kg-text-1)",
+            fontSize: 13,
+            fontWeight: 600,
+          }}
+        >
+          <input
+            id="is_recurring"
+            name="is_recurring"
+            type="checkbox"
+            checked={isRecurring}
+            onChange={(e) => setIsRecurring(e.target.checked)}
+          />
+          Tarea diaria
+        </label>
+        <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+          Se marca como hecha día por día. Al apagarla se preserva el
+          historial. Si tiene duración estimada, se suma a la carga diaria de
+          la persona asignada.
+        </div>
+
+        {isRecurring && (
+          <>
+            <Field label="Días de la semana" htmlFor="recurrence_days_grp" required>
+              <div
+                id="recurrence_days_grp"
+                role="group"
+                aria-label="Días de la semana"
+                style={{ display: "flex", gap: 6, flexWrap: "wrap" }}
+              >
+                {WEEKDAY_OPTIONS.map((d) => {
+                  const active = recurrenceDays.has(d.value);
+                  return (
+                    <label
+                      key={d.value}
+                      title={weekdayFullLabel(d.value)}
+                      style={{
+                        cursor: "pointer",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        minWidth: 34,
+                        height: 34,
+                        borderRadius: 999,
+                        border: active
+                          ? "1px solid var(--kg-accent-500)"
+                          : "1px solid var(--kg-border-subtle)",
+                        background: active
+                          ? "var(--kg-accent-500)"
+                          : "transparent",
+                        color: active ? "#fff" : "var(--kg-text-2)",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        userSelect: "none",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        name="recurrence_days"
+                        value={d.value}
+                        checked={active}
+                        onChange={() => toggleDay(d.value)}
+                        style={{
+                          position: "absolute",
+                          opacity: 0,
+                          pointerEvents: "none",
+                        }}
+                      />
+                      {d.label}
+                    </label>
+                  );
+                })}
+              </div>
+            </Field>
+
+            <Field label="Duración estimada (minutos)" htmlFor="estimated_minutes">
+              <input
+                id="estimated_minutes"
+                name="estimated_minutes"
+                type="number"
+                min={1}
+                max={1440}
+                step={1}
+                defaultValue={initial?.estimatedMinutes ?? ""}
+                placeholder="Ej. 30"
+                style={inputStyle}
+              />
+            </Field>
+          </>
+        )}
+
+        {isEdit && initial && initial.completionsCount > 0 && (
+          <div
+            style={{
+              paddingTop: 10,
+              borderTop: "1px dashed var(--kg-border-subtle)",
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+            }}
+          >
+            <div
+              className="kg-t7"
+              style={{ color: "var(--kg-text-2)", fontWeight: 600 }}
+            >
+              Historial · {initial.completionsCount}{" "}
+              {initial.completionsCount === 1 ? "vez" : "veces"}
+            </div>
+            <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+              {initial.recentCompletions.length > 0
+                ? `Últimas: ${initial.recentCompletions
+                    .map((d) => formatYmdShort(d))
+                    .join(" · ")}`
+                : "—"}
+            </div>
+          </div>
+        )}
+      </div>
+
       {isEdit && initial?.completedAt && (
         <div
           className="kg-t7"
@@ -370,6 +543,30 @@ function formatIso(iso: string): string {
   } catch {
     return iso.slice(0, 10);
   }
+}
+
+function formatYmdShort(ymd: string): string {
+  try {
+    return new Date(`${ymd}T12:00:00Z`).toLocaleDateString("es-AR", {
+      day: "2-digit",
+      month: "short",
+    });
+  } catch {
+    return ymd.slice(0, 10);
+  }
+}
+
+function weekdayFullLabel(day: number): string {
+  const labels = [
+    "Domingo",
+    "Lunes",
+    "Martes",
+    "Miércoles",
+    "Jueves",
+    "Viernes",
+    "Sábado",
+  ];
+  return labels[day] ?? "";
 }
 
 const inputStyle: React.CSSProperties = {

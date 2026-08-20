@@ -47,17 +47,24 @@ interface BlockerDbRow {
   readonly resolved_by: string | null;
 }
 
+type OpStatus =
+  | "sin_empezar"
+  | "en_proceso"
+  | "bloqueado"
+  | "alerta_maxima"
+  | "listo";
+
 interface TaskDbRow {
   readonly id: string;
   readonly title: string;
   readonly internal_project_id: string | null;
-  readonly status: "todo" | "doing" | "blocked" | "done" | "cancelled";
+  readonly status: OpStatus;
 }
 
 interface ProjectDbRow {
   readonly id: string;
   readonly name: string;
-  readonly status: "backlog" | "active" | "paused" | "done" | "archived";
+  readonly status: OpStatus;
 }
 
 interface PersonDbRow {
@@ -90,7 +97,7 @@ export default async function BloqueadoresPage({
     supabase
       .from("internal_projects")
       .select("id, name, status")
-      .neq("status", "archived")
+      .neq("status", "listo")
       .order("name", { ascending: true }),
     supabase
       .from("organization_people")
@@ -160,8 +167,8 @@ export default async function BloqueadoresPage({
 
   // Options para el drawer.
   const taskOptions: TaskOptionForBlocker[] = allTasks
-    // Solo tareas abiertas — bloquear una tarea done/cancelled es raro.
-    .filter((t) => t.status !== "done" && t.status !== "cancelled")
+    // Solo tareas abiertas — bloquear una tarea 'listo' es raro.
+    .filter((t) => t.status !== "listo")
     .map((t) => ({
       id: t.id,
       title: t.title,
