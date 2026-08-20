@@ -332,7 +332,7 @@ export function GastosView({
         // Igual criterio que Facturas: la tabla scrollea internamente y evita
         // el scroll de página. Offset compensa ContextBar + filtros + header
         // del Panel + footer/paginador embebido.
-        maxBodyHeight="calc(100vh - 280px)"
+        maxBodyHeight="calc(100vh - 230px)"
         footerActions={footerActions}
       />
 

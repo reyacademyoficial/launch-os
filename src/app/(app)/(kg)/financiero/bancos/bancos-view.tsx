@@ -108,7 +108,7 @@ export function BancosView({
         totalCount={totalCount}
         emptyTitle="No hay bancos registrados"
         emptyHint="Los bancos son las cuentas donde Kingrow opera. El saldo se calcula: saldo inicial + movimientos de entrada − movimientos de salida. Los cobros de ventas NO alimentan el saldo — para que un cobro impacte el banco hay que cargar el movimiento correspondiente y vincular la factura por Nº de transacción."
-        maxBodyHeight="calc(100vh - 280px)"
+        maxBodyHeight="calc(100vh - 230px)"
       />
 
       {editingRow && (

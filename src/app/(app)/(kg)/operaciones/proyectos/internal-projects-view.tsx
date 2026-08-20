@@ -312,7 +312,7 @@ export function InternalProjectsView({
             totalCount={totalCount}
             emptyTitle="Sin proyectos que coincidan con el filtro"
             emptyHint="Cambiá el filtro o creá un proyecto nuevo."
-            maxBodyHeight="calc(100vh - 320px)"
+            maxBodyHeight="calc(100vh - 260px)"
           />
         </div>
       </Panel>

@@ -242,7 +242,7 @@ export function FacturasView({
         // Ajustada al viewport — la tabla scrollea internamente y evita
         // scroll de página. El offset compensa ContextBar + filtros + header
         // del Panel + footer/paginador embebido (~280px en total).
-        maxBodyHeight="calc(100vh - 280px)"
+        maxBodyHeight="calc(100vh - 230px)"
         footerActions={footerActions}
       />
 

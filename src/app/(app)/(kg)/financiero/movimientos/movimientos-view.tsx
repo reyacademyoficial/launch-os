@@ -347,7 +347,7 @@ export function MovimientosView({
         totalCount={totalCount}
         emptyTitle="No hay movimientos bancarios cargados"
         emptyHint="Los movimientos alimentan el KPI Flujo de caja del dashboard. Cobros de ventas NO se duplican acá — viven en payments; esta tabla es para ingresos/egresos manuales (gastos, retiros, transferencias, ajustes)."
-        maxBodyHeight="calc(100vh - 280px)"
+        maxBodyHeight="calc(100vh - 230px)"
         footerActions={footerActions}
       />
 

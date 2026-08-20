@@ -87,7 +87,7 @@ export function PasivosView({
         totalCount={totalCount}
         emptyTitle="No hay pasivos registrados"
         emptyHint="Los pasivos vigentes (active=true AND settled_at IS NULL) restan del Patrimonio neto del dashboard. Sin pasivos cargados, el patrimonio se estima solo por activos + AP corriente."
-        maxBodyHeight="calc(100vh - 280px)"
+        maxBodyHeight="calc(100vh - 230px)"
       />
 
       {editingRow && (
