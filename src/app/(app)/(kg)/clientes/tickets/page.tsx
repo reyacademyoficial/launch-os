@@ -252,7 +252,13 @@ export default async function TicketsPage({
         ]}
       />
 
-      <KgPageFilters>
+      <KgPageFilters
+        activeCount={
+          (statusFilter !== "abiertos" ? 1 : 0) +
+          (priorityFilter != null ? 1 : 0) +
+          (clientIdFilter != null ? 1 : 0)
+        }
+      >
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <KgParamPills
             ariaLabel="Filtrar por estado"

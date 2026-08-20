@@ -155,7 +155,12 @@ export default async function NpsPage({
         ]}
       />
 
-      <KgPageFilters>
+      <KgPageFilters
+        activeCount={
+          (rangeFilter !== "90d" ? 1 : 0) +
+          (clientIdFilter != null ? 1 : 0)
+        }
+      >
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <KgParamPills
             ariaLabel="Filtrar por período"

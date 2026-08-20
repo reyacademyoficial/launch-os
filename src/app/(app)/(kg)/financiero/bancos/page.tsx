@@ -470,7 +470,7 @@ export default async function BancosPage({
         ]}
       />
 
-      <KgPageFilters>
+      <KgPageFilters activeCount={activeParam !== "activos" ? 1 : 0}>
         <div style={{ display: "flex", gap: 10 }}>
           <KgParamPills
             ariaLabel="Filtrar por estado"
@@ -492,7 +492,13 @@ export default async function BancosPage({
       </Panel>
 
       {/* ─── Panel de comisiones bancarias ─────────────────────────────── */}
-      <KgPageFilters>
+      <KgPageFilters
+        activeCount={
+          feesIsCustom || (rangeParam != null && rangeParam !== "mes-actual")
+            ? 1
+            : 0
+        }
+      >
         <div
           style={{
             display: "flex",

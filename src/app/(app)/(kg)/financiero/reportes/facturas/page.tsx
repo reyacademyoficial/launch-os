@@ -280,7 +280,14 @@ export default async function ReporteFacturasPage({
       />
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <KgPageFilters>
+        <KgPageFilters
+          activeCount={
+            (statusParam !== "todos" ? 1 : 0) +
+            (rangeParam !== "todo" || (period?.fromYmd && period?.toYmd)
+              ? 1
+              : 0)
+          }
+        >
           <KgParamPills
             ariaLabel="Filtrar por estado"
             options={STATUS_OPTIONS.map((o) => ({
@@ -320,7 +327,7 @@ export default async function ReporteFacturasPage({
       </div>
 
       {projectPills.length > 1 && (
-        <KgPageFilters>
+        <KgPageFilters activeCount={projectFilter != null ? 1 : 0}>
           <KgParamPills
             ariaLabel="Filtrar por proyecto"
             options={projectPills}

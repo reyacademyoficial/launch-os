@@ -118,7 +118,12 @@ export default async function ProductosPage({
         ]}
       />
 
-      <KgPageFilters>
+      <KgPageFilters
+        activeCount={
+          (activeParam !== "activos" ? 1 : 0) +
+          (projectFilter != null ? 1 : 0)
+        }
+      >
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <KgParamPills
             ariaLabel="Filtrar por estado"

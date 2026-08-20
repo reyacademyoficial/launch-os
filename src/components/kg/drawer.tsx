@@ -16,6 +16,7 @@ export function Drawer({
   width = 560,
   children,
   footer,
+  overlayClassName,
 }: {
   readonly open: boolean;
   readonly onClose: () => void;
@@ -24,6 +25,12 @@ export function Drawer({
   readonly width?: number;
   readonly children: ReactNode;
   readonly footer?: ReactNode;
+  /**
+   * Clases Tailwind adicionales sobre el overlay externo (fixed inset:0). Usa
+   * esto para hidear el drawer en breakpoints — ej: `max-md:hidden` para
+   * mostrarlo solo desktop, `md:hidden` para mostrarlo solo mobile.
+   */
+  readonly overlayClassName?: string;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -42,13 +49,14 @@ export function Drawer({
       role="dialog"
       aria-modal="true"
       aria-label={title}
+      // display/justify van por Tailwind — así `overlayClassName` con `hidden`/
+      // `max-md:hidden` los puede sobrescribir sin pelearse contra inline.
+      className={`flex justify-end${overlayClassName ? ` ${overlayClassName}` : ""}`}
       style={{
         position: "fixed",
         inset: 0,
         background: "rgba(0,0,0,.5)",
         zIndex: 2000,
-        display: "flex",
-        justifyContent: "flex-end",
       }}
     >
       <div

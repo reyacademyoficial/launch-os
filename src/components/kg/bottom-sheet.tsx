@@ -42,14 +42,15 @@ export function KgBottomSheet({
       role="dialog"
       aria-modal="true"
       aria-label={ariaLabel}
-      className="md:hidden"
+      // display/alignItems por className — un `display: flex` inline pisaría
+      // a `md:hidden` (inline > class en especificidad) y el sheet quedaría
+      // visible en desktop cuando conviva con otro overlay.
+      className="md:hidden flex items-end"
       style={{
         position: "fixed",
         inset: 0,
         background: "rgba(0,0,0,.55)",
         zIndex: 2000,
-        display: "flex",
-        alignItems: "flex-end",
       }}
     >
       <div

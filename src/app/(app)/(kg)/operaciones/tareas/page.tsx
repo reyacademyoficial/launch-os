@@ -356,7 +356,13 @@ export default async function TareasPage({
         ]}
       />
 
-      <KgPageFilters>
+      <KgPageFilters
+        activeCount={
+          (statusFilter !== "abiertas" ? 1 : 0) +
+          (priorityFilter != null ? 1 : 0) +
+          (projectIdFilter != null ? 1 : 0)
+        }
+      >
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {canSeeAll && (
             <KgParamPills

@@ -237,7 +237,12 @@ export default async function ProyectosInternosPage({
         ]}
       />
 
-      <KgPageFilters>
+      <KgPageFilters
+        activeCount={
+          (statusFilter !== "activos" ? 1 : 0) +
+          (ownerIdFilter != null ? 1 : 0)
+        }
+      >
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
           <KgParamPills
             ariaLabel="Filtrar por estado"

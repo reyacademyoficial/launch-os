@@ -330,7 +330,7 @@ export default async function EstudiantesPage({
         ]}
       />
 
-      <KgPageFilters>
+      <KgPageFilters activeCount={show !== "active" ? 1 : 0}>
         <KgParamPills
           ariaLabel="Filtrar por estado"
           options={SHOW_OPTIONS.map((o) => ({

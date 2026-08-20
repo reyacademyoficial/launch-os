@@ -173,7 +173,12 @@ export default async function RenovacionesPage({
         ]}
       />
 
-      <KgPageFilters>
+      <KgPageFilters
+        activeCount={
+          (statusFilter !== "pipeline" ? 1 : 0) +
+          (clientIdFilter != null ? 1 : 0)
+        }
+      >
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <KgParamPills
             ariaLabel="Filtrar por estado"

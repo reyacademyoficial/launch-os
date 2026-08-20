@@ -375,7 +375,14 @@ export default async function GastosPage({
         ]}
       />
 
-      <KgPageFilters>
+      <KgPageFilters
+        activeCount={
+          (paidParam !== "todos" ? 1 : 0) +
+          (rangeParam !== "todo" || (period?.fromYmd && period?.toYmd)
+            ? 1
+            : 0)
+        }
+      >
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <KgParamPills
             ariaLabel="Filtrar por estado de pago"

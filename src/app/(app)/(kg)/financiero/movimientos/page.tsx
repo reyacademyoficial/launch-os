@@ -305,7 +305,15 @@ export default async function MovimientosPage({
         ]}
       />
 
-      <KgPageFilters>
+      <KgPageFilters
+        activeCount={
+          (kindParam !== "todos" ? 1 : 0) +
+          (concilParam !== "todos" ? 1 : 0) +
+          (rangeParam !== "todo" || (period?.fromYmd && period?.toYmd)
+            ? 1
+            : 0)
+        }
+      >
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <KgParamPills
             ariaLabel="Filtrar por tipo"

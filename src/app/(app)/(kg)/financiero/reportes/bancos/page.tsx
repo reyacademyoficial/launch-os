@@ -215,7 +215,11 @@ export default async function ReporteBancosPage({
       />
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <KgPageFilters>
+        <KgPageFilters
+          activeCount={
+            rangeParam !== "todo" || (period?.fromYmd && period?.toYmd) ? 1 : 0
+          }
+        >
           <RangePills
             presets={RANGE_PRESETS}
             activePreset={isCustom ? null : rangeParam === "custom" ? null : rangeParam}

@@ -179,7 +179,7 @@ export function LiquidacionesDashboard({
           justifyContent: "space-between",
         }}
       >
-        <KgPageFilters>
+        <KgPageFilters activeCount={filter !== "todos" ? 1 : 0}>
           <FilterPills current={filter} onChange={setFilter} rows={rows} />
         </KgPageFilters>
         <span className="hidden md:contents">

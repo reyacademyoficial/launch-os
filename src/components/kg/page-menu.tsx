@@ -11,30 +11,40 @@ import {
 } from "react";
 
 import { KgBottomSheet } from "./bottom-sheet";
+import { Drawer } from "./drawer";
 
 /**
- * KG · Filtros mobile.
+ * KG · Filtros de página (mobile bottom-sheet + desktop lateral drawer).
  *
- * En mobile los filtros de cada página (PeriodPicker, pills de estado, etc.)
- * no caben cómodamente en pantalla. Cada bloque de filtros de la página se
- * envuelve con `<KgPageFilters>` — en desktop se renderiza inline (via
- * `md:contents`), en mobile queda oculto de la vista principal y aparece en
- * un bottom-sheet que se dispara desde el botón "Filtros" de la topbar.
+ * Los filtros de cada página (PeriodPicker, pills de estado, etc.) NO se
+ * renderizan inline. Se registran vía `<KgPageFilters>` en un contexto global
+ * y aparecen únicamente cuando el usuario abre el sheet/drawer desde el botón
+ * "Filtros" en el ContextBar.
  *
- * Multi-registro: una página puede tener varios bloques de filtros en zonas
- * distintas (ej. bancos tiene pills de estado arriba + range pills abajo).
- * Cada `<KgPageFilters>` obtiene su propio `id` (via `useId`) y el sheet
- * apila todos los bloques en el orden en que se registraron.
+ * Motivo: liberar espacio vertical del layout para que la tabla se vea
+ * completa sin scroll de página.
  *
- * Split de contexts (actions/state) para que las páginas que solo LLAMAN a los
- * setters no re-rendericen cuando el sheet abre/cierra. El sheet y el botón
- * consumen `usePageMenuState`; las páginas usan `usePageMenuActions`, cuyo
- * valor es estable (memoizado con deps vacías).
+ * BREAKPOINTS
+ *   - Mobile (<md): bottom-sheet — desliza desde abajo, 85dvh máx.
+ *   - Desktop (≥md): lateral drawer derecho, 400px de ancho.
+ *   Los dos coexisten en el árbol; Tailwind los hidea según viewport.
+ *
+ * Multi-registro: una página puede tener varios bloques de filtros. Cada
+ * `<KgPageFilters>` obtiene su `id` (via `useId`) y aporta al `activeCount`
+ * total que la button badge muestra.
+ *
+ * Split de contexts (actions/state) para que las páginas que solo LLAMAN a
+ * los setters no re-rendericen cuando el sheet abre/cierra.
  */
 
 export interface FilterGroup {
   readonly id: string;
   readonly node: ReactNode;
+  /**
+   * Cuántos filtros DEL GRUPO están activos (no en su valor default). Sumado
+   * de todos los grupos alimenta el badge del botón "Filtros".
+   */
+  readonly activeCount: number;
 }
 
 export interface PageMenuState {
@@ -46,7 +56,11 @@ export interface PageMenuActions {
   readonly openSheet: () => void;
   readonly closeSheet: () => void;
   /** `null` desregistra el grupo. */
-  readonly setFilterGroup: (id: string, node: ReactNode | null) => void;
+  readonly setFilterGroup: (
+    id: string,
+    node: ReactNode | null,
+    activeCount: number,
+  ) => void;
 }
 
 const StateCtx = createContext<PageMenuState | null>(null);
@@ -60,10 +74,10 @@ export function PageMenuProvider({ children }: { readonly children: ReactNode })
     () => ({
       openSheet: () => setOpen(true),
       closeSheet: () => setOpen(false),
-      setFilterGroup: (id, node) => {
+      setFilterGroup: (id, node, activeCount) => {
         setFilterGroupsState((prev) => {
           const rest = prev.filter((g) => g.id !== id);
-          return node == null ? rest : [...rest, { id, node }];
+          return node == null ? rest : [...rest, { id, node, activeCount }];
         });
       },
     }),
@@ -100,58 +114,96 @@ export function usePageMenuState(): PageMenuState {
  * Registra un nodo de filtros de la página actual bajo un `id` propio. Se
  * limpia al desmontar. Podés llamarla varias veces por página (cada llamada
  * con su propio `useId`) — todos los grupos aparecen apilados en el sheet.
+ *
+ * `activeCount` = cuántos filtros del grupo tienen valor distinto al default.
+ * Alimenta el badge del botón "Filtros".
  */
-export function useRegisterPageFilters(node: ReactNode | null): void {
+export function useRegisterPageFilters(
+  node: ReactNode | null,
+  activeCount: number = 0,
+): void {
   const { setFilterGroup } = usePageMenuActions();
   const id = useId();
   useEffect(() => {
-    setFilterGroup(id, node);
-    return () => setFilterGroup(id, null);
-  }, [id, node, setFilterGroup]);
+    setFilterGroup(id, node, activeCount);
+    return () => setFilterGroup(id, null, 0);
+  }, [id, node, activeCount, setFilterGroup]);
 }
 
 /**
- * Envuelve un bloque de filtros de página: en desktop renderiza inline
- * (via `md:contents`), en mobile lo esconde de la vista principal y lo
- * registra como grupo en el bottom-sheet. Un solo wrapper resuelve las dos
- * mitades del patrón — la página no necesita saber nada del sheet.
+ * Envuelve un bloque de filtros de página. NO se renderiza inline (ni mobile
+ * ni desktop) — el bloque se registra en el sheet/drawer que se dispara
+ * desde el botón "Filtros" del ContextBar.
+ *
+ * `activeCount` = cuántos filtros del bloque tienen valor no-default (para
+ * el badge del botón).
  *
  * Uso típico:
  *
- *   <KgPageFilters>
+ *   <KgPageFilters activeCount={statusActive + priorityActive}>
  *     <KgParamPills ... />
  *     <RangePills ... />
  *   </KgPageFilters>
  */
-export function KgPageFilters({ children }: { readonly children: ReactNode }) {
-  useRegisterPageFilters(children);
-  return <div className="hidden md:contents">{children}</div>;
+export function KgPageFilters({
+  children,
+  activeCount = 0,
+}: {
+  readonly children: ReactNode;
+  readonly activeCount?: number;
+}) {
+  useRegisterPageFilters(children, activeCount);
+  return null;
 }
 
 /**
- * Sheet visible mobile-only. Se dispara desde el botón "Filtros" de la
- * `KgTopbar` (que solo aparece cuando hay filtros registrados). El módulo
- * nav vive fuera (carrusel horizontal en `KgModuleNav`), no dentro del sheet.
+ * Overlay de filtros — se dispara desde el botón "Filtros" del ContextBar.
+ * En mobile es un bottom-sheet (KgBottomSheet ya trae `md:hidden`). En
+ * desktop es un Drawer lateral derecho (con `overlayClassName="max-md:hidden"`
+ * para que no aparezca en mobile).
  */
 export function PageMenuSheet() {
   const state = usePageMenuState();
   const actions = usePageMenuActions();
 
+  const body =
+    state.filterGroups.length === 0 ? (
+      <div style={{ color: "var(--kg-text-3)" }}>Sin filtros</div>
+    ) : (
+      state.filterGroups.map((g) => (
+        <div
+          key={g.id}
+          style={{ display: "flex", flexDirection: "column", gap: 10 }}
+        >
+          {g.node}
+        </div>
+      ))
+    );
+
   return (
-    <KgBottomSheet
-      open={state.open}
-      onClose={actions.closeSheet}
-      ariaLabel="Filtros de la página"
-    >
-      {state.filterGroups.length === 0 ? (
-        <div style={{ color: "var(--kg-text-3)" }}>Sin filtros</div>
-      ) : (
-        state.filterGroups.map((g) => (
-          <div key={g.id} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {g.node}
-          </div>
-        ))
-      )}
-    </KgBottomSheet>
+    <>
+      {/* Mobile — bottom sheet. KgBottomSheet trae `md:hidden` propio. */}
+      <KgBottomSheet
+        open={state.open}
+        onClose={actions.closeSheet}
+        ariaLabel="Filtros de la página"
+      >
+        {body}
+      </KgBottomSheet>
+
+      {/* Desktop — lateral drawer derecho. `max-md:hidden` esconde en mobile. */}
+      <Drawer
+        open={state.open}
+        onClose={actions.closeSheet}
+        title="Filtros"
+        subtitle="Se aplican al instante al elegir"
+        width={400}
+        overlayClassName="max-md:hidden"
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          {body}
+        </div>
+      </Drawer>
+    </>
   );
 }

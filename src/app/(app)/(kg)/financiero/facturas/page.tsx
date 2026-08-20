@@ -511,7 +511,14 @@ export default async function FacturasPage({
         ]}
       />
 
-      <KgPageFilters>
+      <KgPageFilters
+        activeCount={
+          (statusParam !== "todos" ? 1 : 0) +
+          (rangeParam !== "todo" || (period?.fromYmd && period?.toYmd)
+            ? 1
+            : 0)
+        }
+      >
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <KgParamPills
             ariaLabel="Filtrar por estado"

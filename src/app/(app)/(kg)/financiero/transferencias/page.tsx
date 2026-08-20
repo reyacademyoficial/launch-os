@@ -475,7 +475,12 @@ export default async function TransferenciasPage({
           justifyContent: "space-between",
         }}
       >
-        <KgPageFilters>
+        <KgPageFilters
+          activeCount={
+            (directionParam !== "todos" ? 1 : 0) +
+            (rangeParam !== "todo" ? 1 : 0)
+          }
+        >
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <KgParamPills
               ariaLabel="Filtrar por dirección"
