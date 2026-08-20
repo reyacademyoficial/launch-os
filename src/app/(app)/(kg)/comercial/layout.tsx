@@ -25,7 +25,8 @@ export default async function ComercialLayout({
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    // h-full + min-h-0 habilita flex-fill de tablas en las pages hijas.
+    <div className="flex h-full min-h-0 flex-col gap-4">
       <KgModuleNav items={tabs} />
       {children}
     </div>

@@ -70,8 +70,20 @@ export interface DataTableProps<Row> {
    * Cuando se seta, el <tbody> scrollea internamente con este max-height
    * (ej. `"calc(100vh - 340px)"` o `"60vh"`) y el <thead> queda sticky. Sin
    * esto la tabla crece a lo alto y el scroll queda a nivel de página.
+   *
+   * DEPRECATED en favor de `fillHeight` — offset fijo no se adapta a
+   * viewports distintos. Se mantiene para pages que aún no migraron.
    */
   readonly maxBodyHeight?: string;
+  /**
+   * true = el body scrollea internamente y crece a llenar el espacio
+   * disponible en su parent flex (`flex-1 min-h-0`). El footer queda
+   * pegado al fondo. Requiere que el Panel padre use `fillHeight` y que
+   * los ancestros propaguen la altura con `flex flex-col h-full min-h-0`.
+   *
+   * Mutuamente exclusivo con `maxBodyHeight` — si ambos vienen, gana este.
+   */
+  readonly fillHeight?: boolean;
   /**
    * Slot opcional en la MISMA fila del footer "X de Y registros" — para
    * inyectar el paginador y evitar que ocupe una franja aparte.
@@ -87,6 +99,7 @@ export function KgDataTable<Row>({
   emptyTitle,
   emptyHint,
   maxBodyHeight,
+  fillHeight = false,
   footerActions,
 }: DataTableProps<Row>) {
   if (rows.length === 0) {
@@ -99,21 +112,31 @@ export function KgDataTable<Row>({
       ? `${fCount(total)} ${total === 1 ? "registro" : "registros"}`
       : `${fCount(rows.length)} de ${fCount(total)} registros`;
 
-  const scrollStyle = maxBodyHeight
-    ? { overflow: "auto" as const, maxHeight: maxBodyHeight }
-    : { overflowX: "auto" as const };
+  // fillHeight gana. maxBodyHeight sigue existiendo para pages no migradas.
+  const scrollStyle: React.CSSProperties = fillHeight
+    ? { overflow: "auto", flex: 1, minHeight: 0 }
+    : maxBodyHeight
+      ? { overflow: "auto", maxHeight: maxBodyHeight }
+      : { overflowX: "auto" };
 
-  const stickyThStyle: React.CSSProperties | undefined = maxBodyHeight
-    ? {
-        position: "sticky",
-        top: 0,
-        zIndex: 1,
-        background: "var(--kg-surface-1-solid)",
-      }
-    : undefined;
+  const stickyThStyle: React.CSSProperties | undefined =
+    fillHeight || maxBodyHeight
+      ? {
+          position: "sticky",
+          top: 0,
+          zIndex: 1,
+          background: "var(--kg-surface-1-solid)",
+        }
+      : undefined;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        ...(fillHeight ? { flex: 1, minHeight: 0 } : {}),
+      }}
+    >
       <div style={scrollStyle}>
         <table
           style={{
@@ -187,6 +210,8 @@ export function KgDataTable<Row>({
           justifyContent: "space-between",
           alignItems: "center",
           gap: 12,
+          // No encogerse cuando el body flex-fill agarra todo el espacio.
+          flexShrink: 0,
         }}
       >
         <span>{showingRange}</span>

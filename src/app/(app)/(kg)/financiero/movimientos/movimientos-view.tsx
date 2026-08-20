@@ -337,7 +337,15 @@ export function MovimientosView({
     ) : null;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        // Propaga la altura del Panel (fillHeight) a la KgDataTable de abajo.
+        flex: 1,
+        minHeight: 0,
+      }}
+    >
       {selectionBar}
 
       <KgDataTable
@@ -347,7 +355,7 @@ export function MovimientosView({
         totalCount={totalCount}
         emptyTitle="No hay movimientos bancarios cargados"
         emptyHint="Los movimientos alimentan el KPI Flujo de caja del dashboard. Cobros de ventas NO se duplican acá — viven en payments; esta tabla es para ingresos/egresos manuales (gastos, retiros, transferencias, ajustes)."
-        maxBodyHeight="calc(100vh - 230px)"
+        fillHeight
         footerActions={footerActions}
       />
 

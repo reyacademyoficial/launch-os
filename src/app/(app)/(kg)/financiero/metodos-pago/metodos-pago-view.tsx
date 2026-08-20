@@ -99,7 +99,7 @@ export function MetodosPagoView({
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       <KgDataTable
         columns={columns}
         rows={rows}
@@ -107,7 +107,7 @@ export function MetodosPagoView({
         totalCount={totalCount}
         emptyTitle="No hay métodos de pago cargados"
         emptyHint="El catálogo es de Kingrow: cada método (transferencia, Stripe, Mercado Pago, efectivo…) baja a todos los proyectos. El banco elegido recibe los cobros que entran por ese método."
-        maxBodyHeight="calc(100vh - 230px)"
+        fillHeight
       />
 
       {editingRow && (

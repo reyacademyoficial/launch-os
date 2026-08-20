@@ -92,7 +92,7 @@ export function ActivosView({
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       <KgDataTable
         columns={columns}
         rows={rows}
@@ -100,7 +100,7 @@ export function ActivosView({
         totalCount={totalCount}
         emptyTitle="No hay activos registrados"
         emptyHint="Los activos alimentan la tarjeta Caja del dashboard (los tipo caja/banco) y el Patrimonio neto (la suma total). Sin activos cargados esos dos KPIs quedan vacíos."
-        maxBodyHeight="calc(100vh - 230px)"
+        fillHeight
       />
 
       {editingRow && (

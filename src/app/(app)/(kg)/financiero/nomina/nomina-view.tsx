@@ -108,7 +108,7 @@ export function NominaView({
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       <KgDataTable
         columns={columns}
         rows={rows}
@@ -116,7 +116,7 @@ export function NominaView({
         totalCount={totalCount}
         emptyTitle="No hay nómina cargada"
         emptyHint="Sin nómina cargada, el KPI Nómina del período queda en cero y el Burn mensual se subestima — el runway del dashboard sale inflado."
-        maxBodyHeight="calc(100vh - 230px)"
+        fillHeight
       />
 
       {linkingRow && (

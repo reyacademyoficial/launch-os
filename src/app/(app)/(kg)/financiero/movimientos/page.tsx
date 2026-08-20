@@ -288,7 +288,11 @@ export default async function MovimientosPage({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    // flex-fill layout: la div raíz llena el viewport (heredado del shell
+    // vía layout.tsx `h-full min-h-0 flex-col`). El Panel de la tabla
+    // toma `flex-1` para el resto del alto y el body flex-fill scrollea
+    // internamente sin `calc(100vh - Xpx)` fijos.
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconFin size={16} />}
         title="Movimientos bancarios"
@@ -344,6 +348,7 @@ export default async function MovimientosPage({
       <Panel
         title="Ingresos y egresos bancarios"
         pad={false}
+        fillHeight
         actions={
           <div style={{ display: "inline-flex", gap: 8 }}>
             <span className="hidden md:contents">

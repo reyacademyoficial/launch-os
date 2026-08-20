@@ -329,10 +329,8 @@ export function GastosView({
         totalCount={totalCount}
         emptyTitle="No hay gastos cargados"
         emptyHint="Sin gastos cargados, los KPIs Gastos operativos, Utilidad neta y Burn del dashboard financiero quedan en cero. Los movimientos bancarios de salida (pestaña Movimientos) NO alimentan estos KPIs — cargar el gasto acá es lo que los hace visibles."
-        // Igual criterio que Facturas: la tabla scrollea internamente y evita
-        // el scroll de página. Offset compensa ContextBar + filtros + header
-        // del Panel + footer/paginador embebido.
-        maxBodyHeight="calc(100vh - 230px)"
+        // flex-fill: la tabla toma el alto disponible del Panel padre.
+        fillHeight
         footerActions={footerActions}
       />
 

@@ -231,7 +231,7 @@ export function FacturasView({
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       <KgDataTable
         columns={columns}
         rows={rows}
@@ -239,10 +239,9 @@ export function FacturasView({
         totalCount={totalCount}
         emptyTitle={emptyTitle}
         emptyHint={emptyHint}
-        // Ajustada al viewport — la tabla scrollea internamente y evita
-        // scroll de página. El offset compensa ContextBar + filtros + header
-        // del Panel + footer/paginador embebido (~280px en total).
-        maxBodyHeight="calc(100vh - 230px)"
+        // flex-fill: la tabla toma el alto disponible del Panel padre y
+        // scrollea internamente sin offsets fijos.
+        fillHeight
         footerActions={footerActions}
       />
 

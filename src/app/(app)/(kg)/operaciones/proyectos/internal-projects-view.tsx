@@ -284,7 +284,12 @@ export function InternalProjectsView({
 
   return (
     <>
-      <Panel title="Proyectos internos" actions={headerActions} pad={false}>
+      <Panel
+        title="Proyectos internos"
+        actions={headerActions}
+        pad={false}
+        fillHeight
+      >
         {syncMessage && (
           <div
             style={{
@@ -299,12 +304,22 @@ export function InternalProjectsView({
               color: syncMessage.kind === "ok" ? "#00D084" : "#EF4444",
               fontSize: 11,
               lineHeight: 1.4,
+              flexShrink: 0,
             }}
           >
             {syncMessage.text}
           </div>
         )}
-        <div style={{ padding: syncMessage ? "12px 0 0" : 0 }}>
+        <div
+          style={{
+            padding: syncMessage ? "12px 0 0" : 0,
+            // Propaga altura del Panel (fillHeight) a la tabla.
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
           <KgDataTable
             columns={columns}
             rows={rows}
@@ -312,7 +327,7 @@ export function InternalProjectsView({
             totalCount={totalCount}
             emptyTitle="Sin proyectos que coincidan con el filtro"
             emptyHint="Cambiá el filtro o creá un proyecto nuevo."
-            maxBodyHeight="calc(100vh - 260px)"
+            fillHeight
           />
         </div>
       </Panel>

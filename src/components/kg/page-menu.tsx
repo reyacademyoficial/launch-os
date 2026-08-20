@@ -47,22 +47,9 @@ export interface FilterGroup {
   readonly activeCount: number;
 }
 
-/**
- * Tabs de módulo (Dashboard, Proyectos, Tareas, …). Se registran desde el
- * layout de cada módulo y se renderizan pegadas al Topbar — así el header
- * concentra "en qué módulo estoy" y "qué sección" sin ocupar una franja
- * separada. Ver KgModuleNav / KgTopbar.
- */
-export interface ModuleTabItem {
-  readonly href: string;
-  readonly label: string;
-}
-
 export interface PageMenuState {
   readonly open: boolean;
   readonly filterGroups: readonly FilterGroup[];
-  /** Tabs del módulo activo, o `null` si el layout no registró ninguna. */
-  readonly moduleTabs: readonly ModuleTabItem[] | null;
 }
 
 export interface PageMenuActions {
@@ -74,8 +61,6 @@ export interface PageMenuActions {
     node: ReactNode | null,
     activeCount: number,
   ) => void;
-  /** `null` desregistra las tabs del módulo. */
-  readonly setModuleTabs: (tabs: readonly ModuleTabItem[] | null) => void;
 }
 
 const StateCtx = createContext<PageMenuState | null>(null);
@@ -84,9 +69,6 @@ const ActionsCtx = createContext<PageMenuActions | null>(null);
 export function PageMenuProvider({ children }: { readonly children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [filterGroups, setFilterGroupsState] = useState<readonly FilterGroup[]>([]);
-  const [moduleTabs, setModuleTabsState] = useState<
-    readonly ModuleTabItem[] | null
-  >(null);
 
   const actions = useMemo<PageMenuActions>(
     () => ({
@@ -98,14 +80,13 @@ export function PageMenuProvider({ children }: { readonly children: ReactNode })
           return node == null ? rest : [...rest, { id, node, activeCount }];
         });
       },
-      setModuleTabs: (tabs) => setModuleTabsState(tabs),
     }),
     [],
   );
 
   const state = useMemo<PageMenuState>(
-    () => ({ open, filterGroups, moduleTabs }),
-    [open, filterGroups, moduleTabs],
+    () => ({ open, filterGroups }),
+    [open, filterGroups],
   );
 
   return (
@@ -173,21 +154,6 @@ export function KgPageFilters({
 }) {
   useRegisterPageFilters(children, activeCount);
   return null;
-}
-
-/**
- * Registra las tabs del módulo activo. Se limpia al desmontar (cambio de
- * módulo → layout viejo desmontar → tabs vuelven a null hasta que el
- * layout nuevo se monte y las registre).
- */
-export function useRegisterModuleTabs(
-  tabs: readonly ModuleTabItem[] | null,
-): void {
-  const { setModuleTabs } = usePageMenuActions();
-  useEffect(() => {
-    setModuleTabs(tabs);
-    return () => setModuleTabs(null);
-  }, [tabs, setModuleTabs]);
 }
 
 /**

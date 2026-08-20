@@ -46,7 +46,17 @@ export function KingrowShell({
               — el eje Y arriba se recortó a propósito.
             */}
             <main className="flex-1 overflow-y-auto px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-4 sm:px-6 md:px-8 md:pb-[calc(2rem+env(safe-area-inset-bottom))]">
-              <div className="mx-auto w-full max-w-[1360px]">{children}</div>
+              {/*
+                `flex h-full min-h-0 flex-col` habilita el pattern de
+                flex-fill para pages con tablas: ellas pueden hacer que su
+                Panel crezca hasta el fondo con `flex-1 min-h-0` sin usar
+                offsets `calc(100vh - Xpx)` fijos. Páginas que no lo usan
+                siguen renderizando normal (children shrink-wrap arriba,
+                espacio vacío abajo).
+              */}
+              <div className="mx-auto flex h-full min-h-0 w-full max-w-[1360px] flex-col">
+                {children}
+              </div>
             </main>
           </div>
           {/*

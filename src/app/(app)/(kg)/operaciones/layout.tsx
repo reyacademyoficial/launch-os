@@ -35,7 +35,9 @@ export default async function OperacionesLayout({
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    // h-full + min-h-0 permite a las pages con tablas (proyectos, etc.)
+    // aplicar `flex-1 min-h-0` a su Panel para flex-fill sin offsets fijos.
+    <div className="flex h-full min-h-0 flex-col gap-4">
       <KgModuleNav items={tabs} />
       {children}
     </div>

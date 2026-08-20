@@ -79,7 +79,7 @@ export function PasivosView({
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       <KgDataTable
         columns={columns}
         rows={rows}
@@ -87,7 +87,7 @@ export function PasivosView({
         totalCount={totalCount}
         emptyTitle="No hay pasivos registrados"
         emptyHint="Los pasivos vigentes (active=true AND settled_at IS NULL) restan del Patrimonio neto del dashboard. Sin pasivos cargados, el patrimonio se estima solo por activos + AP corriente."
-        maxBodyHeight="calc(100vh - 230px)"
+        fillHeight
       />
 
       {editingRow && (
