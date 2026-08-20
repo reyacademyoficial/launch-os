@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState, useTransition } from "react";
 
 import { KgDataTable, type Column } from "@/components/kg/data-table";
-import { StatusPill } from "@/components/kg/status-pill";
+import { Panel } from "@/components/kg/panel";
 
 import { syncAllEnabledNotionDatabases } from "../../configuracion/notion/actions";
 
@@ -17,9 +17,16 @@ import {
 // ═══════════════════════════════════════════════════════════════════════════
 // Vista de internal_projects con drawer create/edit y row actions.
 //
+// UI copiada del módulo Financiero (facturas / gastos):
+//   - Sticky header + scroll interno vía `maxBodyHeight`.
+//   - Pills status/priority con dot + color de fondo tenue.
+//   - Ellipsis en nombre + descripción con tooltip completo.
+//   - Fecha compacta dd/mm/aaaa.
+//   - Mini barra de progreso al lado del %.
+//   - Botones row en ghostBtn style.
+//
 // El delete vive dentro del drawer edit (patrón de Clientes) — es acción
-// destructiva y necesita el contexto del form + confirm. La fila muestra
-// solo Editar; el archivado se hace desde el drawer cambiando status.
+// destructiva y necesita el contexto del form + confirm.
 // ═══════════════════════════════════════════════════════════════════════════
 
 type Status =
@@ -51,32 +58,29 @@ export interface InternalProjectRowData {
   readonly notionSyncedAt: string | null;
 }
 
-const STATUS_LABEL: Record<Status, string> = {
-  sin_empezar: "Sin empezar",
-  en_proceso: "En proceso",
-  bloqueado: "Bloqueado",
-  alerta_maxima: "Alerta máxima",
-  listo: "Listo",
+// Especificación de tono para la pill dot. Cada tono = { bg tenue, fg
+// texto, dot sólido }. Mismo esquema que finance/facturas.
+type PillTone = "neutral" | "accent" | "warning" | "negative" | "positive";
+const PILL_TONE: Record<PillTone, { bg: string; fg: string; dot: string }> = {
+  neutral: { bg: "rgba(138,138,153,0.15)", fg: "var(--kg-text-2)", dot: "#8A8A99" },
+  accent: { bg: "rgba(64,120,255,0.15)", fg: "#4078FF", dot: "#4078FF" },
+  warning: { bg: "rgba(255,184,0,0.15)", fg: "#FFB800", dot: "#FFB800" },
+  negative: { bg: "rgba(239,68,68,0.15)", fg: "#EF4444", dot: "#EF4444" },
+  positive: { bg: "rgba(0,208,132,0.15)", fg: "#00D084", dot: "#00D084" },
 };
 
-const STATUS_TONE: Record<Status, string> = {
-  sin_empezar: "var(--kg-neutral-500)",
-  en_proceso: "var(--kg-accent-500)",
-  bloqueado: "var(--kg-warning-500)",
-  alerta_maxima: "var(--kg-negative-500)",
-  listo: "var(--kg-positive-500)",
+const STATUS_SPEC: Record<Status, { label: string; tone: PillTone }> = {
+  sin_empezar: { label: "Sin empezar", tone: "neutral" },
+  en_proceso: { label: "En proceso", tone: "accent" },
+  bloqueado: { label: "Bloqueado", tone: "warning" },
+  alerta_maxima: { label: "Alerta máxima", tone: "negative" },
+  listo: { label: "Listo", tone: "positive" },
 };
 
-const PRIORITY_LABEL: Record<Priority, string> = {
-  alta: "Alta",
-  media: "Media",
-  baja: "Baja",
-};
-
-const PRIORITY_TONE: Record<Priority, string> = {
-  alta: "var(--kg-warning-500)",
-  media: "var(--kg-neutral-500)",
-  baja: "var(--kg-neutral-500)",
+const PRIORITY_SPEC: Record<Priority, { label: string; tone: PillTone }> = {
+  alta: { label: "Alta", tone: "warning" },
+  media: { label: "Media", tone: "neutral" },
+  baja: { label: "Baja", tone: "neutral" },
 };
 
 export function InternalProjectsView({
@@ -152,11 +156,13 @@ export function InternalProjectsView({
             <Link
               href={`/operaciones/proyectos/${r.id}`}
               className="kg-focus"
+              title={r.name}
               style={{
                 color: "var(--kg-text-1)",
                 textDecoration: "none",
                 fontWeight: 600,
                 fontSize: 13,
+                ...ellipsis,
               }}
             >
               {r.name}
@@ -166,13 +172,8 @@ export function InternalProjectsView({
           {r.description && (
             <div
               className="kg-t7"
-              style={{
-                color: "var(--kg-text-3)",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                maxWidth: 320,
-              }}
+              style={{ color: "var(--kg-text-3)", ...ellipsis }}
+              title={r.description}
             >
               {r.description}
             </div>
@@ -185,9 +186,14 @@ export function InternalProjectsView({
       label: "Responsables",
       render: (r) =>
         r.ownerNames.length === 0 ? (
-          <span style={{ color: "var(--kg-text-3)" }}>Sin dueños</span>
+          <span style={{ color: "var(--kg-text-3)", fontStyle: "italic" }}>
+            sin dueños
+          </span>
         ) : (
-          <span title={r.ownerNames.join(", ")}>
+          <span
+            title={r.ownerNames.join(", ")}
+            style={{ ...ellipsis, maxWidth: 180 }}
+          >
             {r.ownerNames.length <= 2
               ? r.ownerNames.join(", ")
               : `${r.ownerNames.slice(0, 2).join(", ")} +${r.ownerNames.length - 2}`}
@@ -198,16 +204,19 @@ export function InternalProjectsView({
       key: "status",
       label: "Estado",
       render: (r) => (
-        <StatusPill text={STATUS_LABEL[r.status]} tone={STATUS_TONE[r.status]} />
+        <DotPill
+          label={STATUS_SPEC[r.status].label}
+          tone={STATUS_SPEC[r.status].tone}
+        />
       ),
     },
     {
       key: "priority",
       label: "Prioridad",
       render: (r) => (
-        <StatusPill
-          text={PRIORITY_LABEL[r.priority]}
-          tone={PRIORITY_TONE[r.priority]}
+        <DotPill
+          label={PRIORITY_SPEC[r.priority].label}
+          tone={PRIORITY_SPEC[r.priority].tone}
         />
       ),
     },
@@ -215,14 +224,11 @@ export function InternalProjectsView({
       key: "progress",
       label: "Progreso",
       align: "right",
-      numeric: true,
       render: (r) =>
         r.progressPct == null ? (
           <span style={{ color: "var(--kg-text-3)" }}>—</span>
         ) : (
-          <span style={{ fontVariantNumeric: "tabular-nums" }}>
-            {r.progressPct}%
-          </span>
+          <ProgressCell pct={r.progressPct} openCount={r.openTasksCount} />
         ),
     },
     {
@@ -232,7 +238,7 @@ export function InternalProjectsView({
         r.dueOn == null ? (
           <span style={{ color: "var(--kg-text-3)" }}>—</span>
         ) : (
-          formatDate(r.dueOn)
+          fmtDate(r.dueOn)
         ),
     },
     {
@@ -244,7 +250,8 @@ export function InternalProjectsView({
           type="button"
           onClick={() => setEditingId(r.id)}
           className="kg-focus"
-          style={rowBtn}
+          style={ghostBtn}
+          title="Editar proyecto"
         >
           Editar
         </button>
@@ -252,21 +259,37 @@ export function InternalProjectsView({
     },
   ];
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 12,
-          flexWrap: "wrap",
-        }}
+  const headerActions = (
+    <div style={{ display: "flex", gap: 8 }}>
+      <button
+        type="button"
+        onClick={handleSyncNotion}
+        disabled={syncing}
+        className="kg-focus"
+        style={secondaryBtn}
+        title="Trae todos los pages de todas las databases habilitadas de Notion"
       >
-        {syncMessage ? (
+        {syncing ? "Sincronizando Notion…" : "Sincronizar Notion"}
+      </button>
+      <button
+        type="button"
+        onClick={() => setCreating(true)}
+        className="kg-focus"
+        style={primaryBtn}
+      >
+        + Nuevo proyecto
+      </button>
+    </div>
+  );
+
+  return (
+    <>
+      <Panel title="Proyectos internos" actions={headerActions} pad={false}>
+        {syncMessage && (
           <div
             style={{
-              padding: "6px 12px",
+              margin: "12px 20px 0",
+              padding: "8px 12px",
               borderRadius: "var(--kg-r-8)",
               background:
                 syncMessage.kind === "ok"
@@ -276,45 +299,23 @@ export function InternalProjectsView({
               color: syncMessage.kind === "ok" ? "#00D084" : "#EF4444",
               fontSize: 11,
               lineHeight: 1.4,
-              flex: 1,
-              minWidth: 200,
             }}
           >
             {syncMessage.text}
           </div>
-        ) : (
-          <div />
         )}
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            type="button"
-            onClick={handleSyncNotion}
-            disabled={syncing}
-            className="kg-focus"
-            style={secondaryBtn}
-            title="Trae todos los pages de todas las databases habilitadas de Notion"
-          >
-            {syncing ? "Sincronizando Notion…" : "Sincronizar Notion"}
-          </button>
-          <button
-            type="button"
-            onClick={() => setCreating(true)}
-            className="kg-focus"
-            style={primaryBtn}
-          >
-            + Nuevo proyecto
-          </button>
+        <div style={{ padding: syncMessage ? "12px 0 0" : 0 }}>
+          <KgDataTable
+            columns={columns}
+            rows={rows}
+            rowKey={(r) => r.id}
+            totalCount={totalCount}
+            emptyTitle="Sin proyectos que coincidan con el filtro"
+            emptyHint="Cambiá el filtro o creá un proyecto nuevo."
+            maxBodyHeight="calc(100vh - 320px)"
+          />
         </div>
-      </div>
-
-      <KgDataTable
-        columns={columns}
-        rows={rows}
-        rowKey={(r) => r.id}
-        totalCount={totalCount}
-        emptyTitle="Sin proyectos que coincidan con el filtro"
-        emptyHint="Cambiá el filtro o creá un proyecto nuevo."
-      />
+      </Panel>
 
       <InternalProjectFormDrawer
         mode="create"
@@ -330,7 +331,111 @@ export function InternalProjectsView({
         owners={owners}
         initial={editingInitial}
       />
-    </div>
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Sub-componentes de presentación
+// ═══════════════════════════════════════════════════════════════════════════
+
+function DotPill({
+  label,
+  tone,
+}: {
+  readonly label: string;
+  readonly tone: PillTone;
+}) {
+  const spec = PILL_TONE[tone];
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "3px 10px",
+        borderRadius: 999,
+        background: spec.bg,
+        color: spec.fg,
+        fontSize: 11,
+        fontWeight: 700,
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: 999,
+          background: spec.dot,
+          display: "inline-block",
+        }}
+      />
+      {label}
+    </span>
+  );
+}
+
+function ProgressCell({
+  pct,
+  openCount,
+}: {
+  readonly pct: number;
+  readonly openCount: number;
+}) {
+  // Verde arriba de 66, ámbar entre 33 y 66, gris debajo. Neutro para 100
+  // (proyecto casi cerrado) para no gritar el color pleno.
+  const barColor =
+    pct >= 100
+      ? "var(--kg-positive-500)"
+      : pct >= 66
+        ? "#00D084"
+        : pct >= 33
+          ? "#FFB800"
+          : "var(--kg-text-3)";
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+        justifyContent: "flex-end",
+      }}
+      title={`${openCount} abiertas`}
+    >
+      <span
+        style={{
+          width: 60,
+          height: 6,
+          borderRadius: 999,
+          background: "rgba(138,138,153,0.15)",
+          overflow: "hidden",
+          display: "inline-block",
+        }}
+        aria-hidden
+      >
+        <span
+          style={{
+            display: "block",
+            height: "100%",
+            width: `${Math.min(100, Math.max(0, pct))}%`,
+            background: barColor,
+          }}
+        />
+      </span>
+      <span
+        style={{
+          fontVariantNumeric: "tabular-nums",
+          color: "var(--kg-text-2)",
+          fontSize: 11,
+          fontWeight: 600,
+          minWidth: 32,
+          textAlign: "right",
+        }}
+      >
+        {pct}%
+      </span>
+    </span>
   );
 }
 
@@ -356,6 +461,7 @@ function NotionBadge({ pageId }: { readonly pageId: string }) {
         display: "inline-flex",
         alignItems: "center",
         gap: 4,
+        flexShrink: 0,
       }}
     >
       <span
@@ -373,17 +479,21 @@ function NotionBadge({ pageId }: { readonly pageId: string }) {
   );
 }
 
-function formatDate(ymd: string): string {
-  try {
-    return new Date(`${ymd}T12:00:00Z`).toLocaleDateString("es-AR", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
-  } catch {
-    return ymd.slice(0, 10);
-  }
+// Fecha compacta dd/mm/aaaa — mismo formato que finance (facturas/gastos).
+function fmtDate(iso: string): string {
+  const s = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T12:00:00Z` : iso;
+  const d = new Date(s);
+  if (!Number.isFinite(d.getTime())) return iso;
+  return d.toLocaleDateString("es-AR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Estilos compartidos
+// ═══════════════════════════════════════════════════════════════════════════
 
 const primaryBtn: React.CSSProperties = {
   padding: "8px 16px",
@@ -408,13 +518,22 @@ const secondaryBtn: React.CSSProperties = {
   whiteSpace: "nowrap",
 };
 
-const rowBtn: React.CSSProperties = {
+const ghostBtn: React.CSSProperties = {
   padding: "4px 10px",
   borderRadius: 999,
   background: "transparent",
   border: "1px solid var(--kg-border-subtle)",
   color: "var(--kg-text-2)",
   fontSize: 11,
-  fontWeight: 600,
+  fontWeight: 700,
   cursor: "pointer",
+};
+
+const ellipsis: React.CSSProperties = {
+  display: "inline-block",
+  maxWidth: 280,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  verticalAlign: "middle",
 };

@@ -443,7 +443,8 @@ function Field({
   children,
 }: {
   readonly label: string;
-  readonly htmlFor: string;
+  /** Opcional — algunos campos (multi-select checkboxes) no tienen un htmlFor único. */
+  readonly htmlFor?: string;
   readonly required?: boolean;
   readonly children: React.ReactNode;
 }) {

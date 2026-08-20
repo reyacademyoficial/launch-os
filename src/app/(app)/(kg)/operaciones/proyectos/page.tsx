@@ -4,7 +4,6 @@ import { ContextBar } from "@/components/kg/context-bar";
 import { IconOps } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
-import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
 import { createClient } from "@/lib/supabase/server";
 
@@ -13,6 +12,7 @@ import {
   InternalProjectsView,
   type InternalProjectRowData,
 } from "./internal-projects-view";
+import { OwnerFilterSelect } from "./owner-filter-select";
 
 export const metadata: Metadata = { title: "Proyectos internos · Operaciones" };
 
@@ -23,6 +23,8 @@ export const metadata: Metadata = { title: "Proyectos internos · Operaciones" }
 //   ?status=activos|cerrados|todos    default activos
 //                                      (activos = todo lo que no es 'listo';
 //                                       cerrados = 'listo')
+//   ?ownerId=<uuid>                   opcional — filtra a los proyectos donde
+//                                     la persona figura en internal_project_owners.
 // ═══════════════════════════════════════════════════════════════════════════
 
 type Status =
@@ -88,6 +90,7 @@ export default async function ProyectosInternosPage({
 }) {
   const sp = await searchParams;
   const statusFilter = parseStatus(sp.status);
+  const ownerIdFilter = parseUuidParam(sp.ownerId);
 
   const supabase = await createClient();
 
@@ -162,8 +165,12 @@ export default async function ProyectosInternosPage({
   }
 
   const filtered = allProjects.filter((p) => {
-    if (statusFilter === "activos") return OPEN_STATUSES.has(p.status);
-    if (statusFilter === "cerrados") return !OPEN_STATUSES.has(p.status);
+    if (statusFilter === "activos" && !OPEN_STATUSES.has(p.status)) return false;
+    if (statusFilter === "cerrados" && OPEN_STATUSES.has(p.status)) return false;
+    if (ownerIdFilter != null) {
+      const projectOwners = ownersByProject.get(p.id) ?? [];
+      if (!projectOwners.includes(ownerIdFilter)) return false;
+    }
     return true;
   });
 
@@ -203,9 +210,16 @@ export default async function ProyectosInternosPage({
     (p) => p.status === "sin_empezar",
   ).length;
 
-  function buildHref(nextStatus: StatusFilter): string {
+  function buildHref(overrides: {
+    status?: StatusFilter;
+    ownerId?: string | null;
+  }): string {
+    const nextStatus = overrides.status ?? statusFilter;
+    const nextOwnerId =
+      overrides.ownerId !== undefined ? overrides.ownerId : ownerIdFilter;
     const params = new URLSearchParams();
     if (nextStatus !== "activos") params.set("status", nextStatus);
+    if (nextOwnerId != null) params.set("ownerId", nextOwnerId);
     const qs = params.toString();
     return qs ? `/operaciones/proyectos?${qs}` : "/operaciones/proyectos";
   }
@@ -224,23 +238,27 @@ export default async function ProyectosInternosPage({
       />
 
       <KgPageFilters>
-        <KgParamPills
-          ariaLabel="Filtrar por estado"
-          options={STATUS_FILTER_OPTIONS.map((o) => ({
-            label: o.label,
-            href: buildHref(o.value),
-            active: statusFilter === o.value,
-          }))}
-        />
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <KgParamPills
+            ariaLabel="Filtrar por estado"
+            options={STATUS_FILTER_OPTIONS.map((o) => ({
+              label: o.label,
+              href: buildHref({ status: o.value }),
+              active: statusFilter === o.value,
+            }))}
+          />
+          <OwnerFilterSelect
+            people={owners}
+            currentId={ownerIdFilter}
+          />
+        </div>
       </KgPageFilters>
 
-      <Panel title="Proyectos internos">
-        <InternalProjectsView
-          rows={rows}
-          totalCount={rows.length}
-          owners={owners}
-        />
-      </Panel>
+      <InternalProjectsView
+        rows={rows}
+        totalCount={rows.length}
+        owners={owners}
+      />
     </div>
   );
 }
@@ -249,4 +267,9 @@ function parseStatus(v: string | string[] | undefined): StatusFilter {
   if (typeof v !== "string") return "activos";
   if (v === "cerrados" || v === "todos") return v;
   return "activos";
+}
+
+function parseUuidParam(v: string | string[] | undefined): string | null {
+  if (typeof v !== "string" || v.length === 0) return null;
+  return v;
 }

@@ -114,7 +114,7 @@ export function TaskFormDrawer({
         assignees={assignees}
         initial={initial}
         presetProjectId={presetProjectId}
-        presetAssigneeId={presetAssigneeId}
+        presetAssigneeIds={presetAssigneeIds}
         onClose={onClose}
       />
     </Drawer>
@@ -135,7 +135,7 @@ function TaskFormBody({
   readonly assignees: readonly AssigneeOptionForTask[];
   readonly initial?: TaskInitial;
   readonly presetProjectId?: string | null;
-  readonly presetAssigneeId?: string | null;
+  readonly presetAssigneeIds?: readonly string[];
   readonly onClose: () => void;
 }) {
   const isEdit = mode === "edit" && initial != null;
@@ -585,7 +585,8 @@ function Field({
   children,
 }: {
   readonly label: string;
-  readonly htmlFor: string;
+  /** Opcional — algunos campos (checkbox group / multi-select) no tienen un htmlFor único. */
+  readonly htmlFor?: string;
   readonly required?: boolean;
   readonly children: React.ReactNode;
 }) {

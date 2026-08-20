@@ -90,34 +90,57 @@ export default async function OperacionesDashboardPage({
 
   const supabase = await createClient();
 
-  const [projectsRes, tasksRes, blockersRes, entriesRes, peopleRes] =
-    await Promise.all([
-      supabase.from("internal_projects").select("id, status"),
-      supabase
-        .from("tasks")
-        .select(
-          "id, assignee_id, status, priority, due_on, completed_at, created_at",
-        ),
-      supabase
-        .from("blockers")
-        .select(
-          "id, reason, opened_at, resolved_at, internal_project_id, task_id",
-        )
-        .is("resolved_at", null)
-        .order("opened_at", { ascending: true }),
-      supabase
-        .from("time_entries")
-        .select("person_id, minutes, logged_on")
-        .gte("logged_on", cutoffYmd),
-      supabase
-        .from("organization_people")
-        .select("id, full_name, active")
-        .eq("active", true)
-        .order("full_name", { ascending: true }),
-    ]);
+  const [
+    projectsRes,
+    tasksRes,
+    taskAssigneesRes,
+    blockersRes,
+    entriesRes,
+    peopleRes,
+  ] = await Promise.all([
+    supabase.from("internal_projects").select("id, status"),
+    supabase
+      .from("tasks")
+      .select("id, status, priority, due_on, completed_at, created_at"),
+    // 0141: assignees viven en junction. Traemos todos y agrupamos.
+    supabase.from("task_assignees").select("task_id, person_id"),
+    supabase
+      .from("blockers")
+      .select(
+        "id, reason, opened_at, resolved_at, internal_project_id, task_id",
+      )
+      .is("resolved_at", null)
+      .order("opened_at", { ascending: true }),
+    supabase
+      .from("time_entries")
+      .select("person_id, minutes, logged_on")
+      .gte("logged_on", cutoffYmd),
+    supabase
+      .from("organization_people")
+      .select("id, full_name, active")
+      .eq("active", true)
+      .order("full_name", { ascending: true }),
+  ]);
 
   const projects = (projectsRes.data ?? []) as unknown as ProjectRow[];
-  const tasks = (tasksRes.data ?? []) as unknown as OpsTaskRow[];
+  const rawTasks = (tasksRes.data ?? []) as unknown as Array<
+    Omit<OpsTaskRow, "assignee_ids">
+  >;
+  const taskAssigneeRows = (taskAssigneesRes.data ?? []) as unknown as Array<{
+    task_id: string;
+    person_id: string;
+  }>;
+  const assigneesByTask = new Map<string, string[]>();
+  for (const r of taskAssigneeRows) {
+    const list = assigneesByTask.get(r.task_id) ?? [];
+    list.push(r.person_id);
+    assigneesByTask.set(r.task_id, list);
+  }
+  // Hidratar assignee_ids en cada task para que los selectores puros los vean.
+  const tasks: OpsTaskRow[] = rawTasks.map((t) => ({
+    ...t,
+    assignee_ids: assigneesByTask.get(t.id) ?? [],
+  }));
   const blockers = (blockersRes.data ?? []) as unknown as BlockerRow[];
   const entries =
     (entriesRes.data ?? []) as unknown as OpsTimeEntryRow[];
