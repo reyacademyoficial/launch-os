@@ -71,13 +71,12 @@ describe("mapNotionPageToInternalProject", () => {
 
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.payload).toEqual({
+    expect(res.result.payload).toEqual({
       organization_id: ORG,
       name: "Rediseño roadmap",
       description: "Detalle largo del proyecto.",
       status: "en_proceso",
       priority: "alta",
-      owner_id: "kg-person-1",
       starts_on: "2026-08-01",
       due_on: "2026-09-01",
       notion_page_id: "page-1",
@@ -85,6 +84,7 @@ describe("mapNotionPageToInternalProject", () => {
       notion_workspace_id: WS,
       notion_synced_at: NOW,
     });
+    expect(res.result.ownerIds).toEqual(["kg-person-1"]);
   });
 
   it("falta el título → rechaza con reason='missing-title'", () => {
@@ -110,30 +110,66 @@ describe("mapNotionPageToInternalProject", () => {
     const res = mapNotionPageToInternalProject(page, map, makeCtx());
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.payload.status).toBe("sin_empezar");
-    expect(res.payload.priority).toBe("media");
+    expect(res.result.payload.status).toBe("sin_empezar");
+    expect(res.result.payload.priority).toBe("media");
+    expect(res.result.ownerIds).toEqual([]);
   });
 
-  it("status en Notion no está en el map → fallback 'sin_empezar'", () => {
-    // El operador configuró map con "In progress"→"en_proceso" pero la page
-    // tiene "Blocked" que no está mapeado. Cae a sin_empezar en vez de
-    // meter un valor que rompa el CHECK del schema.
+  it("auto-normalización: 'En proceso' de Notion → 'en_proceso' sin map explícito", () => {
+    // Si el operador no llenó el status_map pero los labels de Notion
+    // matchean el enum KG (mismo texto, ignorando case/tildes/espacios),
+    // el mapper resuelve solo via applyValueMap + KG_STATUSES.
     const map: NotionPropertyMap = {
       title_prop: "Name",
       status_prop: "Status",
-      status_map: { "In progress": "en_proceso" },
+      // Sin status_map explícito.
     };
     const page = makePage({
       Name: { type: "title", title: [{ plain_text: "X" }] },
-      Status: { type: "select", select: { name: "Blocked" } },
+      Status: { type: "status", status: { name: "En proceso" } },
     });
     const res = mapNotionPageToInternalProject(page, map, makeCtx());
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.payload.status).toBe("sin_empezar");
+    expect(res.result.payload.status).toBe("en_proceso");
   });
 
-  it("assignee sin mapping a KG persona → owner_id null", () => {
+  it("auto-normalización con tildes: 'Alerta máxima' → 'alerta_maxima'", () => {
+    const map: NotionPropertyMap = {
+      title_prop: "Name",
+      priority_prop: "Priority",
+      status_prop: "Status",
+    };
+    const page = makePage({
+      Name: { type: "title", title: [{ plain_text: "X" }] },
+      Status: { type: "status", status: { name: "Alerta máxima" } },
+      Priority: { type: "select", select: { name: "Alta" } },
+    });
+    const res = mapNotionPageToInternalProject(page, map, makeCtx());
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.result.payload.status).toBe("alerta_maxima");
+    expect(res.result.payload.priority).toBe("alta");
+  });
+
+  it("status Notion no está en enum KG ni en map → fallback 'sin_empezar'", () => {
+    // "Custom X" ni matchea el auto-normalizador ni tiene entry explícita.
+    // Cae al fallback en vez de reventar el CHECK del schema.
+    const map: NotionPropertyMap = {
+      title_prop: "Name",
+      status_prop: "Status",
+    };
+    const page = makePage({
+      Name: { type: "title", title: [{ plain_text: "X" }] },
+      Status: { type: "select", select: { name: "Custom X" } },
+    });
+    const res = mapNotionPageToInternalProject(page, map, makeCtx());
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.result.payload.status).toBe("sin_empezar");
+  });
+
+  it("assignee sin mapping a KG persona → ownerIds vacío", () => {
     const map: NotionPropertyMap = {
       title_prop: "Name",
       assignee_prop: "Owner",
@@ -145,12 +181,13 @@ describe("mapNotionPageToInternalProject", () => {
     const res = mapNotionPageToInternalProject(page, map, makeCtx());
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.payload.owner_id).toBeNull();
+    expect(res.result.ownerIds).toEqual([]);
   });
 
-  it("assignee con múltiples people → toma el primero mapeado", () => {
-    // Notion permite múltiples people; nosotros tomamos el primer notion
-    // user que esté mapeado a una KG persona. Los demás se ignoran.
+  it("assignee con múltiples people → devuelve TODOS los mapeados sin duplicar", () => {
+    // Cambio de 0140: ahora Notion permite N responsables y los persistimos
+    // TODOS en la junction internal_project_owners. Los no-mapeados se
+    // filtran; los duplicados (misma persona mapeada 2 veces) se dedupean.
     const map: NotionPropertyMap = {
       title_prop: "Name",
       assignee_prop: "Owner",
@@ -160,20 +197,46 @@ describe("mapNotionPageToInternalProject", () => {
       Owner: {
         type: "people",
         people: [
-          { id: "no-mapea-1" },
-          { id: "mapea" },
-          { id: "no-mapea-2" },
+          { id: "nu-a" },
+          { id: "no-mapea" },
+          { id: "nu-b" },
+          { id: "nu-a" }, // duplicado — mismo notion user
         ],
       },
     });
     const res = mapNotionPageToInternalProject(
       page,
       map,
-      makeCtx({ mapea: "kg-1" }),
+      makeCtx({ "nu-a": "kg-a", "nu-b": "kg-b" }),
     );
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.payload.owner_id).toBe("kg-1");
+    expect(res.result.ownerIds).toEqual(["kg-a", "kg-b"]);
+  });
+
+  it("dos notion users mapeados a la MISMA kg person → dedup en ownerIds", () => {
+    // Caso poco frecuente pero posible: dos cuentas Notion apuntan a la
+    // misma persona KG (después de una migración de email, por ejemplo).
+    // La junction tiene PK (project, person) — no toleraría el duplicado.
+    const map: NotionPropertyMap = {
+      title_prop: "Name",
+      assignee_prop: "Owner",
+    };
+    const page = makePage({
+      Name: { type: "title", title: [{ plain_text: "X" }] },
+      Owner: {
+        type: "people",
+        people: [{ id: "nu-old" }, { id: "nu-new" }],
+      },
+    });
+    const res = mapNotionPageToInternalProject(
+      page,
+      map,
+      makeCtx({ "nu-old": "kg-1", "nu-new": "kg-1" }),
+    );
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.result.ownerIds).toEqual(["kg-1"]);
   });
 
   it("fechas ausentes → starts_on / due_on null", () => {
@@ -190,8 +253,8 @@ describe("mapNotionPageToInternalProject", () => {
     const res = mapNotionPageToInternalProject(page, map, makeCtx());
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.payload.due_on).toBeNull();
-    expect(res.payload.starts_on).toBeNull();
+    expect(res.result.payload.due_on).toBeNull();
+    expect(res.result.payload.starts_on).toBeNull();
   });
 
   it("preserva metadata de trazabilidad (page_id, db_id, workspace_id, synced_at)", () => {
@@ -202,9 +265,9 @@ describe("mapNotionPageToInternalProject", () => {
     const res = mapNotionPageToInternalProject(page, map, makeCtx());
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.payload.notion_page_id).toBe("page-1");
-    expect(res.payload.notion_database_id).toBe(DB);
-    expect(res.payload.notion_workspace_id).toBe(WS);
-    expect(res.payload.notion_synced_at).toBe(NOW);
+    expect(res.result.payload.notion_page_id).toBe("page-1");
+    expect(res.result.payload.notion_database_id).toBe(DB);
+    expect(res.result.payload.notion_workspace_id).toBe(WS);
+    expect(res.result.payload.notion_synced_at).toBe(NOW);
   });
 });

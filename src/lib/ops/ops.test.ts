@@ -20,7 +20,7 @@ import {
 function task(overrides: Partial<OpsTaskRow> = {}): OpsTaskRow {
   return {
     id: "task-x",
-    assignee_id: null,
+    assignee_ids: [],
     status: "sin_empezar",
     priority: "media",
     due_on: null,
@@ -160,14 +160,14 @@ describe("computeLoadByPerson", () => {
       ],
       tasks: [
         // Ana: 2 abiertas, 1 overdue, 1 dueSoon (empate=hoy)
-        task({ id: "a1", assignee_id: "ana", status: "sin_empezar", due_on: "2026-07-26" }), // overdue
-        task({ id: "a2", assignee_id: "ana", status: "en_proceso", due_on: "2026-07-28" }), // dueSoon (hoy)
+        task({ id: "a1", assignee_ids: ["ana"], status: "sin_empezar", due_on: "2026-07-26" }), // overdue
+        task({ id: "a2", assignee_ids: ["ana"], status: "en_proceso", due_on: "2026-07-28" }), // dueSoon (hoy)
         // Bob: 3 abiertas — 0 overdue, 1 dueSoon en 7 días
-        task({ id: "b1", assignee_id: "bob", status: "sin_empezar", due_on: null }),
-        task({ id: "b2", assignee_id: "bob", status: "bloqueado", due_on: "2026-08-10" }),
-        task({ id: "b3", assignee_id: "bob", status: "en_proceso", due_on: "2026-07-30" }), // dueSoon
+        task({ id: "b1", assignee_ids: ["bob"], status: "sin_empezar", due_on: null }),
+        task({ id: "b2", assignee_ids: ["bob"], status: "bloqueado", due_on: "2026-08-10" }),
+        task({ id: "b3", assignee_ids: ["bob"], status: "en_proceso", due_on: "2026-07-30" }), // dueSoon
         // Cerradas no cuentan
-        task({ id: "closed", assignee_id: "ana", status: "listo", due_on: "2026-07-01" }),
+        task({ id: "closed", assignee_ids: ["ana"], status: "listo", due_on: "2026-07-01" }),
       ],
     });
 
@@ -199,8 +199,8 @@ describe("computeLoadByPerson", () => {
       today,
       people: [person({ id: "ana", full_name: "Ana" })],
       tasks: [
-        task({ assignee_id: null, status: "sin_empezar" }),
-        task({ assignee_id: null, status: "sin_empezar", due_on: "2026-07-01" }),
+        task({ assignee_ids: [], status: "sin_empezar" }),
+        task({ assignee_ids: [], status: "sin_empezar", due_on: "2026-07-01" }),
       ],
     });
     expect(load[0]!.open).toBe(0);
@@ -213,9 +213,9 @@ describe("computeLoadByPerson", () => {
       dueSoonWindowDays: 1,
       people: [person({ id: "ana", full_name: "Ana" })],
       tasks: [
-        task({ assignee_id: "ana", status: "sin_empezar", due_on: "2026-07-28" }), // hoy
-        task({ assignee_id: "ana", status: "sin_empezar", due_on: "2026-07-29" }), // mañana
-        task({ assignee_id: "ana", status: "sin_empezar", due_on: "2026-07-30" }), // pasado
+        task({ assignee_ids: ["ana"], status: "sin_empezar", due_on: "2026-07-28" }), // hoy
+        task({ assignee_ids: ["ana"], status: "sin_empezar", due_on: "2026-07-29" }), // mañana
+        task({ assignee_ids: ["ana"], status: "sin_empezar", due_on: "2026-07-30" }), // pasado
       ],
     });
     expect(load[0]!.open).toBe(3);
@@ -226,10 +226,10 @@ describe("computeLoadByPerson", () => {
 describe("countUnassignedOpenTasks", () => {
   it("cuenta abiertas sin assignee, ignora cerradas y las que sí tienen dueño", () => {
     const n = countUnassignedOpenTasks([
-      task({ assignee_id: null, status: "sin_empezar" }),
-      task({ assignee_id: null, status: "bloqueado" }),
-      task({ assignee_id: "ana", status: "sin_empezar" }), // tiene dueño
-      task({ assignee_id: null, status: "listo" }),        // cerrada
+      task({ assignee_ids: [], status: "sin_empezar" }),
+      task({ assignee_ids: [], status: "bloqueado" }),
+      task({ assignee_ids: ["ana"], status: "sin_empezar" }), // tiene dueño
+      task({ assignee_ids: [], status: "listo" }),        // cerrada
     ]);
     expect(n).toBe(2);
   });

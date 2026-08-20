@@ -58,7 +58,8 @@ export interface TaskInitial {
   readonly status: Status;
   readonly priority: Priority;
   readonly internalProjectId: string | null;
-  readonly assigneeId: string | null;
+  /** Personas asignadas (0141 M2M). Vacío = tarea sin dueño. */
+  readonly assigneeIds: readonly string[];
   readonly dueOn: string | null;
   readonly completedAt: string | null;
   readonly isRecurring: boolean;
@@ -90,7 +91,7 @@ export function TaskFormDrawer({
   assignees,
   initial,
   presetProjectId,
-  presetAssigneeId,
+  presetAssigneeIds,
 }: {
   readonly mode: "create" | "edit";
   readonly open: boolean;
@@ -100,8 +101,8 @@ export function TaskFormDrawer({
   readonly initial?: TaskInitial;
   /** Proyecto pre-seleccionado en create (viene de la ficha del proyecto). */
   readonly presetProjectId?: string | null;
-  /** Assignee pre-seleccionado en create (útil para "crear tarea para mí"). */
-  readonly presetAssigneeId?: string | null;
+  /** Assignees pre-seleccionados en create (útil para "crear tarea para mí"). */
+  readonly presetAssigneeIds?: readonly string[];
 }) {
   if (!open) return null;
   const title = mode === "create" ? "Nueva tarea" : "Editar tarea";
@@ -126,7 +127,7 @@ function TaskFormBody({
   assignees,
   initial,
   presetProjectId,
-  presetAssigneeId,
+  presetAssigneeIds,
   onClose,
 }: {
   readonly mode: "create" | "edit";
@@ -273,20 +274,17 @@ function TaskFormBody({
         </div>
       </Field>
 
-      <Field label="Asignada a" htmlFor="assignee_id">
-        <select
-          id="assignee_id"
-          name="assignee_id"
-          defaultValue={initial?.assigneeId ?? presetAssigneeId ?? ""}
-          style={inputStyle}
+      <Field label="Asignada a">
+        <AssigneesMultiSelect
+          assignees={assignees}
+          initialIds={initial?.assigneeIds ?? presetAssigneeIds ?? []}
+        />
+        <div
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)", marginTop: 6 }}
         >
-          <option value="">— Sin asignar —</option>
-          {assignees.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.fullName}
-            </option>
-          ))}
-        </select>
+          Podés marcar 0, 1 o varias personas. Sin nadie = tarea sin dueño.
+        </div>
       </Field>
 
       <Field label="Vencimiento" htmlFor="due_on">
@@ -500,6 +498,83 @@ function TaskFormBody({
         </button>
       </div>
     </form>
+  );
+}
+
+/**
+ * Multi-select por checkboxes. Cada checkbox emite `assignee_ids` (mismo
+ * name) — el server action lee formData.getAll("assignee_ids"). Las inactivas
+ * que ya estaban asignadas se muestran igual para no perder el historial.
+ */
+function AssigneesMultiSelect({
+  assignees,
+  initialIds,
+}: {
+  readonly assignees: readonly AssigneeOptionForTask[];
+  readonly initialIds: readonly string[];
+}) {
+  const initialSet = useMemo(() => new Set(initialIds), [initialIds]);
+  const [checked, setChecked] = useState<Set<string>>(initialSet);
+
+  function toggle(id: string) {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  if (assignees.length === 0) {
+    return (
+      <div
+        className="kg-t7"
+        style={{ color: "var(--kg-text-3)", padding: "8px 0" }}
+      >
+        No hay personas activas cargadas. Andá a Organización → Personas.
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        maxHeight: 200,
+        overflowY: "auto",
+        padding: "8px 12px",
+        borderRadius: "var(--kg-r-8)",
+        background: "var(--kg-surface-2-solid)",
+        border: "1px solid var(--kg-border-subtle)",
+      }}
+    >
+      {assignees.map((a) => (
+        <label
+          key={a.id}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "6px 4px",
+            cursor: "pointer",
+            fontSize: 13,
+            color: "var(--kg-text-1)",
+          }}
+        >
+          <input
+            type="checkbox"
+            name="assignee_ids"
+            value={a.id}
+            checked={checked.has(a.id)}
+            onChange={() => toggle(a.id)}
+            style={{ cursor: "pointer", flexShrink: 0 }}
+          />
+          {a.fullName}
+        </label>
+      ))}
+    </div>
   );
 }
 

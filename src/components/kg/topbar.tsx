@@ -31,7 +31,7 @@ export function KgTopbar({ theme }: { readonly theme: Theme }) {
 
   return (
     <header
-      className="kg-glass-2 flex items-center gap-3 border-b px-4 py-3 sm:px-6"
+      className="kg-glass-2 flex items-center gap-3 border-b px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))] sm:px-6"
       style={{ borderColor: "var(--kg-border-subtle)" }}
     >
       <SidebarToggle />

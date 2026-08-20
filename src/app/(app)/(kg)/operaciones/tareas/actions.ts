@@ -57,7 +57,8 @@ interface TaskPayload {
   readonly status: Status;
   readonly priority: Priority;
   readonly internalProjectId: string | null;
-  readonly assigneeId: string | null;
+  /** Personas asignadas (0141 M2M). Dedupeadas. Vacío = tarea sin dueño. */
+  readonly assigneeIds: string[];
   readonly dueOn: string | null;
   readonly isRecurring: boolean;
   /** 0=domingo … 6=sábado. Null si !isRecurring. */
@@ -86,7 +87,17 @@ function parseTaskFormData(formData: FormData): TaskPayload | string {
   const priority = priorityRaw as Priority;
 
   const internalProjectId = nullIfEmpty(formData.get("internal_project_id"));
-  const assigneeId = nullIfEmpty(formData.get("assignee_id"));
+
+  // Multi-select: los checkboxes envían N valores con el mismo name.
+  const rawAssignees = formData.getAll("assignee_ids");
+  const assigneeIds: string[] = [];
+  const seenAssignees = new Set<string>();
+  for (const v of rawAssignees) {
+    const s = String(v).trim();
+    if (s.length === 0 || seenAssignees.has(s)) continue;
+    seenAssignees.add(s);
+    assigneeIds.push(s);
+  }
 
   const dueOn = nullIfEmpty(formData.get("due_on"));
   if (dueOn != null && !YMD_RX.test(dueOn)) {
@@ -130,7 +141,7 @@ function parseTaskFormData(formData: FormData): TaskPayload | string {
     status,
     priority,
     internalProjectId,
-    assigneeId,
+    assigneeIds,
     dueOn,
     isRecurring,
     recurrenceDays,
@@ -174,7 +185,6 @@ export async function createTask(
     status: parsed.status,
     priority: parsed.priority,
     internal_project_id: parsed.internalProjectId,
-    assignee_id: parsed.assigneeId,
     due_on: parsed.dueOn,
     completed_at: completedAt,
     is_recurring: parsed.isRecurring,
@@ -192,6 +202,20 @@ export async function createTask(
 
   const created = data as { id: string } | null;
   if (!created) return { error: "El insert no devolvió fila." };
+
+  if (parsed.assigneeIds.length > 0) {
+    const rows = parsed.assigneeIds.map((personId) => ({
+      task_id: created.id,
+      person_id: personId,
+      organization_id: organizationId,
+    }));
+    const { error: aErr } = await supabase
+      .from("task_assignees")
+      .insert(rows as never);
+    if (aErr) {
+      return { error: `Tarea creada pero fallaron los asignados: ${aErr.message}` };
+    }
+  }
 
   revalidatePath("/operaciones/tareas");
   revalidatePath("/operaciones");
@@ -220,15 +244,18 @@ export async function updateTask(
 
   const { data: existing } = await supabase
     .from("tasks")
-    .select("completed_at, internal_project_id")
+    .select("completed_at, internal_project_id, organization_id")
     .eq("id", taskId)
     .maybeSingle();
   const prev = existing as {
     completed_at: string | null;
     internal_project_id: string | null;
+    organization_id: string;
   } | null;
-  const prevCompletedAt = prev?.completed_at ?? null;
-  const prevProjectId = prev?.internal_project_id ?? null;
+  if (!prev) return { error: "Tarea no encontrada." };
+  const prevCompletedAt = prev.completed_at;
+  const prevProjectId = prev.internal_project_id;
+  const organizationId = prev.organization_id;
 
   const nextIsClosed = CLOSED_STATUSES.has(parsed.status);
   const completedAt = nextIsClosed
@@ -241,7 +268,6 @@ export async function updateTask(
     status: parsed.status,
     priority: parsed.priority,
     internal_project_id: parsed.internalProjectId,
-    assignee_id: parsed.assigneeId,
     due_on: parsed.dueOn,
     completed_at: completedAt,
     is_recurring: parsed.isRecurring,
@@ -255,6 +281,25 @@ export async function updateTask(
     .eq("id", taskId);
 
   if (error) return { error: error.message };
+
+  // Reemplazar set de asignados: delete + insert bulk.
+  const { error: delErr } = await supabase
+    .from("task_assignees")
+    .delete()
+    .eq("task_id", taskId);
+  if (delErr) return { error: `Asignados no reemplazados: ${delErr.message}` };
+
+  if (parsed.assigneeIds.length > 0) {
+    const rows = parsed.assigneeIds.map((personId) => ({
+      task_id: taskId,
+      person_id: personId,
+      organization_id: organizationId,
+    }));
+    const { error: insErr } = await supabase
+      .from("task_assignees")
+      .insert(rows as never);
+    if (insErr) return { error: `Asignados nuevos fallaron: ${insErr.message}` };
+  }
 
   revalidatePath("/operaciones/tareas");
   revalidatePath("/operaciones");

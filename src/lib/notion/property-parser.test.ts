@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyValueMap,
+  normalizeEnumLabel,
   parseDateStart,
   parsePeople,
   parseRichText,
@@ -197,29 +198,96 @@ describe("parseDateStart", () => {
 
 describe("applyValueMap", () => {
   const statusMap = {
-    "Not started": "backlog",
-    "In progress": "active",
-    Done: "done",
+    "Not started": "sin_empezar",
+    "In progress": "en_proceso",
+    Done: "listo",
   };
+  const allowed = [
+    "sin_empezar",
+    "en_proceso",
+    "bloqueado",
+    "alerta_maxima",
+    "listo",
+  ] as const;
 
-  it("devuelve el mapeo cuando el valor está en el mapa", () => {
-    expect(applyValueMap("In progress", statusMap, "backlog")).toBe("active");
+  it("devuelve el mapeo explícito cuando el valor está en el mapa", () => {
+    expect(applyValueMap("In progress", statusMap, "sin_empezar")).toBe(
+      "en_proceso",
+    );
   });
 
-  it("devuelve el fallback cuando el valor no está en el mapa", () => {
-    // "Paused" no está mapeado — cae al fallback en vez de mandar "Paused"
-    // al DB (que rompería el CHECK constraint del status).
-    expect(applyValueMap("Paused", statusMap, "backlog")).toBe("backlog");
+  it("devuelve el fallback cuando el valor no está en el mapa y no hay allowed", () => {
+    // Sin lista de allowed values no puede auto-match — cae al fallback.
+    expect(applyValueMap("Paused", statusMap, "sin_empezar")).toBe(
+      "sin_empezar",
+    );
   });
 
   it("devuelve el fallback cuando el valor es null", () => {
-    expect(applyValueMap(null, statusMap, "backlog")).toBe("backlog");
+    expect(applyValueMap(null, statusMap, "sin_empezar")).toBe("sin_empezar");
   });
 
-  it("es case-sensitive — 'in progress' NO matchea 'In progress'", () => {
-    // Notion es case-sensitive en los option names. Documentado — si el
-    // usuario renombra en Notion, el mapping falla silencioso y cae al
-    // fallback. Un test acá para prevenir "arreglos" bien intencionados.
-    expect(applyValueMap("in progress", statusMap, "backlog")).toBe("backlog");
+  it("es case-sensitive en el map explícito — 'in progress' cae al auto-match", () => {
+    // El map lookup es case-sensitive (Notion es case-sensitive). Con
+    // allowed activo, "in progress" normaliza a "in_progress" que NO está
+    // en el enum → fallback. Con "En proceso" en cambio sí matchearía.
+    expect(applyValueMap("in progress", statusMap, "sin_empezar", allowed)).toBe(
+      "sin_empezar",
+    );
+  });
+
+  // ── Auto-normalización ─────────────────────────────────────────────────
+
+  it("auto-match: 'Sin empezar' Notion → 'sin_empezar' KG sin mapping explícito", () => {
+    // Escenario típico: operador no llenó el mapping form porque los
+    // labels de Notion ya matchean el enum KG. No necesita configurar.
+    expect(applyValueMap("Sin empezar", {}, "sin_empezar", allowed)).toBe(
+      "sin_empezar",
+    );
+  });
+
+  it("auto-match: 'Alerta máxima' con tilde → 'alerta_maxima'", () => {
+    // Tildes y capitalización se normalizan. Notion permite emojis y
+    // otros caracteres — los ignoramos, solo importa la palabra base.
+    expect(applyValueMap("Alerta máxima", {}, "sin_empezar", allowed)).toBe(
+      "alerta_maxima",
+    );
+  });
+
+  it("auto-match: prioridad 'Alta' → 'alta'", () => {
+    expect(applyValueMap("Alta", {}, "media", ["alta", "media", "baja"])).toBe(
+      "alta",
+    );
+  });
+
+  it("map explícito gana sobre auto-match", () => {
+    // Si el operador mapeó "Bloqueado" → "alerta_maxima" a mano, respetamos
+    // el override aunque "Bloqueado" auto-normalizaría a "bloqueado".
+    expect(
+      applyValueMap("Bloqueado", { Bloqueado: "alerta_maxima" }, "sin_empezar", allowed),
+    ).toBe("alerta_maxima");
+  });
+
+  it("fallback cuando ni map explícito ni auto-match resuelven", () => {
+    // "Custom X" no está en map ni en enum — cae al fallback.
+    expect(applyValueMap("Custom X", {}, "sin_empezar", allowed)).toBe(
+      "sin_empezar",
+    );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// normalizeEnumLabel
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("normalizeEnumLabel", () => {
+  it("lowercase + snake_case + strip tildes", () => {
+    expect(normalizeEnumLabel("Sin Empezar")).toBe("sin_empezar");
+    expect(normalizeEnumLabel("Alerta Máxima")).toBe("alerta_maxima");
+    expect(normalizeEnumLabel("EN PROCESO")).toBe("en_proceso");
+  });
+
+  it("colapsa múltiples espacios y trimea bordes", () => {
+    expect(normalizeEnumLabel("   sin  empezar  ")).toBe("sin_empezar");
   });
 });

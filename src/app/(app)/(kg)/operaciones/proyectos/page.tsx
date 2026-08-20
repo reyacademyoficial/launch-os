@@ -57,13 +57,17 @@ interface ProjectDbRow {
   readonly description: string | null;
   readonly status: Status;
   readonly priority: Priority;
-  readonly owner_id: string | null;
   readonly starts_on: string | null;
   readonly due_on: string | null;
   readonly closed_at: string | null;
   readonly notes: string | null;
   readonly notion_page_id: string | null;
   readonly notion_synced_at: string | null;
+}
+
+interface ProjectOwnerRow {
+  readonly internal_project_id: string;
+  readonly person_id: string;
 }
 
 interface PersonDbRow {
@@ -87,11 +91,11 @@ export default async function ProyectosInternosPage({
 
   const supabase = await createClient();
 
-  const [projectsRes, peopleRes, tasksRes] = await Promise.all([
+  const [projectsRes, peopleRes, tasksRes, ownersRes] = await Promise.all([
     supabase
       .from("internal_projects")
       .select(
-        "id, name, description, status, priority, owner_id, starts_on, due_on, closed_at, notes, notion_page_id, notion_synced_at",
+        "id, name, description, status, priority, starts_on, due_on, closed_at, notes, notion_page_id, notion_synced_at",
       )
       .order("status", { ascending: true })
       .order("due_on", { ascending: true, nullsFirst: false })
@@ -106,12 +110,26 @@ export default async function ProyectosInternosPage({
       .from("tasks")
       .select("internal_project_id, status")
       .not("internal_project_id", "is", null),
+    // 0140: owners viven en junction. Traemos todas las filas y las
+    // agrupamos client-side por project_id.
+    supabase
+      .from("internal_project_owners")
+      .select("internal_project_id, person_id"),
   ]);
 
   const allProjects =
     (projectsRes.data ?? []) as unknown as ProjectDbRow[];
   const allPeople = (peopleRes.data ?? []) as unknown as PersonDbRow[];
   const allTasks = (tasksRes.data ?? []) as unknown as TaskProgressRow[];
+  const allOwners = (ownersRes.data ?? []) as unknown as ProjectOwnerRow[];
+
+  // Agrupar owners por project_id.
+  const ownersByProject = new Map<string, string[]>();
+  for (const o of allOwners) {
+    const list = ownersByProject.get(o.internal_project_id) ?? [];
+    list.push(o.person_id);
+    ownersByProject.set(o.internal_project_id, list);
+  }
 
   const personNameById = new Map<string, string>();
   for (const p of allPeople) personNameById.set(p.id, p.full_name);
@@ -154,14 +172,18 @@ export default async function ProyectosInternosPage({
     const done = tasksDoneByProject.get(p.id) ?? 0;
     const open = tasksOpenByProject.get(p.id) ?? 0;
     const progressPct = total > 0 ? Math.round((done / total) * 100) : null;
+    const ownerIds = ownersByProject.get(p.id) ?? [];
+    const ownerNames = ownerIds
+      .map((pid) => personNameById.get(pid))
+      .filter((n): n is string => !!n);
     return {
       id: p.id,
       name: p.name,
       description: p.description,
       status: p.status,
       priority: p.priority,
-      ownerId: p.owner_id,
-      ownerName: p.owner_id ? personNameById.get(p.owner_id) ?? null : null,
+      ownerIds,
+      ownerNames,
       startsOn: p.starts_on,
       dueOn: p.due_on,
       closedAt: p.closed_at,

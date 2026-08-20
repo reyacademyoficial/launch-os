@@ -1,7 +1,6 @@
 /**
  * Función pura que traduce una NotionPage a un shape listo para upsert en
- * `internal_projects`. Toda la lógica de sync que NO toca DB vive acá para
- * poder testearla sin fake de Supabase.
+ * `internal_projects` + `internal_project_owners` (0140).
  *
  * INPUTS
  *   - page (raw properties de Notion)
@@ -14,6 +13,11 @@
  * OUTPUT
  *   { ok, payload } o { ok: false, reason } — el sync decide qué hacer.
  *   Solo rebota si el título es null (name es NOT NULL en el DB).
+ *
+ * `owner_ids` es un arreglo deduplicado de kg_person_ids. Vacío si el
+ * assignee_prop no está configurado o si ningún notion user está mapeado.
+ * El caller (sync-runner) reemplaza la lista de owners de la junction en
+ * cada corrida — todo lo que no venga en `owner_ids` sale del proyecto.
  */
 
 import type { NotionPage } from "./client";
@@ -25,10 +29,12 @@ import {
   parseSelect,
   parseTitle,
 } from "./property-parser";
-import type {
-  KgPriority,
-  KgStatus,
-  NotionPropertyMap,
+import {
+  KG_PRIORITIES,
+  KG_STATUSES,
+  type KgPriority,
+  type KgStatus,
+  type NotionPropertyMap,
 } from "./property-map";
 
 export interface InternalProjectUpsertPayload {
@@ -37,7 +43,6 @@ export interface InternalProjectUpsertPayload {
   description: string | null;
   status: KgStatus;
   priority: KgPriority;
-  owner_id: string | null;
   starts_on: string | null;
   due_on: string | null;
   notion_page_id: string;
@@ -46,8 +51,15 @@ export interface InternalProjectUpsertPayload {
   notion_synced_at: string;
 }
 
+export interface MappedProject {
+  /** Payload plano para upsert en internal_projects. */
+  readonly payload: InternalProjectUpsertPayload;
+  /** kg_person_ids únicos que van a la junction internal_project_owners. */
+  readonly ownerIds: readonly string[];
+}
+
 export type MapResult =
-  | { ok: true; payload: InternalProjectUpsertPayload }
+  | { ok: true; result: MappedProject }
   | { ok: false; reason: "missing-title" | "invalid-map" };
 
 export interface MapContext {
@@ -73,14 +85,15 @@ export function mapNotionPageToInternalProject(
     return { ok: false, reason: "missing-title" };
   }
 
-  // Status: aplicamos map con fallback a 'sin_empezar'. Si el humano no
-  // configuró status_prop, todo entra como 'sin_empezar' — decisión
-  // razonable para pages recién importados que después el operador triage.
+  // Status: aplicamos map explícito con fallback a auto-normalización
+  // contra KG_STATUSES (ver property-parser.applyValueMap). Si nada
+  // resuelve, cae a 'sin_empezar'.
   const status: KgStatus = map.status_prop
     ? applyValueMap<KgStatus>(
         parseSelect(page.properties, map.status_prop),
         map.status_map ?? {},
         "sin_empezar",
+        KG_STATUSES,
       )
     : "sin_empezar";
 
@@ -89,20 +102,21 @@ export function mapNotionPageToInternalProject(
         parseSelect(page.properties, map.priority_prop),
         map.priority_map ?? {},
         "media",
+        KG_PRIORITIES,
       )
     : "media";
 
-  // Assignee: tomamos el primer people. Notion permite múltiples pero
-  // internal_projects tiene un solo owner_id. El sync ignora los demás; si
-  // el humano necesita ver los otros co-owners tendría que verlos en Notion.
-  let ownerId: string | null = null;
+  // Assignees: junta TODOS los notion users mapeados a personas KG. Dedup
+  // preservando orden — el orden importa poco (junction table sin rank).
+  const ownerIds: string[] = [];
   if (map.assignee_prop) {
     const people = parsePeople(page.properties, map.assignee_prop);
+    const seen = new Set<string>();
     for (const nu of people) {
       const kg = ctx.assigneeToKgPerson(nu);
-      if (kg) {
-        ownerId = kg;
-        break;
+      if (kg && !seen.has(kg)) {
+        seen.add(kg);
+        ownerIds.push(kg);
       }
     }
   }
@@ -120,19 +134,21 @@ export function mapNotionPageToInternalProject(
 
   return {
     ok: true,
-    payload: {
-      organization_id: ctx.organizationId,
-      name,
-      description,
-      status,
-      priority,
-      owner_id: ownerId,
-      starts_on: startsOn,
-      due_on: dueOn,
-      notion_page_id: page.id,
-      notion_database_id: ctx.databaseId,
-      notion_workspace_id: ctx.workspaceId,
-      notion_synced_at: ctx.nowIso,
+    result: {
+      payload: {
+        organization_id: ctx.organizationId,
+        name,
+        description,
+        status,
+        priority,
+        starts_on: startsOn,
+        due_on: dueOn,
+        notion_page_id: page.id,
+        notion_database_id: ctx.databaseId,
+        notion_workspace_id: ctx.workspaceId,
+        notion_synced_at: ctx.nowIso,
+      },
+      ownerIds,
     },
   };
 }

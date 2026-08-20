@@ -107,17 +107,58 @@ export function parseDateStart(
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Aplica el mapa Notion→KG con fallback. Si el valor Notion no está en el
- * mapa, devuelve el fallback (típicamente 'sin_empezar' para status,
- * 'media' para priority). Case-sensitive: los nombres en el mapa deben
- * matchear exactamente como los devuelve la API.
+ * Aplica el mapa Notion→KG con auto-normalización + fallback.
+ *
+ * Orden de resolución:
+ *   1) Match exacto en `map` (lo que el humano configuró explícito).
+ *   2) Auto-match: normaliza el valor Notion (lowercase, sin tildes,
+ *      espacios → "_") y si coincide con alguno de los valores KG válidos,
+ *      lo usa. Motivo: como los enums KG están alineados a las etiquetas
+ *      típicas de Notion (Sin empezar → sin_empezar, Alta → alta, etc.),
+ *      el operador no tiene que llenar el mapping form si nombra igual.
+ *   3) `fallback` — típicamente 'sin_empezar' para status, 'media' para
+ *      priority. Solo se aplica si ni el map ni el auto-match resuelven.
+ *
+ * `allowedValues` es la lista blanca (ej: KG_STATUSES). Sin ella el
+ * auto-match no puede validar. Case-insensitive contra el enum en formato
+ * ya normalizado (los valores KG viven en snake_case lowercase por
+ * convención del schema).
  */
 export function applyValueMap<T extends string>(
   notionValue: string | null,
   map: Record<string, string>,
   fallback: T,
+  allowedValues?: readonly T[],
 ): T {
   if (notionValue == null) return fallback;
+
+  // 1) Map explícito.
   const mapped = map[notionValue];
-  return (mapped as T) ?? fallback;
+  if (mapped != null) return mapped as T;
+
+  // 2) Auto-match por normalización.
+  if (allowedValues && allowedValues.length > 0) {
+    const normalized = normalizeEnumLabel(notionValue);
+    for (const v of allowedValues) {
+      if (v === normalized) return v;
+    }
+  }
+
+  // 3) Fallback.
+  return fallback;
+}
+
+/**
+ * Normaliza una etiqueta Notion al formato snake_case lowercase sin acentos
+ * — para matchear contra enums KG (ej: "Alerta Máxima" → "alerta_maxima").
+ * Exportado para tests + reutilización.
+ */
+export function normalizeEnumLabel(raw: string): string {
+  return raw
+    .normalize("NFD")
+    // Strip combining diacritical marks (tildes, acentos): U+0300–U+036F.
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "_");
 }

@@ -186,6 +186,9 @@ export async function runNotionDatabaseSync(
   let upserted = 0;
   let skippedNoTitle = 0;
   const payloads: InternalProjectUpsertPayload[] = [];
+  // Guardamos el ownerIds resuelto por notion_page_id para poder reemplazar
+  // la junction internal_project_owners después del upsert (paso 6b).
+  const ownersByPageId = new Map<string, readonly string[]>();
 
   for (const page of pages) {
     const mapped = mapNotionPageToInternalProject(page, map, {
@@ -199,7 +202,8 @@ export async function runNotionDatabaseSync(
       if (mapped.reason === "missing-title") skippedNoTitle += 1;
       continue;
     }
-    payloads.push(mapped.payload);
+    payloads.push(mapped.result.payload);
+    ownersByPageId.set(mapped.result.payload.notion_page_id, mapped.result.ownerIds);
   }
 
   // 6) Upsert por notion_page_id
@@ -214,24 +218,71 @@ export async function runNotionDatabaseSync(
     upserted = payloads.length;
   }
 
-  // 7) Sync comentarios: sólo para las pages devueltas en este run. En modo
-  //    incremental esto no cubre pages con comments nuevos pero sin edits
-  //    (ver limitación al tope del archivo).
-  let commentsUpserted = 0;
-  let commentsFailed = 0;
+  // 6b) Reemplazar owners en la junction. Notion es la fuente de verdad —
+  //     cualquier owner añadido manualmente en KG a un project sourced se
+  //     pisa en cada sync. Esto es simétrico con status/priority.
+  //
+  //     Estrategia: DELETE bulk de todos los owners de los projects
+  //     tocados en este run, luego INSERT bulk de los nuevos. Dos queries
+  //     total en vez de 2×N.
+  let projectIdByPage = new Map<string, string>();
   if (payloads.length > 0) {
     const pageIds = payloads.map((p) => p.notion_page_id);
     const projectsRes = await supabase
       .from("internal_projects")
       .select("id, notion_page_id")
       .in("notion_page_id", pageIds);
-    const projectIdByPage = new Map<string, string>();
     for (const r of (projectsRes.data ?? []) as Array<{
       id: string;
       notion_page_id: string;
     }>) {
       projectIdByPage.set(r.notion_page_id, r.id);
     }
+
+    const projectIds = Array.from(projectIdByPage.values());
+    if (projectIds.length > 0) {
+      await supabase
+        .from("internal_project_owners")
+        .delete()
+        .in("internal_project_id", projectIds);
+
+      const ownerRows: Array<{
+        internal_project_id: string;
+        person_id: string;
+        organization_id: string;
+      }> = [];
+      for (const [pageId, ownerIds] of ownersByPageId.entries()) {
+        const projectId = projectIdByPage.get(pageId);
+        if (!projectId) continue;
+        for (const personId of ownerIds) {
+          ownerRows.push({
+            internal_project_id: projectId,
+            person_id: personId,
+            organization_id: ws.organization_id,
+          });
+        }
+      }
+      if (ownerRows.length > 0) {
+        // on_conflict do_nothing por si dos personas Notion mapean a la
+        // misma KG persona en el mismo project (aunque el mapper ya
+        // dedupea, defensivo contra corner cases).
+        await supabase
+          .from("internal_project_owners")
+          .upsert(ownerRows as never, {
+            onConflict: "internal_project_id,person_id",
+            ignoreDuplicates: true,
+          });
+      }
+    }
+  }
+
+  // 7) Sync comentarios: sólo para las pages devueltas en este run. En modo
+  //    incremental esto no cubre pages con comments nuevos pero sin edits
+  //    (ver limitación al tope del archivo).
+  let commentsUpserted = 0;
+  let commentsFailed = 0;
+  if (payloads.length > 0) {
+    // projectIdByPage ya está poblado por el paso 6b.
 
     for (const page of pages) {
       const projectId = projectIdByPage.get(page.id);

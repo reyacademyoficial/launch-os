@@ -43,13 +43,16 @@ export function isTaskOpen(status: TaskStatus): boolean {
 
 /**
  * Subset de `tasks` para carga, throughput y overdue.
- * - `assignee_id` NULL = tarea sin dueño.
+ * - `assignee_ids` vacío = tarea sin dueño (0141 M2M).
  * - `due_on` NULL = sin vencimiento (nunca cuenta como overdue).
  * - `completed_at` NULL = no finalizada aún.
+ *
+ * `assignee_ids` viene ya hidratado desde task_assignees por el caller —
+ * los selectores puros no tocan DB.
  */
 export interface OpsTaskRow {
   id: string;
-  assignee_id: string | null;
+  assignee_ids: readonly string[];
   status: TaskStatus;
   priority: TaskPriority;
   due_on: string | null;        // YYYY-MM-DD

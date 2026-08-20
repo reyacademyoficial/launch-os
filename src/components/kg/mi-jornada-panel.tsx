@@ -7,11 +7,14 @@ import { createClient } from "@/lib/supabase/server";
  * KG · MiJornadaPanel — resumen compacto en el sidebar de los proyectos
  * sincronizados desde Notion (0132-0138) que le pertenecen al usuario logueado.
  *
- * DISEÑO (v3 — Notion-first)
+ * DISEÑO (v4 — 0140 M2M)
  *   El sync trae TODOS los proyectos de las databases habilitadas y persiste
- *   `owner_id` en cada uno (mapeado desde el assignee de Notion vía
- *   notion_users.kg_person_id). Este widget filtra por `owner_id = mi persona`
- *   y por `notion_page_id IS NOT NULL` para ver "mis tareas de Notion".
+ *   los responsables en `internal_project_owners` (mapeados desde el
+ *   assignee de Notion vía notion_users.kg_person_id — pueden ser N por
+ *   proyecto). Este widget:
+ *     1) Fetch los project_ids donde yo (persona actual) estoy como owner.
+ *     2) Fetch los proyectos que además tengan notion_page_id + status abierto.
+ *   Dos queries pequeñas, mantiene la simetría con el nuevo modelo.
  *
  *   Muestra hasta 3 contadores según haya:
  *     · Urgente: status='alerta_maxima' O derived atrasado
@@ -60,14 +63,29 @@ export async function MiJornadaPanel() {
   if (!personId) return null;
 
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("internal_projects")
-    .select("id, status, priority, due_on")
-    .eq("owner_id", personId)
-    .not("notion_page_id", "is", null)
-    .in("status", [...OPEN_STATUSES]);
 
-  const rows = (data ?? []) as NotionProjectRow[];
+  // 1) Ids de proyectos donde soy owner.
+  const myOwnerRes = await supabase
+    .from("internal_project_owners")
+    .select("internal_project_id")
+    .eq("person_id", personId);
+  const myProjectIds = (
+    (myOwnerRes.data ?? []) as Array<{ internal_project_id: string }>
+  ).map((r) => r.internal_project_id);
+
+  // 2) Traigo esos proyectos que además vengan de Notion y estén abiertos.
+  //    Si no soy owner de ningún proyecto, skippeamos la 2da query.
+  const projectsRes =
+    myProjectIds.length === 0
+      ? { data: [] as NotionProjectRow[] }
+      : await supabase
+          .from("internal_projects")
+          .select("id, status, priority, due_on")
+          .in("id", myProjectIds)
+          .not("notion_page_id", "is", null)
+          .in("status", [...OPEN_STATUSES]);
+
+  const rows = (projectsRes.data ?? []) as NotionProjectRow[];
   const total = rows.length;
 
   const today = todayYmd();

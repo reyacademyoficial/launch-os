@@ -52,7 +52,7 @@ interface ProjectDbRow {
   readonly description: string | null;
   readonly status: Status;
   readonly priority: Priority;
-  readonly owner_id: string | null;
+  // owner_id se removió en 0140 — owners viven en internal_project_owners.
   readonly starts_on: string | null;
   readonly due_on: string | null;
   readonly closed_at: string | null;
@@ -131,36 +131,46 @@ export default async function InternalProjectFichaPage({
 
   const supabase = await createClient();
 
-  const [projectRes, peopleRes, checklistsRes, tasksRes] = await Promise.all([
-    supabase
-      .from("internal_projects")
-      .select(
-        "id, name, description, status, priority, owner_id, starts_on, due_on, closed_at, notes, notion_page_id, notion_workspace_id, notion_synced_at",
-      )
-      .eq("id", projectId)
-      .maybeSingle(),
-    supabase
-      .from("organization_people")
-      .select("id, full_name, active")
-      .order("full_name", { ascending: true }),
-    // Solo las checklists colgadas DIRECTO del proyecto (XOR). Las que
-    // cuelgan de tareas viven en la ficha de la tarea (pendiente).
-    supabase
-      .from("checklists")
-      .select("id, title")
-      .eq("internal_project_id", projectId)
-      .order("created_at", { ascending: true }),
-    // Tareas del proyecto — usadas por la sub-sección "Tareas" y como
-    // filtro para blockers/time_entries que cuelgan de tareas.
-    supabase
-      .from("tasks")
-      .select(
-        "id, title, description, status, priority, assignee_id, due_on, completed_at, is_recurring, recurrence_days, estimated_minutes",
-      )
-      .eq("internal_project_id", projectId)
-      .order("due_on", { ascending: true, nullsFirst: false })
-      .order("created_at", { ascending: false }),
-  ]);
+  const [projectRes, peopleRes, checklistsRes, tasksRes, projectOwnersRes] =
+    await Promise.all([
+      supabase
+        .from("internal_projects")
+        .select(
+          "id, name, description, status, priority, starts_on, due_on, closed_at, notes, notion_page_id, notion_workspace_id, notion_synced_at",
+        )
+        .eq("id", projectId)
+        .maybeSingle(),
+      supabase
+        .from("organization_people")
+        .select("id, full_name, active")
+        .order("full_name", { ascending: true }),
+      // Solo las checklists colgadas DIRECTO del proyecto (XOR). Las que
+      // cuelgan de tareas viven en la ficha de la tarea (pendiente).
+      supabase
+        .from("checklists")
+        .select("id, title")
+        .eq("internal_project_id", projectId)
+        .order("created_at", { ascending: true }),
+      // Tareas del proyecto — usadas por la sub-sección "Tareas" y como
+      // filtro para blockers/time_entries que cuelgan de tareas.
+      supabase
+        .from("tasks")
+        .select(
+          "id, title, description, status, priority, due_on, completed_at, is_recurring, recurrence_days, estimated_minutes",
+        )
+        .eq("internal_project_id", projectId)
+        .order("due_on", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: false }),
+      // 0140: owners del proyecto en junction.
+      supabase
+        .from("internal_project_owners")
+        .select("person_id")
+        .eq("internal_project_id", projectId),
+    ]);
+
+  const projectOwnerIds = (
+    (projectOwnersRes.data ?? []) as Array<{ person_id: string }>
+  ).map((r) => r.person_id);
 
   const project = projectRes.data as ProjectDbRow | null;
   if (!project) notFound();
@@ -250,9 +260,15 @@ export default async function InternalProjectFichaPage({
       })
       .sort((a, b) => a.displayName.localeCompare(b.displayName, "es"));
   }
-  const ownerName = project.owner_id
-    ? allPeople.find((p) => p.id === project.owner_id)?.full_name ?? null
-    : null;
+  const projectOwnerNames = projectOwnerIds
+    .map((pid) => allPeople.find((p) => p.id === pid)?.full_name)
+    .filter((n): n is string => !!n);
+  const ownersLabel =
+    projectOwnerNames.length === 0
+      ? "Sin dueños"
+      : projectOwnerNames.length <= 3
+        ? projectOwnerNames.join(", ")
+        : `${projectOwnerNames.slice(0, 3).join(", ")} +${projectOwnerNames.length - 3}`;
 
   // Segundo batch: items de las checklists del proyecto. En paralelo
   // porque depende de los checklist_ids.
@@ -314,7 +330,6 @@ export default async function InternalProjectFichaPage({
       | "alerta_maxima"
       | "listo";
     readonly priority: "alta" | "media" | "baja";
-    readonly assignee_id: string | null;
     readonly due_on: string | null;
     readonly completed_at: string | null;
     readonly is_recurring: boolean;
@@ -364,7 +379,7 @@ export default async function InternalProjectFichaPage({
     readonly notes: string | null;
   }
 
-  const [blockersRes, timeRes] = await Promise.all([
+  const [blockersRes, timeRes, taskAssigneesRes] = await Promise.all([
     supabase
       .from("blockers")
       .select("id, task_id, internal_project_id, reason, opened_at, resolved_at")
@@ -376,10 +391,28 @@ export default async function InternalProjectFichaPage({
       .select("id, person_id, task_id, minutes, logged_on, notes")
       .or(timeFilter)
       .order("logged_on", { ascending: false }),
+    // 0141: assignees para las tareas del proyecto (nombres en la sección
+    // "Tareas del proyecto"). Si no hay tareas, no consultamos.
+    taskIds.length === 0
+      ? Promise.resolve({ data: [] as Array<{ task_id: string; person_id: string }> })
+      : supabase
+          .from("task_assignees")
+          .select("task_id, person_id")
+          .in("task_id", taskIds),
   ]);
 
   const blockerRows = (blockersRes.data ?? []) as unknown as BlockerDbRow[];
   const timeEntryRows = (timeRes.data ?? []) as unknown as TimeEntryDbRow[];
+  const taskAssigneeRows = (taskAssigneesRes.data ?? []) as unknown as Array<{
+    task_id: string;
+    person_id: string;
+  }>;
+  const assigneesByTaskId = new Map<string, string[]>();
+  for (const r of taskAssigneeRows) {
+    const list = assigneesByTaskId.get(r.task_id) ?? [];
+    list.push(r.person_id);
+    assigneesByTaskId.set(r.task_id, list);
+  }
 
   // ─── Sub-sección: Tareas ────────────────────────────────────────────────
   // Completions para las tareas recurrentes del proyecto (contador +
@@ -408,16 +441,18 @@ export default async function InternalProjectFichaPage({
 
   const projectTasks: ProjectTaskRow[] = tasksRows.map((t) => {
     const completions = completionsByTask.get(t.id) ?? [];
+    const assigneeIds = assigneesByTaskId.get(t.id) ?? [];
+    const assigneeNames = assigneeIds
+      .map((pid) => personNameById.get(pid))
+      .filter((n): n is string => !!n);
     return {
       id: t.id,
       title: t.title,
       description: t.description,
       status: t.status,
       priority: t.priority,
-      assigneeId: t.assignee_id,
-      assigneeName: t.assignee_id
-        ? personNameById.get(t.assignee_id) ?? null
-        : null,
+      assigneeIds,
+      assigneeNames,
       dueOn: t.due_on,
       completedAt: t.completed_at,
       isOverdue:
@@ -518,7 +553,7 @@ export default async function InternalProjectFichaPage({
     description: project.description,
     status: project.status,
     priority: project.priority,
-    ownerId: project.owner_id,
+    ownerIds: projectOwnerIds,
     startsOn: project.starts_on,
     dueOn: project.due_on,
     notes: project.notes,
@@ -532,7 +567,7 @@ export default async function InternalProjectFichaPage({
         stats={[
           { l: "Estado", v: STATUS_LABEL[project.status] },
           { l: "Prioridad", v: PRIORITY_LABEL[project.priority] },
-          { l: "Owner", v: ownerName ?? "—" },
+          { l: "Responsables", v: ownersLabel },
           { l: "Vence", v: project.due_on ? formatDate(project.due_on) : "—" },
         ]}
       />
@@ -565,7 +600,14 @@ export default async function InternalProjectFichaPage({
                 />
               }
             />
-            <FieldRow label="Owner" value={ownerName ?? "Sin dueño"} />
+            <FieldRow
+              label="Responsables"
+              value={
+                projectOwnerNames.length === 0
+                  ? "Sin dueños"
+                  : projectOwnerNames.join(", ")
+              }
+            />
             <FieldRow
               label="Inicio"
               value={project.starts_on ? formatDate(project.starts_on) : "—"}

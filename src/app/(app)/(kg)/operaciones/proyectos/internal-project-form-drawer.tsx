@@ -52,7 +52,8 @@ export interface ProjectInitial {
   readonly description: string | null;
   readonly status: Status;
   readonly priority: Priority;
-  readonly ownerId: string | null;
+  /** Personas responsables (0140 M2M). Vacío = sin dueños. */
+  readonly ownerIds: readonly string[];
   readonly startsOn: string | null;
   readonly dueOn: string | null;
   readonly notes: string | null;
@@ -231,26 +232,17 @@ function ProjectFormBody({
         </Field>
       </div>
 
-      <Field label="Owner" htmlFor="owner_id">
-        <select
-          id="owner_id"
-          name="owner_id"
-          defaultValue={initial?.ownerId ?? ""}
-          style={inputStyle}
-        >
-          <option value="">— Sin dueño —</option>
-          {owners.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.fullName}
-            </option>
-          ))}
-        </select>
+      <Field label="Responsables">
+        <OwnersMultiSelect
+          owners={owners}
+          initialOwnerIds={initial?.ownerIds ?? []}
+        />
         <div
           className="kg-t7"
           style={{ color: "var(--kg-text-3)", marginTop: 6 }}
         >
-          Persona responsable del proyecto interno. Se muestra en el listado y
-          alimenta reportes de carga.
+          Podés marcar 0, 1 o varias personas. Se muestran en el listado y
+          alimentan reportes de carga. Sin nadie = proyecto sin dueños.
         </div>
       </Field>
 
@@ -339,6 +331,91 @@ function ProjectFormBody({
         </div>
       </div>
     </form>
+  );
+}
+
+/**
+ * Multi-select por checkboxes. Cada checkbox emite `owner_ids` (mismo name)
+ * con el id de la persona — el server action lee formData.getAll("owner_ids")
+ * para obtener el array. Todas las personas activas + las que ya estaban en
+ * el proyecto (aunque estén inactivas — para no perder el mapping histórico).
+ */
+function OwnersMultiSelect({
+  owners,
+  initialOwnerIds,
+}: {
+  readonly owners: readonly OwnerOption[];
+  readonly initialOwnerIds: readonly string[];
+}) {
+  const initialSet = useMemo(
+    () => new Set(initialOwnerIds),
+    [initialOwnerIds],
+  );
+  const [checked, setChecked] = useState<Set<string>>(initialSet);
+
+  function toggle(id: string) {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  if (owners.length === 0) {
+    return (
+      <div
+        className="kg-t7"
+        style={{ color: "var(--kg-text-3)", padding: "8px 0" }}
+      >
+        No hay personas activas cargadas. Andá a Organización → Personas para
+        dar de alta al menos una.
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        maxHeight: 220,
+        overflowY: "auto",
+        padding: "8px 12px",
+        borderRadius: "var(--kg-r-8)",
+        background: "var(--kg-surface-2-solid)",
+        border: "1px solid var(--kg-border-subtle)",
+      }}
+    >
+      {owners.map((o) => {
+        const isChecked = checked.has(o.id);
+        return (
+          <label
+            key={o.id}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "6px 4px",
+              cursor: "pointer",
+              fontSize: 13,
+              color: "var(--kg-text-1)",
+            }}
+          >
+            <input
+              type="checkbox"
+              name="owner_ids"
+              value={o.id}
+              checked={isChecked}
+              onChange={() => toggle(o.id)}
+              style={{ cursor: "pointer", flexShrink: 0 }}
+            />
+            {o.fullName}
+          </label>
+        );
+      })}
+    </div>
   );
 }
 

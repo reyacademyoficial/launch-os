@@ -82,13 +82,17 @@ interface TaskDbRow {
   readonly status: Status;
   readonly priority: Priority;
   readonly internal_project_id: string | null;
-  readonly assignee_id: string | null;
   readonly due_on: string | null;
   readonly completed_at: string | null;
   readonly created_at: string;
   readonly is_recurring: boolean;
   readonly recurrence_days: number[] | null;
   readonly estimated_minutes: number | null;
+}
+
+interface TaskAssigneeRow {
+  readonly task_id: string;
+  readonly person_id: string;
 }
 
 interface TaskCompletionDbRow {
@@ -129,23 +133,39 @@ export default async function TareasPage({
 
   const supabase = await createClient();
 
-  // Tasks: si scope=mine, filtramos server-side por assignee_id. Si es
-  // "mine" pero el user no tiene persona vinculada, showPersonMissing=true
-  // y devolvemos vacío.
+  // Tasks: si scope=mine y el user tiene persona, primero traemos los
+  // task_ids de la junction task_assignees donde person_id = yo, y filtramos
+  // por esos ids. Es una query extra pero más simple y explícito que
+  // intentar embeds. Si no hay persona vinculada, devolvemos vacío.
+  let scopedTaskIds: string[] | null = null;
+  if (scope === "mine") {
+    if (currentPersonId == null) {
+      scopedTaskIds = []; // sin persona → 0 tasks
+    } else {
+      const myRes = await supabase
+        .from("task_assignees")
+        .select("task_id")
+        .eq("person_id", currentPersonId);
+      scopedTaskIds = ((myRes.data ?? []) as Array<{ task_id: string }>).map(
+        (r) => r.task_id,
+      );
+    }
+  }
+
   const tasksQuery = supabase
     .from("tasks")
     .select(
-      "id, title, description, status, priority, internal_project_id, assignee_id, due_on, completed_at, created_at, is_recurring, recurrence_days, estimated_minutes",
+      "id, title, description, status, priority, internal_project_id, due_on, completed_at, created_at, is_recurring, recurrence_days, estimated_minutes",
     )
     .order("due_on", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: false });
 
   const scopedTasksQuery =
-    scope === "mine" && currentPersonId != null
-      ? tasksQuery.eq("assignee_id", currentPersonId)
-      : scope === "mine"
-        ? tasksQuery.eq("assignee_id", "__no-match__") // devuelve 0 rows
-        : tasksQuery;
+    scopedTaskIds != null
+      ? scopedTaskIds.length === 0
+        ? tasksQuery.eq("id", "__no-match__") // fuerza 0 filas
+        : tasksQuery.in("id", scopedTaskIds)
+      : tasksQuery;
 
   const [tasksRes, projectsRes, peopleRes] = await Promise.all([
     scopedTasksQuery,
@@ -163,6 +183,25 @@ export default async function TareasPage({
   const allTasks = (tasksRes.data ?? []) as unknown as TaskDbRow[];
   const allProjects = (projectsRes.data ?? []) as unknown as ProjectDbRow[];
   const allPeople = (peopleRes.data ?? []) as unknown as PersonDbRow[];
+
+  // Fetch assignees para todas las tareas visibles — hidratamos names para
+  // la vista. Los que no aparecen en la junction quedan sin dueños.
+  const visibleTaskIds = allTasks.map((t) => t.id);
+  const assigneesRes =
+    visibleTaskIds.length === 0
+      ? { data: [] as TaskAssigneeRow[] }
+      : await supabase
+          .from("task_assignees")
+          .select("task_id, person_id")
+          .in("task_id", visibleTaskIds);
+  const allAssignees =
+    (assigneesRes.data ?? []) as unknown as TaskAssigneeRow[];
+  const assigneesByTask = new Map<string, string[]>();
+  for (const a of allAssignees) {
+    const list = assigneesByTask.get(a.task_id) ?? [];
+    list.push(a.person_id);
+    assigneesByTask.set(a.task_id, list);
+  }
 
   const projectNameById = new Map<string, string>();
   for (const p of allProjects) projectNameById.set(p.id, p.name);
@@ -236,10 +275,10 @@ export default async function TareasPage({
       internalProjectName: t.internal_project_id
         ? projectNameById.get(t.internal_project_id) ?? null
         : null,
-      assigneeId: t.assignee_id,
-      assigneeName: t.assignee_id
-        ? personNameById.get(t.assignee_id) ?? null
-        : null,
+      assigneeIds: assigneesByTask.get(t.id) ?? [],
+      assigneeNames: (assigneesByTask.get(t.id) ?? [])
+        .map((pid) => personNameById.get(pid))
+        .filter((n): n is string => !!n),
       dueOn: t.due_on,
       completedAt: t.completed_at,
       createdAt: t.created_at,
@@ -407,7 +446,9 @@ export default async function TareasPage({
             projects={projectOptions}
             assignees={assigneeOptions}
             presetProjectId={projectIdFilter}
-            presetAssigneeId={scope === "mine" ? currentPersonId : null}
+            presetAssigneeIds={
+              scope === "mine" && currentPersonId ? [currentPersonId] : null
+            }
             canCreate
           />
         )}

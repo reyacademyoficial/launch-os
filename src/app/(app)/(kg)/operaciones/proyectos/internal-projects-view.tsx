@@ -36,8 +36,9 @@ export interface InternalProjectRowData {
   readonly description: string | null;
   readonly status: Status;
   readonly priority: Priority;
-  readonly ownerId: string | null;
-  readonly ownerName: string | null;
+  /** Personas responsables (0140 M2M). Vacío = sin dueños. Ya hidratado por server. */
+  readonly ownerIds: readonly string[];
+  readonly ownerNames: readonly string[];
   readonly startsOn: string | null;
   readonly dueOn: string | null;
   readonly closedAt: string | null;
@@ -133,7 +134,7 @@ export function InternalProjectsView({
         description: editing.description,
         status: editing.status,
         priority: editing.priority,
-        ownerId: editing.ownerId,
+        ownerIds: editing.ownerIds,
         startsOn: editing.startsOn,
         dueOn: editing.dueOn,
         notes: editing.notes,
@@ -181,10 +182,16 @@ export function InternalProjectsView({
     },
     {
       key: "owner",
-      label: "Owner",
+      label: "Responsables",
       render: (r) =>
-        r.ownerName ?? (
-          <span style={{ color: "var(--kg-text-3)" }}>Sin dueño</span>
+        r.ownerNames.length === 0 ? (
+          <span style={{ color: "var(--kg-text-3)" }}>Sin dueños</span>
+        ) : (
+          <span title={r.ownerNames.join(", ")}>
+            {r.ownerNames.length <= 2
+              ? r.ownerNames.join(", ")
+              : `${r.ownerNames.slice(0, 2).join(", ")} +${r.ownerNames.length - 2}`}
+          </span>
         ),
     },
     {

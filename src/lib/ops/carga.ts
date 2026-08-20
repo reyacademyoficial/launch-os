@@ -7,8 +7,12 @@
  * "Carga" ≠ "tiempo trabajado". Esto mide COLA DE PENDIENTES; para horas
  * dedicadas ver `sumMinutesByPerson` (usa time_entries).
  *
- * Tareas SIN assignee no se atribuyen a nadie — se pueden reportar aparte
+ * Tareas SIN assignees no se atribuyen a nadie — se pueden reportar aparte
  * con `countUnassignedOpenTasks` si el caller quiere una línea "sin dueño".
+ *
+ * 0141: cambio a M2M. Una tarea con N assignees suma N a "open" (una por
+ * persona). Esto es lo esperado: si Ana y Bob están asignados a la misma
+ * tarea, cada uno tiene 1 tarea abierta en su balance.
  */
 
 import { filterDueSoonTasks, filterOverdueTasks } from "./overdue";
@@ -66,15 +70,17 @@ export function computeLoadByPerson(
 
 function bump(tasks: OpsTaskRow[], target: Map<string, number>): void {
   for (const t of tasks) {
-    if (t.assignee_id == null) continue;
-    target.set(t.assignee_id, (target.get(t.assignee_id) ?? 0) + 1);
+    for (const personId of t.assignee_ids) {
+      target.set(personId, (target.get(personId) ?? 0) + 1);
+    }
   }
 }
 
-/** Tareas abiertas sin assignee. Útil para "sin dueño" en el dashboard. */
+/** Tareas abiertas sin ningún assignee. Útil para "sin dueño" en el dashboard. */
 export function countUnassignedOpenTasks(tasks: OpsTaskRow[]): number {
-  return tasks.filter((t) => isTaskOpen(t.status) && t.assignee_id == null)
-    .length;
+  return tasks.filter(
+    (t) => isTaskOpen(t.status) && t.assignee_ids.length === 0,
+  ).length;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

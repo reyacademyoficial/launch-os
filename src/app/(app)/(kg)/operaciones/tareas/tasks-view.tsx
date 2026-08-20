@@ -40,8 +40,9 @@ export interface TaskRowData {
   readonly priority: Priority;
   readonly internalProjectId: string | null;
   readonly internalProjectName: string | null;
-  readonly assigneeId: string | null;
-  readonly assigneeName: string | null;
+  /** Personas asignadas (0141 M2M). Ya hidratado. Vacío = sin asignar. */
+  readonly assigneeIds: readonly string[];
+  readonly assigneeNames: readonly string[];
   readonly dueOn: string | null;
   readonly completedAt: string | null;
   readonly createdAt: string;
@@ -92,7 +93,7 @@ export function TasksView({
   projects,
   assignees,
   presetProjectId,
-  presetAssigneeId,
+  presetAssigneeIds,
   canCreate,
 }: {
   readonly rows: readonly TaskRowData[];
@@ -100,7 +101,7 @@ export function TasksView({
   readonly projects: readonly ProjectOptionForTask[];
   readonly assignees: readonly AssigneeOptionForTask[];
   readonly presetProjectId: string | null;
-  readonly presetAssigneeId: string | null;
+  readonly presetAssigneeIds: readonly string[] | null;
   readonly canCreate: boolean;
 }) {
   const [creating, setCreating] = useState(false);
@@ -118,7 +119,7 @@ export function TasksView({
         status: editing.status,
         priority: editing.priority,
         internalProjectId: editing.internalProjectId,
-        assigneeId: editing.assigneeId,
+        assigneeIds: editing.assigneeIds,
         dueOn: editing.dueOn,
         completedAt: editing.completedAt,
         isRecurring: editing.isRecurring,
@@ -203,8 +204,14 @@ export function TasksView({
       key: "assignee",
       label: "Asignada",
       render: (r) =>
-        r.assigneeName ?? (
+        r.assigneeNames.length === 0 ? (
           <span style={{ color: "var(--kg-text-3)" }}>Sin asignar</span>
+        ) : (
+          <span title={r.assigneeNames.join(", ")}>
+            {r.assigneeNames.length <= 2
+              ? r.assigneeNames.join(", ")
+              : `${r.assigneeNames.slice(0, 2).join(", ")} +${r.assigneeNames.length - 2}`}
+          </span>
         ),
     },
     {
@@ -372,7 +379,7 @@ export function TasksView({
             projects={projects}
             assignees={assignees}
             presetProjectId={presetProjectId}
-            presetAssigneeId={presetAssigneeId}
+            presetAssigneeIds={presetAssigneeIds ?? undefined}
           />
 
           <TaskFormDrawer

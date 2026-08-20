@@ -57,7 +57,8 @@ interface ProjectPayload {
   readonly description: string | null;
   readonly status: Status;
   readonly priority: Priority;
-  readonly ownerId: string | null;
+  /** Personas responsables. Dedupeadas. Vacío = proyecto sin dueños. */
+  readonly ownerIds: string[];
   readonly startsOn: string | null;
   readonly dueOn: string | null;
   readonly notes: string | null;
@@ -82,7 +83,16 @@ function parseProjectFormData(formData: FormData): ProjectPayload | string {
   }
   const priority = priorityRaw as Priority;
 
-  const ownerId = nullIfEmpty(formData.get("owner_id"));
+  // Multi-select: los checkboxes envían N valores con el mismo name.
+  const rawOwnerIds = formData.getAll("owner_ids");
+  const ownerIds: string[] = [];
+  const seenOwners = new Set<string>();
+  for (const v of rawOwnerIds) {
+    const s = String(v).trim();
+    if (s.length === 0 || seenOwners.has(s)) continue;
+    seenOwners.add(s);
+    ownerIds.push(s);
+  }
 
   const startsOn = nullIfEmpty(formData.get("starts_on"));
   if (startsOn != null && !YMD_RX.test(startsOn)) {
@@ -103,7 +113,7 @@ function parseProjectFormData(formData: FormData): ProjectPayload | string {
     description,
     status,
     priority,
-    ownerId,
+    ownerIds,
     startsOn,
     dueOn,
     notes,
@@ -144,7 +154,6 @@ export async function createProject(
     description: parsed.description,
     status: parsed.status,
     priority: parsed.priority,
-    owner_id: parsed.ownerId,
     starts_on: parsed.startsOn,
     due_on: parsed.dueOn,
     closed_at: closedAt,
@@ -161,6 +170,24 @@ export async function createProject(
 
   const created = data as { id: string } | null;
   if (!created) return { error: "El insert no devolvió fila." };
+
+  // Popular la junction si hay owners seleccionados.
+  if (parsed.ownerIds.length > 0) {
+    const ownerRows = parsed.ownerIds.map((personId) => ({
+      internal_project_id: created.id,
+      person_id: personId,
+      organization_id: organizationId,
+    }));
+    const { error: ownersErr } = await supabase
+      .from("internal_project_owners")
+      .insert(ownerRows as never);
+    if (ownersErr) {
+      // El project ya existe pero los owners fallaron. Devolvemos error
+      // igual — el operador puede editar y reintentar. No rollbackeamos
+      // el project (no vale la complejidad para este caso raro).
+      return { error: `Proyecto creado pero fallaron los owners: ${ownersErr.message}` };
+    }
+  }
 
   revalidatePath("/operaciones/proyectos");
   revalidatePath("/operaciones");
@@ -185,11 +212,15 @@ export async function updateProject(
 
   const { data: existing } = await supabase
     .from("internal_projects")
-    .select("closed_at")
+    .select("closed_at, organization_id")
     .eq("id", projectId)
     .maybeSingle();
-  const prevClosedAt =
-    (existing as { closed_at: string | null } | null)?.closed_at ?? null;
+  const existingRow = existing as
+    | { closed_at: string | null; organization_id: string }
+    | null;
+  if (!existingRow) return { error: "Proyecto no encontrado." };
+  const prevClosedAt = existingRow.closed_at;
+  const organizationId = existingRow.organization_id;
 
   const nextIsClosed = CLOSED_STATUSES.has(parsed.status);
   const closedAt = nextIsClosed
@@ -201,7 +232,6 @@ export async function updateProject(
     description: parsed.description,
     status: parsed.status,
     priority: parsed.priority,
-    owner_id: parsed.ownerId,
     starts_on: parsed.startsOn,
     due_on: parsed.dueOn,
     closed_at: closedAt,
@@ -214,6 +244,28 @@ export async function updateProject(
     .eq("id", projectId);
 
   if (error) return { error: error.message };
+
+  // Reemplazar el set de owners: delete + insert bulk. Es un reemplazo
+  // atómico (borra los que se sacaron, mete los nuevos) más simple que
+  // diff-ear el set previo. El costo es N filas nuevas cada guardado
+  // pero N es chico (< 20 típico).
+  const { error: delErr } = await supabase
+    .from("internal_project_owners")
+    .delete()
+    .eq("internal_project_id", projectId);
+  if (delErr) return { error: `Owners no se pudieron reemplazar: ${delErr.message}` };
+
+  if (parsed.ownerIds.length > 0) {
+    const ownerRows = parsed.ownerIds.map((personId) => ({
+      internal_project_id: projectId,
+      person_id: personId,
+      organization_id: organizationId,
+    }));
+    const { error: insErr } = await supabase
+      .from("internal_project_owners")
+      .insert(ownerRows as never);
+    if (insErr) return { error: `Owners nuevos fallaron: ${insErr.message}` };
+  }
 
   revalidatePath("/operaciones/proyectos");
   revalidatePath(`/operaciones/proyectos/${projectId}`);

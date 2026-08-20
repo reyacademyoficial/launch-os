@@ -39,8 +39,9 @@ export interface ProjectTaskRow {
   readonly description: string | null;
   readonly status: TaskStatus;
   readonly priority: TaskPriority;
-  readonly assigneeId: string | null;
-  readonly assigneeName: string | null;
+  /** Personas asignadas (0141 M2M). Vacío = sin asignar. */
+  readonly assigneeIds: readonly string[];
+  readonly assigneeNames: readonly string[];
   readonly dueOn: string | null;
   readonly completedAt: string | null;
   /** Precomputado server-side: due_on < today AND status abierta. */
@@ -127,7 +128,7 @@ export function ProjectTasksSection({
         status: editing.status,
         priority: editing.priority,
         internalProjectId: projectId,
-        assigneeId: editing.assigneeId,
+        assigneeIds: editing.assigneeIds,
         dueOn: editing.dueOn,
         completedAt: editing.completedAt,
         isRecurring: editing.isRecurring,
@@ -252,7 +253,11 @@ export function ProjectTasksSection({
                     className="kg-t7"
                     style={{ color: "var(--kg-text-3)", fontSize: 11 }}
                   >
-                    {r.assigneeName ?? "Sin asignar"}
+                    {r.assigneeNames.length === 0
+                      ? "Sin asignar"
+                      : r.assigneeNames.length <= 2
+                        ? r.assigneeNames.join(", ")
+                        : `${r.assigneeNames.slice(0, 2).join(", ")} +${r.assigneeNames.length - 2}`}
                     {r.dueOn && (
                       <>
                         {" · "}

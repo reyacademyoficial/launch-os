@@ -49,7 +49,7 @@ export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
 
   return (
     <aside
-      className="kg-glass flex h-full w-[236px] shrink-0 flex-col border-r"
+      className="kg-glass flex h-full w-[236px] shrink-0 flex-col border-r pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pt-[env(safe-area-inset-top)]"
       style={{
         background: "var(--kg-bg-base)",
         borderColor: "var(--kg-border-subtle)",

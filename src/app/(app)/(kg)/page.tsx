@@ -158,7 +158,6 @@ interface TaskRow {
     | "bloqueado"
     | "alerta_maxima"
     | "listo";
-  readonly assignee_id: string | null;
   readonly due_on: string | null;
 }
 
@@ -621,6 +620,7 @@ export default async function EjecutivoDashboardPage({
     certificatesRes,
     internalProjectsRes,
     tasksRes,
+    taskAssigneesRes,
     blockersRes,
   ] = await Promise.all([
     supabase.from("clients").select("id, name, active"),
@@ -649,7 +649,10 @@ export default async function EjecutivoDashboardPage({
     supabase.from("exams").select("cohort_id, passed"),
     supabase.from("certificates").select("student_id"),
     supabase.from("internal_projects").select("status"),
-    supabase.from("tasks").select("id, status, assignee_id, due_on"),
+    supabase.from("tasks").select("id, status, due_on"),
+    // 0141: assignees viven en junction. Traemos todos y contamos
+    // "sin asignar" derivando (tasks - las que aparecen en la junction).
+    supabase.from("task_assignees").select("task_id"),
     supabase
       .from("blockers")
       .select("id, reason, opened_at, resolved_at")
@@ -674,6 +677,10 @@ export default async function EjecutivoDashboardPage({
   const internalProjects =
     (internalProjectsRes.data ?? []) as unknown as InternalProjectRow[];
   const tasks = (tasksRes.data ?? []) as unknown as TaskRow[];
+  const taskAssigneeRows = (taskAssigneesRes.data ?? []) as unknown as Array<{
+    task_id: string;
+  }>;
+  const assignedTaskIds = new Set(taskAssigneeRows.map((r) => r.task_id));
   const blockers = (blockersRes.data ?? []) as unknown as BlockerRow[];
 
   // ─── AP (después de tener client_transfers + payroll + expenses) ────
@@ -793,7 +800,8 @@ export default async function EjecutivoDashboardPage({
   const overdueTasks = openTasks.filter(
     (t) => t.due_on != null && t.due_on < today,
   );
-  const unassignedOpen = openTasks.filter((t) => t.assignee_id == null).length;
+  const unassignedOpen = openTasks.filter((t) => !assignedTaskIds.has(t.id))
+    .length;
   const nowMs = Date.now();
   const oldBlockers = blockers.filter((b) => {
     const openedMs = new Date(b.opened_at).getTime();

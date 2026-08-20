@@ -45,7 +45,7 @@ export function KingrowShell({
               el inferior se mantienen para respirar. Antes era `py-6 md:py-8`
               — el eje Y arriba se recortó a propósito.
             */}
-            <main className="flex-1 overflow-y-auto px-4 pb-6 pt-4 sm:px-6 md:px-8 md:pb-8">
+            <main className="flex-1 overflow-y-auto px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-4 sm:px-6 md:px-8 md:pb-[calc(2rem+env(safe-area-inset-bottom))]">
               <div className="mx-auto w-full max-w-[1360px]">{children}</div>
             </main>
           </div>
