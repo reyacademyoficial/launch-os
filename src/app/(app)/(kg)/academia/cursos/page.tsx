@@ -7,7 +7,10 @@ import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
 import { createClient } from "@/lib/supabase/server";
 
-import type { ProductOptionForCourse } from "./course-form-drawer";
+import type {
+  ExternalAppOptionForCourse,
+  ProductOptionForCourse,
+} from "./course-form-drawer";
 import { CoursesView, type CourseRowData } from "./courses-view";
 import type { ParameterRowData } from "./parameters-editor";
 
@@ -30,6 +33,14 @@ interface CourseDbRow {
   readonly active: boolean;
   readonly default_access_days: number | null;
   readonly ghl_expiration_webhook_url: string | null;
+  readonly external_app_id: string | null;
+}
+
+interface ExternalAppDbRow {
+  readonly id: string;
+  readonly name: string;
+  readonly project_id: string;
+  readonly active: boolean;
 }
 
 interface ProductDbRow {
@@ -74,11 +85,12 @@ export default async function CursosPage({
     projectsRes,
     cohortsRes,
     parametersRes,
+    externalAppsRes,
   ] = await Promise.all([
     supabase
       .from("courses")
       .select(
-        "id, product_id, project_id, duration_hours, modules_count, active, default_access_days, ghl_expiration_webhook_url",
+        "id, product_id, project_id, duration_hours, modules_count, active, default_access_days, ghl_expiration_webhook_url, external_app_id",
       )
       .order("active", { ascending: false }),
     supabase.from("products").select("id, name, project_id"),
@@ -91,6 +103,10 @@ export default async function CursosPage({
       .from("course_parameters")
       .select("id, course_id, key, label, type, required, order_index")
       .order("order_index", { ascending: true }),
+    supabase
+      .from("external_apps")
+      .select("id, name, project_id, active")
+      .order("name", { ascending: true }),
   ]);
 
   const allCourses = (coursesRes.data ?? []) as unknown as CourseDbRow[];
@@ -153,6 +169,7 @@ export default async function CursosPage({
       cohortsCount: cohortsByCourse.get(c.id) ?? 0,
       defaultAccessDays: c.default_access_days,
       ghlExpirationWebhookUrl: c.ghl_expiration_webhook_url,
+      externalAppId: c.external_app_id,
     };
   });
 
@@ -164,9 +181,21 @@ export default async function CursosPage({
       id: p.id,
       name: p.name,
       projectName: projectNameById.get(p.project_id) ?? null,
+      projectId: p.project_id,
       alreadyCourse: alreadyCourseProductIds.has(p.id),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
+
+  const allExternalApps =
+    (externalAppsRes.data ?? []) as unknown as ExternalAppDbRow[];
+  const externalApps: ExternalAppOptionForCourse[] = allExternalApps
+    .filter((a) => propiaProjectIds.has(a.project_id))
+    .map((a) => ({
+      id: a.id,
+      name: a.name,
+      projectId: a.project_id,
+      active: a.active,
+    }));
 
   const activeCount = allCourses.filter((c) => c.active).length;
   const inactiveCount = allCourses.length - activeCount;
@@ -205,6 +234,7 @@ export default async function CursosPage({
           rows={rows}
           totalCount={rows.length}
           products={products}
+          externalApps={externalApps}
           parametersByCourseId={parametersByCourseId}
         />
       </Panel>

@@ -25,8 +25,16 @@ export interface ProductOptionForCourse {
   readonly id: string;
   readonly name: string;
   readonly projectName: string | null;
+  readonly projectId: string;
   /** True si ya está asignado a otro curso — se muestra deshabilitado. */
   readonly alreadyCourse: boolean;
+}
+
+export interface ExternalAppOptionForCourse {
+  readonly id: string;
+  readonly name: string;
+  readonly projectId: string;
+  readonly active: boolean;
 }
 
 export interface CourseInitial {
@@ -37,6 +45,7 @@ export interface CourseInitial {
   readonly active: boolean;
   readonly defaultAccessDays: number | null;
   readonly ghlExpirationWebhookUrl: string | null;
+  readonly externalAppId: string | null;
 }
 
 export function CourseFormDrawer({
@@ -44,6 +53,7 @@ export function CourseFormDrawer({
   open,
   onClose,
   products,
+  externalApps,
   initial,
   parameters,
 }: {
@@ -51,6 +61,7 @@ export function CourseFormDrawer({
   readonly open: boolean;
   readonly onClose: () => void;
   readonly products: readonly ProductOptionForCourse[];
+  readonly externalApps?: readonly ExternalAppOptionForCourse[];
   readonly initial?: CourseInitial;
   /** Solo aplica en mode='edit'. Se carga en el server para el course actual. */
   readonly parameters?: readonly ParameterRowData[];
@@ -62,6 +73,7 @@ export function CourseFormDrawer({
       <CourseFormBody
         mode={mode}
         products={products}
+        externalApps={externalApps ?? []}
         initial={initial}
         parameters={parameters}
         onClose={onClose}
@@ -73,12 +85,14 @@ export function CourseFormDrawer({
 function CourseFormBody({
   mode,
   products,
+  externalApps,
   initial,
   parameters,
   onClose,
 }: {
   readonly mode: "create" | "edit";
   readonly products: readonly ProductOptionForCourse[];
+  readonly externalApps: readonly ExternalAppOptionForCourse[];
   readonly initial?: CourseInitial;
   readonly parameters?: readonly ParameterRowData[];
   readonly onClose: () => void;
@@ -114,6 +128,12 @@ function CourseFormBody({
   }, [state, onClose]);
 
   const [active, setActive] = useState(initial?.active ?? true);
+  const [selectedProductId, setSelectedProductId] = useState<string>(
+    initial?.productId ?? "",
+  );
+  const [externalAppId, setExternalAppId] = useState<string>(
+    initial?.externalAppId ?? "",
+  );
   const [deletePending, startDeleteTransition] = useTransition();
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -143,6 +163,16 @@ function CourseFormBody({
     if (!isEdit) return !p.alreadyCourse;
     return !p.alreadyCourse || p.id === initial?.productId;
   });
+
+  const effectiveProductId =
+    selectedProductId || initial?.productId || productOptions[0]?.id || "";
+  const effectiveProjectId =
+    products.find((p) => p.id === effectiveProductId)?.projectId ?? null;
+  const filteredExternalApps = effectiveProjectId
+    ? externalApps.filter(
+        (a) => a.projectId === effectiveProjectId && (a.active || a.id === externalAppId),
+      )
+    : [];
 
   if (productOptions.length === 0) {
     return (
@@ -175,7 +205,14 @@ function CourseFormBody({
         <select
           id="product_id"
           name="product_id"
-          defaultValue={initial?.productId ?? productOptions[0]?.id ?? ""}
+          value={effectiveProductId}
+          onChange={(e) => {
+            setSelectedProductId(e.target.value);
+            // Al cambiar el product cambia el project. Reseteamos el
+            // external_app_id para no quedar apuntando a una app de otro
+            // proyecto.
+            setExternalAppId("");
+          }}
           required
           style={inputStyle}
         >
@@ -192,6 +229,33 @@ function CourseFormBody({
         >
           Solo se listan productos de proyectos con ownership='propia'. Un
           producto es a lo sumo 1 curso.
+        </div>
+      </Field>
+
+      <Field label="App externa asociada" htmlFor="external_app_id">
+        <select
+          id="external_app_id"
+          name="external_app_id"
+          value={externalAppId}
+          onChange={(e) => setExternalAppId(e.target.value)}
+          disabled={filteredExternalApps.length === 0}
+          style={inputStyle}
+        >
+          <option value="">— Sin app externa —</option>
+          {filteredExternalApps.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+              {a.active ? "" : " · archivada"}
+            </option>
+          ))}
+        </select>
+        <div
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)", marginTop: 6 }}
+        >
+          {filteredExternalApps.length === 0
+            ? "No hay apps externas cargadas en el proyecto del producto elegido. Gestionalas desde Academia → Apps externas."
+            : "El curso mostrará un botón 'Abrir app' con SSO si se elige una app activa."}
         </div>
       </Field>
 

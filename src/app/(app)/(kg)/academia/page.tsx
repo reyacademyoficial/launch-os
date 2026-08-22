@@ -6,6 +6,7 @@ import { EmptyState } from "@/components/kg/empty-state";
 import { IconAca } from "@/components/kg/icons";
 import { Panel } from "@/components/kg/panel";
 import { StatusPill } from "@/components/kg/status-pill";
+import { getCourseOverallProgress } from "@/lib/academia/course-metrics";
 import {
   activeStudents as computeActiveStudents,
   averageAttendance,
@@ -81,6 +82,11 @@ interface ProjectDbRow {
   readonly name: string;
 }
 
+interface CourseGhlDbRow {
+  readonly id: string;
+  readonly progress_source: string;
+}
+
 const COHORT_ORDER: Record<CohortStatus, number> = {
   active: 0,
   planned: 1,
@@ -114,6 +120,7 @@ export default async function AcademiaDashboardPage() {
     examsRes,
     certsRes,
     projectsRes,
+    ghlCoursesRes,
   ] = await Promise.all([
     supabase.from("students").select("id, project_id, status"),
     supabase.from("enrollments").select("id, cohort_id, student_id, status"),
@@ -130,6 +137,10 @@ export default async function AcademiaDashboardPage() {
       .from("projects")
       .select("id, name")
       .eq("ownership", "propia"),
+    supabase
+      .from("courses")
+      .select("id, progress_source")
+      .eq("progress_source", "ghl_tags"),
   ]);
 
   const students = (studentsRes.data ?? []) as unknown as StudentDbRow[];
@@ -143,6 +154,34 @@ export default async function AcademiaDashboardPage() {
   const certs = (certsRes.data ?? []) as unknown as CertDbRow[];
   const propiaProjects =
     (projectsRes.data ?? []) as unknown as ProjectDbRow[];
+  const ghlCourses =
+    (ghlCoursesRes.data ?? []) as unknown as CourseGhlDbRow[];
+
+  // ── KPI global "Progreso promedio MdE" — promedio ponderado por students
+  //    de los cursos con progress_source='ghl_tags'. Si no hay ni un curso,
+  //    ni siquiera se muestra el card (undefined en vez de 0 para
+  //    distinguir "sin base" de "0%").
+  let mdeAvgProgress: number | null = null;
+  let mdeTotalStudents = 0;
+  if (ghlCourses.length > 0) {
+    const overall = await Promise.all(
+      ghlCourses.map((c) => getCourseOverallProgress(c.id)),
+    );
+    let numeratorSum = 0;
+    for (const o of overall) {
+      // avg_completion_percent está ponderado por students dentro del curso
+      // (avg de per-student). Reagregamos por total_students para que un
+      // curso con 100 alumnos pese más que uno con 3.
+      numeratorSum += o.avg_completion_percent * o.total_students;
+      mdeTotalStudents += o.total_students;
+    }
+    if (mdeTotalStudents > 0) {
+      mdeAvgProgress = numeratorSum / mdeTotalStudents;
+    } else {
+      // Hay cursos GHL pero sin alumnos activos → 0% con base 0.
+      mdeAvgProgress = 0;
+    }
+  }
 
   // ── Empty gate: sin proyectos propios el módulo no arranca. Lo aclara
   //    el banner del layout, pero el dashboard además muestra el
@@ -316,6 +355,17 @@ export default async function AcademiaDashboardPage() {
                   : `${uniqueCertifiedCount(certs)} de ${students.length} certificados`
               }
             />
+            {mdeAvgProgress != null && (
+              <KpiCard
+                label="Progreso promedio MdE"
+                value={formatPct(mdeAvgProgress)}
+                hint={
+                  mdeTotalStudents === 0
+                    ? `${ghlCourses.length} curso${ghlCourses.length === 1 ? "" : "s"} MdE · sin alumnos activos`
+                    : `${ghlCourses.length} curso${ghlCourses.length === 1 ? "" : "s"} · ${mdeTotalStudents} alumno${mdeTotalStudents === 1 ? "" : "s"}`
+                }
+              />
+            )}
           </div>
 
           <Panel title="Salud por generación">

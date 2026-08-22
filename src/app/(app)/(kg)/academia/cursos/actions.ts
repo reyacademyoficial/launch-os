@@ -37,6 +37,7 @@ interface CoursePayload {
   readonly active: boolean;
   readonly defaultAccessDays: number | null;
   readonly ghlExpirationWebhookUrl: string | null;
+  readonly externalAppId: string | null;
 }
 
 function parseCourseFormData(
@@ -93,6 +94,9 @@ function parseCourseFormData(
   const active =
     activeRaw === null ? defaultActive : String(activeRaw) === "on";
 
+  const externalAppIdRaw = nullIfEmpty(formData.get("external_app_id"));
+  const externalAppId = externalAppIdRaw;
+
   return {
     productId,
     durationHours,
@@ -100,6 +104,7 @@ function parseCourseFormData(
     active,
     defaultAccessDays,
     ghlExpirationWebhookUrl,
+    externalAppId,
   };
 }
 
@@ -123,6 +128,7 @@ export async function createCourse(
     active: parsed.active,
     default_access_days: parsed.defaultAccessDays,
     ghl_expiration_webhook_url: parsed.ghlExpirationWebhookUrl,
+    external_app_id: parsed.externalAppId,
   } as never;
 
   const { data, error } = await supabase
@@ -175,6 +181,7 @@ export async function updateCourse(
     active: parsed.active,
     default_access_days: parsed.defaultAccessDays,
     ghl_expiration_webhook_url: parsed.ghlExpirationWebhookUrl,
+    external_app_id: parsed.externalAppId,
   } as never;
 
   const { error } = await supabase
@@ -208,6 +215,49 @@ export async function updateCourse(
 // false). Los cohorts sobreviven con course_id apuntando al mismo course
 // mientras exista; si el course se borra sin cohorts, no hay problema.
 // ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+// linkExternalAppToCourse — setea courses.external_app_id (Fase G · 0153).
+//
+// Se separa del updateCourse para evitar agregar el select al form del curso
+// (que ya está denso). Uso previsto: server component o botón inline "Vincular
+// app externa" desde el detalle del curso.
+//
+// Pasar `null` desvinculada. El FK es ON DELETE SET NULL — si la app se
+// elimina, el link se rompe solo.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type LinkExternalAppResult = { ok: true } | { error: string };
+
+export async function linkExternalAppToCourse(
+  courseId: string,
+  externalAppId: string | null,
+): Promise<LinkExternalAppResult> {
+  if (!courseId) return { error: "Falta el id del curso." };
+
+  const supabase = await createSupabaseClient();
+  const payload = { external_app_id: externalAppId } as never;
+  const { error } = await supabase
+    .from("courses")
+    .update(payload)
+    .eq("id", courseId);
+
+  if (error) {
+    if (error.code === "23503") {
+      return { error: "La app externa no existe o no es visible." };
+    }
+    if (error.code === "42501") {
+      return {
+        error: "No tenés permisos para editar este curso.",
+      };
+    }
+    return { error: error.message };
+  }
+
+  revalidatePath("/academia/cursos");
+  revalidatePath(`/academia/cursos/${courseId}`);
+  return { ok: true };
+}
 
 export async function deleteCourse(
   courseId: string,

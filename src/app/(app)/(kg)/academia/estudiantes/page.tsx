@@ -9,6 +9,10 @@ import { fCount } from "@/lib/finance/format";
 import { createClient } from "@/lib/supabase/server";
 
 import {
+  ClearFiltersButton,
+  PersistentFilterSync,
+} from "../_shared/persistent-filters";
+import {
   PendingBuyersView,
   type CohortOptionForBulk,
   type PendingBuyer,
@@ -361,6 +365,8 @@ export default async function EstudiantesPage({
         ]}
       />
 
+      <PersistentFilterSync storageKey="academia:filters:estudiantes" />
+
       <KgPageFilters activeCount={show !== "active" ? 1 : 0}>
         <KgParamPills
           ariaLabel="Filtrar por estado"
@@ -370,6 +376,10 @@ export default async function EstudiantesPage({
             href: buildHref(o.value),
             active: show === o.value,
           }))}
+        />
+        <ClearFiltersButton
+          storageKey="academia:filters:estudiantes"
+          basePath="/academia/estudiantes"
         />
       </KgPageFilters>
 

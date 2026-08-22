@@ -6,6 +6,10 @@ import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
 import { createClient } from "@/lib/supabase/server";
 
+import {
+  ClearFiltersButton,
+  PersistentFilterSync,
+} from "../_shared/persistent-filters";
 import type {
   CourseOptionForCert,
   StudentOptionForCert,
@@ -146,6 +150,15 @@ export default async function CertificadosPage() {
           { l: "Estudiantes certificados", v: fCount(uniqueStudentsCertified) },
         ]}
       />
+      <PersistentFilterSync storageKey="academia:filters:certificados" />
+
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <ClearFiltersButton
+          storageKey="academia:filters:certificados"
+          basePath="/academia/certificados"
+        />
+      </div>
+
       <Panel title="Certificados emitidos">
         <CertificadosView
           certificates={certificates}

@@ -15,6 +15,7 @@ import type {
   SystemOptionForCohort,
 } from "../cohort-form-drawer";
 import { EditCohortButton } from "./edit-cohort-button";
+import { ExportAttendanceButton } from "./export-attendance-button";
 import type { BulkEnrollCandidate } from "./bulk-enroll-drawer";
 import type {
   SaleOptionForEnroll,
@@ -545,12 +546,15 @@ export default async function CohortFichaPage({
               >
                 ← Volver
               </Link>
-              <EditCohortButton
-                projects={projectOptions}
-                courses={courseOptions}
-                systems={systemOptions}
-                initial={initial}
-              />
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <ExportAttendanceButton cohortId={cohort.id} />
+                <EditCohortButton
+                  projects={projectOptions}
+                  courses={courseOptions}
+                  systems={systemOptions}
+                  initial={initial}
+                />
+              </div>
             </div>
           </div>
         </Panel>

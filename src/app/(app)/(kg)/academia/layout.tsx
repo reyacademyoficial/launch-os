@@ -34,6 +34,7 @@ export default async function AcademiaLayout({
     { href: "/academia/estudiantes", label: "Estudiantes" },
     { href: "/academia/cursos", label: "Cursos" },
     { href: "/academia/certificados", label: "Certificados" },
+    { href: "/academia/apps-externas", label: "Apps externas" },
   ];
 
   return (

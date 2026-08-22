@@ -17,23 +17,34 @@ import type {
   StudentInitial,
 } from "../student-form-drawer";
 import { EditStudentButton } from "./edit-student-button";
-import { EnrollmentExpireButton } from "./enrollment-expire-button";
 import {
-  ModulesProgressPanel,
-  type EnrollmentProgressGroup,
-  type ModuleProgressEntry,
-} from "./modules-progress-panel";
-import {
-  ParametersPanel,
-  type EnrollmentGroup,
-  type EnrollmentParameterEntry,
-} from "./parameters-panel";
+  EnrollmentCard,
+  type EnrollmentCardData,
+  type EnrollmentCardModule,
+  type EnrollmentCardParameter,
+} from "./enrollment-card";
 import {
   StudentCertificatesPanel,
   type StudentCertRowData,
 } from "./student-certificates-panel";
 
 export const metadata: Metadata = { title: "Estudiante · Academia" };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Ficha del alumno — Fase H · task #1 (vista unificada).
+//
+// Orden por importancia:
+//   1) Header (ContextBar) + Panel "Datos del estudiante"
+//   2) Panel "Generaciones": 1 card por enrollment con TODA la info del curso
+//      (nombre, cohort, sistema, progreso, badge de vencimiento, botón "Dar
+//      de baja ahora", parámetros del curso inline, módulos completados/
+//      pendientes inline). Empty state claro si no hay enrollments.
+//   3) Panel "Certificados"
+//   4) Panel "Exámenes" (placeholder)
+//
+// Los paneles sueltos de Progreso módulos / Parámetros / Vigencia que había
+// antes se movieron DENTRO del card del enrollment correspondiente.
+// ═══════════════════════════════════════════════════════════════════════════
 
 type Status = "active" | "inactive" | "graduated";
 
@@ -85,6 +96,7 @@ interface CourseBriefDbRow {
   readonly product_id: string;
   readonly project_id: string;
   readonly progress_source: string;
+  readonly has_systems: boolean;
 }
 
 interface ProductBriefDbRow {
@@ -92,67 +104,16 @@ interface ProductBriefDbRow {
   readonly name: string;
 }
 
-const ENROLL_STATUS_LABEL: Record<EnrollStatus, string> = {
-  active: "Activo",
-  completed: "Completado",
-  dropped: "Abandonó",
-  suspended: "Suspendido",
-  expired: "Vencido",
-};
+interface CohortWithSystemRow {
+  readonly id: string;
+  readonly name: string;
+  readonly course_id: string | null;
+  readonly system_id: string | null;
+}
 
-const ENROLL_STATUS_TONE: Record<EnrollStatus, string> = {
-  active: "var(--kg-positive-500)",
-  completed: "var(--kg-accent-500)",
-  dropped: "var(--kg-negative-500)",
-  suspended: "var(--kg-warning-500)",
-  expired: "var(--kg-negative-500)",
-};
-
-type AccessBadge =
-  | { kind: "vigente"; label: string; tone: string }
-  | { kind: "por_vencer"; label: string; tone: string }
-  | { kind: "vencido"; label: string; tone: string }
-  | { kind: "sin_vigencia"; label: string; tone: string };
-
-function computeAccessBadge(
-  status: EnrollStatus,
-  accessExpiresAt: string | null,
-): AccessBadge {
-  if (status === "expired") {
-    return { kind: "vencido", label: "Vencido", tone: "var(--kg-negative-500)" };
-  }
-  if (!accessExpiresAt) {
-    return {
-      kind: "sin_vigencia",
-      label: "Sin vigencia",
-      tone: "var(--kg-neutral-500)",
-    };
-  }
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const expDate = new Date(`${accessExpiresAt}T12:00:00Z`);
-  const diffDays = Math.floor(
-    (expDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
-  );
-  if (diffDays < 0) {
-    return {
-      kind: "vencido",
-      label: "Vencido",
-      tone: "var(--kg-negative-500)",
-    };
-  }
-  if (diffDays <= 7) {
-    return {
-      kind: "por_vencer",
-      label: `Por vencer · ${diffDays}d`,
-      tone: "var(--kg-warning-500)",
-    };
-  }
-  return {
-    kind: "vigente",
-    label: "Vigente",
-    tone: "var(--kg-positive-500)",
-  };
+interface SystemNameRow {
+  readonly id: string;
+  readonly name: string;
 }
 
 const STATUS_LABEL: Record<Status, string> = {
@@ -191,7 +152,6 @@ export default async function StudentFichaPage({
     attendanceRes,
     examsRes,
     certsRes,
-    cohortsRes,
   ] = await Promise.all([
     supabase
       .from("students")
@@ -224,7 +184,6 @@ export default async function StudentFichaPage({
       .select("id, course_id, code, issued_at, url, notes")
       .eq("student_id", studentId)
       .order("issued_at", { ascending: false }),
-    supabase.from("cohorts").select("id, name"),
   ]);
 
   const student = studentRes.data as StudentDbRow | null;
@@ -251,23 +210,54 @@ export default async function StudentFichaPage({
 
   const enrollmentRows =
     (enrollmentsRes.data ?? []) as unknown as EnrollmentBrief[];
-  const cohortsData =
-    (cohortsRes.data ?? []) as unknown as { id: string; name: string }[];
-  const cohortNameById = new Map<string, string>();
-  for (const c of cohortsData) cohortNameById.set(c.id, c.name);
 
   const attendanceCount = attendanceRes.count ?? 0;
   const examsCount = examsRes.count ?? 0;
   const certRows = (certsRes.data ?? []) as unknown as CertBriefDbRow[];
   const certsCount = certRows.length;
 
-  // Courses del proyecto del student — para mostrar el nombre en la lista
-  // y alimentar el drawer de emisión. Filtrado en server para no bombear
-  // toda la tabla al cliente.
+  // Cohortes de los enrollments del alumno — se traen aparte porque
+  // necesitamos course_id + system_id (no viene con la select principal).
+  const enrollmentCohortIds = enrollmentRows.map((e) => e.cohort_id);
+  const cohortsRes =
+    enrollmentCohortIds.length > 0
+      ? await supabase
+          .from("cohorts")
+          .select("id, name, course_id, system_id")
+          .in("id", enrollmentCohortIds)
+      : { data: [] as unknown[] };
+  const cohortsData =
+    (cohortsRes.data ?? []) as unknown as CohortWithSystemRow[];
+  const cohortById = new Map<string, CohortWithSystemRow>();
+  for (const c of cohortsData) cohortById.set(c.id, c);
+
+  // Systems: solo cargamos los referenciados por las cohortes del alumno.
+  const systemIds = Array.from(
+    new Set(
+      cohortsData
+        .map((c) => c.system_id)
+        .filter((v): v is string => v != null),
+    ),
+  );
+  const systemsRes =
+    systemIds.length > 0
+      ? await supabase
+          .from("academia_systems")
+          .select("id, name")
+          .in("id", systemIds)
+      : { data: [] as unknown[] };
+  const systemsData = (systemsRes.data ?? []) as unknown as SystemNameRow[];
+  const systemNameById = new Map<string, string>();
+  for (const s of systemsData) systemNameById.set(s.id, s.name);
+
+  // Courses del proyecto del student (para nombre + progress_source +
+  // has_systems). Filtrado en server para no bombear toda la tabla al
+  // cliente. Filtramos también por los course_id derivados de las cohortes,
+  // pero el proyecto ya es un filtro fuerte.
   const [studentCoursesRes, productsForCertsRes] = await Promise.all([
     supabase
       .from("courses")
-      .select("id, product_id, project_id, progress_source")
+      .select("id, product_id, project_id, progress_source, has_systems")
       .eq("project_id", student.project_id),
     supabase.from("products").select("id, name"),
   ]);
@@ -279,11 +269,13 @@ export default async function StudentFichaPage({
   for (const p of productRowsForCerts)
     productNameByIdForCerts.set(p.id, p.name);
   const courseNameById = new Map<string, string>();
+  const courseByIdMap = new Map<string, CourseBriefDbRow>();
   for (const c of studentCourseRows) {
     courseNameById.set(
       c.id,
       productNameByIdForCerts.get(c.product_id) ?? "—",
     );
+    courseByIdMap.set(c.id, c);
   }
 
   const studentCerts: StudentCertRowData[] = certRows.map((c) => ({
@@ -304,24 +296,14 @@ export default async function StudentFichaPage({
     }),
   );
 
-  // ── Parámetros (Fase B) ────────────────────────────────────────────────
-  // Mapeo cohort_id → course_id (para reagrupar los parámetros por cohort).
-  const enrollmentCohortIds = enrollmentRows.map((e) => e.cohort_id);
-  const cohortCourseMap = new Map<string, string>();
-  if (enrollmentCohortIds.length > 0) {
-    const { data: cohortCoursesData } = await supabase
-      .from("cohorts")
-      .select("id, course_id")
-      .in("id", enrollmentCohortIds);
-    for (const row of (cohortCoursesData ?? []) as unknown as {
-      id: string;
-      course_id: string | null;
-    }[]) {
-      if (row.course_id) cohortCourseMap.set(row.id, row.course_id);
-    }
-  }
-
-  const courseIdsForParams = Array.from(new Set(cohortCourseMap.values()));
+  // ── Parámetros por (course_id) ─────────────────────────────────────────
+  const courseIdsForParams = Array.from(
+    new Set(
+      cohortsData
+        .map((c) => c.course_id)
+        .filter((v): v is string => v != null),
+    ),
+  );
   const [paramsRes, valuesRes] = await Promise.all([
     courseIdsForParams.length > 0
       ? supabase
@@ -373,61 +355,13 @@ export default async function StudentFichaPage({
     valueByEnrollmentAndParam.set(`${v.enrollment_id}::${v.parameter_id}`, v);
   }
 
-  const parameterGroups: EnrollmentGroup[] = enrollmentRows.map((e) => {
-    const courseId = cohortCourseMap.get(e.cohort_id) ?? null;
-    const paramsForCourse = courseId
-      ? paramsByCourse.get(courseId) ?? []
-      : [];
-    const cohortLabel = cohortNameById.get(e.cohort_id) ?? "generación";
-    const courseLabel = courseId
-      ? courseNameById.get(courseId) ?? "Curso"
-      : "Sin curso";
-
-    const parameters: EnrollmentParameterEntry[] = paramsForCourse.map((p) => {
-      const value = valueByEnrollmentAndParam.get(`${e.id}::${p.id}`);
-      let currentValue: boolean | number | string | null = null;
-      if (value) {
-        if (p.type === "boolean") currentValue = value.value_bool;
-        else if (p.type === "integer") currentValue = value.value_int;
-        else currentValue = value.value_text;
-      }
-      return {
-        parameterId: p.id,
-        key: p.key,
-        label: p.label,
-        type: p.type,
-        required: p.required,
-        currentValue,
-      };
-    });
-
-    return {
-      enrollmentId: e.id,
-      courseId: courseId ?? "",
-      cohortId: e.cohort_id,
-      cohortName: cohortLabel,
-      courseName: courseLabel,
-      parameters,
-    };
+  // ── Módulos + progreso ─────────────────────────────────────────────────
+  const trackedCourseIds = courseIdsForParams.filter((cid) => {
+    const c = courseByIdMap.get(cid);
+    return (
+      c != null && (c.progress_source === "ghl_tags" || c.progress_source === "manual")
+    );
   });
-
-  const canEditParameters = await userCanEditProject(student.project_id);
-
-  // ── Progreso de módulos (Fase C) ────────────────────────────────────────
-  // Solo aplica a enrollments cuyo curso tenga progress_source in
-  // ('ghl_tags','manual'). El panel filtra por eso, pero fetcheamos módulos +
-  // progreso siempre para simplificar el flujo.
-  const courseProgressSourceById = new Map<string, string>();
-  for (const c of studentCourseRows) {
-    courseProgressSourceById.set(c.id, c.progress_source);
-  }
-
-  const trackedCourseIds = Array.from(new Set(cohortCourseMap.values())).filter(
-    (cid) => {
-      const src = courseProgressSourceById.get(cid);
-      return src === "ghl_tags" || src === "manual";
-    },
-  );
 
   const [modulesRes, progressRes] = await Promise.all([
     trackedCourseIds.length > 0
@@ -479,14 +413,30 @@ export default async function StudentFichaPage({
     );
   }
 
-  const progressGroups: EnrollmentProgressGroup[] = enrollmentRows.map((e) => {
-    const courseId = cohortCourseMap.get(e.cohort_id) ?? "";
-    const source = (courseProgressSourceById.get(courseId) ?? "attendance") as
+  const canEditParameters = await userCanEditProject(student.project_id);
+
+  // ── Enrollment cards data ──────────────────────────────────────────────
+  const enrollmentCards: EnrollmentCardData[] = enrollmentRows.map((e) => {
+    const cohort = cohortById.get(e.cohort_id) ?? null;
+    const courseId = cohort?.course_id ?? null;
+    const course = courseId ? courseByIdMap.get(courseId) : null;
+    const cohortLabel = cohort?.name ?? "generación";
+    const courseLabel = courseId
+      ? courseNameById.get(courseId) ?? "Curso"
+      : "Sin curso";
+    const systemName =
+      cohort?.system_id != null && (course?.has_systems ?? false)
+        ? systemNameById.get(cohort.system_id) ?? null
+        : null;
+    const progressSource = (course?.progress_source ?? "attendance") as
       | "attendance"
       | "ghl_tags"
       | "manual";
-    const modulesForCourse = modulesByCourse.get(courseId) ?? [];
-    const modules: ModuleProgressEntry[] = modulesForCourse.map((m) => {
+
+    const modulesForCourse = courseId
+      ? modulesByCourse.get(courseId) ?? []
+      : [];
+    const modules: EnrollmentCardModule[] = modulesForCourse.map((m) => {
       const p = progressByEnrollmentAndModule.get(`${e.id}::${m.id}`);
       return {
         moduleId: m.id,
@@ -496,16 +446,43 @@ export default async function StudentFichaPage({
         source: p?.source ?? null,
       };
     });
+
+    const paramsForCourse = courseId
+      ? paramsByCourse.get(courseId) ?? []
+      : [];
+    const parameters: EnrollmentCardParameter[] = paramsForCourse.map((p) => {
+      const value = valueByEnrollmentAndParam.get(`${e.id}::${p.id}`);
+      let currentValue: boolean | number | string | null = null;
+      if (value) {
+        if (p.type === "boolean") currentValue = value.value_bool;
+        else if (p.type === "integer") currentValue = value.value_int;
+        else currentValue = value.value_text;
+      }
+      return {
+        parameterId: p.id,
+        key: p.key,
+        label: p.label,
+        type: p.type,
+        required: p.required,
+        currentValue,
+      };
+    });
+
     return {
       enrollmentId: e.id,
       cohortId: e.cohort_id,
-      cohortName: cohortNameById.get(e.cohort_id) ?? "generación",
+      cohortName: cohortLabel,
       courseId,
-      courseName: courseId
-        ? courseNameById.get(courseId) ?? "Curso"
-        : "Sin curso",
-      progressSource: source,
+      courseName: courseLabel,
+      systemName,
+      status: e.status,
+      progressPercent: e.progress_percent,
+      enrolledAt: e.enrolled_at,
+      accessExpiresAt: e.access_expires_at,
+      saleId: e.sale_id,
+      progressSource,
       modules,
+      parameters,
     };
   });
 
@@ -522,185 +499,99 @@ export default async function StudentFichaPage({
         ]}
       />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-        <Panel title="Datos del estudiante">
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <FieldRow label="Proyecto" value={projectName ?? "—"} />
-            <FieldRow label="Email" value={student.email ?? "—"} />
-            <FieldRow label="Teléfono" value={student.phone ?? "—"} />
-            <FieldRow
-              label="Estado"
-              value={
-                <StatusPill
-                  text={STATUS_LABEL[student.status]}
-                  tone={STATUS_TONE[student.status]}
-                />
-              }
-            />
-            <FieldRow
-              label="Alta"
-              value={formatDate(student.enrolled_at)}
-            />
-            {student.notes && (
-              <FieldRow label="Notas" value={student.notes} multiline />
-            )}
-            <div
+      <Panel title="Datos del estudiante">
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(160px, 1fr)) auto",
+            gap: 14,
+            alignItems: "start",
+          }}
+        >
+          <FieldRow label="Proyecto" value={projectName ?? "—"} />
+          <FieldRow label="Email" value={student.email ?? "—"} />
+          <FieldRow label="Teléfono" value={student.phone ?? "—"} />
+          <FieldRow
+            label="Estado"
+            value={
+              <StatusPill
+                text={STATUS_LABEL[student.status]}
+                tone={STATUS_TONE[student.status]}
+              />
+            }
+          />
+          <FieldRow label="Alta" value={formatDate(student.enrolled_at)} />
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              alignSelf: "end",
+              justifyContent: "flex-end",
+            }}
+          >
+            <Link
+              href="/academia/estudiantes"
+              className="kg-focus"
               style={{
-                display: "flex",
-                gap: 8,
-                marginTop: 6,
-                justifyContent: "space-between",
-                alignItems: "center",
+                padding: "6px 12px",
+                borderRadius: 999,
+                background: "transparent",
+                border: "1px solid var(--kg-border-subtle)",
+                color: "var(--kg-text-2)",
+                fontSize: 11,
+                fontWeight: 700,
+                textDecoration: "none",
               }}
             >
-              <Link
-                href="/academia/estudiantes"
-                className="kg-focus"
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: 999,
-                  background: "transparent",
-                  border: "1px solid var(--kg-border-subtle)",
-                  color: "var(--kg-text-2)",
-                  fontSize: 11,
-                  fontWeight: 700,
-                  textDecoration: "none",
-                }}
-              >
-                ← Volver
-              </Link>
-              <EditStudentButton
-                projects={projectOptions}
-                initial={initial}
+              ← Volver
+            </Link>
+            <EditStudentButton
+              projects={projectOptions}
+              initial={initial}
+            />
+          </div>
+        </div>
+        {student.notes && (
+          <div style={{ marginTop: 12 }}>
+            <FieldRow label="Notas" value={student.notes} multiline />
+          </div>
+        )}
+      </Panel>
+
+      <Panel title="Generaciones">
+        {enrollmentCards.length === 0 ? (
+          <EmptyState
+            icon={<IconAca size={22} />}
+            title="Sin generaciones asignadas"
+            hint="Este alumno todavía no está inscripto en ninguna generación. Andá a la ficha de la generación (Generaciones → nombre) y usá 'Inscribir' desde allí."
+          />
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {enrollmentCards.map((card) => (
+              <EnrollmentCard
+                key={card.enrollmentId}
+                studentId={student.id}
+                data={card}
+                canExpire={canExpire}
+                canEditParameters={canEditParameters}
               />
+            ))}
+            <div
+              className="kg-t7"
+              style={{
+                color: "var(--kg-text-3)",
+                padding: "0 2px",
+                fontStyle: "italic",
+              }}
+            >
+              Editar o quitar inscripciones se hace desde la ficha de cada
+              generación.
             </div>
           </div>
-        </Panel>
-
-        <Panel title="Generaciones">
-          {enrollmentRows.length === 0 ? (
-            <EmptyState
-              icon={<IconAca size={22} />}
-              title="Sin generaciones asignadas"
-              hint="Este estudiante todavía no está inscripto en ninguna generación. Andá a la ficha de la generación (Generaciones → nombre) y usá 'Inscribir' desde allí."
-            />
-          ) : (
-            <div
-              style={{ display: "flex", flexDirection: "column", gap: 6 }}
-            >
-              {enrollmentRows.map((e) => {
-                const badge = computeAccessBadge(e.status, e.access_expires_at);
-                const cohortLabel =
-                  cohortNameById.get(e.cohort_id) ?? "generación";
-                return (
-                  <div
-                    key={e.id}
-                    style={{
-                      padding: "10px 14px",
-                      borderRadius: "var(--kg-r-8)",
-                      background: "var(--kg-surface-2-solid)",
-                      border: "1px solid var(--kg-border-subtle)",
-                      display: "grid",
-                      gridTemplateColumns: "1fr auto",
-                      gap: 12,
-                      alignItems: "center",
-                    }}
-                  >
-                    <div>
-                      <Link
-                        href={`/academia/cohortes/${e.cohort_id}`}
-                        className="kg-focus"
-                        style={{
-                          color: "var(--kg-text-1)",
-                          textDecoration: "none",
-                          fontWeight: 600,
-                          fontSize: 13,
-                        }}
-                      >
-                        {cohortLabel}
-                      </Link>
-                      <div
-                        className="kg-t7"
-                        style={{
-                          color: "var(--kg-text-3)",
-                          marginTop: 2,
-                          display: "flex",
-                          gap: 10,
-                          alignItems: "center",
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        <span>desde {formatDate(e.enrolled_at)}</span>
-                        {e.access_expires_at && (
-                          <span>
-                            vence {formatDate(e.access_expires_at)}
-                          </span>
-                        )}
-                        {e.sale_id && (
-                          <span
-                            style={{
-                              padding: "1px 6px",
-                              borderRadius: 4,
-                              background: "var(--kg-surface-1-solid)",
-                              color: "var(--kg-accent-text)",
-                              fontSize: 10,
-                              fontWeight: 700,
-                            }}
-                          >
-                            Auto
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 4,
-                        alignItems: "flex-end",
-                      }}
-                    >
-                      <StatusPill
-                        text={ENROLL_STATUS_LABEL[e.status]}
-                        tone={ENROLL_STATUS_TONE[e.status]}
-                      />
-                      <StatusPill text={badge.label} tone={badge.tone} />
-                      <div
-                        className="kg-t7"
-                        style={{
-                          color: "var(--kg-text-3)",
-                          fontVariantNumeric: "tabular-nums",
-                        }}
-                      >
-                        {e.progress_percent}%
-                      </div>
-                      {canExpire && e.status === "active" && (
-                        <EnrollmentExpireButton
-                          enrollmentId={e.id}
-                          studentId={student.id}
-                          cohortLabel={cohortLabel}
-                        />
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-              <div
-                className="kg-t7"
-                style={{
-                  color: "var(--kg-text-3)",
-                  marginTop: 4,
-                  padding: "0 2px",
-                  fontStyle: "italic",
-                }}
-              >
-                Editar o quitar inscripciones se hace desde la ficha de
-                cada generación.
-              </div>
-            </div>
-          )}
-        </Panel>
-      </div>
+        )}
+      </Panel>
 
       <div
         style={{
@@ -709,20 +600,6 @@ export default async function StudentFichaPage({
           gap: 16,
         }}
       >
-        <Panel title="Asistencia">
-          <EmptyState
-            icon={<IconAca size={22} />}
-            title="Sub-sección en construcción"
-            hint={`${attendanceCount} registros de asistencia — se muestran por generación cuando conectemos la sub-sección.`}
-          />
-        </Panel>
-        <Panel title="Exámenes">
-          <EmptyState
-            icon={<IconAca size={22} />}
-            title="Sub-sección en construcción"
-            hint={`${examsCount} exámenes — score, passed, taken_at, por generación.`}
-          />
-        </Panel>
         <Panel title="Certificados">
           <StudentCertificatesPanel
             studentId={student.id}
@@ -733,19 +610,14 @@ export default async function StudentFichaPage({
             courses={courseOptionsForCert}
           />
         </Panel>
+        <Panel title="Exámenes">
+          <EmptyState
+            icon={<IconAca size={22} />}
+            title="Sub-sección en construcción"
+            hint={`${examsCount} exámenes — score, passed, taken_at, por generación.`}
+          />
+        </Panel>
       </div>
-
-      <Panel title="Progreso por módulos">
-        <ModulesProgressPanel groups={progressGroups} />
-      </Panel>
-
-      <Panel title="Parámetros">
-        <ParametersPanel
-          studentId={student.id}
-          canEdit={canEditParameters}
-          groups={parameterGroups}
-        />
-      </Panel>
     </div>
   );
 }

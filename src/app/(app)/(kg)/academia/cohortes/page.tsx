@@ -7,6 +7,10 @@ import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
 import { createClient } from "@/lib/supabase/server";
 
+import {
+  ClearFiltersButton,
+  PersistentFilterSync,
+} from "../_shared/persistent-filters";
 import type {
   CourseOptionForCohort,
   ProjectOptionForCohort,
@@ -208,14 +212,29 @@ export default async function CohortesPage({
         ]}
       />
 
-      <KgParamPills
-        ariaLabel="Filtrar por estado"
-        options={STATUS_FILTER_OPTIONS.map((o) => ({
-          label: o.label,
-          href: buildHref(o.value),
-          active: statusFilter === o.value,
-        }))}
-      />
+      <PersistentFilterSync storageKey="academia:filters:cohortes" />
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          flexWrap: "wrap",
+        }}
+      >
+        <KgParamPills
+          ariaLabel="Filtrar por estado"
+          options={STATUS_FILTER_OPTIONS.map((o) => ({
+            label: o.label,
+            href: buildHref(o.value),
+            active: statusFilter === o.value,
+          }))}
+        />
+        <ClearFiltersButton
+          storageKey="academia:filters:cohortes"
+          basePath="/academia/cohortes"
+        />
+      </div>
 
       <Panel title="Generaciones">
         <CohortsView

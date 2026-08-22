@@ -9,6 +9,7 @@ import { StatusPill } from "@/components/kg/status-pill";
 import {
   CourseFormDrawer,
   type CourseInitial,
+  type ExternalAppOptionForCourse,
   type ProductOptionForCourse,
 } from "./course-form-drawer";
 import type { ParameterRowData } from "./parameters-editor";
@@ -24,17 +25,20 @@ export interface CourseRowData {
   readonly cohortsCount: number;
   readonly defaultAccessDays?: number | null;
   readonly ghlExpirationWebhookUrl?: string | null;
+  readonly externalAppId?: string | null;
 }
 
 export function CoursesView({
   rows,
   totalCount,
   products,
+  externalApps,
   parametersByCourseId,
 }: {
   readonly rows: readonly CourseRowData[];
   readonly totalCount: number;
   readonly products: readonly ProductOptionForCourse[];
+  readonly externalApps?: readonly ExternalAppOptionForCourse[];
   readonly parametersByCourseId?: Readonly<
     Record<string, readonly ParameterRowData[]>
   >;
@@ -53,6 +57,7 @@ export function CoursesView({
         active: editing.active,
         defaultAccessDays: editing.defaultAccessDays ?? null,
         ghlExpirationWebhookUrl: editing.ghlExpirationWebhookUrl ?? null,
+        externalAppId: editing.externalAppId ?? null,
       }
     : undefined;
 
@@ -180,6 +185,7 @@ export function CoursesView({
         open={creating}
         onClose={() => setCreating(false)}
         products={products}
+        externalApps={externalApps}
       />
 
       <CourseFormDrawer
@@ -187,6 +193,7 @@ export function CoursesView({
         open={editingId != null}
         onClose={() => setEditingId(null)}
         products={products}
+        externalApps={externalApps}
         initial={editingInitial}
         parameters={
           editingId != null

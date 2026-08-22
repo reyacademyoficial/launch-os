@@ -6,12 +6,20 @@ import { ContextBar } from "@/components/kg/context-bar";
 import { IconAca } from "@/components/kg/icons";
 import { Panel } from "@/components/kg/panel";
 import { StatusPill } from "@/components/kg/status-pill";
+import {
+  getCourseDropoff,
+  getCourseModuleCompletionStats,
+  getCourseOverallProgress,
+} from "@/lib/academia/course-metrics";
+import { getExternalApp } from "@/lib/academia/external-apps";
 import { listModulesByCourse } from "@/lib/academia/modules";
 import { getSessionProfile } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { listTeamMembersForProject } from "@/lib/team/list";
 
+import { MetricasTab } from "./metricas-tab";
 import { ModulesTab, type ModuleRowData } from "./modules-tab";
+import { OpenExternalAppButton } from "./open-external-app-button";
 import { SistemasTab, type SystemRowData, type TeamMemberOption } from "./sistemas-tab";
 
 export const metadata: Metadata = { title: "Curso · Academia" };
@@ -25,6 +33,7 @@ interface CourseDbRow {
   readonly active: boolean;
   readonly has_systems: boolean;
   readonly progress_source: string;
+  readonly external_app_id: string | null;
 }
 
 interface ProductDbRow {
@@ -61,7 +70,7 @@ export default async function CoursePage({
   const courseRes = await supabase
     .from("courses")
     .select(
-      "id, product_id, project_id, duration_hours, modules_count, active, has_systems, progress_source",
+      "id, product_id, project_id, duration_hours, modules_count, active, has_systems, progress_source, external_app_id",
     )
     .eq("id", courseId)
     .maybeSingle();
@@ -99,10 +108,35 @@ export default async function CoursePage({
     ? await listTeamMembersForProject(course.project_id)
     : [];
 
-  // Módulos + mappings de tags GHL. Solo cargamos si el curso los muestra
-  // (progress_source='ghl_tags'); en otros casos son irrelevantes en esta UI.
+  // App externa asociada (Fase G · 0153). Solo cargamos si el curso está
+  // enlazado. RLS filtra por proyecto — si no hay acceso, app queda null.
+  const externalApp = course.external_app_id
+    ? await getExternalApp(course.external_app_id)
+    : null;
+  const showExternalAppButton =
+    externalApp != null && externalApp.active === true;
+
+  // Módulos + mappings de tags GHL + métricas. Solo cargamos si el curso los
+  // muestra (progress_source='ghl_tags'); en otros casos son irrelevantes en
+  // esta UI.
   const showModules = course.progress_source === "ghl_tags";
   const modules = showModules ? await listModulesByCourse(courseId) : [];
+
+  const [completionStats, dropoffStats, overallProgress] = showModules
+    ? await Promise.all([
+        getCourseModuleCompletionStats(courseId),
+        getCourseDropoff(courseId),
+        getCourseOverallProgress(courseId),
+      ])
+    : [
+        [] as Awaited<ReturnType<typeof getCourseModuleCompletionStats>>,
+        [] as Awaited<ReturnType<typeof getCourseDropoff>>,
+        {
+          avg_completion_percent: 0,
+          total_students: 0,
+          fully_completed_students: 0,
+        } as Awaited<ReturnType<typeof getCourseOverallProgress>>,
+      ];
 
   const moduleIds = modules.map((m) => m.id);
   const tagMappingsRes =
@@ -204,6 +238,19 @@ export default async function CoursePage({
                 />
               }
             />
+            {showExternalAppButton && externalApp && (
+              <div style={{ marginTop: 4 }}>
+                <FieldRow
+                  label="App externa"
+                  value={
+                    <OpenExternalAppButton
+                      courseId={course.id}
+                      appName={externalApp.name}
+                    />
+                  }
+                />
+              </div>
+            )}
             <div style={{ marginTop: 6 }}>
               <Link
                 href="/academia/cursos"
@@ -243,6 +290,16 @@ export default async function CoursePage({
             modules={moduleRows}
             canEdit={canEditModules}
             showTagCol={true}
+          />
+        </Panel>
+      )}
+
+      {showModules && (
+        <Panel title="Métricas">
+          <MetricasTab
+            completions={completionStats}
+            dropoff={dropoffStats}
+            overall={overallProgress}
           />
         </Panel>
       )}
