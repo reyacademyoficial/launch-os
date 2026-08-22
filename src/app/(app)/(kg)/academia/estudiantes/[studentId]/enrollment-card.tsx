@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 
 import { StatusPill } from "@/components/kg/status-pill";
-import type { ParameterType } from "@/lib/academia/parameters";
+import type { ParameterType } from "@/lib/academia/parameters-shared";
 
 import { setParameterValueAction } from "../parameter-values-actions";
 import { EnrollmentExpireButton } from "./enrollment-expire-button";
@@ -503,30 +503,14 @@ function ParameterRow({
         background: "var(--kg-surface-1-solid)",
       }}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        <div
-          style={{
-            color: "var(--kg-text-1)",
-            fontSize: 12,
-            fontWeight: 600,
-          }}
-        >
-          {parameter.label}
-          {parameter.required && (
-            <span
-              aria-hidden="true"
-              style={{ color: "#EF4444", marginLeft: 4 }}
-            >
-              *
-            </span>
-          )}
-        </div>
-        <code
-          className="kg-t7"
-          style={{ color: "var(--kg-text-3)", fontSize: 10 }}
-        >
-          {parameter.key}
-        </code>
+      <div
+        style={{
+          color: "var(--kg-text-1)",
+          fontSize: 12,
+          fontWeight: 600,
+        }}
+      >
+        {parameter.label}
       </div>
       <ValueControl
         type={parameter.type}
@@ -598,31 +582,21 @@ function ValueControl({
       </label>
     );
   }
-  if (type === "integer") {
-    return (
-      <input
-        type="number"
-        step={1}
-        value={typeof value === "number" ? value : ""}
-        onChange={(e) => {
-          const raw = e.target.value;
-          if (raw === "") {
-            onChange(0);
-            return;
-          }
-          const n = Number(raw);
-          if (Number.isFinite(n)) onChange(Math.trunc(n));
-        }}
-        disabled={disabled}
-        style={inputStyle}
-      />
-    );
-  }
+  // integer
   return (
     <input
-      type="text"
-      value={typeof value === "string" ? value : ""}
-      onChange={(e) => onChange(e.target.value)}
+      type="number"
+      step={1}
+      value={typeof value === "number" ? value : ""}
+      onChange={(e) => {
+        const raw = e.target.value;
+        if (raw === "") {
+          onChange(0);
+          return;
+        }
+        const n = Number(raw);
+        if (Number.isFinite(n)) onChange(Math.trunc(n));
+      }}
       disabled={disabled}
       style={inputStyle}
     />
@@ -631,14 +605,12 @@ function ValueControl({
 
 function toEditableValue(
   p: EnrollmentCardParameter,
-): boolean | number | string {
+): boolean | number {
   if (p.type === "boolean") {
     return typeof p.currentValue === "boolean" ? p.currentValue : false;
   }
-  if (p.type === "integer") {
-    return typeof p.currentValue === "number" ? p.currentValue : 0;
-  }
-  return typeof p.currentValue === "string" ? p.currentValue : "";
+  // integer
+  return typeof p.currentValue === "number" ? p.currentValue : 0;
 }
 
 function isSameValue(

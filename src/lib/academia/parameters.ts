@@ -2,170 +2,49 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 
+import {
+  PARAMETER_TYPES,
+  validateCreateParameterInput,
+  validateParameterKey,
+  validateParameterLabel,
+  validateParameterValue,
+  toValueColumns,
+  type CourseParameterRow,
+  type CreateParameterInput,
+  type ParameterValueInput,
+  type StudentParameterValueRow,
+  type UpdateParameterInput,
+} from "./parameters-shared";
+
 /**
- * course_parameters + student_parameter_values — Fase B del plan Academia
- * (migraciones 0145 y 0146). Este helper cubre CRUD de parámetros y set/read
- * de valores por enrollment.
+ * course_parameters + student_parameter_values — server-only DB helpers.
  *
- * Los tipos son locales porque el schema generado por `supabase gen types`
- * todavía no incluye las tablas (se regenera después de aplicar migraciones).
- * Los payloads usan `as unknown as never` — workaround postgrest-js que
- * colapsa a `never` con el marcador __InternalSupabase.
+ * Los tipos, validators y slugify puros viven en `parameters-shared.ts` para
+ * poder importarse desde client components sin arrastrar next/headers.
+ * Se re-exportan acá para que los callers server-side no tengan que cambiar
+ * de import path.
  */
 
-// ─── Tipos ───────────────────────────────────────────────────────────────────
+// Re-export para que server callers sigan funcionando con el mismo import.
+export {
+  PARAMETER_TYPES,
+  slugifyToKey,
+  validateCreateParameterInput,
+  validateParameterKey,
+  validateParameterLabel,
+  validateParameterValue,
+  toValueColumns,
+} from "./parameters-shared";
+export type {
+  CourseParameterRow,
+  CreateParameterInput,
+  ParameterType,
+  ParameterValueInput,
+  StudentParameterValueRow,
+  UpdateParameterInput,
+} from "./parameters-shared";
 
-export type ParameterType = "boolean" | "integer" | "text";
-
-export const PARAMETER_TYPES: readonly ParameterType[] = [
-  "boolean",
-  "integer",
-  "text",
-];
-
-export interface CourseParameterRow {
-  id: string;
-  course_id: string;
-  project_id: string;
-  key: string;
-  label: string;
-  type: ParameterType;
-  required: boolean;
-  order_index: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface CreateParameterInput {
-  course_id: string;
-  key: string;
-  label: string;
-  type: ParameterType;
-  required?: boolean;
-  /** Si no se pasa, se ubica al final (max(order_index)+1). */
-  order_index?: number;
-}
-
-export interface UpdateParameterInput {
-  key?: string;
-  label?: string;
-  type?: ParameterType;
-  required?: boolean;
-}
-
-export interface StudentParameterValueRow {
-  id: string;
-  enrollment_id: string;
-  parameter_id: string;
-  project_id: string;
-  value_bool: boolean | null;
-  value_int: number | null;
-  value_text: string | null;
-  updated_at: string;
-  updated_by: string | null;
-}
-
-export type ParameterValueInput =
-  | { readonly type: "boolean"; readonly value: boolean }
-  | { readonly type: "integer"; readonly value: number }
-  | { readonly type: "text"; readonly value: string };
-
-// ─── Validación pura (para tests unitarios) ──────────────────────────────────
-
-/**
- * Valida el shape de un CreateParameterInput. Devuelve `null` si es válido,
- * o un string con el error. Pura (sin DB) para poder testear.
- */
-export function validateCreateParameterInput(
-  input: CreateParameterInput,
-): string | null {
-  if (!input.course_id || input.course_id.trim().length === 0) {
-    return "course_id es requerido";
-  }
-  const keyErr = validateParameterKey(input.key);
-  if (keyErr) return keyErr;
-  const labelErr = validateParameterLabel(input.label);
-  if (labelErr) return labelErr;
-  if (!(PARAMETER_TYPES as readonly string[]).includes(input.type)) {
-    return "type inválido (boolean | integer | text)";
-  }
-  if (
-    input.order_index !== undefined &&
-    (!Number.isInteger(input.order_index) || input.order_index < 0)
-  ) {
-    return "order_index debe ser un entero >= 0";
-  }
-  return null;
-}
-
-export function validateParameterKey(key: string): string | null {
-  const trimmed = (key ?? "").trim();
-  if (trimmed.length === 0) return "key es requerido";
-  if (trimmed.length > 60) return "key no puede tener más de 60 caracteres";
-  // key estable: minúsculas, dígitos, guiones bajos y guiones — evita
-  // sorpresas si mañana se usa como identificador de integración.
-  if (!/^[a-z0-9_-]+$/.test(trimmed)) {
-    return "key solo admite minúsculas, dígitos, guiones y guiones bajos";
-  }
-  return null;
-}
-
-export function validateParameterLabel(label: string): string | null {
-  const trimmed = (label ?? "").trim();
-  if (trimmed.length === 0) return "label es requerido";
-  if (trimmed.length > 120) return "label no puede tener más de 120 caracteres";
-  return null;
-}
-
-/**
- * Valida que un ParameterValueInput sea coherente con su tipo declarado.
- * Devuelve `null` si es válido, o un string con el error.
- * Pura — mirror TS del trigger `b_check_value_shape` de la DB.
- */
-export function validateParameterValue(
-  input: ParameterValueInput,
-): string | null {
-  if (input.type === "boolean") {
-    if (typeof input.value !== "boolean") {
-      return "value debe ser boolean para type=boolean";
-    }
-    return null;
-  }
-  if (input.type === "integer") {
-    if (typeof input.value !== "number" || !Number.isInteger(input.value)) {
-      return "value debe ser un entero para type=integer";
-    }
-    return null;
-  }
-  if (input.type === "text") {
-    if (typeof input.value !== "string") {
-      return "value debe ser string para type=text";
-    }
-    return null;
-  }
-  return "type de parámetro desconocido";
-}
-
-/**
- * Traduce un ParameterValueInput al triplete de columnas value_bool / value_int
- * / value_text que espera la DB. El campo del tipo se llena; los otros
- * quedan null (el trigger de la DB rebota si no es así).
- */
-export function toValueColumns(input: ParameterValueInput): {
-  value_bool: boolean | null;
-  value_int: number | null;
-  value_text: string | null;
-} {
-  if (input.type === "boolean") {
-    return { value_bool: input.value, value_int: null, value_text: null };
-  }
-  if (input.type === "integer") {
-    return { value_bool: null, value_int: input.value, value_text: null };
-  }
-  return { value_bool: null, value_int: null, value_text: input.value };
-}
-
-// ─── DB helpers ──────────────────────────────────────────────────────────────
+// ─── DB helpers (server-only) ────────────────────────────────────────────────
 
 export async function listParametersByCourse(
   courseId: string,
@@ -179,11 +58,6 @@ export async function listParametersByCourse(
   return (data ?? []) as unknown as CourseParameterRow[];
 }
 
-/**
- * Crea un parámetro. Si order_index no se pasa, lo ubica al final.
- * project_id lo denormaliza el trigger de la DB — no hace falta pasarlo,
- * pero el NOT NULL exige un placeholder que el trigger sobreescribe.
- */
 export async function createParameter(
   input: CreateParameterInput,
 ): Promise<CourseParameterRow> {
@@ -244,7 +118,7 @@ export async function updateParameter(
     input.type !== undefined &&
     !(PARAMETER_TYPES as readonly string[]).includes(input.type)
   ) {
-    throw new Error("type inválido (boolean | integer | text)");
+    throw new Error("type inválido (boolean | integer)");
   }
 
   const supabase = await createClient();
@@ -327,9 +201,6 @@ export async function listParameterValuesForEnrollment(
  * Upsert de un valor de parámetro para un enrollment. Recibe el value tipado
  * discriminado por type — así el TS chequea la coherencia en compile time,
  * el trigger de la DB lo revalida en runtime.
- *
- * updated_by se llena con el uid de la sesión actual si existe (nullable si
- * hay problema al leerlo — el registro no rebota por eso).
  */
 export async function setParameterValue(
   enrollmentId: string,
@@ -349,8 +220,7 @@ export async function setParameterValue(
   const payload = {
     enrollment_id: enrollmentId,
     parameter_id: parameterId,
-    // project_id lo autocompleta el trigger `a_denorm_project_id`. Placeholder
-    // NOT NULL — el trigger reemplaza por el project del enrollment.
+    // project_id lo autocompleta el trigger `a_denorm_project_id`.
     project_id: enrollmentId,
     ...columns,
     updated_by: user?.id ?? null,

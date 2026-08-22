@@ -64,7 +64,7 @@ interface ParameterDbRow {
   readonly course_id: string;
   readonly key: string;
   readonly label: string;
-  readonly type: "boolean" | "integer" | "text";
+  readonly type: "boolean" | "integer";
   readonly required: boolean;
   readonly order_index: number;
 }

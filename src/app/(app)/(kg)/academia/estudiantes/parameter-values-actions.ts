@@ -35,26 +35,21 @@ function coerceValue(
     }
     return "El valor debe ser boolean.";
   }
-  if (type === "integer") {
-    let num: number | null = null;
-    if (typeof raw === "number") num = raw;
-    else if (typeof raw === "string") {
-      const trimmed = raw.trim();
-      if (trimmed.length === 0) {
-        return "El valor entero es requerido.";
-      }
-      const parsed = Number(trimmed);
-      if (Number.isFinite(parsed)) num = parsed;
+  // integer
+  let num: number | null = null;
+  if (typeof raw === "number") num = raw;
+  else if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) {
+      return "El valor entero es requerido.";
     }
-    if (num === null || !Number.isInteger(num)) {
-      return "El valor debe ser un entero.";
-    }
-    return { type, value: num };
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed)) num = parsed;
   }
-  // text
-  if (typeof raw === "string") return { type, value: raw };
-  if (raw == null) return { type, value: "" };
-  return "El valor debe ser texto.";
+  if (num === null || !Number.isInteger(num)) {
+    return "El valor debe ser un entero.";
+  }
+  return { type: "integer", value: num };
 }
 
 export async function setParameterValueAction(input: {

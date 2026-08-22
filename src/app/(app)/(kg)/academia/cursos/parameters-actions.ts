@@ -6,16 +6,19 @@ import {
   createParameter,
   deleteParameter,
   reorderParameters,
+  slugifyToKey,
   updateParameter,
   type ParameterType,
 } from "@/lib/academia/parameters";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Server actions para course_parameters (Fase B · 0145).
+// Server actions para course_parameters (Fase B · 0145, simplificado en 0154).
 //
-// El gating fino vive en RLS (can_edit_project). Estas actions asumen que la
-// UI ya escondió los controles a roles sin permisos; si un role sin edit
-// llega igual, la DB rebota con 42501 (permission denied) o similar.
+// La UI envía "name" (nombre visible) y el server autogenera la key con
+// slugifyToKey. El label queda igual al name. Retrocompat: si el formulario
+// envía "key" y "label" explícitos, los respetamos.
+//
+// El gating fino vive en RLS (can_edit_project).
 // ═══════════════════════════════════════════════════════════════════════════
 
 export type UpsertParameterState =
@@ -27,7 +30,7 @@ export type DeleteParameterResult = { ok: true } | { error: string };
 
 export type ReorderParametersResult = { ok: true } | { error: string };
 
-const TYPES: readonly ParameterType[] = ["boolean", "integer", "text"];
+const TYPES: readonly ParameterType[] = ["boolean", "integer"];
 
 function nullIfEmpty(value: FormDataEntryValue | null): string | null {
   const trimmed = String(value ?? "").trim();
@@ -48,28 +51,34 @@ export async function upsertParameter(
 ): Promise<UpsertParameterState> {
   const idRaw = nullIfEmpty(formData.get("parameter_id"));
   const courseId = nullIfEmpty(formData.get("course_id"));
-  const key = nullIfEmpty(formData.get("key"));
-  const label = nullIfEmpty(formData.get("label"));
+  const name = nullIfEmpty(formData.get("name"));
+  const explicitKey = nullIfEmpty(formData.get("key"));
+  const explicitLabel = nullIfEmpty(formData.get("label"));
   const typeRaw = nullIfEmpty(formData.get("type"));
-  const requiredRaw = formData.get("required");
-  const required = String(requiredRaw ?? "").toLowerCase() === "on";
 
   if (!courseId) return { error: "Falta el id del curso." };
-  if (!key) return { error: "La key del parámetro es requerida." };
-  if (!label) return { error: "El label del parámetro es requerido." };
+
+  // Resolver label y key: si vienen name-only, autogenerar; si vienen
+  // explícitos, respetar (retrocompat).
+  const label = name ?? explicitLabel;
+  if (!label) return { error: "El nombre del parámetro es requerido." };
+
+  const key = explicitKey ?? (name ? slugifyToKey(name) : null);
+  if (!key) {
+    return {
+      error: "El nombre debe tener al menos una letra o número.",
+    };
+  }
+
   if (!typeRaw || !(TYPES as readonly string[]).includes(typeRaw)) {
-    return { error: "El tipo es inválido (boolean | integer | text)." };
+    return { error: "El tipo es inválido (Sí/No o Cantidad)." };
   }
   const type = typeRaw as ParameterType;
 
   try {
     if (idRaw) {
-      const updated = await updateParameter(idRaw, {
-        key,
-        label,
-        type,
-        required,
-      });
+      // En update no cambiamos la key para no romper referencias externas.
+      const updated = await updateParameter(idRaw, { label, type });
       revalidateCourse(courseId);
       return { ok: true, parameterId: updated.id };
     }
@@ -78,7 +87,6 @@ export async function upsertParameter(
       key,
       label,
       type,
-      required,
     });
     revalidateCourse(courseId);
     return { ok: true, parameterId: created.id };
@@ -86,7 +94,7 @@ export async function upsertParameter(
     const message = err instanceof Error ? err.message : "Error desconocido";
     if (message.toLowerCase().includes("duplicate key")) {
       return {
-        error: "Ya existe un parámetro con esa key en este curso.",
+        error: "Ya existe un parámetro con ese nombre en este curso.",
       };
     }
     return { error: message };

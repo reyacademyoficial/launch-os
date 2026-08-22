@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import {
+  slugifyToKey,
   toValueColumns,
   validateCreateParameterInput,
   validateParameterKey,
@@ -8,7 +9,34 @@ import {
   validateParameterValue,
   type CreateParameterInput,
   type ParameterValueInput,
-} from "./parameters";
+} from "./parameters-shared";
+
+describe("academia/parameters — slugifyToKey", () => {
+  it("normaliza nombres humanos a keys estables", () => {
+    expect(slugifyToKey("Diagnóstico")).toBe("diagnostico");
+    expect(slugifyToKey("Sesiones de coaching")).toBe("sesiones-de-coaching");
+    expect(slugifyToKey("¿Terminó el módulo 1?")).toBe("termino-el-modulo-1");
+    expect(slugifyToKey("  Con  espacios  ")).toBe("con-espacios");
+    expect(slugifyToKey("Año 2026")).toBe("ano-2026");
+  });
+
+  it("colapsa símbolos y guiones", () => {
+    expect(slugifyToKey("a --- b")).toBe("a-b");
+    expect(slugifyToKey("!!!hola!!!")).toBe("hola");
+    expect(slugifyToKey("a/b\\c.d")).toBe("a-b-c-d");
+  });
+
+  it("devuelve string vacío para inputs sin caracteres alfanuméricos", () => {
+    expect(slugifyToKey("")).toBe("");
+    expect(slugifyToKey("   ")).toBe("");
+    expect(slugifyToKey("!!!")).toBe("");
+  });
+
+  it("trunca a 60 caracteres", () => {
+    const long = "a".repeat(100);
+    expect(slugifyToKey(long).length).toBeLessThanOrEqual(60);
+  });
+});
 
 describe("academia/parameters — validateParameterKey", () => {
   it("acepta keys válidas", () => {
@@ -68,6 +96,9 @@ describe("academia/parameters — validateCreateParameterInput", () => {
         order_index: 3,
       }),
     ).toBeNull();
+    expect(
+      validateCreateParameterInput({ ...base, type: "integer" }),
+    ).toBeNull();
   });
 
   it("rechaza course_id vacío", () => {
@@ -76,11 +107,17 @@ describe("academia/parameters — validateCreateParameterInput", () => {
     );
   });
 
-  it("rechaza type inválido", () => {
+  it("rechaza type inválido (incluye el ex-tipo 'text')", () => {
     expect(
       validateCreateParameterInput({
         ...base,
         type: "float" as unknown as CreateParameterInput["type"],
+      }),
+    ).toMatch(/type/);
+    expect(
+      validateCreateParameterInput({
+        ...base,
+        type: "text" as unknown as CreateParameterInput["type"],
       }),
     ).toMatch(/type/);
   });
@@ -136,17 +173,6 @@ describe("academia/parameters — validateParameterValue", () => {
       } as unknown as ParameterValueInput),
     ).toMatch(/entero/);
   });
-
-  it("text acepta cualquier string y rechaza otros", () => {
-    expect(validateParameterValue({ type: "text", value: "" })).toBeNull();
-    expect(validateParameterValue({ type: "text", value: "hola" })).toBeNull();
-    expect(
-      validateParameterValue({
-        type: "text",
-        value: 42,
-      } as unknown as ParameterValueInput),
-    ).toMatch(/string/);
-  });
 });
 
 describe("academia/parameters — toValueColumns", () => {
@@ -169,7 +195,7 @@ describe("academia/parameters — toValueColumns", () => {
       value_int: 7,
       value_text: null,
     });
-    // También cubre value=0 (edge del boolean falso — asegura no colisión)
+    // Cubre value=0 (edge del boolean falso — asegura no colisión)
     expect(toValueColumns({ type: "integer", value: 0 })).toEqual({
       value_bool: null,
       value_int: 0,
@@ -177,24 +203,10 @@ describe("academia/parameters — toValueColumns", () => {
     });
   });
 
-  it("text llena solo value_text (incluye string vacía)", () => {
-    expect(toValueColumns({ type: "text", value: "hola" })).toEqual({
-      value_bool: null,
-      value_int: null,
-      value_text: "hola",
-    });
-    expect(toValueColumns({ type: "text", value: "" })).toEqual({
-      value_bool: null,
-      value_int: null,
-      value_text: "",
-    });
-  });
-
-  it("los tres tipos son mutuamente excluyentes en el output (invariante)", () => {
+  it("los dos tipos son mutuamente excluyentes en el output (invariante)", () => {
     const inputs: readonly ParameterValueInput[] = [
       { type: "boolean", value: true },
       { type: "integer", value: 1 },
-      { type: "text", value: "x" },
     ];
     for (const input of inputs) {
       const cols = toValueColumns(input);

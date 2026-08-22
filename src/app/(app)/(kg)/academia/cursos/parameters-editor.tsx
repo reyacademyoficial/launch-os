@@ -2,7 +2,10 @@
 
 import { useEffect, useState, useTransition } from "react";
 
-import type { ParameterType } from "@/lib/academia/parameters";
+import {
+  slugifyToKey,
+  type ParameterType,
+} from "@/lib/academia/parameters-shared";
 
 import {
   deleteParameterAction,
@@ -11,18 +14,18 @@ import {
 } from "./parameters-actions";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Editor inline de course_parameters — se monta dentro del CourseFormDrawer
-// en modo edit. En modo create se muestra un placeholder que le pide al
-// usuario guardar primero (necesitamos el courseId para el FK).
+// Editor inline de course_parameters — pensado para usuarios no técnicos.
+// El único input es "Nombre del parámetro" (ej: "Diagnóstico" o "Sesiones de
+// coaching"). El tipo se elige entre 2 botones grandes: Sí/No o Cantidad.
+//
+// Internamente el nombre se guarda en `label` y `key` se autogenera con
+// slugifyToKey. El usuario no ve la key nunca.
 // ═══════════════════════════════════════════════════════════════════════════
 
 const TYPE_LABEL: Record<ParameterType, string> = {
-  boolean: "Booleano (si/no)",
-  integer: "Entero",
-  text: "Texto",
+  boolean: "Sí/No",
+  integer: "Cantidad",
 };
-
-const TYPE_OPTIONS: readonly ParameterType[] = ["boolean", "integer", "text"];
 
 export interface ParameterRowData {
   readonly id: string;
@@ -40,7 +43,6 @@ export function ParametersEditor({
   readonly courseId: string;
   readonly parameters: readonly ParameterRowData[];
 }) {
-  // Copia local para permitir reorder optimista + edición inline.
   const [rows, setRows] = useState<readonly ParameterRowData[]>(parameters);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -97,7 +99,6 @@ export function ParametersEditor({
       );
       if ("error" in result) {
         setError(result.error);
-        // Revertimos si falló.
         setRows(rows);
       }
     });
@@ -158,8 +159,9 @@ export function ParametersEditor({
       )}
 
       {showNew && (
-        <ParameterNewForm
+        <ParameterInlineForm
           courseId={courseId}
+          initial={null}
           onSaved={(saved) => handleSaved(saved, "create")}
           onCancel={() => setShowNew(false)}
         />
@@ -258,26 +260,12 @@ function ParameterRow({
           style={{ color: "var(--kg-text-1)", fontWeight: 600, fontSize: 13 }}
         >
           {row.label}
-          {row.required && (
-            <span
-              aria-hidden="true"
-              style={{ color: "#EF4444", marginLeft: 4 }}
-            >
-              *
-            </span>
-          )}
         </div>
         <div
           className="kg-t7"
-          style={{
-            color: "var(--kg-text-3)",
-            display: "flex",
-            gap: 8,
-            flexWrap: "wrap",
-          }}
+          style={{ color: "var(--kg-text-3)" }}
         >
-          <code>{row.key}</code>
-          <span>· {TYPE_LABEL[row.type]}</span>
+          {TYPE_LABEL[row.type]}
         </div>
       </div>
       <div style={{ display: "flex", gap: 6 }}>
@@ -304,25 +292,6 @@ function ParameterRow({
   );
 }
 
-function ParameterNewForm({
-  courseId,
-  onSaved,
-  onCancel,
-}: {
-  readonly courseId: string;
-  readonly onSaved: (row: ParameterRowData) => void;
-  readonly onCancel: () => void;
-}) {
-  return (
-    <ParameterInlineForm
-      courseId={courseId}
-      initial={null}
-      onSaved={onSaved}
-      onCancel={onCancel}
-    />
-  );
-}
-
 function ParameterInlineForm({
   courseId,
   initial,
@@ -334,22 +303,37 @@ function ParameterInlineForm({
   readonly onSaved: (row: ParameterRowData) => void;
   readonly onCancel: () => void;
 }) {
-  const [key, setKey] = useState(initial?.key ?? "");
-  const [label, setLabel] = useState(initial?.label ?? "");
+  const [name, setName] = useState(initial?.label ?? "");
   const [type, setType] = useState<ParameterType>(initial?.type ?? "boolean");
-  const [required, setRequired] = useState(initial?.required ?? false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   function submit() {
     setError(null);
+
+    const trimmedName = name.trim();
+    if (trimmedName.length === 0) {
+      setError("El nombre es requerido.");
+      return;
+    }
+
+    // Al editar preservamos la key para no romper referencias externas
+    // (ej. integraciones que la usen). Al crear la generamos desde el nombre.
+    const key = initial?.key ?? slugifyToKey(trimmedName);
+    if (key.length === 0) {
+      setError(
+        "El nombre debe tener al menos una letra o número.",
+      );
+      return;
+    }
+
     const fd = new FormData();
     if (initial) fd.set("parameter_id", initial.id);
     fd.set("course_id", courseId);
+    fd.set("name", trimmedName);
     fd.set("key", key);
-    fd.set("label", label);
     fd.set("type", type);
-    if (required) fd.set("required", "on");
+
     startTransition(async () => {
       const result = await upsertParameter(null, fd);
       if (!result) {
@@ -362,10 +346,10 @@ function ParameterInlineForm({
       }
       onSaved({
         id: result.parameterId,
-        key: key.trim(),
-        label: label.trim(),
+        key,
+        label: trimmedName,
         type,
-        required,
+        required: false,
         orderIndex: initial?.orderIndex ?? 0,
       });
     });
@@ -374,87 +358,53 @@ function ParameterInlineForm({
   return (
     <div
       style={{
-        padding: "10px 12px",
+        padding: "12px 14px",
         borderRadius: "var(--kg-r-8)",
         background: "var(--kg-surface-2-solid)",
         border: "1px solid var(--kg-accent-500)",
         display: "flex",
         flexDirection: "column",
-        gap: 10,
+        gap: 12,
       }}
     >
-      <div
-        style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}
+      <label
+        className="kg-t7"
+        style={{ color: "var(--kg-text-3)", display: "grid", gap: 6 }}
       >
-        <label
-          className="kg-t7"
-          style={{ color: "var(--kg-text-3)", display: "grid", gap: 4 }}
-        >
-          Key
-          <input
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            placeholder="p.ej. diagnostico"
-            style={inputStyle}
+        Nombre del parámetro
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="p.ej. Diagnóstico"
+          style={inputStyle}
+          autoFocus
+        />
+      </label>
+
+      <div style={{ display: "grid", gap: 6 }}>
+        <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+          Tipo de valor
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <TypeToggleButton
+            active={type === "boolean"}
+            onClick={() => setType("boolean")}
+            label="Sí / No"
+            hint="Para marcar si algo se hizo o no"
           />
-        </label>
-        <label
-          className="kg-t7"
-          style={{ color: "var(--kg-text-3)", display: "grid", gap: 4 }}
-        >
-          Label
-          <input
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            placeholder="p.ej. Diagnóstico hecho"
-            style={inputStyle}
+          <TypeToggleButton
+            active={type === "integer"}
+            onClick={() => setType("integer")}
+            label="Cantidad"
+            hint="Para llevar un número (0, 1, 2, 3…)"
           />
-        </label>
+        </div>
       </div>
-      <div
-        style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}
-      >
-        <label
-          className="kg-t7"
-          style={{ color: "var(--kg-text-3)", display: "grid", gap: 4 }}
-        >
-          Tipo
-          <select
-            value={type}
-            onChange={(e) => setType(e.target.value as ParameterType)}
-            style={inputStyle}
-          >
-            {TYPE_OPTIONS.map((t) => (
-              <option key={t} value={t}>
-                {TYPE_LABEL[t]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            paddingTop: 20,
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={required}
-            onChange={(e) => setRequired(e.target.checked)}
-          />
-          <span
-            className="kg-t7"
-            style={{ color: "var(--kg-text-2)", fontWeight: 600 }}
-          >
-            Requerido
-          </span>
-        </label>
-      </div>
+
       {error && (
         <div style={{ color: "#EF4444", fontSize: 12 }}>{error}</div>
       )}
+
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
         <button
           type="button"
@@ -479,14 +429,62 @@ function ParameterInlineForm({
   );
 }
 
+function TypeToggleButton({
+  active,
+  onClick,
+  label,
+  hint,
+}: {
+  readonly active: boolean;
+  readonly onClick: () => void;
+  readonly label: string;
+  readonly hint: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="kg-focus"
+      style={{
+        flex: 1,
+        padding: "10px 12px",
+        borderRadius: "var(--kg-r-8)",
+        background: active ? "var(--kg-accent-500)" : "var(--kg-surface-1-solid)",
+        border: active
+          ? "1px solid var(--kg-accent-500)"
+          : "1px solid var(--kg-border-subtle)",
+        color: active ? "#fff" : "var(--kg-text-1)",
+        cursor: "pointer",
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+        alignItems: "flex-start",
+        textAlign: "left",
+        transition: "all 120ms ease",
+      }}
+      aria-pressed={active}
+    >
+      <span style={{ fontSize: 13, fontWeight: 700 }}>{label}</span>
+      <span
+        style={{
+          fontSize: 11,
+          opacity: active ? 0.9 : 0.7,
+        }}
+      >
+        {hint}
+      </span>
+    </button>
+  );
+}
+
 const inputStyle: React.CSSProperties = {
   width: "100%",
-  padding: "7px 10px",
+  padding: "8px 10px",
   borderRadius: "var(--kg-r-8)",
   background: "var(--kg-surface-1-solid)",
   border: "1px solid var(--kg-border-subtle)",
   color: "var(--kg-text-1)",
-  fontSize: 12,
+  fontSize: 13,
   colorScheme: "dark",
 };
 
