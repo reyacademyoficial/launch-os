@@ -30,12 +30,21 @@ export interface CourseOptionForCohort {
   readonly id: string;
   readonly productName: string;
   readonly projectId: string;
+  /** Fase E — si false, no ofrecemos selector de sistema. */
+  readonly hasSystems?: boolean;
+}
+
+export interface SystemOptionForCohort {
+  readonly id: string;
+  readonly name: string;
+  readonly courseId: string;
 }
 
 export interface CohortInitial {
   readonly id: string;
   readonly projectId: string;
   readonly courseId: string | null;
+  readonly systemId: string | null;
   readonly name: string;
   readonly startDate: string;
   readonly endDate: string;
@@ -49,6 +58,7 @@ export function CohortFormDrawer({
   onClose,
   projects,
   courses,
+  systems,
   initial,
   presetProjectId,
 }: {
@@ -57,6 +67,7 @@ export function CohortFormDrawer({
   readonly onClose: () => void;
   readonly projects: readonly ProjectOptionForCohort[];
   readonly courses: readonly CourseOptionForCohort[];
+  readonly systems?: readonly SystemOptionForCohort[];
   readonly initial?: CohortInitial;
   readonly presetProjectId?: string | null;
 }) {
@@ -68,6 +79,7 @@ export function CohortFormDrawer({
         mode={mode}
         projects={projects}
         courses={courses}
+        systems={systems ?? []}
         initial={initial}
         presetProjectId={presetProjectId}
         onClose={onClose}
@@ -80,6 +92,7 @@ function CohortFormBody({
   mode,
   projects,
   courses,
+  systems,
   initial,
   presetProjectId,
   onClose,
@@ -87,6 +100,7 @@ function CohortFormBody({
   readonly mode: "create" | "edit";
   readonly projects: readonly ProjectOptionForCohort[];
   readonly courses: readonly CourseOptionForCohort[];
+  readonly systems: readonly SystemOptionForCohort[];
   readonly initial?: CohortInitial;
   readonly presetProjectId?: string | null;
   readonly onClose: () => void;
@@ -127,6 +141,9 @@ function CohortFormBody({
   const [courseId, setCourseId] = useState<string>(
     initial?.courseId ?? "",
   );
+  const [systemId, setSystemId] = useState<string>(
+    initial?.systemId ?? "",
+  );
   const [startDate, setStartDate] = useState<string>(initial?.startDate ?? "");
   const [endDate, setEndDate] = useState<string>(initial?.endDate ?? "");
 
@@ -134,6 +151,12 @@ function CohortFormBody({
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const coursesForProject = courses.filter((c) => c.projectId === projectId);
+  const selectedCourse = courses.find((c) => c.id === courseId) ?? null;
+  const systemsForCourse = courseId
+    ? systems.filter((s) => s.courseId === courseId)
+    : [];
+  const showSystemSelector =
+    selectedCourse?.hasSystems === true;
 
   function handleProjectChange(nextId: string) {
     setProjectId(nextId);
@@ -143,6 +166,18 @@ function CohortFormBody({
       !courses.some((c) => c.id === courseId && c.projectId === nextId)
     ) {
       setCourseId("");
+      setSystemId("");
+    }
+  }
+
+  function handleCourseChange(nextId: string) {
+    setCourseId(nextId);
+    // Si el sistema actual no pertenece al nuevo course, limpiar.
+    if (
+      systemId &&
+      !systems.some((s) => s.id === systemId && s.courseId === nextId)
+    ) {
+      setSystemId("");
     }
   }
 
@@ -204,7 +239,7 @@ function CohortFormBody({
           id="course_id"
           name="course_id"
           value={courseId}
-          onChange={(e) => setCourseId(e.target.value)}
+          onChange={(e) => handleCourseChange(e.target.value)}
           disabled={coursesForProject.length === 0}
           style={inputStyle}
         >
@@ -224,6 +259,33 @@ function CohortFormBody({
             : "Solo se listan cursos del proyecto seleccionado."}
         </div>
       </Field>
+
+      {showSystemSelector && (
+        <Field label="Sistema (opcional)" htmlFor="system_id">
+          <select
+            id="system_id"
+            name="system_id"
+            value={systemId}
+            onChange={(e) => setSystemId(e.target.value)}
+            style={inputStyle}
+          >
+            <option value="">— Sin sistema —</option>
+            {systemsForCourse.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+          <div
+            className="kg-t7"
+            style={{ color: "var(--kg-text-3)", marginTop: 6 }}
+          >
+            {systemsForCourse.length === 0
+              ? "El curso tiene sistemas activados pero todavía no hay ninguno cargado."
+              : "Solo se listan sistemas del curso seleccionado."}
+          </div>
+        </Field>
+      )}
 
       <Field label="Nombre" htmlFor="name" required>
         <input

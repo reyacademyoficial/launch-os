@@ -7,15 +7,18 @@ import {
   type CohortInitial,
   type CourseOptionForCohort,
   type ProjectOptionForCohort,
+  type SystemOptionForCohort,
 } from "../cohort-form-drawer";
 
 export function EditCohortButton({
   projects,
   courses,
+  systems,
   initial,
 }: {
   readonly projects: readonly ProjectOptionForCohort[];
   readonly courses: readonly CourseOptionForCohort[];
+  readonly systems?: readonly SystemOptionForCohort[];
   readonly initial: CohortInitial;
 }) {
   const [open, setOpen] = useState(false);
@@ -44,6 +47,7 @@ export function EditCohortButton({
         onClose={() => setOpen(false)}
         projects={projects}
         courses={courses}
+        systems={systems}
         initial={initial}
       />
     </>

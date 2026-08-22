@@ -38,9 +38,10 @@ Ver `.env.example`. Resumen:
 | --------------------------------- | -------- | ------------------------------------------------- |
 | `NEXT_PUBLIC_SUPABASE_URL`        | público  | URL del proyecto Supabase                         |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY`   | público  | Anon key                                          |
-| `SUPABASE_SERVICE_ROLE_KEY`       | **servidor** | Service-role: invites + `project_secrets`     |
+| `SUPABASE_SERVICE_ROLE_KEY`       | **servidor** | Service-role: invites + `project_secrets` + crons y jobs de sistema |
 | `OPENAI_API_KEY`                  | **servidor** | Resumen ejecutivo con IA (Server Action)      |
 | `NEXT_PUBLIC_APP_URL`             | público  | URL canónica (usada en `redirectTo` de invites)   |
+| `CRON_SECRET`                     | **servidor** | Auth compartida para los Vercel Crons (`sync-integrations`, `notion-sync`, `academia-daily`). Vercel Cron inyecta `Authorization: Bearer $CRON_SECRET`. |
 
 > **Regla:** `SUPABASE_SERVICE_ROLE_KEY` y `OPENAI_API_KEY` nunca se importan
 > desde código de cliente ni se prefijan con `NEXT_PUBLIC_`.

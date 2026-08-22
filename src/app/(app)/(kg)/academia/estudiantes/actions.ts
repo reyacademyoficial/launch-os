@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 
+import { expireEnrollment } from "@/lib/academia/expirations";
+import { requireRole } from "@/lib/supabase/auth";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -480,4 +482,43 @@ export async function deleteStudent(
   revalidatePath("/academia/estudiantes");
   revalidatePath("/academia");
   return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// expireEnrollmentNow — botón "Dar de baja ahora" en la ficha del alumno
+//
+// Solo admin/superadmin/coordinador (dev pasa por override en requireRole).
+// Marca el enrollment como 'expired', crea el event log y dispara webhook
+// GHL si el course tiene URL configurada. La escritura al event log va por
+// service_role (RLS 0149 bloquea a authenticated).
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type ExpireEnrollmentResult =
+  | { ok: true; webhookStatus: string }
+  | { error: string };
+
+export async function expireEnrollmentNow(
+  enrollmentId: string,
+  studentId: string,
+): Promise<ExpireEnrollmentResult> {
+  if (!enrollmentId) return { error: "Falta el id de la inscripción." };
+  await requireRole("superadmin", "admin", "coordinador");
+
+  try {
+    const event = await expireEnrollment(enrollmentId, { force: false });
+    revalidatePath(`/academia/estudiantes/${studentId}`);
+    revalidatePath("/academia/estudiantes");
+    revalidatePath("/academia");
+    return {
+      ok: true,
+      webhookStatus: event?.webhook_status ?? "already_expired",
+    };
+  } catch (err) {
+    return {
+      error:
+        err instanceof Error
+          ? err.message
+          : "No se pudo dar de baja el enrollment.",
+    };
+  }
 }

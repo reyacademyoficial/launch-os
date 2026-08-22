@@ -12,6 +12,7 @@ import type {
   CohortInitial,
   CourseOptionForCohort,
   ProjectOptionForCohort,
+  SystemOptionForCohort,
 } from "../cohort-form-drawer";
 import { EditCohortButton } from "./edit-cohort-button";
 import type { BulkEnrollCandidate } from "./bulk-enroll-drawer";
@@ -41,6 +42,7 @@ interface CohortDbRow {
   readonly id: string;
   readonly project_id: string;
   readonly course_id: string | null;
+  readonly system_id: string | null;
   readonly name: string;
   readonly start_date: string;
   readonly end_date: string;
@@ -58,6 +60,14 @@ interface CourseDbRow {
   readonly id: string;
   readonly product_id: string;
   readonly project_id: string;
+  readonly active: boolean;
+  readonly has_systems: boolean;
+}
+
+interface SystemDbRow {
+  readonly id: string;
+  readonly course_id: string;
+  readonly name: string;
   readonly active: boolean;
 }
 
@@ -156,7 +166,7 @@ export default async function CohortFichaPage({
     supabase
       .from("cohorts")
       .select(
-        "id, project_id, course_id, name, start_date, end_date, status, notes",
+        "id, project_id, course_id, system_id, name, start_date, end_date, status, notes",
       )
       .eq("id", cohortId)
       .maybeSingle(),
@@ -166,7 +176,7 @@ export default async function CohortFichaPage({
       .eq("ownership", "propia"),
     supabase
       .from("courses")
-      .select("id, product_id, project_id, active")
+      .select("id, product_id, project_id, active, has_systems")
       .eq("active", true),
     supabase.from("products").select("id, name"),
     supabase
@@ -323,13 +333,36 @@ export default async function CohortFichaPage({
       id: c.id,
       productName: productNameById.get(c.product_id) ?? "—",
       projectId: c.project_id,
+      hasSystems: c.has_systems,
     }))
     .sort((a, b) => a.productName.localeCompare(b.productName));
+
+  // Sistemas del curso actual — para el selector nullable en el edit drawer.
+  const systemsForCourseRes = cohort.course_id
+    ? await supabase
+        .from("academia_systems")
+        .select("id, course_id, name, active")
+        .eq("course_id", cohort.course_id)
+        .eq("active", true)
+    : { data: [] as SystemDbRow[] };
+  const systemsForCourse =
+    (systemsForCourseRes.data ?? []) as unknown as SystemDbRow[];
+  const systemOptions: SystemOptionForCohort[] = systemsForCourse
+    .map((s) => ({ id: s.id, name: s.name, courseId: s.course_id }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const currentSystemName = cohort.system_id
+    ? systemsForCourse.find((s) => s.id === cohort.system_id)?.name ?? null
+    : null;
+  const currentCourseHasSystems = cohort.course_id
+    ? activeCourses.find((c) => c.id === cohort.course_id)?.has_systems ??
+      false
+    : false;
 
   const initial: CohortInitial = {
     id: cohort.id,
     projectId: cohort.project_id,
     courseId: cohort.course_id,
+    systemId: cohort.system_id,
     name: cohort.name,
     startDate: cohort.start_date,
     endDate: cohort.end_date,
@@ -465,6 +498,12 @@ export default async function CohortFichaPage({
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <FieldRow label="Proyecto" value={projectName ?? "—"} />
             <FieldRow label="Curso" value={courseName ?? "Sin curso"} />
+            {currentCourseHasSystems && (
+              <FieldRow
+                label="Sistema"
+                value={currentSystemName ?? "Sin sistema"}
+              />
+            )}
             <FieldRow
               label="Período"
               value={`${formatDate(cohort.start_date)} – ${formatDate(cohort.end_date)}`}
@@ -509,6 +548,7 @@ export default async function CohortFichaPage({
               <EditCohortButton
                 projects={projectOptions}
                 courses={courseOptions}
+                systems={systemOptions}
                 initial={initial}
               />
             </div>

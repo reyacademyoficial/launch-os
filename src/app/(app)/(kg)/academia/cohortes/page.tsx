@@ -10,6 +10,7 @@ import { createClient } from "@/lib/supabase/server";
 import type {
   CourseOptionForCohort,
   ProjectOptionForCohort,
+  SystemOptionForCohort,
 } from "./cohort-form-drawer";
 import { CohortsView, type CohortRowData } from "./cohorts-view";
 
@@ -33,6 +34,7 @@ interface CohortDbRow {
   readonly id: string;
   readonly project_id: string;
   readonly course_id: string | null;
+  readonly system_id: string | null;
   readonly name: string;
   readonly start_date: string;
   readonly end_date: string;
@@ -51,6 +53,7 @@ interface CourseDbRow {
   readonly product_id: string;
   readonly project_id: string;
   readonly active: boolean;
+  readonly has_systems: boolean;
 }
 
 interface ProductDbRow {
@@ -60,6 +63,13 @@ interface ProductDbRow {
 
 interface EnrollmentLink {
   readonly cohort_id: string;
+}
+
+interface SystemDbRow {
+  readonly id: string;
+  readonly course_id: string;
+  readonly name: string;
+  readonly active: boolean;
 }
 
 export default async function CohortesPage({
@@ -72,25 +82,35 @@ export default async function CohortesPage({
 
   const supabase = await createClient();
 
-  const [cohortsRes, projectsRes, coursesRes, productsRes, enrollmentsRes] =
-    await Promise.all([
-      supabase
-        .from("cohorts")
-        .select(
-          "id, project_id, course_id, name, start_date, end_date, status, notes",
-        )
-        .order("start_date", { ascending: false }),
-      supabase
-        .from("projects")
-        .select("id, name, ownership")
-        .eq("ownership", "propia"),
-      supabase
-        .from("courses")
-        .select("id, product_id, project_id, active")
-        .eq("active", true),
-      supabase.from("products").select("id, name"),
-      supabase.from("enrollments").select("cohort_id"),
-    ]);
+  const [
+    cohortsRes,
+    projectsRes,
+    coursesRes,
+    productsRes,
+    enrollmentsRes,
+    systemsRes,
+  ] = await Promise.all([
+    supabase
+      .from("cohorts")
+      .select(
+        "id, project_id, course_id, system_id, name, start_date, end_date, status, notes",
+      )
+      .order("start_date", { ascending: false }),
+    supabase
+      .from("projects")
+      .select("id, name, ownership")
+      .eq("ownership", "propia"),
+    supabase
+      .from("courses")
+      .select("id, product_id, project_id, active, has_systems")
+      .eq("active", true),
+    supabase.from("products").select("id, name"),
+    supabase.from("enrollments").select("cohort_id"),
+    supabase
+      .from("academia_systems")
+      .select("id, course_id, name, active")
+      .eq("active", true),
+  ]);
 
   const allCohorts = (cohortsRes.data ?? []) as unknown as CohortDbRow[];
   const propiaProjects =
@@ -100,6 +120,8 @@ export default async function CohortesPage({
   const allProducts = (productsRes.data ?? []) as unknown as ProductDbRow[];
   const enrollments =
     (enrollmentsRes.data ?? []) as unknown as EnrollmentLink[];
+  const activeSystems =
+    (systemsRes.data ?? []) as unknown as SystemDbRow[];
 
   const projectNameById = new Map<string, string>();
   for (const p of propiaProjects) projectNameById.set(p.id, p.name);
@@ -132,6 +154,7 @@ export default async function CohortesPage({
     projectName: projectNameById.get(c.project_id) ?? null,
     courseId: c.course_id,
     courseName: c.course_id ? courseNameById.get(c.course_id) ?? null : null,
+    systemId: c.system_id,
     name: c.name,
     startDate: c.start_date,
     endDate: c.end_date,
@@ -150,8 +173,13 @@ export default async function CohortesPage({
       id: c.id,
       productName: productNameById.get(c.product_id) ?? "—",
       projectId: c.project_id,
+      hasSystems: c.has_systems,
     }))
     .sort((a, b) => a.productName.localeCompare(b.productName));
+
+  const systemOptions: SystemOptionForCohort[] = activeSystems
+    .map((s) => ({ id: s.id, name: s.name, courseId: s.course_id }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   // Stats sobre TODAS las cohortes.
   const activeCount = allCohorts.filter((c) => c.status === "active").length;
@@ -195,6 +223,7 @@ export default async function CohortesPage({
           totalCount={rows.length}
           projects={projectOptions}
           courses={courseOptions}
+          systems={systemOptions}
         />
       </Panel>
     </div>

@@ -30,7 +30,8 @@ type ShowFilter =
   | "graduated"
   | "inactive"
   | "all"
-  | "pending";
+  | "pending"
+  | "expiring";
 
 interface StudentDbRow {
   readonly id: string;
@@ -78,6 +79,11 @@ interface ProductDbRow {
 
 interface EnrollmentLink {
   readonly student_id: string;
+}
+
+interface ExpiringEnrollmentRow {
+  readonly student_id: string;
+  readonly access_expires_at: string | null;
 }
 
 interface CohortDbRow {
@@ -148,6 +154,25 @@ export default async function EstudiantesPage({
       (enrollmentsByStudent.get(e.student_id) ?? 0) + 1,
     );
   }
+
+  // Enrollments activos con vigencia dentro de los próximos 7 días — para el
+  // filtro "Por vencer" del listado. La query pega al índice parcial
+  // `enrollments_active_expiring_idx` (migración 0144).
+  const todayYmd = new Date().toISOString().slice(0, 10);
+  const in7DaysYmd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  const expiringRes = await supabase
+    .from("enrollments")
+    .select("student_id, access_expires_at")
+    .eq("status", "active")
+    .not("access_expires_at", "is", null)
+    .gte("access_expires_at", todayYmd)
+    .lte("access_expires_at", in7DaysYmd);
+  const expiringRows =
+    (expiringRes.data ?? []) as unknown as ExpiringEnrollmentRow[];
+  const expiringStudentIds = new Set<string>();
+  for (const e of expiringRows) expiringStudentIds.add(e.student_id);
 
   // Courses indexado por product_id (unique en la tabla) — el flujo
   // "comprador → curso" pasa por matching product_id.
@@ -271,6 +296,7 @@ export default async function EstudiantesPage({
     if (show === "graduated") return s.status === "graduated";
     if (show === "inactive") return s.status === "inactive";
     if (show === "pending") return false; // el otro tab gobierna
+    if (show === "expiring") return expiringStudentIds.has(s.id);
     return true;
   });
 
@@ -299,6 +325,11 @@ export default async function EstudiantesPage({
     { value: "graduated", label: "Graduados" },
     { value: "inactive", label: "Inactivos" },
     { value: "all", label: "Todos" },
+    {
+      value: "expiring",
+      label: "Por vencer (7d)",
+      badge: expiringStudentIds.size,
+    },
     {
       value: "pending",
       label: "Compradores pendientes",
@@ -368,7 +399,8 @@ function parseShow(v: string | string[] | undefined): ShowFilter {
     v === "graduated" ||
     v === "inactive" ||
     v === "all" ||
-    v === "pending"
+    v === "pending" ||
+    v === "expiring"
   ) {
     return v;
   }

@@ -110,7 +110,8 @@
       "Bash(echo \"ESLINT exit: $?\")",
       "Bash(echo \"TSC EXIT: $?\")",
       "Bash(grep -v \":1$\")",
-      "Bash(grep -v \":0$\")"
+      "Bash(grep -v \":0$\")",
+      "Bash(pnpm typecheck *)"
     ]
   }
 }

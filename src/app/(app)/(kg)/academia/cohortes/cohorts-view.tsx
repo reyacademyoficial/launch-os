@@ -11,6 +11,7 @@ import {
   type CohortInitial,
   type CourseOptionForCohort,
   type ProjectOptionForCohort,
+  type SystemOptionForCohort,
 } from "./cohort-form-drawer";
 
 type Status = "planned" | "active" | "finished" | "cancelled";
@@ -21,6 +22,7 @@ export interface CohortRowData {
   readonly projectName: string | null;
   readonly courseId: string | null;
   readonly courseName: string | null;
+  readonly systemId: string | null;
   readonly name: string;
   readonly startDate: string;
   readonly endDate: string;
@@ -48,11 +50,13 @@ export function CohortsView({
   totalCount,
   projects,
   courses,
+  systems,
 }: {
   readonly rows: readonly CohortRowData[];
   readonly totalCount: number;
   readonly projects: readonly ProjectOptionForCohort[];
   readonly courses: readonly CourseOptionForCohort[];
+  readonly systems?: readonly SystemOptionForCohort[];
 }) {
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -64,6 +68,7 @@ export function CohortsView({
         id: editing.id,
         projectId: editing.projectId,
         courseId: editing.courseId,
+        systemId: editing.systemId,
         name: editing.name,
         startDate: editing.startDate,
         endDate: editing.endDate,
@@ -175,6 +180,7 @@ export function CohortsView({
         onClose={() => setCreating(false)}
         projects={projects}
         courses={courses}
+        systems={systems}
       />
 
       <CohortFormDrawer
@@ -183,6 +189,7 @@ export function CohortsView({
         onClose={() => setEditingId(null)}
         projects={projects}
         courses={courses}
+        systems={systems}
         initial={editingInitial}
       />
     </div>

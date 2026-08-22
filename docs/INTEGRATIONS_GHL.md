@@ -122,3 +122,86 @@ Hasta el momento `warm_orphan_promotions: 0`. Hay que:
 - Dead-letter queue para fallos persistentes.
 - Aislamiento entre launches del mismo location (decisión: convivir con la limitación).
 - Eliminación del cap de 2000 en conversation lookups (requiere cola de background jobs).
+
+---
+
+# Tag sync para Academia (Fase C — Máquina del Éxito)
+
+Sync separado del sync de leads descrito arriba. Objetivo: marcar módulos de curso como completados cuando el alumno recibe una tag en GHL. Vive en `src/lib/integrations/ghl-tag-sync.ts`.
+
+## Approach: PULL, no webhook inbound
+
+El cron diario `/api/cron/academia-daily` (schedule `0 3 * * *`) invoca `syncAllGhlTrackedCourses()` al terminar el barrido de expiraciones. La UI de curso también expone un botón **Sincronizar ahora** que dispara `syncTagProgressForCourse(courseId)` de la corrida manual.
+
+**Por qué pull y no webhook**:
+- Un webhook inbound requiere endpoint público expuesto + auth por header + tolerancia a duplicados. Con volumen bajo (típicamente <100 completions/día por curso) el costo operativo no justifica la complejidad.
+- Idempotente por diseño: `unique(enrollment_id, course_module_id)` + upsert en `student_module_progress`.
+
+## Datos y credenciales
+
+- `projects.ghl_location_id text` (agregado en migración 0142) — el location del cliente en GHL.
+- `launch_secrets.provider='ghl'` — se reutiliza el PIT de cualquier launch del proyecto (todos apuntan a la misma location). El helper busca el más reciente por `updated_at`.
+- `module_ghl_tag_mappings` (migración 0147) — puente `course_module ↔ ghl_tag`, unique por `(project_id, ghl_tag)`.
+- `student_module_progress` (migración 0148) — progreso por `(enrollment_id, course_module_id)`.
+
+Si falta el `ghl_location_id` o no hay ningún PIT en el proyecto, la sync se saltea el curso y retorna `skippedReason` en el resumen — no rompe el cron.
+
+## Endpoint y filtros
+
+Por cada tag mapeada de un curso trackeado:
+
+```
+POST https://services.leadconnectorhq.com/contacts/search
+Headers:
+  Authorization: Bearer <PIT>
+  Version: 2021-04-15
+Body:
+  {
+    "locationId": "<projects.ghl_location_id>",
+    "pageLimit": 100,
+    "filters": [
+      { "field": "tags", "operator": "contains", "value": "<tag>" }
+    ],
+    "searchAfter": <cursor opcional, ver abajo>
+  }
+```
+
+**Paginación**: cursor `searchAfter` devuelto en la respuesta (variantes: top-level, dentro de `meta`, o expuesto en el último contact). Corta cuando la página trae menos que `pageLimit` o cuando no aparecen contactos nuevos entre páginas (dedup por `contact.id`).
+
+**Techo defensivo**: `MAX_PAGES_PER_TAG = 100` (~10k contactos por tag). Locations con más de 10k contactos con la misma tag exceden lo esperado; si aparece, hay que rediseñar el approach (webhooks + cursor persistido).
+
+## Match student por email
+
+- Los contactos devueltos se matchean contra `students.email` del proyecto (case-insensitive, trim). El schema tiene unique parcial `(project_id, lower(email))` así que el match es 1-1.
+- Solo se upsertea si el student tiene un enrollment `status='active'` a alguna cohort del curso. Enrollments completados/expirados no reciben actualizaciones.
+- Al upsert: `completed_at=now()`, `source='ghl_tag'`, `source_ref=<tag>`.
+
+## Resumen del sync
+
+`syncTagProgressForCourse` retorna:
+
+```ts
+{
+  tagsChecked: number;      // mappings consultados
+  contactsMatched: number;  // contacts con email que matchean students
+  progressUpserted: number; // filas upsertedas en student_module_progress
+  skippedReason?: 'missing_location_id' | 'missing_token' | 'no_mappings'
+                | 'no_students' | 'no_active_enrollments' | 'course_not_found';
+}
+```
+
+El botón "Sincronizar ahora" muestra estos contadores en la UI.
+
+## Idempotencia
+
+- Volver a correr el sync con las mismas tags → mismos matches → mismos upserts → 0 progresos nuevos. `updated_at` avanza pero `completed_at` original se preserva (la unique constraint + upsert onConflict evita duplicar).
+- Un module_progress se puede reasignar a `source='manual'` manualmente desde la UI del alumno; el próximo sync GHL lo pisa si la tag sigue presente (source `ghl_tag` es "última fuente autoritativa").
+
+## Tests
+
+`src/lib/integrations/ghl-tag-sync.test.ts` cubre:
+
+- `fetchContactsByTag`: página única, paginación con `searchAfter`, dedup entre páginas, respuesta 4xx.
+- `syncTagProgressForCourse`: match happy path, no match, contact sin email, case-insensitive, sin location_id, sin token, sin mappings, sin students, sin enrollments activos, paginación real.
+
+Todos los tests mockean el `global.fetch` + un `SupabaseLike` stub. No corren contra GHL ni Supabase reales.

@@ -11,6 +11,7 @@ import {
   type CreateCourseState,
   type UpdateCourseState,
 } from "./actions";
+import { ParametersEditor, type ParameterRowData } from "./parameters-editor";
 
 /**
  * Drawer para crear o editar un curso.
@@ -34,6 +35,8 @@ export interface CourseInitial {
   readonly durationHours: number | null;
   readonly modulesCount: number | null;
   readonly active: boolean;
+  readonly defaultAccessDays: number | null;
+  readonly ghlExpirationWebhookUrl: string | null;
 }
 
 export function CourseFormDrawer({
@@ -42,12 +45,15 @@ export function CourseFormDrawer({
   onClose,
   products,
   initial,
+  parameters,
 }: {
   readonly mode: "create" | "edit";
   readonly open: boolean;
   readonly onClose: () => void;
   readonly products: readonly ProductOptionForCourse[];
   readonly initial?: CourseInitial;
+  /** Solo aplica en mode='edit'. Se carga en el server para el course actual. */
+  readonly parameters?: readonly ParameterRowData[];
 }) {
   if (!open) return null;
   const title = mode === "create" ? "Nuevo curso" : "Editar curso";
@@ -57,6 +63,7 @@ export function CourseFormDrawer({
         mode={mode}
         products={products}
         initial={initial}
+        parameters={parameters}
         onClose={onClose}
       />
     </Drawer>
@@ -67,11 +74,13 @@ function CourseFormBody({
   mode,
   products,
   initial,
+  parameters,
   onClose,
 }: {
   readonly mode: "create" | "edit";
   readonly products: readonly ProductOptionForCourse[];
   readonly initial?: CourseInitial;
+  readonly parameters?: readonly ParameterRowData[];
   readonly onClose: () => void;
 }) {
   const isEdit = mode === "edit" && initial != null;
@@ -213,6 +222,72 @@ function CourseFormBody({
         </Field>
       </div>
 
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+          padding: "12px 14px",
+          borderRadius: "var(--kg-r-8)",
+          background: "var(--kg-surface-1-solid)",
+          border: "1px solid var(--kg-border-subtle)",
+        }}
+      >
+        <div
+          className="kg-t7"
+          style={{
+            color: "var(--kg-text-1)",
+            fontWeight: 700,
+            fontSize: 12,
+          }}
+        >
+          Vigencia y baja automática
+        </div>
+        <Field label="Días de acceso por defecto" htmlFor="default_access_days">
+          <input
+            id="default_access_days"
+            name="default_access_days"
+            type="number"
+            min={1}
+            step={1}
+            defaultValue={initial?.defaultAccessDays ?? ""}
+            placeholder="Ej: 365"
+            style={inputStyle}
+          />
+          <div
+            className="kg-t7"
+            style={{ color: "var(--kg-text-3)", marginTop: 6 }}
+          >
+            Si está seteado, cada nuevo enrollment autocalcula
+            {" "}
+            <code style={codeStyle}>access_expires_at = enrolled_at + N</code>.
+            Se puede sobreescribir manualmente en la inscripción.
+          </div>
+        </Field>
+        <Field
+          label="URL webhook GHL (baja por vencimiento)"
+          htmlFor="ghl_expiration_webhook_url"
+        >
+          <input
+            id="ghl_expiration_webhook_url"
+            name="ghl_expiration_webhook_url"
+            type="url"
+            defaultValue={initial?.ghlExpirationWebhookUrl ?? ""}
+            placeholder="https://services.leadconnectorhq.com/hooks/…"
+            style={inputStyle}
+          />
+          <div
+            className="kg-t7"
+            style={{ color: "var(--kg-text-3)", marginTop: 6 }}
+          >
+            El cron diario llama a esta URL cuando vence una inscripción de
+            este curso. Si queda vacío, el enrollment se marca
+            {" "}
+            <code style={codeStyle}>expired</code> sin disparar webhook.
+          </div>
+        </Field>
+      </div>
+
       {isEdit && (
         <>
           <label
@@ -253,6 +328,51 @@ function CourseFormBody({
           </label>
           <input type="hidden" name="active" value={active ? "on" : "off"} />
         </>
+      )}
+
+      {isEdit && initial && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            padding: "12px 14px",
+            borderRadius: "var(--kg-r-8)",
+            background: "var(--kg-surface-1-solid)",
+            border: "1px solid var(--kg-border-subtle)",
+          }}
+        >
+          <div
+            className="kg-t7"
+            style={{
+              color: "var(--kg-text-1)",
+              fontWeight: 700,
+              fontSize: 12,
+            }}
+          >
+            Parámetros del curso
+          </div>
+          <ParametersEditor
+            courseId={initial.id}
+            parameters={parameters ?? []}
+          />
+        </div>
+      )}
+
+      {!isEdit && (
+        <div
+          className="kg-t7"
+          style={{
+            padding: "10px 14px",
+            borderRadius: "var(--kg-r-8)",
+            background: "var(--kg-surface-1-solid)",
+            border: "1px dashed var(--kg-border-subtle)",
+            color: "var(--kg-text-3)",
+          }}
+        >
+          Podés configurar los parámetros del curso (diagnóstico, sesiones,
+          etc.) una vez creado.
+        </div>
       )}
 
       {state && "error" in state && <ErrorBanner text={state.error} />}
@@ -366,6 +486,14 @@ const inputStyle: React.CSSProperties = {
   color: "var(--kg-text-1)",
   fontSize: 13,
   colorScheme: "dark",
+};
+
+const codeStyle: React.CSSProperties = {
+  padding: "1px 5px",
+  borderRadius: 4,
+  background: "var(--kg-surface-2-solid)",
+  fontFamily: "ui-monospace, monospace",
+  fontSize: 11,
 };
 
 const primaryBtn: React.CSSProperties = {

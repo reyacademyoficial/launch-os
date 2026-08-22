@@ -41,6 +41,7 @@ function nullIfEmpty(value: FormDataEntryValue | null): string | null {
 interface CohortPayload {
   readonly projectId: string;
   readonly courseId: string | null;
+  readonly systemId: string | null;
   readonly name: string;
   readonly startDate: string;
   readonly endDate: string;
@@ -53,6 +54,11 @@ function parseCohortFormData(formData: FormData): CohortPayload | string {
   if (projectId == null) return "Elegí un proyecto.";
 
   const courseId = nullIfEmpty(formData.get("course_id"));
+  const systemId = nullIfEmpty(formData.get("system_id"));
+
+  if (systemId != null && courseId == null) {
+    return "No se puede asignar un sistema si la cohorte no tiene curso.";
+  }
 
   const name = String(formData.get("name") ?? "").trim();
   if (name.length === 0) return "El nombre es obligatorio.";
@@ -82,6 +88,7 @@ function parseCohortFormData(formData: FormData): CohortPayload | string {
   return {
     projectId,
     courseId,
+    systemId,
     name,
     startDate,
     endDate,
@@ -105,6 +112,7 @@ export async function createCohort(
   const payload = {
     project_id: parsed.projectId,
     course_id: parsed.courseId,
+    system_id: parsed.systemId,
     name: parsed.name,
     start_date: parsed.startDate,
     end_date: parsed.endDate,
@@ -158,6 +166,7 @@ export async function updateCohort(
   const payload = {
     project_id: parsed.projectId,
     course_id: parsed.courseId,
+    system_id: parsed.systemId,
     name: parsed.name,
     start_date: parsed.startDate,
     end_date: parsed.endDate,

@@ -35,6 +35,8 @@ interface CoursePayload {
   readonly durationHours: number | null;
   readonly modulesCount: number | null;
   readonly active: boolean;
+  readonly defaultAccessDays: number | null;
+  readonly ghlExpirationWebhookUrl: string | null;
 }
 
 function parseCourseFormData(
@@ -64,6 +66,29 @@ function parseCourseFormData(
     modulesCount = n;
   }
 
+  const accessDaysRaw = nullIfEmpty(formData.get("default_access_days"));
+  let defaultAccessDays: number | null = null;
+  if (accessDaysRaw != null) {
+    const n = Number(accessDaysRaw);
+    if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) {
+      return "Los días de acceso tienen que ser un entero positivo (o dejarlo vacío).";
+    }
+    defaultAccessDays = n;
+  }
+
+  const webhookRaw = nullIfEmpty(formData.get("ghl_expiration_webhook_url"));
+  let ghlExpirationWebhookUrl: string | null = null;
+  if (webhookRaw != null) {
+    // Validación mínima — la URL de webhook GHL suele ser https.
+    if (!/^https?:\/\//i.test(webhookRaw)) {
+      return "La URL del webhook GHL tiene que empezar con http:// o https://.";
+    }
+    if (webhookRaw.length > 2048) {
+      return "La URL del webhook GHL es demasiado larga (máx 2048).";
+    }
+    ghlExpirationWebhookUrl = webhookRaw;
+  }
+
   const activeRaw = formData.get("active");
   const active =
     activeRaw === null ? defaultActive : String(activeRaw) === "on";
@@ -73,6 +98,8 @@ function parseCourseFormData(
     durationHours,
     modulesCount,
     active,
+    defaultAccessDays,
+    ghlExpirationWebhookUrl,
   };
 }
 
@@ -94,6 +121,8 @@ export async function createCourse(
     duration_hours: parsed.durationHours,
     modules_count: parsed.modulesCount,
     active: parsed.active,
+    default_access_days: parsed.defaultAccessDays,
+    ghl_expiration_webhook_url: parsed.ghlExpirationWebhookUrl,
   } as never;
 
   const { data, error } = await supabase
@@ -144,6 +173,8 @@ export async function updateCourse(
     duration_hours: parsed.durationHours,
     modules_count: parsed.modulesCount,
     active: parsed.active,
+    default_access_days: parsed.defaultAccessDays,
+    ghl_expiration_webhook_url: parsed.ghlExpirationWebhookUrl,
   } as never;
 
   const { error } = await supabase

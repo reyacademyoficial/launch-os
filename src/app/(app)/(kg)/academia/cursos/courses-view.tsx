@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import { KgDataTable, type Column } from "@/components/kg/data-table";
@@ -10,6 +11,7 @@ import {
   type CourseInitial,
   type ProductOptionForCourse,
 } from "./course-form-drawer";
+import type { ParameterRowData } from "./parameters-editor";
 
 export interface CourseRowData {
   readonly id: string;
@@ -20,16 +22,22 @@ export interface CourseRowData {
   readonly modulesCount: number | null;
   readonly active: boolean;
   readonly cohortsCount: number;
+  readonly defaultAccessDays?: number | null;
+  readonly ghlExpirationWebhookUrl?: string | null;
 }
 
 export function CoursesView({
   rows,
   totalCount,
   products,
+  parametersByCourseId,
 }: {
   readonly rows: readonly CourseRowData[];
   readonly totalCount: number;
   readonly products: readonly ProductOptionForCourse[];
+  readonly parametersByCourseId?: Readonly<
+    Record<string, readonly ParameterRowData[]>
+  >;
 }) {
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -43,6 +51,8 @@ export function CoursesView({
         durationHours: editing.durationHours,
         modulesCount: editing.modulesCount,
         active: editing.active,
+        defaultAccessDays: editing.defaultAccessDays ?? null,
+        ghlExpirationWebhookUrl: editing.ghlExpirationWebhookUrl ?? null,
       }
     : undefined;
 
@@ -122,14 +132,23 @@ export function CoursesView({
       label: "",
       align: "right",
       render: (r) => (
-        <button
-          type="button"
-          onClick={() => setEditingId(r.id)}
-          className="kg-focus"
-          style={rowBtn}
-        >
-          Editar
-        </button>
+        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+          <Link
+            href={`/academia/cursos/${r.id}`}
+            className="kg-focus"
+            style={rowLinkBtn}
+          >
+            Ver
+          </Link>
+          <button
+            type="button"
+            onClick={() => setEditingId(r.id)}
+            className="kg-focus"
+            style={rowBtn}
+          >
+            Editar
+          </button>
+        </div>
       ),
     },
   ];
@@ -169,6 +188,11 @@ export function CoursesView({
         onClose={() => setEditingId(null)}
         products={products}
         initial={editingInitial}
+        parameters={
+          editingId != null
+            ? parametersByCourseId?.[editingId] ?? []
+            : []
+        }
       />
     </div>
   );
@@ -194,4 +218,18 @@ const rowBtn: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 600,
   cursor: "pointer",
+};
+
+const rowLinkBtn: React.CSSProperties = {
+  ...({
+    padding: "4px 10px",
+    borderRadius: 999,
+    background: "transparent",
+    border: "1px solid var(--kg-border-subtle)",
+    color: "var(--kg-text-2)",
+    fontSize: 11,
+    fontWeight: 600,
+    textDecoration: "none",
+    display: "inline-block",
+  } satisfies React.CSSProperties),
 };

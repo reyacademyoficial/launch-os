@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase/server";
 
 import type { ProductOptionForCourse } from "./course-form-drawer";
 import { CoursesView, type CourseRowData } from "./courses-view";
+import type { ParameterRowData } from "./parameters-editor";
 
 export const metadata: Metadata = { title: "Cursos · Academia" };
 
@@ -27,6 +28,8 @@ interface CourseDbRow {
   readonly duration_hours: number | null;
   readonly modules_count: number | null;
   readonly active: boolean;
+  readonly default_access_days: number | null;
+  readonly ghl_expiration_webhook_url: string | null;
 }
 
 interface ProductDbRow {
@@ -45,6 +48,16 @@ interface CohortLink {
   readonly course_id: string | null;
 }
 
+interface ParameterDbRow {
+  readonly id: string;
+  readonly course_id: string;
+  readonly key: string;
+  readonly label: string;
+  readonly type: "boolean" | "integer" | "text";
+  readonly required: boolean;
+  readonly order_index: number;
+}
+
 export default async function CursosPage({
   searchParams,
 }: {
@@ -55,11 +68,17 @@ export default async function CursosPage({
 
   const supabase = await createClient();
 
-  const [coursesRes, productsRes, projectsRes, cohortsRes] = await Promise.all([
+  const [
+    coursesRes,
+    productsRes,
+    projectsRes,
+    cohortsRes,
+    parametersRes,
+  ] = await Promise.all([
     supabase
       .from("courses")
       .select(
-        "id, product_id, project_id, duration_hours, modules_count, active",
+        "id, product_id, project_id, duration_hours, modules_count, active, default_access_days, ghl_expiration_webhook_url",
       )
       .order("active", { ascending: false }),
     supabase.from("products").select("id, name, project_id"),
@@ -68,6 +87,10 @@ export default async function CursosPage({
       .select("id, name, ownership")
       .eq("ownership", "propia"),
     supabase.from("cohorts").select("course_id").not("course_id", "is", null),
+    supabase
+      .from("course_parameters")
+      .select("id, course_id, key, label, type, required, order_index")
+      .order("order_index", { ascending: true }),
   ]);
 
   const allCourses = (coursesRes.data ?? []) as unknown as CourseDbRow[];
@@ -95,6 +118,22 @@ export default async function CursosPage({
 
   const alreadyCourseProductIds = new Set(allCourses.map((c) => c.product_id));
 
+  const allParameters =
+    (parametersRes.data ?? []) as unknown as ParameterDbRow[];
+  const parametersByCourseId: Record<string, ParameterRowData[]> = {};
+  for (const p of allParameters) {
+    const arr = parametersByCourseId[p.course_id] ?? [];
+    arr.push({
+      id: p.id,
+      key: p.key,
+      label: p.label,
+      type: p.type,
+      required: p.required,
+      orderIndex: p.order_index,
+    });
+    parametersByCourseId[p.course_id] = arr;
+  }
+
   const filtered = allCourses.filter((c) => {
     if (show === "active") return c.active;
     if (show === "inactive") return !c.active;
@@ -112,6 +151,8 @@ export default async function CursosPage({
       modulesCount: c.modules_count,
       active: c.active,
       cohortsCount: cohortsByCourse.get(c.id) ?? 0,
+      defaultAccessDays: c.default_access_days,
+      ghlExpirationWebhookUrl: c.ghl_expiration_webhook_url,
     };
   });
 
@@ -164,6 +205,7 @@ export default async function CursosPage({
           rows={rows}
           totalCount={rows.length}
           products={products}
+          parametersByCourseId={parametersByCourseId}
         />
       </Panel>
     </div>
