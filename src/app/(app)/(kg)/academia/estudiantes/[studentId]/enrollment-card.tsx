@@ -6,6 +6,7 @@ import { useMemo, useState, useTransition } from "react";
 import { StatusPill } from "@/components/kg/status-pill";
 import type { ParameterType } from "@/lib/academia/parameters-shared";
 
+import { toggleModuleCompletionAction } from "../module-progress-actions";
 import { setParameterValueAction } from "../parameter-values-actions";
 import { EnrollmentExpireButton } from "./enrollment-expire-button";
 
@@ -105,16 +106,26 @@ export function EnrollmentCard({
   data,
   canExpire,
   canEditParameters,
+  canEditModules,
 }: {
   readonly studentId: string;
   readonly data: EnrollmentCardData;
   readonly canExpire: boolean;
   readonly canEditParameters: boolean;
+  readonly canEditModules: boolean;
 }) {
   const badge = computeAccessBadge(data.status, data.accessExpiresAt);
-  const showModules =
-    data.progressSource === "ghl_tags" || data.progressSource === "manual";
+  // Los módulos aparecen si el curso tiene alguno cargado — sin importar
+  // el progress_source. El marcado puede ser manual (ficha) o automático
+  // (sync GHL).
+  const showModules = data.modules.length > 0;
   const completedModules = data.modules.filter((m) => m.completedAt != null);
+  // Si hay módulos, el % se calcula en vivo desde los completados (así sube
+  // apenas se tilda uno). Si no hay módulos, cae al progress_percent
+  // estático guardado en enrollments.
+  const displayedProgress = showModules
+    ? Math.round((completedModules.length / data.modules.length) * 100)
+    : data.progressPercent;
 
   return (
     <div
@@ -255,7 +266,7 @@ export function EnrollmentCard({
             className="kg-t7"
             style={{ color: "var(--kg-text-3)", fontWeight: 600 }}
           >
-            Progreso ({data.progressSource})
+            Progreso
           </div>
           <div
             className="kg-t7"
@@ -266,13 +277,13 @@ export function EnrollmentCard({
             }}
           >
             {showModules
-              ? `${completedModules.length}/${data.modules.length} · ${data.progressPercent}%`
-              : `${data.progressPercent}%`}
+              ? `${completedModules.length}/${data.modules.length} · ${displayedProgress}%`
+              : `${displayedProgress}%`}
           </div>
         </div>
         <div
           role="progressbar"
-          aria-valuenow={data.progressPercent}
+          aria-valuenow={displayedProgress}
           aria-valuemin={0}
           aria-valuemax={100}
           style={{
@@ -284,7 +295,7 @@ export function EnrollmentCard({
         >
           <div
             style={{
-              width: `${Math.max(0, Math.min(100, data.progressPercent))}%`,
+              width: `${Math.max(0, Math.min(100, displayedProgress))}%`,
               height: "100%",
               background: "var(--kg-accent-500)",
               transition: "width 240ms ease",
@@ -293,9 +304,14 @@ export function EnrollmentCard({
         </div>
       </div>
 
-      {/* Módulos (solo si progress_source lo justifica) */}
+      {/* Módulos — visibles si el curso tiene alguno cargado */}
       {showModules && (
-        <ModulesBlock modules={data.modules} />
+        <ModulesBlock
+          studentId={studentId}
+          enrollmentId={data.enrollmentId}
+          modules={data.modules}
+          canEdit={canEditModules}
+        />
       )}
 
       {/* Parámetros (siempre — muestra vacío si no hay) */}
@@ -310,91 +326,186 @@ export function EnrollmentCard({
 }
 
 function ModulesBlock({
+  studentId,
+  enrollmentId,
   modules,
+  canEdit,
 }: {
+  readonly studentId: string;
+  readonly enrollmentId: string;
   readonly modules: readonly EnrollmentCardModule[];
+  readonly canEdit: boolean;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       <div
-        className="kg-t7"
-        style={{ color: "var(--kg-text-3)", fontWeight: 600 }}
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+        }}
       >
-        Módulos
-      </div>
-      {modules.length === 0 ? (
         <div
           className="kg-t7"
-          style={{
-            color: "var(--kg-text-3)",
-            fontStyle: "italic",
-            padding: "4px 0",
-          }}
+          style={{ color: "var(--kg-text-3)", fontWeight: 600 }}
         >
-          El curso no tiene módulos cargados todavía.
+          Módulos
         </div>
-      ) : (
-        <ul
-          style={{
-            listStyle: "none",
-            margin: 0,
-            padding: 0,
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-          }}
+        <div
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)" }}
         >
-          {modules.map((m) => {
-            const done = m.completedAt != null;
-            return (
-              <li
-                key={m.moduleId}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "4px 0",
-                  fontSize: 12,
-                }}
-              >
-                <span
-                  aria-hidden
-                  style={{
-                    width: 14,
-                    height: 14,
-                    borderRadius: 999,
-                    background: done
-                      ? "var(--kg-positive-500)"
-                      : "var(--kg-surface-1-solid)",
-                    border: `1px solid ${done ? "var(--kg-positive-500)" : "var(--kg-border-subtle)"}`,
-                    flexShrink: 0,
-                  }}
-                />
-                <span
-                  style={{
-                    color: done ? "var(--kg-text-1)" : "var(--kg-text-3)",
-                    fontWeight: done ? 600 : 400,
-                  }}
-                >
-                  {m.orderIndex + 1}. {m.moduleName}
-                </span>
-                {done && m.completedAt && (
-                  <span
-                    className="kg-t7"
-                    style={{
-                      color: "var(--kg-text-3)",
-                      marginLeft: "auto",
-                    }}
-                  >
-                    {formatIsoDate(m.completedAt)}
-                  </span>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
+          {modules.filter((m) => m.completedAt != null).length}/{modules.length}
+        </div>
+      </div>
+      <ul
+        style={{
+          listStyle: "none",
+          margin: 0,
+          padding: 0,
+          display: "flex",
+          flexDirection: "column",
+          gap: 2,
+        }}
+      >
+        {modules.map((m) => (
+          <ModuleRow
+            key={m.moduleId}
+            studentId={studentId}
+            enrollmentId={enrollmentId}
+            module={m}
+            canEdit={canEdit}
+          />
+        ))}
+      </ul>
     </div>
+  );
+}
+
+function ModuleRow({
+  studentId,
+  enrollmentId,
+  module,
+  canEdit,
+}: {
+  readonly studentId: string;
+  readonly enrollmentId: string;
+  readonly module: EnrollmentCardModule;
+  readonly canEdit: boolean;
+}) {
+  const [optimistic, setOptimistic] = useState<{
+    completed: boolean;
+    source: "ghl_tag" | "manual" | null;
+  } | null>(null);
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  const doneServer = module.completedAt != null;
+  const done = optimistic?.completed ?? doneServer;
+  const source = optimistic?.source ?? module.source;
+
+  function toggle() {
+    if (!canEdit || pending) return;
+    setError(null);
+    const next = !done;
+    setOptimistic({ completed: next, source: next ? "manual" : null });
+    startTransition(async () => {
+      const result = await toggleModuleCompletionAction({
+        enrollmentId,
+        courseModuleId: module.moduleId,
+        studentId,
+        completed: next,
+      });
+      if ("error" in result) {
+        setError(result.error);
+        setOptimistic(null);
+      }
+    });
+  }
+
+  return (
+    <li
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "5px 6px",
+        borderRadius: 6,
+        fontSize: 12,
+        background: done ? "rgba(0,180,120,0.06)" : "transparent",
+        cursor: canEdit ? "pointer" : "default",
+        opacity: pending ? 0.6 : 1,
+        transition: "background 120ms ease",
+      }}
+      onClick={toggle}
+      role={canEdit ? "button" : undefined}
+      aria-pressed={canEdit ? done : undefined}
+      title={
+        canEdit
+          ? done
+            ? "Clic para desmarcar"
+            : "Clic para marcar como visto"
+          : undefined
+      }
+    >
+      <input
+        type="checkbox"
+        checked={done}
+        readOnly
+        disabled={!canEdit || pending}
+        style={{
+          width: 14,
+          height: 14,
+          cursor: canEdit ? "pointer" : "default",
+          accentColor: "var(--kg-positive-500)",
+          flexShrink: 0,
+        }}
+        onClick={(e) => e.stopPropagation()}
+        onChange={toggle}
+      />
+      <span
+        style={{
+          color: done ? "var(--kg-text-1)" : "var(--kg-text-3)",
+          fontWeight: done ? 600 : 400,
+          flex: 1,
+        }}
+      >
+        {module.orderIndex + 1}. {module.moduleName}
+      </span>
+      {done && source === "ghl_tag" && (
+        <span
+          className="kg-t7"
+          style={{
+            padding: "1px 6px",
+            borderRadius: 4,
+            background: "var(--kg-surface-1-solid)",
+            color: "var(--kg-accent-text)",
+            fontSize: 10,
+            fontWeight: 700,
+          }}
+          title="Completado automáticamente vía tag de HighLevel"
+        >
+          GHL
+        </span>
+      )}
+      {done && module.completedAt && (
+        <span
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)" }}
+        >
+          {formatIsoDate(module.completedAt)}
+        </span>
+      )}
+      {error && (
+        <span
+          className="kg-t7"
+          style={{ color: "var(--kg-negative-500)" }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {error}
+        </span>
+      )}
+    </li>
   );
 }
 

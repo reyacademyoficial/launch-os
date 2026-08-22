@@ -116,13 +116,17 @@ export default async function CoursePage({
   const showExternalAppButton =
     externalApp != null && externalApp.active === true;
 
-  // Módulos + mappings de tags GHL + métricas. Solo cargamos si el curso los
-  // muestra (progress_source='ghl_tags'); en otros casos son irrelevantes en
-  // esta UI.
-  const showModules = course.progress_source === "ghl_tags";
-  const modules = showModules ? await listModulesByCourse(courseId) : [];
+  // Módulos: el editor está SIEMPRE visible — todo curso puede tener módulos
+  // con nombre. El input "Tag GHL" también está siempre disponible: la sync
+  // pull con HighLevel funciona en cualquier curso que tenga tags mapeadas,
+  // sin importar el progress_source (deprecado como flag de UI).
+  // Las Métricas siguen siendo exclusivas de progress_source='ghl_tags'
+  // porque usan datos agregados poblados por el sync automático.
+  const modules = await listModulesByCourse(courseId);
+  const showTagCol = true;
+  const showMetrics = course.progress_source === "ghl_tags";
 
-  const [completionStats, dropoffStats, overallProgress] = showModules
+  const [completionStats, dropoffStats, overallProgress] = showMetrics
     ? await Promise.all([
         getCourseModuleCompletionStats(courseId),
         getCourseDropoff(courseId),
@@ -140,7 +144,7 @@ export default async function CoursePage({
 
   const moduleIds = modules.map((m) => m.id);
   const tagMappingsRes =
-    showModules && moduleIds.length > 0
+    showTagCol && moduleIds.length > 0
       ? await supabase
           .from("module_ghl_tag_mappings")
           .select("course_module_id, ghl_tag")
@@ -222,10 +226,6 @@ export default async function CoursePage({
               }
             />
             <FieldRow
-              label="Fuente de progreso"
-              value={course.progress_source}
-            />
-            <FieldRow
               label="Estado"
               value={
                 <StatusPill
@@ -283,18 +283,16 @@ export default async function CoursePage({
         )}
       </div>
 
-      {showModules && (
-        <Panel title="Módulos (progreso vía tags GHL)">
-          <ModulesTab
-            courseId={course.id}
-            modules={moduleRows}
-            canEdit={canEditModules}
-            showTagCol={true}
-          />
-        </Panel>
-      )}
+      <Panel title="Módulos">
+        <ModulesTab
+          courseId={course.id}
+          modules={moduleRows}
+          canEdit={canEditModules}
+          showTagCol={showTagCol}
+        />
+      </Panel>
 
-      {showModules && (
+      {showMetrics && (
         <Panel title="Métricas">
           <MetricasTab
             completions={completionStats}

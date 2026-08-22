@@ -356,19 +356,15 @@ export default async function StudentFichaPage({
   }
 
   // ── Módulos + progreso ─────────────────────────────────────────────────
-  const trackedCourseIds = courseIdsForParams.filter((cid) => {
-    const c = courseByIdMap.get(cid);
-    return (
-      c != null && (c.progress_source === "ghl_tags" || c.progress_source === "manual")
-    );
-  });
-
+  // Cargamos módulos de TODOS los cursos donde el student tiene enrollment.
+  // El marcado puede ser automático (GHL sync) o manual desde la ficha —
+  // no filtramos por progress_source: si hay módulos cargados, se muestran.
   const [modulesRes, progressRes] = await Promise.all([
-    trackedCourseIds.length > 0
+    courseIdsForParams.length > 0
       ? supabase
           .from("course_modules")
           .select("id, course_id, name, order_index")
-          .in("course_id", trackedCourseIds)
+          .in("course_id", courseIdsForParams)
           .order("order_index", { ascending: true })
       : Promise.resolve({ data: [] as unknown[] }),
     enrollmentRows.length > 0
@@ -414,6 +410,8 @@ export default async function StudentFichaPage({
   }
 
   const canEditParameters = await userCanEditProject(student.project_id);
+  // El toggle manual de módulos usa las mismas capabilities que parámetros.
+  const canEditModules = canEditParameters;
 
   // ── Enrollment cards data ──────────────────────────────────────────────
   const enrollmentCards: EnrollmentCardData[] = enrollmentRows.map((e) => {
@@ -576,6 +574,7 @@ export default async function StudentFichaPage({
                 data={card}
                 canExpire={canExpire}
                 canEditParameters={canEditParameters}
+                canEditModules={canEditModules}
               />
             ))}
             <div

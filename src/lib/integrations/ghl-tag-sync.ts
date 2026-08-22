@@ -316,25 +316,40 @@ export async function syncTagProgressForCourse(
 }
 
 /**
- * Itera todos los cursos con `progress_source='ghl_tags'` y sincroniza cada
- * uno. Retorna resultados individuales para logging del cron.
+ * Itera todos los cursos que tengan AL MENOS UN módulo con tag mapeada a
+ * HighLevel y sincroniza cada uno. Es agnóstico al `progress_source` del
+ * curso (deprecado como flag) — el criterio de inclusión es la existencia
+ * de mappings, no un flag en el schema.
  *
- * Usado por el cron diario `/api/cron/academia-daily` (Fase D — Lifecycle).
- * El caller debe pasar el service client (bypassea RLS) para acceder a los
- * cursos de todos los proyectos.
+ * Usado por el cron diario. El caller debe pasar el service client
+ * (bypassea RLS) para acceder a los cursos de todos los proyectos.
  */
 export async function syncAllGhlTrackedCourses(
   client?: SupabaseLike,
 ): Promise<Array<{ courseId: string; result: TagSyncResult }>> {
   const loose = (client ?? createServiceClient()) as SupabaseLike;
 
-  const coursesRes = await loose
-    .from("courses")
-    .select("id")
-    .eq("progress_source", "ghl_tags");
+  // 1) Traer todos los mappings existentes (module_id → tag).
+  const mappingsRes = await loose
+    .from("module_ghl_tag_mappings")
+    .select("course_module_id");
+  const mappedModuleIds = (
+    (mappingsRes.data ?? []) as { course_module_id: string }[]
+  ).map((m) => m.course_module_id);
 
-  const courseIds = ((coursesRes.data ?? []) as { id: string }[]).map(
-    (c) => c.id,
+  if (mappedModuleIds.length === 0) return [];
+
+  // 2) Resolver los course_id únicos a partir de esos course_modules.
+  const modulesRes = await loose
+    .from("course_modules")
+    .select("course_id")
+    .in("id", mappedModuleIds);
+  const courseIds = Array.from(
+    new Set(
+      ((modulesRes.data ?? []) as { course_id: string }[]).map(
+        (m) => m.course_id,
+      ),
+    ),
   );
 
   const out: Array<{ courseId: string; result: TagSyncResult }> = [];
