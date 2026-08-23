@@ -307,7 +307,7 @@ function CourseFormBody({
         >
           Vigencia y baja automática
         </div>
-        <Field label="Días de acceso por defecto" htmlFor="default_access_days">
+        <Field label="Vigencia fija (opcional, en días)" htmlFor="default_access_days">
           <input
             id="default_access_days"
             name="default_access_days"
@@ -320,12 +320,17 @@ function CourseFormBody({
           />
           <div
             className="kg-t7"
-            style={{ color: "var(--kg-text-3)", marginTop: 6 }}
+            style={{ color: "var(--kg-text-3)", marginTop: 6, lineHeight: 1.5 }}
           >
-            Si está seteado, cada nuevo enrollment autocalcula
-            {" "}
-            <code style={codeStyle}>access_expires_at = enrolled_at + N</code>.
-            Se puede sobreescribir manualmente en la inscripción.
+            Si lo dejás vacío, la vigencia se calcula automáticamente por el
+            método de pago de la venta:
+            <br />
+            <strong>· Pago único</strong> → sin vencimiento
+            <br />
+            <strong>· En cuotas</strong> → 1 año desde la fecha de compra
+            <br />
+            Si ponés un número acá, ese valor gana siempre (para cursos como
+            Nitro que duran un plazo fijo sin importar cómo se pagaron).
           </div>
         </Field>
         <Field

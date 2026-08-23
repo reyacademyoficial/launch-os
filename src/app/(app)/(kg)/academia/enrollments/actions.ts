@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { resolveAccessExpiryForEnrollment } from "@/lib/academia/access-expiration-server";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -137,12 +138,24 @@ export async function createEnrollment(
   if (typeof parsed === "string") return { error: parsed };
 
   const supabase = await createSupabaseClient();
+
+  // Resolvemos vigencia + sale_id automáticamente si el operador no los
+  // pasó explícitos. Regla: courses.default_access_days (override) o si no
+  // hay override, según el método de pago de la venta más reciente del
+  // student para el producto del curso.
+  const resolved = await resolveAccessExpiryForEnrollment({
+    studentId: parsed.studentId,
+    cohortId: parsed.cohortId,
+    enrolledAt: parsed.enrolledAt,
+  });
+
   // project_id se autofillea via trigger desde cohorts.
   const payload = {
     student_id: parsed.studentId,
     cohort_id: parsed.cohortId,
-    sale_id: parsed.saleId,
+    sale_id: parsed.saleId ?? resolved.saleId,
     enrolled_at: parsed.enrolledAt,
+    access_expires_at: resolved.accessExpiresAt,
     status: parsed.status,
     progress_percent: parsed.progressPercent,
     notes: parsed.notes,
@@ -249,13 +262,22 @@ export async function bulkEnrollStudents(
 
   const failures: BulkEnrollFailure[] = [];
   let enrolledCount = 0;
+  const enrolledAt = todayYmd();
 
   for (const studentId of studentIds) {
+    // Vigencia + sale por student, según regla override / método de pago.
+    const resolved = await resolveAccessExpiryForEnrollment({
+      studentId,
+      cohortId,
+      enrolledAt,
+    });
+
     const payload = {
       student_id: studentId,
       cohort_id: cohortId,
-      sale_id: null,
-      enrolled_at: todayYmd(),
+      sale_id: resolved.saleId,
+      enrolled_at: enrolledAt,
+      access_expires_at: resolved.accessExpiresAt,
       status: "active",
       progress_percent: 0,
       notes: null,
