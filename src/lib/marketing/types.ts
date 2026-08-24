@@ -103,6 +103,73 @@ export function isMarketingStage(v: string): v is MarketingStage {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Recording sessions (0160) + assignees (0161)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const RECORDING_SESSION_STATUSES = [
+  "planificada",
+  "confirmada",
+  "realizada",
+  "cancelada",
+] as const;
+
+export type RecordingSessionStatus = (typeof RECORDING_SESSION_STATUSES)[number];
+
+export const SESSION_STATUS_LABEL: Record<RecordingSessionStatus, string> = {
+  planificada: "Planificada",
+  confirmada: "Confirmada",
+  realizada: "Realizada",
+  cancelada: "Cancelada",
+};
+
+export const SESSION_STATUS_TONE: Record<RecordingSessionStatus, string> = {
+  planificada: "var(--kg-neutral-500)",
+  confirmada: "var(--kg-accent-500)",
+  realizada: "var(--kg-positive-500)",
+  cancelada: "var(--kg-negative-500)",
+};
+
+export const RECORDING_ROLES = [
+  "filmaker",
+  "experto",
+  "asistente",
+] as const;
+
+export type RecordingRole = (typeof RECORDING_ROLES)[number];
+
+export const ROLE_LABEL: Record<RecordingRole, string> = {
+  filmaker: "Filmaker",
+  experto: "Experto",
+  asistente: "Asistente",
+};
+
+export function isRecordingSessionStatus(v: string): v is RecordingSessionStatus {
+  return (RECORDING_SESSION_STATUSES as readonly string[]).includes(v);
+}
+
+export function isRecordingRole(v: string): v is RecordingRole {
+  return (RECORDING_ROLES as readonly string[]).includes(v);
+}
+
+export interface RecordingSessionRow {
+  readonly id: string;
+  readonly contentOwnerId: string;
+  readonly scheduledAt: string;
+  readonly durationMinutes: number | null;
+  readonly location: string | null;
+  readonly materials: string | null;
+  readonly notes: string | null;
+  readonly status: RecordingSessionStatus;
+  readonly completedAt: string | null;
+}
+
+export interface RecordingAssigneeRow {
+  readonly recordingSessionId: string;
+  readonly personId: string;
+  readonly role: RecordingRole;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Row shapes (mirror de las columnas leídas del server — subset típico).
 // ═══════════════════════════════════════════════════════════════════════════
 
