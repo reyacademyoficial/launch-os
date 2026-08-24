@@ -142,12 +142,13 @@ export function canSeeDev(ctx: { isDevPrivileged: boolean }): boolean {
  */
 const ROLE_MODULE_ALLOWLIST: Partial<Record<Role, ReadonlySet<string>>> = {
   cliente: new Set(["lanzamientos"]),
-  operador: new Set(["lanzamientos", "operaciones"]),
+  operador: new Set(["lanzamientos", "operaciones", "marketing"]),
   coordinador: new Set([
     "lanzamientos",
     "clientes",
     "academia",
     "operaciones",
+    "marketing",
   ]),
 };
 

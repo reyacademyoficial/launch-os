@@ -677,12 +677,19 @@ Cuando se corra la migración del §2.2:
 
 ---
 
-## Anexo B — Marketing (postergado)
+## Anexo B — Marketing
 
-Módulo Marketing sacado del alcance inicial. Cuando se retome, la opción confirmada por
-el Gate 0 es la **Opción A: vista agregada de datos LaunchOS a nivel organización**.
+> **Actualización 2026-08-24:** Marketing sale de la nevera con un diseño distinto al
+> propuesto originalmente. El plan vivo pasa a **`docs/marketing-plan.md`** — pipeline
+> creativo end-to-end (planificación → grabación → edición → publicación) + stock de
+> contenido + alertas de cobertura. El diseño previo (Opción A, agregado de ads de
+> LaunchOS) queda como referencia debajo pero **no es lo que se va a construir**; si
+> aparece necesidad de ver ads agregados a nivel org, se retoma como vista adicional
+> `/marketing/ads`, aditivo, no reemplazo.
 
-### Motivación de la postergación
+### Diseño superado (Opción A — no se implementa)
+
+### Motivación de la postergación (histórica — ya no aplica)
 
 - No hay backend propio de marketing. Todo lo que existe vive en tablas de LaunchOS
   (`launch_daily_ads`, `launch_community_metrics`) por launch.
@@ -690,7 +697,7 @@ el Gate 0 es la **Opción A: vista agregada de datos LaunchOS a nivel organizaci
   impacto operativo.
 - Meterlo en la primera pasada agrega superficie sin resolver una necesidad urgente.
 
-### Diseño cuando se retome (Opción A)
+### Diseño previo (Opción A) — no se ejecuta
 
 Sin migraciones. Solo selectores nuevos y UI.
 
