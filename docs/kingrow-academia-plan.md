@@ -259,34 +259,21 @@ FASES B / C / D / E son **paralelizables** entre sí después de A. Cada una la 
 
 ---
 
-## FASE G — App externa Nitro (SSO)
+## FASE G — App externa Nitro (redirect)
 
-**Responsable:** agente `vercel:ai-architect` o `general-purpose` (SSO).
-**Depende de:** A. **Parcialmente bloqueado** hasta que el user pase credenciales/endpoints del backend Nitro.
+**Responsable:** agente `general-purpose`.
+**Depende de:** A.
 
 ### Migraciones
-- **0153_external_apps.sql**:
-  - `external_apps (id, project_id, name, base_url, auth_strategy text CHECK in ('jwt','oauth2','shared_secret'), config jsonb, active, created_at, updated_at)`
-- FK ya declarada en `courses.external_app_id` (fase A).
+- **0153_external_apps.sql** — crea tabla `external_apps` + FK diferida en `courses.external_app_id`.
+- **0156_external_apps_simplify.sql** — dropea `auth_strategy` + `config`. La tabla queda con `id, project_id, name, base_url, active`.
 
 ### UI
-- `academia/apps-externas/page.tsx` — CRUD de external apps del proyecto
-- Botón "Abrir app Nitro" en detalle de curso si `course.external_app_id is not null`
-  - Llama endpoint interno `/api/academia/external-app/sso?courseId=...` que devuelve URL con token
-  - Abre en nueva pestaña
-
-### Server side
-- `src/lib/academia/external-app-sso.ts` — genera token según `auth_strategy`
-  - JWT: firma con secret shared del backend externo
-  - OAuth2: intercambio con endpoint del backend
-- Env vars por app (guardadas en `external_apps.config` cifradas o referenciadas)
-
-### Reportería (segunda iteración, ya con backend)
-- Pull mensual de "sesiones individuales" por sistema desde app Nitro
-- Alimenta reporte de Fase E
+- `academia/apps-externas/page.tsx` — CRUD (nombre, URL, proyecto, activa).
+- Detalle de curso: si `course.external_app_id` apunta a una app `active`, muestra un botón `<a href={base_url} target="_blank">Abrir {name}</a>`.
 
 ### Definition of done
-- Botón abre app externa con sesión iniciada
+- Botón abre la URL de la app externa en pestaña nueva. No hay SSO.
 - (Segunda iteración) reporte mensual muestra sesiones + asistencias
 
 **⚠ Requiere del user:** endpoint + método auth del backend Nitro antes de completar.

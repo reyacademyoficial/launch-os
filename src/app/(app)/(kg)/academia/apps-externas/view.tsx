@@ -4,10 +4,6 @@ import { useActionState, useEffect, useMemo, useState, useTransition } from "rea
 
 import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { StatusPill } from "@/components/kg/status-pill";
-import type {
-  ExternalAppAuthStrategy,
-  ExternalAppConfig,
-} from "@/lib/academia/external-apps";
 
 import {
   createExternalAppAction,
@@ -17,11 +13,10 @@ import {
 } from "./actions";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CRUD de external_apps (Fase G · 0153).
+// CRUD de external_apps (Fase G · 0153 + simplificado 0156).
 //
-// El row muestra name / proyecto / strategy / active. El overlay permite
-// editar/crear con todos los campos de config. secret se muestra oculto
-// tras un toggle "mostrar" para evitar exposición accidental.
+// Solo capturamos nombre, URL base, proyecto y estado activo. El botón del
+// detalle del curso abre `base_url` en nueva pestaña — no hay SSO.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export interface ProjectOption {
@@ -35,17 +30,8 @@ export interface AppRow {
   readonly projectName: string;
   readonly name: string;
   readonly baseUrl: string;
-  readonly authStrategy: ExternalAppAuthStrategy;
   readonly active: boolean;
-  readonly config: ExternalAppConfig;
 }
-
-const STRATEGY_LABEL: Record<ExternalAppAuthStrategy, string> = {
-  jwt: "JWT (HS256)",
-  shared_secret: "Shared secret (HMAC)",
-  magic_link: "Magic link (backend)",
-  oauth2: "OAuth2 (TODO)",
-};
 
 export function AppsExternasView({
   rows,
@@ -94,15 +80,6 @@ export function AppsExternasView({
       ),
     },
     {
-      key: "strategy",
-      label: "Auth",
-      render: (r) => (
-        <span style={{ color: "var(--kg-text-2)", fontSize: 12 }}>
-          {STRATEGY_LABEL[r.authStrategy]}
-        </span>
-      ),
-    },
-    {
       key: "status",
       label: "Estado",
       render: (r) => (
@@ -145,9 +122,10 @@ export function AppsExternasView({
           className="kg-t7"
           style={{ color: "var(--kg-text-3)", lineHeight: 1.55 }}
         >
-          Apps externas conectadas al ecosistema (ej: Nitro tiene una app de
-          agenda de turnos con expertos). El link app↔curso se hace desde el
-          formulario del curso (campo &ldquo;App externa&rdquo;).
+          Apps externas del ecosistema (ej: Nitro tiene una app de agenda de
+          turnos con expertos). El link app↔curso se hace desde el formulario
+          del curso (campo &ldquo;App externa&rdquo;). El botón del curso abre
+          la URL en nueva pestaña.
         </div>
         <button
           type="button"
@@ -230,10 +208,6 @@ function AppFormOverlay({
   const formAction = isEdit ? updateAction : createAction;
   const pending = isEdit ? updatePending : createPending;
 
-  const [strategy, setStrategy] = useState<ExternalAppAuthStrategy>(
-    initial?.authStrategy ?? "jwt",
-  );
-  const [showSecret, setShowSecret] = useState(false);
   const [deletePending, startDeleteTransition] = useTransition();
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -279,7 +253,7 @@ function AppFormOverlay({
         onClick={(e) => e.stopPropagation()}
         style={{
           width: "100%",
-          maxWidth: 620,
+          maxWidth: 520,
           background: "var(--kg-surface-1-solid)",
           border: "1px solid var(--kg-border-subtle)",
           borderRadius: "var(--kg-r-12)",
@@ -358,7 +332,7 @@ function AppFormOverlay({
             />
           </Field>
 
-          <Field label="URL base" htmlFor="base_url" required>
+          <Field label="URL de la app" htmlFor="base_url" required>
             <input
               id="base_url"
               name="base_url"
@@ -369,190 +343,6 @@ function AppFormOverlay({
               style={inputStyle}
             />
           </Field>
-
-          <Field label="Estrategia de auth" htmlFor="auth_strategy" required>
-            <select
-              id="auth_strategy"
-              name="auth_strategy"
-              value={strategy}
-              onChange={(e) =>
-                setStrategy(e.target.value as ExternalAppAuthStrategy)
-              }
-              style={inputStyle}
-            >
-              {(Object.keys(STRATEGY_LABEL) as ExternalAppAuthStrategy[]).map(
-                (s) => (
-                  <option key={s} value={s}>
-                    {STRATEGY_LABEL[s]}
-                  </option>
-                ),
-              )}
-            </select>
-          </Field>
-
-          <div
-            style={{
-              padding: 12,
-              borderRadius: "var(--kg-r-8)",
-              background: "var(--kg-surface-2-solid)",
-              border: "1px solid var(--kg-border-subtle)",
-              display: "flex",
-              flexDirection: "column",
-              gap: 12,
-            }}
-          >
-            <div
-              className="kg-t7"
-              style={{ color: "var(--kg-text-3)", fontWeight: 700 }}
-            >
-              Config ({strategy})
-            </div>
-
-            {(strategy === "jwt" ||
-              strategy === "shared_secret" ||
-              strategy === "magic_link") && (
-              <Field label="Secret" htmlFor="config_secret" required>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <input
-                    id="config_secret"
-                    name="config_secret"
-                    type={showSecret ? "text" : "password"}
-                    defaultValue={initial?.config?.secret ?? ""}
-                    placeholder="Shared secret (mín. 32 chars recomendado)"
-                    style={{ ...inputStyle, flex: 1 }}
-                    autoComplete="off"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowSecret((s) => !s)}
-                    className="kg-focus"
-                    style={secondaryBtn}
-                  >
-                    {showSecret ? "Ocultar" : "Mostrar"}
-                  </button>
-                </div>
-              </Field>
-            )}
-
-            {strategy === "magic_link" && (
-              <Field
-                label="Magic link endpoint"
-                htmlFor="config_magic_link_endpoint"
-                required
-              >
-                <input
-                  id="config_magic_link_endpoint"
-                  name="config_magic_link_endpoint"
-                  type="url"
-                  defaultValue={initial?.config?.magic_link_endpoint ?? ""}
-                  placeholder="https://backend.nitro.reyacademy.com/api/sso/magic-link"
-                  style={inputStyle}
-                />
-              </Field>
-            )}
-
-            {strategy === "jwt" && (
-              <>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: 10,
-                  }}
-                >
-                  <Field label="Issuer (iss)" htmlFor="config_issuer">
-                    <input
-                      id="config_issuer"
-                      name="config_issuer"
-                      type="text"
-                      defaultValue={initial?.config?.issuer ?? ""}
-                      placeholder="kingrow"
-                      style={inputStyle}
-                    />
-                  </Field>
-                  <Field label="Audience (aud)" htmlFor="config_audience">
-                    <input
-                      id="config_audience"
-                      name="config_audience"
-                      type="text"
-                      defaultValue={initial?.config?.audience ?? ""}
-                      placeholder="nitro"
-                      style={inputStyle}
-                    />
-                  </Field>
-                </div>
-              </>
-            )}
-
-            {(strategy === "jwt" || strategy === "shared_secret") && (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr 1fr",
-                  gap: 10,
-                }}
-              >
-                <Field label="Token param" htmlFor="config_token_param">
-                  <input
-                    id="config_token_param"
-                    name="config_token_param"
-                    type="text"
-                    defaultValue={initial?.config?.token_param ?? ""}
-                    placeholder="token"
-                    style={inputStyle}
-                  />
-                </Field>
-                <Field
-                  label="Placement"
-                  htmlFor="config_token_placement"
-                >
-                  <select
-                    id="config_token_placement"
-                    name="config_token_placement"
-                    defaultValue={
-                      initial?.config?.token_placement ?? "query"
-                    }
-                    style={inputStyle}
-                  >
-                    <option value="query">query (?token=)</option>
-                    <option value="hash">hash (#token=)</option>
-                  </select>
-                </Field>
-                <Field
-                  label="Validez (s)"
-                  htmlFor="config_expires_in_seconds"
-                >
-                  <input
-                    id="config_expires_in_seconds"
-                    name="config_expires_in_seconds"
-                    type="number"
-                    min={30}
-                    max={3600}
-                    defaultValue={
-                      initial?.config?.expires_in_seconds ?? 300
-                    }
-                    style={inputStyle}
-                  />
-                </Field>
-              </div>
-            )}
-
-            {strategy === "oauth2" && (
-              <div
-                className="kg-t7"
-                style={{
-                  color: "#F59E0B",
-                  padding: 8,
-                  border: "1px solid rgba(245,158,11,0.4)",
-                  borderRadius: "var(--kg-r-8)",
-                  background: "rgba(245,158,11,0.08)",
-                }}
-              >
-                OAuth2 aún no está implementado. Elegí otra estrategia por
-                ahora.
-              </div>
-            )}
-          </div>
 
           {isEdit && (
             <label

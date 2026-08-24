@@ -30,6 +30,11 @@ export interface ModuleRowData {
   readonly description: string | null;
   readonly orderIndex: number;
   readonly ghlTag: string | null;
+  readonly views: {
+    readonly total: number;
+    readonly completed: number;
+    readonly rate: number;
+  } | null;
 }
 
 export function ModulesTab({
@@ -287,12 +292,22 @@ function ModuleRow({
           ) : (
             <div
               style={{
-                color: "var(--kg-text-1)",
-                fontWeight: 600,
-                fontSize: 13,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                flexWrap: "wrap",
               }}
             >
-              {module.name}
+              <div
+                style={{
+                  color: "var(--kg-text-1)",
+                  fontWeight: 600,
+                  fontSize: 13,
+                }}
+              >
+                {module.name}
+              </div>
+              {module.views != null && <ViewsBadge views={module.views} />}
             </div>
           )}
           {editing ? (
@@ -530,6 +545,64 @@ function CreateModuleForm({
       </div>
     </div>
   );
+}
+
+// ─── Views badge ────────────────────────────────────────────────────────────
+
+function ViewsBadge({
+  views,
+}: {
+  readonly views: {
+    readonly total: number;
+    readonly completed: number;
+    readonly rate: number;
+  };
+}) {
+  if (views.total === 0) {
+    return (
+      <span
+        className="kg-t7"
+        style={{
+          padding: "2px 8px",
+          borderRadius: 999,
+          background: "var(--kg-surface-1-solid)",
+          border: "1px solid var(--kg-border-subtle)",
+          color: "var(--kg-text-3)",
+          fontSize: 10,
+          fontWeight: 600,
+          fontVariantNumeric: "tabular-nums",
+        }}
+        title="Sin inscriptos activos en el curso"
+      >
+        sin inscriptos
+      </span>
+    );
+  }
+  const pct = formatPct(views.rate);
+  return (
+    <span
+      className="kg-t7"
+      style={{
+        padding: "2px 8px",
+        borderRadius: 999,
+        background: "rgba(0,180,120,0.10)",
+        border: "1px solid rgba(0,180,120,0.35)",
+        color: "var(--kg-text-1)",
+        fontSize: 10,
+        fontWeight: 700,
+        fontVariantNumeric: "tabular-nums",
+      }}
+      title={`${views.completed} de ${views.total} inscriptos vieron este módulo`}
+    >
+      {views.completed}/{views.total} · {pct}
+    </span>
+  );
+}
+
+function formatPct(v: number): string {
+  const rounded = Math.round(v * 10) / 10;
+  if (Number.isInteger(rounded)) return `${rounded}%`;
+  return `${rounded.toFixed(1)}%`;
 }
 
 // ─── Styles ─────────────────────────────────────────────────────────────────

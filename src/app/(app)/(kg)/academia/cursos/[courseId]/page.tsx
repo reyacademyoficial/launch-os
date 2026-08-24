@@ -19,7 +19,6 @@ import { listTeamMembersForProject } from "@/lib/team/list";
 
 import { MetricasTab } from "./metricas-tab";
 import { ModulesTab, type ModuleRowData } from "./modules-tab";
-import { OpenExternalAppButton } from "./open-external-app-button";
 import { SistemasTab, type SystemRowData, type TeamMemberOption } from "./sistemas-tab";
 
 export const metadata: Metadata = { title: "Curso · Academia" };
@@ -126,21 +125,25 @@ export default async function CoursePage({
   const showTagCol = true;
   const showMetrics = course.progress_source === "ghl_tags";
 
-  const [completionStats, dropoffStats, overallProgress] = showMetrics
-    ? await Promise.all([
-        getCourseModuleCompletionStats(courseId),
-        getCourseDropoff(courseId),
-        getCourseOverallProgress(courseId),
-      ])
-    : [
-        [] as Awaited<ReturnType<typeof getCourseModuleCompletionStats>>,
-        [] as Awaited<ReturnType<typeof getCourseDropoff>>,
-        {
+  // Las completions se muestran inline en cada módulo — cualquier curso
+  // puede tener progreso poblado por acción manual (ficha del alumno), no
+  // solo los de progress_source='ghl_tags'. Fetch siempre. La pestaña
+  // "Métricas" completa (dropoff + overall) sigue gateada.
+  const [completionStats, dropoffStats, overallProgress] = await Promise.all([
+    getCourseModuleCompletionStats(courseId),
+    showMetrics
+      ? getCourseDropoff(courseId)
+      : Promise.resolve(
+          [] as Awaited<ReturnType<typeof getCourseDropoff>>,
+        ),
+    showMetrics
+      ? getCourseOverallProgress(courseId)
+      : Promise.resolve({
           avg_completion_percent: 0,
           total_students: 0,
           fully_completed_students: 0,
-        } as Awaited<ReturnType<typeof getCourseOverallProgress>>,
-      ];
+        } as Awaited<ReturnType<typeof getCourseOverallProgress>>),
+  ]);
 
   const moduleIds = modules.map((m) => m.id);
   const tagMappingsRes =
@@ -158,13 +161,29 @@ export default async function CoursePage({
     tagByModule.set(row.course_module_id, row.ghl_tag);
   }
 
-  const moduleRows: ModuleRowData[] = modules.map((m) => ({
-    id: m.id,
-    name: m.name,
-    description: m.description,
-    orderIndex: m.order_index,
-    ghlTag: tagByModule.get(m.id) ?? null,
-  }));
+  const completionByModule = new Map<
+    string,
+    { total: number; completed: number; rate: number }
+  >();
+  for (const c of completionStats) {
+    completionByModule.set(c.course_module_id, {
+      total: c.total_students,
+      completed: c.completed_students,
+      rate: c.completion_rate,
+    });
+  }
+
+  const moduleRows: ModuleRowData[] = modules.map((m) => {
+    const v = completionByModule.get(m.id);
+    return {
+      id: m.id,
+      name: m.name,
+      description: m.description,
+      orderIndex: m.order_index,
+      ghlTag: tagByModule.get(m.id) ?? null,
+      views: v ?? null,
+    };
+  });
 
   // canEdit para los módulos: admin/coordinador/superadmin. El server action
   // igual gatea; esto es solo la UI.
@@ -243,10 +262,25 @@ export default async function CoursePage({
                 <FieldRow
                   label="App externa"
                   value={
-                    <OpenExternalAppButton
-                      courseId={course.id}
-                      appName={externalApp.name}
-                    />
+                    <a
+                      href={externalApp.base_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="kg-focus"
+                      style={{
+                        display: "inline-block",
+                        padding: "8px 16px",
+                        borderRadius: 999,
+                        background: "var(--kg-accent-500)",
+                        border: "none",
+                        color: "#fff",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        textDecoration: "none",
+                      }}
+                    >
+                      Abrir {externalApp.name}
+                    </a>
                   }
                 />
               </div>

@@ -6,7 +6,10 @@ import { EmptyState } from "@/components/kg/empty-state";
 import { IconAca } from "@/components/kg/icons";
 import { Panel } from "@/components/kg/panel";
 import { StatusPill } from "@/components/kg/status-pill";
-import { getCourseOverallProgress } from "@/lib/academia/course-metrics";
+import {
+  getCourseModuleCompletionStats,
+  getCourseOverallProgress,
+} from "@/lib/academia/course-metrics";
 import {
   activeStudents as computeActiveStudents,
   averageAttendance,
@@ -85,6 +88,7 @@ interface ProjectDbRow {
 interface CourseGhlDbRow {
   readonly id: string;
   readonly progress_source: string;
+  readonly product_id: string;
 }
 
 const COHORT_ORDER: Record<CohortStatus, number> = {
@@ -137,10 +141,7 @@ export default async function AcademiaDashboardPage() {
       .from("projects")
       .select("id, name")
       .eq("ownership", "propia"),
-    supabase
-      .from("courses")
-      .select("id, progress_source")
-      .eq("progress_source", "ghl_tags"),
+    supabase.from("courses").select("id, progress_source, product_id"),
   ]);
 
   const students = (studentsRes.data ?? []) as unknown as StudentDbRow[];
@@ -154,33 +155,100 @@ export default async function AcademiaDashboardPage() {
   const certs = (certsRes.data ?? []) as unknown as CertDbRow[];
   const propiaProjects =
     (projectsRes.data ?? []) as unknown as ProjectDbRow[];
-  const ghlCourses =
+  const allCourses =
     (ghlCoursesRes.data ?? []) as unknown as CourseGhlDbRow[];
+  const ghlCourses = allCourses.filter(
+    (c) => c.progress_source === "ghl_tags",
+  );
 
   // ── KPI global "Progreso promedio MdE" — promedio ponderado por students
   //    de los cursos con progress_source='ghl_tags'. Si no hay ni un curso,
   //    ni siquiera se muestra el card (undefined en vez de 0 para
-  //    distinguir "sin base" de "0%").
+  //    distinguir "sin base" de "0%"). En el mismo pase resolvemos también
+  //    la tabla "Progreso por curso" (avg % + módulo más visto).
+  interface CourseProgressRow {
+    readonly id: string;
+    readonly name: string;
+    readonly totalStudents: number;
+    readonly avgProgress: number;
+    readonly topModuleName: string | null;
+    readonly topModuleRate: number | null;
+  }
+
   let mdeAvgProgress: number | null = null;
   let mdeTotalStudents = 0;
-  if (ghlCourses.length > 0) {
-    const overall = await Promise.all(
-      ghlCourses.map((c) => getCourseOverallProgress(c.id)),
+  const courseProgressRows: CourseProgressRow[] = [];
+  if (allCourses.length > 0) {
+    const productIds = Array.from(
+      new Set(allCourses.map((c) => c.product_id)),
     );
+    const productsForCoursesRes = await supabase
+      .from("products")
+      .select("id, name")
+      .in("id", productIds);
+    const productNameById = new Map<string, string>();
+    for (const p of (productsForCoursesRes.data ??
+      []) as unknown as ProjectDbRow[]) {
+      productNameById.set(p.id, p.name);
+    }
+
+    const perCourse = await Promise.all(
+      allCourses.map(async (c) => {
+        const [overall, completions] = await Promise.all([
+          getCourseOverallProgress(c.id),
+          getCourseModuleCompletionStats(c.id),
+        ]);
+        return { course: c, overall, completions };
+      }),
+    );
+
     let numeratorSum = 0;
-    for (const o of overall) {
+    for (const { course, overall, completions } of perCourse) {
       // avg_completion_percent está ponderado por students dentro del curso
       // (avg de per-student). Reagregamos por total_students para que un
-      // curso con 100 alumnos pese más que uno con 3.
-      numeratorSum += o.avg_completion_percent * o.total_students;
-      mdeTotalStudents += o.total_students;
+      // curso con 100 alumnos pese más que uno con 3. Solo cuenta si el
+      // curso es ghl_tags (el KPI original).
+      if (course.progress_source === "ghl_tags") {
+        numeratorSum += overall.avg_completion_percent * overall.total_students;
+        mdeTotalStudents += overall.total_students;
+      }
+
+      // Módulo más visto = mayor completion_rate. En empate gana el de menor
+      // order_index (aparece antes en el curso — es más probable que sea el
+      // "más visto" real, no un módulo terminal). Si no hay módulos o total=0,
+      // dejamos null.
+      let top: (typeof completions)[number] | null = null;
+      for (const row of completions) {
+        if (
+          top == null ||
+          row.completion_rate > top.completion_rate ||
+          (row.completion_rate === top.completion_rate &&
+            row.order_index < top.order_index)
+        ) {
+          top = row;
+        }
+      }
+      const hasBase = overall.total_students > 0;
+      courseProgressRows.push({
+        id: course.id,
+        name: productNameById.get(course.product_id) ?? "Curso",
+        totalStudents: overall.total_students,
+        avgProgress: overall.avg_completion_percent,
+        topModuleName: hasBase && top ? top.module_name : null,
+        topModuleRate: hasBase && top ? top.completion_rate : null,
+      });
     }
-    if (mdeTotalStudents > 0) {
-      mdeAvgProgress = numeratorSum / mdeTotalStudents;
-    } else {
-      // Hay cursos GHL pero sin alumnos activos → 0% con base 0.
-      mdeAvgProgress = 0;
+
+    if (ghlCourses.length > 0) {
+      if (mdeTotalStudents > 0) {
+        mdeAvgProgress = numeratorSum / mdeTotalStudents;
+      } else {
+        // Hay cursos GHL pero sin alumnos activos → 0% con base 0.
+        mdeAvgProgress = 0;
+      }
     }
+
+    courseProgressRows.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   // ── Empty gate: sin proyectos propios el módulo no arranca. Lo aclara
@@ -367,6 +435,85 @@ export default async function AcademiaDashboardPage() {
               />
             )}
           </div>
+
+          {courseProgressRows.length > 0 && (
+            <Panel title="Progreso por curso">
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  fontSize: 12,
+                }}
+              >
+                <thead>
+                  <tr>
+                    <th style={thStyle}>Curso</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>
+                      Inscriptos
+                    </th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>
+                      % promedio
+                    </th>
+                    <th style={thStyle}>Módulo más visto</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>
+                      % del más visto
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {courseProgressRows.map((r) => (
+                    <tr
+                      key={r.id}
+                      style={{
+                        borderTop: "1px solid var(--kg-border-subtle)",
+                      }}
+                    >
+                      <td
+                        style={{
+                          ...tdStyle,
+                          color: "var(--kg-text-1)",
+                          fontWeight: 600,
+                        }}
+                      >
+                        <Link
+                          href={`/academia/cursos/${r.id}`}
+                          className="kg-focus"
+                          style={{
+                            color: "inherit",
+                            textDecoration: "none",
+                          }}
+                        >
+                          {r.name}
+                        </Link>
+                      </td>
+                      <td style={{ ...tdStyle, ...numStyle }}>
+                        {r.totalStudents === 0 ? (
+                          <span style={{ color: "var(--kg-text-3)" }}>—</span>
+                        ) : (
+                          r.totalStudents
+                        )}
+                      </td>
+                      <td style={{ ...tdStyle, ...numStyle }}>
+                        {r.totalStudents === 0
+                          ? "—"
+                          : formatPct(r.avgProgress)}
+                      </td>
+                      <td style={tdStyle}>
+                        {r.topModuleName ?? (
+                          <span style={{ color: "var(--kg-text-3)" }}>—</span>
+                        )}
+                      </td>
+                      <td style={{ ...tdStyle, ...numStyle }}>
+                        {r.topModuleRate == null
+                          ? "—"
+                          : formatPct(r.topModuleRate)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Panel>
+          )}
 
           <Panel title="Salud por generación">
             {cohortRows.length === 0 ? (

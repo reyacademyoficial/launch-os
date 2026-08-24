@@ -6,12 +6,10 @@ import {
   createExternalApp,
   deleteExternalApp,
   updateExternalApp,
-  type ExternalAppAuthStrategy,
-  type ExternalAppConfig,
 } from "@/lib/academia/external-apps";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Server actions para external_apps (Fase G · 0153).
+// Server actions para external_apps (Fase G · 0153 + simplificado en 0156).
 //
 // El gating fino vive en RLS (can_edit_project). project_id NO se denormaliza
 // desde ningún parent — el usuario elige el proyecto al crear la app.
@@ -23,13 +21,6 @@ export type UpsertExternalAppState =
   | null;
 
 export type DeleteExternalAppResult = { ok: true } | { error: string };
-
-const STRATEGIES: readonly ExternalAppAuthStrategy[] = [
-  "jwt",
-  "shared_secret",
-  "oauth2",
-  "magic_link",
-];
 
 function nullIfEmpty(value: FormDataEntryValue | null): string | null {
   const trimmed = String(value ?? "").trim();
@@ -55,38 +46,6 @@ function parseBaseUrl(raw: FormDataEntryValue | null): string | null {
   }
 }
 
-/**
- * Construye ExternalAppConfig desde los campos del form. Solo incluye los
- * que están seteados — no forzamos defaults acá (los defaults viven en el
- * SSO helper para poder cambiarlos sin migración).
- */
-function buildConfig(formData: FormData): ExternalAppConfig {
-  const config: Record<string, unknown> = {};
-  const secret = nullIfEmpty(formData.get("config_secret"));
-  const magicEp = nullIfEmpty(formData.get("config_magic_link_endpoint"));
-  const tokenParam = nullIfEmpty(formData.get("config_token_param"));
-  const tokenPlacementRaw = nullIfEmpty(formData.get("config_token_placement"));
-  const issuer = nullIfEmpty(formData.get("config_issuer"));
-  const audience = nullIfEmpty(formData.get("config_audience"));
-  const expiresRaw = nullIfEmpty(formData.get("config_expires_in_seconds"));
-
-  if (secret) config.secret = secret;
-  if (magicEp) config.magic_link_endpoint = magicEp;
-  if (tokenParam) config.token_param = tokenParam;
-  if (tokenPlacementRaw === "hash" || tokenPlacementRaw === "query") {
-    config.token_placement = tokenPlacementRaw;
-  }
-  if (issuer) config.issuer = issuer;
-  if (audience) config.audience = audience;
-  if (expiresRaw) {
-    const n = Number(expiresRaw);
-    if (Number.isFinite(n) && n > 0 && n <= 3600) {
-      config.expires_in_seconds = Math.floor(n);
-    }
-  }
-  return config as ExternalAppConfig;
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // createExternalAppAction
 // ═══════════════════════════════════════════════════════════════════════════
@@ -106,25 +65,12 @@ export async function createExternalAppAction(
   if (baseUrl == null) {
     return { error: "La URL base debe ser una URL válida (http/https)." };
   }
-  const strategyRaw = nullIfEmpty(formData.get("auth_strategy"));
-  if (
-    !strategyRaw ||
-    !(STRATEGIES as readonly string[]).includes(strategyRaw)
-  ) {
-    return {
-      error:
-        "auth_strategy inválida (jwt | shared_secret | oauth2 | magic_link).",
-    };
-  }
-  const config = buildConfig(formData);
 
   try {
     const row = await createExternalApp({
       project_id: projectId,
       name,
       base_url: baseUrl,
-      auth_strategy: strategyRaw as ExternalAppAuthStrategy,
-      config,
     });
     revalidatePath("/academia/apps-externas");
     return { ok: true, appId: row.id };
@@ -152,26 +98,13 @@ export async function updateExternalAppAction(
   if (baseUrl == null) {
     return { error: "La URL base debe ser una URL válida (http/https)." };
   }
-  const strategyRaw = nullIfEmpty(formData.get("auth_strategy"));
-  if (
-    !strategyRaw ||
-    !(STRATEGIES as readonly string[]).includes(strategyRaw)
-  ) {
-    return {
-      error:
-        "auth_strategy inválida (jwt | shared_secret | oauth2 | magic_link).",
-    };
-  }
   const activeRaw = formData.get("active");
   const active = activeRaw === null ? true : String(activeRaw) === "on";
-  const config = buildConfig(formData);
 
   try {
     await updateExternalApp(appId, {
       name,
       base_url: baseUrl,
-      auth_strategy: strategyRaw as ExternalAppAuthStrategy,
-      config,
       active,
     });
     revalidatePath("/academia/apps-externas");

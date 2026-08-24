@@ -46,9 +46,7 @@ export default async function AppsExternasPage() {
     projectName: nameByProject.get(a.project_id) ?? "—",
     name: a.name,
     baseUrl: a.base_url,
-    authStrategy: a.auth_strategy,
     active: a.active,
-    config: a.config,
   }));
 
   const projectOptions: ProjectOption[] = projects.map((p) => ({
