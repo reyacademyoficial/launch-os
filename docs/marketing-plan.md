@@ -25,6 +25,54 @@
 - Cero filas — el módulo arranca por **CRUD, no por dashboard** (regla vigente del
   Gate 0 para tablas nuevas en cero).
 
+## Estado al 2026-08-24 (sesión Claude — sub-gate + Configuración + Bloques 1 y 2)
+
+**Cerrado por Claude (código escrito y en verde local):**
+
+- Sub-gate del bloque, Configuración (Dueños + Cadencias), Bloque 1 · Planificación
+  y Bloque 2 · Grabación con calendario dual tabla/calendario.
+- Migraciones **0157-0161 escritas** (5 de 9). Están en `supabase/migrations/`
+  esperando que el usuario las corra en Studio en orden — regla del proyecto.
+- Componente reutilizable **`src/components/kg/calendar.tsx`** (grid mensual custom,
+  ~400 líneas con helpers). Sirve también para el Bloque 4 · Subidas.
+- `src/lib/marketing/types.ts` con todos los enums (platforms, formats, categories,
+  stages, session statuses, roles), labels, tones y type guards.
+- `tsc --noEmit` = 0. `eslint` marketing = 0. Suite: 698/699 (fallo pre-existente en
+  `sync-ghl`, ver deuda de Kingrow).
+
+**Pendiente cuando se retome:**
+
+1. **Correr en Studio (orden):** `0157_marketing_content_owners.sql`,
+   `0158_marketing_publishing_cadences.sql`, `0159_marketing_content_pieces.sql`,
+   `0160_marketing_recording_sessions.sql`, `0161_marketing_recording_assignees.sql`.
+2. **Verificación de humo** con 1-2 dueños + 1 cadencia + 2 pieces + 1 session con
+   assignees: (a) piece asignado a session → stage salta de `planificado` a
+   `en_grabacion`; (b) session pasada a `realizada` → pieces asociadas saltan a
+   `en_edicion`. Ambos triggers viven en 0160.
+3. **Bloques restantes (4 de 8):**
+   - Bloque 3 · Edición — migración 0162 (`content_assets`) + `/marketing/edicion`
+     con planning semanal por editor. Diferido: 0164 (`editor_availability`) para
+     alimentar el planning.
+   - Bloque 4 · Subidas — migración 0163 (`content_uploads`) + `/marketing/subidas`
+     reusando el `KgCalendar` de Bloque 2.
+   - Stock y alertas — `/marketing/stock` + selectores `src/lib/marketing/stock.ts`
+     + `alerts.ts`.
+   - Dashboard `/marketing` — reemplaza el ModulePlaceholder actual con KPIs
+     (`HeroKpi` con tone según umbral) + 4 paneles (alertas, próximas grabaciones,
+     editores esta semana, últimas subidas).
+   - Migración 0165 pendiente: solo los triggers de asset/upload → stage
+     (`content_piece_stage_from_asset`, `content_piece_stage_from_upload`,
+     `content_piece_daily_regenerate`). Los triggers de session ya viven en 0160.
+   - Migración 0164 (`editor_availability`) se puede correr junto con 0162 —
+     el bloque de Edición necesita ambas.
+4. **Placeholder actual del dashboard** (`marketing/page.tsx`) va a ser reemplazado
+   cuando se cierre el bloque Dashboard. Ídem las páginas placeholder de
+   `edicion/`, `subidas/`, `stock/` y `disponibilidad/`.
+
+**Cuenta:** hechos 3 sub-bloques (Config + Planificación + Grabación) de 8 total.
+Quedan **5 sub-bloques**: Edición, Subidas, Stock, Dashboard, Tareas recurrentes
+(este último es solo verificación del trigger que ya está codeado en 0165 pendiente).
+
 ---
 
 ## Roles (matriz de acceso)
@@ -316,55 +364,70 @@ lib externa.
 
 ### 0. Sub-gate del bloque
 
-- [ ] Releer las 9 migraciones nuevas antes de escribir código de UI.
-- [ ] Confirmar que `src/lib/marketing/` no existe todavía.
-- [ ] Confirmar rutas y componentes reutilizables (Drawer, KgDataTable,
+- [x] Releer las 9 migraciones nuevas antes de escribir código de UI.
+- [x] Confirmar que `src/lib/marketing/` no existe todavía.
+- [x] Confirmar rutas y componentes reutilizables (Drawer, KgDataTable,
       HeroKpi, KgParamPills, StatusPill, StateDot).
-- [ ] Registrar módulo en `layers.ts` bajo `ROLE_MODULE_ALLOWLIST` con
+- [x] Registrar módulo en `layers.ts` bajo `ROLE_MODULE_ALLOWLIST` con
       `coordinador` y `operador` incluidos.
 
 ### 1. Configuración (obligatoria antes de todo lo demás)
 
-- [ ] **CRUD `content_owners`** (`/marketing/duenos`): drawer + server action
-      con `use()` action state + `revalidatePath`. Sin al menos 1 dueño no hay
-      dónde colgar contenido → estado vacío específico "Creá tu primer dueño".
-- [ ] **CRUD `publishing_cadences`** (`/marketing/cadencias`): matriz por
-      dueño × plataforma × formato. UI tabla con inputs inline (mismo patrón
-      que asistencia de Academia). Toggle `allow_repeat_asset` por fila.
+- [x] **CRUD `content_owners`** (`/marketing/duenos`): drawer + server action
+      con `useActionState` + `revalidatePath`. `active` + soft delete con
+      guard duro (bloquea borrar si hay cadencias colgadas). Handles por
+      plataforma nullables (IG/FB/TT/YT). Unique parcial por
+      `(org, lower(name)) where active`.
+- [x] **CRUD `publishing_cadences`** (`/marketing/cadencias`): tabla plana
+      por dueño × plataforma × formato. `upsertCadence` con PK compuesta,
+      `deleteCadence` por triada. Picker de owners activos.
+      `allow_repeat_asset` como toggle por fila.
 - [ ] **CRUD `editor_availability`** (`/marketing/disponibilidad`): drawer
       simple (person + rango + available + notes). Vista tabla con filtro
-      por persona y mes.
+      por persona y mes. _(Diferido a Bloque 3 — se hace junto con el
+      planning semanal que la consume.)_
 
 ### 2. Bloque 1 — Planificación
 
-- [ ] **CRUD `content_pieces`** (`/marketing/planificacion`): drawer con
-      todos los campos (title, script_md como textarea grande, category,
-      format, platforms multi-check, scheduled_recording_at,
-      scheduled_publish_at, content_owner_id, notes, is_daily_recurring).
-- [ ] Vista tabla con columnas: owner, título, tipo, formato, plataformas
-      (chips), grabación planificada, subida planificada, stage
-      (`StatusPill` con dot semántico).
-- [ ] Filtros vía `searchParams`: owner, stage, category, format, rango de
-      fechas. `KgParamPills` en el header.
-- [ ] Estado vacío que explica "Cuando planificás un contenido, se lista
+- [x] **CRUD `content_pieces`** (`/marketing/planificacion`): drawer 620px
+      con title, dueño, categoría, formato, plataformas (grid 2×2 checkboxes
+      con borde carmesí al marcar), scheduled_recording_at + scheduled_publish_at,
+      script_md (textarea 7 filas), toggle "Tarea diaria" con copy, notas.
+      `deletePiece` gated por (stage='planificado' AND recording_session_id
+      IS NULL); resto se descarta con `setPieceStage('descartado')`.
+- [x] Vista tabla con columnas: título (+ badge "Diaria" si aplica), dueño,
+      categoría, formato, plataformas (chips), grabación, publicación, stage
+      (`StatusPill` con tono semántico de `STAGE_TONE`).
+- [x] Filtros vía `searchParams`: `stage` (open|all|individual), `owner`,
+      `category`, `format`. 4 `KgParamPills` apiladas. Default `stage=open`
+      esconde publicado+descartado.
+- [x] Estado vacío que explica "Cuando planificás un contenido, se lista
       acá y pasa a Grabación cuando lo asignás a una sesión".
 
 ### 3. Bloque 2 — Grabación
 
-- [ ] **CRUD `recording_sessions`** (`/marketing/grabacion`): drawer con
-      scheduled_at, duration, location, materials, notes, status +
-      **asignación de personas con rol** (filmaker/experto/asistente).
-      Multi-select con `role` por persona. Junction `recording_assignees`.
-- [ ] **Asociación de content_pieces**: dentro del drawer de la sesión,
-      selector multi con content_pieces en `stage='planificado'` del mismo
-      dueño (filtrado server-side). Al confirmar, popula
-      `content_pieces.recording_session_id`.
-- [ ] Vista **tabla** default: sesiones ordenadas por `scheduled_at` desc,
-      con chips de assignees y count de pieces asociados.
-- [ ] Vista **calendario** (`?view=calendario`): grid mes/semana. Click en
-      día → `<Drawer>` con lista de sesiones + botón "Nueva sesión".
-- [ ] Marcar sesión como `status='realizada'` dispara el trigger de stage:
-      todos los pieces asociados pasan a `en_edicion`.
+- [x] **CRUD `recording_sessions`** (`/marketing/grabacion`): drawer 640px
+      con owner, fecha/hora, duración, ubicación, materiales, notas, y
+      **filas dinámicas +/- de assignees (persona + rol)**. Junction
+      `recording_assignees` con PK compuesta que incluye rol → una misma
+      persona puede tener dos roles distintos. `syncAssignees` calcula
+      diff (delete + insert).
+- [x] **Asociación de content_pieces**: lista de checkboxes dentro del
+      drawer filtrada por owner elegido y por pieces libres (o ya asociadas
+      a esta sesión). Cambiar owner resetea la selección. `syncPieces`
+      valida que las pieces pertenecen al owner y no están tomadas por
+      otra sesión antes de asociar.
+- [x] Vista **tabla** default: sesiones ordenadas por `scheduled_at desc`,
+      chips de assignees con rol, count de pieces, `StatusPill` semántico,
+      dropdown inline para cambiar status.
+- [x] Vista **calendario** (`?view=calendario`): componente nuevo
+      `src/components/kg/calendar.tsx` — grid mensual 7×6 con día actual
+      resaltado, count badge + hasta 3 eventos por día con dot semántico,
+      "+N más" si desborda. Click día → `<Drawer>` con lista de sesiones
+      del día + editar cada una + "+ Nueva sesión este día".
+- [x] Marcar sesión como `status='realizada'` dispara el trigger de stage
+      (0160): todas las pieces asociadas en `planificado|en_grabacion`
+      pasan a `en_edicion` en un solo statement bulk update. Idempotente.
 
 ### 4. Bloque 3 — Edición
 
@@ -539,5 +602,63 @@ lib externa.
 
 ---
 
-> Notas del módulo Marketing:
-> _(completar durante el trabajo)_
+## Notas del módulo Marketing
+
+### 2026-08-24 — sesión Claude Opus 4.7 (sub-gate + Config + Bloques 1 y 2)
+
+**Migraciones escritas (esperando run en Studio):**
+
+| Archivo | Contenido | Notas |
+|---|---|---|
+| `0157_marketing_content_owners.sql` | dueños org-scope + handles + active | template 0090; unique parcial en `(org, lower(name)) where active` |
+| `0158_marketing_publishing_cadences.sql` | cadencias (owner × platform × format) | PK compuesta; trigger org-match |
+| `0159_marketing_content_pieces.sql` | plan editorial con array `platforms` | `recording_session_id` sin FK todavía (aditiva en 0160) |
+| `0160_marketing_recording_sessions.sql` | sesiones + FK a pieces + 3 triggers | (a) auto-fill `completed_at`; (b) piece.stage `planificado→en_grabacion` al asignar; (c) session `realizada` → pieces bulk-update a `en_edicion` |
+| `0161_marketing_recording_assignees.sql` | junction M:N con rol | PK compuesta incluye rol; trigger org-match |
+
+**Decisiones cerradas que difieren del plan original:**
+
+- **Trigger `content_piece_stage_from_session_status`** movido de 0165 a **0160**
+  (tiene sentido que viva con la tabla que lo dispara, `recording_sessions`).
+  0165 queda para triggers de assets/uploads/daily-regenerate.
+- **Trigger extra `content_piece_stage_from_session_link`** (planificado →
+  en_grabacion al asignar) agregado en 0160 — no estaba en el plan pero mejora
+  la señal visual del pipeline (una piece con sesión asignada no debería
+  seguir contándose como "por planificar").
+- **`editor_availability` diferida al Bloque 3.** Sin planning semanal que la
+  consuma, ese CRUD es una tabla flotante. La pestaña `/marketing/disponibilidad`
+  hoy es un `ModulePlaceholder`.
+
+**Artefactos código (todos con `tsc` + `eslint` en 0):**
+
+```
+src/lib/marketing/types.ts                         ← enums + labels + tones + type guards + RowShapes
+src/components/kg/calendar.tsx                     ← KgCalendar + helpers puros (buildMonthCells, shiftMonth, toDateKey)
+src/components/kg/layers.ts                        ← marketing en allowlist de coordinador y operador
+
+src/app/(app)/(kg)/marketing/
+  layout.tsx                                       ← requireRole + 9 tabs
+  page.tsx                                         ← ModulePlaceholder (dashboard queda pendiente)
+  duenos/{page,duenos-view,owner-form-drawer,actions}.tsx
+  cadencias/{page,cadencias-view,cadence-form-drawer,actions}.tsx
+  planificacion/{page,planificacion-view,piece-form-drawer,actions}.tsx
+  grabacion/{page,grabacion-view,session-form-drawer,actions}.tsx
+  {edicion,subidas,stock,disponibilidad}/page.tsx  ← ModulePlaceholder cada uno
+```
+
+**Roles gateados** (`layers.ts` + `layout.tsx`): superadmin, admin, coordinador,
+operador. Operador todavía NO tiene filtro server-side de "mis assignees" —
+se agrega junto con los siguientes bloques cuando exista `editor_person_id`
+en `content_assets` y assignee filtering en `recording_sessions`.
+
+**Deuda técnica del módulo:**
+
+- Regenerar `src/lib/types/database.ts` cuando se corran las 5 migraciones
+  (`npx supabase gen types typescript --project-id <REF>`). Mientras tanto
+  todos los INSERT/UPDATE usan `as never` — mismo patrón que otros módulos
+  del proyecto según memoria del usuario.
+- `editor_availability` (0164) y triggers finales (0165) siguen pendientes.
+- Dashboard `/marketing` sigue como `ModulePlaceholder` — se cierra al final
+  cuando existan las 9 migraciones + selectores de stock y alertas.
+
+### _(completar en la próxima sesión)_
