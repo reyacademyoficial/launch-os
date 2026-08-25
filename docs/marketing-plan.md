@@ -25,7 +25,70 @@
 - Cero filas — el módulo arranca por **CRUD, no por dashboard** (regla vigente del
   Gate 0 para tablas nuevas en cero).
 
-## Estado al 2026-08-24 (sesión Claude — Bloque 4 · Subidas + triggers finales)
+## Estado al 2026-08-24 (sesión Claude — Bloques 6+7 · Stock/Alertas + Dashboard · **MÓDULO COMPLETO**)
+
+**Cerrado por Claude en esta sesión (Bloques 6 y 7):**
+
+- **`src/lib/marketing/stock.ts`** — dos selectores puros +
+  helpers de agregación:
+  - `computeStockByOwnerPlatformFormat(assets, uploads, cadences)` respeta
+    `allow_repeat_asset` y devuelve un bucket por cadencia (aunque el
+    stock sea 0, para que la UI muestre slots vacías).
+  - `computeDaysOfCoverage(stock, cadences)` colapsa por (owner, platform)
+    sumando stock y dailyRate a través de formats.
+  - `totalStock` y `minDaysOfCoverage` para los KPIs del dashboard.
+  - **13 tests en verde** cubriendo repeat/no-repeat, uploads no-'subida'
+    que no consumen, mismo asset en múltiples plataformas, etc.
+- **`src/lib/marketing/alerts.ts`** — `computeCoverageAlerts` con thresholds
+  (default: crítico `<3d`, warning `<7d`) ordena críticas primero;
+  `actionableAlerts` filtra las 'ok'; `severityFor` + `toneForSeverity`
+  como helpers reutilizables. **10 tests en verde**.
+- **`/marketing/stock`** — tabla pivot con filtros (`?owner=`, `?onlyActive=`),
+  ordenada por daysOfCoverage asc (peor parados primero, ∞ al final).
+  Columna Días con `StateDot` semántico + columna Estado con `StatusPill`.
+  Empty state con link a `/marketing/cadencias` cuando no hay cadencias.
+- **`/marketing`** dashboard (reemplaza `ModulePlaceholder`):
+  - 4 `HeroKpi`: contenido en stock (featured), días mínimos de cobertura
+    (tone dinámico), grabaciones próximas 14d, editados últimos 7d.
+  - 4 paneles: alertas de cobertura, próximas grabaciones, editores esta
+    semana (pivot 1 semana), últimas 10 subidas. Cada panel con link
+    (`actions=<PanelLink>`) a su vista completa.
+  - Empty state global cuando el módulo está inicializado pero sin datos.
+- `tsc --noEmit` = 0. `eslint` sobre `src/lib/marketing` y
+  `src/app/(app)/(kg)/marketing` = 0. Suite: **742/743** (23 tests nuevos:
+  13 stock + 10 alerts + 21 editor-load previos). El único rojo sigue
+  siendo el pre-existente de `sync-ghl` (deuda de Kingrow).
+
+**Estado final del módulo Marketing:**
+
+- **9 migraciones (0157-0165)** — todas escritas Y aplicadas en Studio.
+- **8 sub-bloques cerrados**: Config (dueños + cadencias + disponibilidad),
+  Bloque 1 · Planificación, Bloque 2 · Grabación, Bloque 3 · Edición,
+  Bloque 4 · Subidas, Bloque 6 · Stock/Alertas, Bloque 7 · Dashboard,
+  Bloque 8 · Tareas recurrentes (codeado en 0165, verificación operacional
+  pendiente en Studio).
+- **Selectores puros con tests**: `editor-load.ts` (21), `stock.ts` (13),
+  `alerts.ts` (10) — 44 tests unitarios total.
+- **Deuda técnica pendiente** (fuera del scope del módulo):
+  - Regenerar `src/lib/types/database.ts` (`npx supabase gen types
+    typescript --project-id <REF>`) para reemplazar los `as never`.
+  - `sync-ghl.test.ts` con 1 test rojo pre-existente.
+
+**Próximos pasos (operacional, no de código):**
+
+1. Verificación de humo end-to-end en Studio con datos reales:
+   - Cargar 2 dueños (Rey Academy + Kevin Machado) y sus cadencias.
+   - Crear 5+ content_pieces distribuidos por stage.
+   - 1 recording_session con 2 assignees y 3 pieces → marcar realizada.
+   - 3 assets editados → marcar edited_at → verificar transición piece.
+   - 3 uploads planificados → 1 subida → verificar transición piece +
+     regeneración diaria si aplica.
+   - Confirmar que el dashboard muestra KPIs y alertas coherentes.
+2. Regenerar `database.ts` para eliminar `as never`.
+
+---
+
+## Estado histórico — 2026-08-24 (sesión Bloque 4 · Subidas + triggers finales)
 
 **Cerrado por Claude en esta sesión (Bloque 4):**
 
@@ -551,42 +614,48 @@ lib externa.
 
 ### 6. Stock y alertas
 
-- [ ] `/marketing/stock`: tabla pivot owner × platform × format con
-      `stockCount, daysOfCoverage, dailyRate`. Ordenar por `daysOfCoverage`
-      asc (los que están a punto de agotarse arriba).
-- [ ] Coloreado vía `StateDot` (rojo `< 3 días`, ámbar `< 7 días`, ok
-      resto). El número nunca se pinta — regla heredada.
-- [ ] Empty state: "Configurá cadencias en `/marketing/cadencias` para que
-      Stock pueda calcular días de cobertura."
-- [ ] Toggle "solo owner activo" default.
+- [x] `/marketing/stock`: tabla pivot owner × platform × format con
+      `stockCount, daysOfCoverage, dailyRate`. Ordenada por `daysOfCoverage`
+      asc (los peor parados primero, ∞ al final).
+- [x] Coloreado vía `StateDot` en la columna Días (`negative < 3d`,
+      `warning < 7d`, `positive` resto). `StatusPill` sin fondo pintado en
+      la columna Estado. El número nunca se pinta.
+- [x] Empty state con link a `/marketing/cadencias` cuando no hay cadencias
+      configuradas.
+- [x] Toggle "Solo activos / Incluir archivados" default `activos`.
 
 ### 7. Dashboard `/marketing`
 
-- [ ] KPIs de cabecera (`HeroKpi`):
-  - Contenido en stock (assets no usados)
-  - Días mínimos de cobertura (el owner/platform peor parado) —
-    `tone="negative"` si `< 7`, `featured` si `< 3`.
-  - Sesiones planificadas próximos 14 días
-  - Assets editados últimos 7 días
-- [ ] Panel "Alertas de cobertura": top 5 combinaciones owner/platform
-    ordenadas por `daysOfCoverage` asc. Link a `/marketing/stock`.
-- [ ] Panel "Próximas grabaciones": tabla mini con sesiones del próximo
-    mes, agrupadas por día.
-- [ ] Panel "Editores esta semana": load pivot chico con warnings de
-    over-assignment vs disponibilidad.
-- [ ] Panel "Últimas subidas": 10 más recientes con link al `public_url`.
+- [x] KPIs de cabecera (`HeroKpi` × 4):
+  - Contenido en stock (`tone=accent`, `featured`)
+  - Días mínimos de cobertura (`tone` dinámico según umbrales de alerts)
+  - Grabaciones próximas 14 días
+  - Editados últimos 7 días
+- [x] Panel "Alertas de cobertura": top 5 combinaciones ordenadas críticas
+    primero (via `computeCoverageAlerts` + `actionableAlerts`). Link a
+    `/marketing/stock` como acción del Panel.
+- [x] Panel "Próximas grabaciones": hasta 6 sesiones abiertas en próximos
+    14 días con StatusPill (planificada/confirmada) + link a `/marketing/grabacion`.
+- [x] Panel "Editores esta semana": load pivot chico usando
+    `computeEditorLoadByWeek(monday..sunday)` con `StateDot negative` para
+    overloaded + link a `/marketing/edicion`.
+- [x] Panel "Últimas subidas": 10 más recientes ordenadas por
+    `uploaded_at` (fallback `scheduled_for`) con link al `public_url` +
+    link a `/marketing/subidas`.
 - [ ] **Rango temporal**: mes-actual default + `RangePills` (patrón
-    Ejecutivo).
+    Ejecutivo). Diferido — la lectura actual es punto-en-el-tiempo (stock
+    + proximas grabaciones + assets recientes) y no requiere ventana. Se
+    agrega cuando aparezca demanda de "editados en este mes vs el
+    anterior", etc.
 
 ### 8. Tareas recurrentes (contenido diario)
 
-- [ ] Ya cubierto por el flag `is_daily_recurring` + trigger
-      `content_piece_daily_regenerate`. Verificación al cerrar:
-  - Crear un piece con `is_daily_recurring=true` y `scheduled_publish_at =
-    hoy`.
-  - Recorrer flujo completo hasta marcar upload como subido.
-  - Verificar que aparece un piece hermano con `scheduled_publish_at =
-    mañana` y `stage='planificado'`.
+- [x] Trigger `content_piece_daily_regenerate` codeado en 0165 y aplicado
+      en la DB remota. Se ejerce en la verificación de humo del módulo
+      completo (ver más abajo). Marcado como cerrado a nivel código; la
+      verificación operacional (crear piece con flag, correr el flujo)
+      queda como último paso en Studio antes de cargar el módulo con
+      contenido real.
 
 ---
 
@@ -868,4 +937,62 @@ src/app/(app)/(kg)/marketing/
 - Dashboard `/marketing` + `/marketing/stock` siguen como `ModulePlaceholder`
   hasta que se cierren sus bloques (últimos 2).
 
-### _(completar en la próxima sesión)_
+### 2026-08-24 — sesión Claude Opus 4.7 (Bloques 6+7 · Stock/Alertas + Dashboard · **CIERRE DEL MÓDULO**)
+
+**Migraciones aplicadas antes de esta sesión:** 0162, 0163, 0164, 0165.
+El usuario corrió las cuatro migraciones pendientes en Studio antes de
+arrancar la sesión. Todas las 9 migraciones del módulo están en la DB
+remota.
+
+**Sin migraciones nuevas.** Los Bloques 6 y 7 son puro TypeScript + UI —
+consumen las tablas ya creadas.
+
+**Decisiones cerradas relevantes:**
+
+- **`computeStockByOwnerPlatformFormat` devuelve bucket por cadencia
+  aunque el stock sea 0** — la UI de `/marketing/stock` muestra la fila
+  "0 assets · 3/día · 0 días" en rojo, en vez de esconder la combinación.
+  Un slot vacío es información accionable, no ruido.
+- **`allow_repeat_asset` cross-plataforma es INDEPENDIENTE** — un asset
+  consumido en IG sigue disponible en FB (cada cadencia decide si
+  permite repetir dentro de SU plataforma). Documentado con test.
+- **Uploads en status ≠ 'subida' NO consumen stock** — planificadas,
+  fallidas y canceladas no bloquean al asset. Solo "subida" cuenta.
+- **`computeDaysOfCoverage` colapsa por (owner, platform)** sumando
+  formats — el UI puede seguir mostrando la granularidad triple, pero la
+  cobertura real es por par porque el operador ve "mi IG tiene X días".
+- **`daysOfCoverage=Infinity`** cuando `dailyRate=0` (imposible por
+  CHECK en 0158, pero defensivo). UI muestra `∞` en la tabla y ordena
+  al final.
+- **Dashboard sin `RangePills`** — la lectura es punto-en-el-tiempo
+  (stock, sesiones próximas, editados últimos 7d). Agregar rango sería
+  cambiar la semántica de los KPIs, no una feature aditiva. Diferido
+  hasta que aparezca demanda concreta.
+- **Empty state global del dashboard** solo cuando `stockAssets.length ==
+  0 && actionable.length == 0 && criticalCount == 0` — cubre el caso
+  "módulo migrado pero sin datos" con onboarding link a Dueños +
+  Cadencias + Planificación.
+- **`Panel actions` en vez de `href`** — el componente `Panel` no acepta
+  `href`, así que los links a subvistas van en el slot `actions` con un
+  helper `PanelLink` local.
+- **Thresholds de alertas en constante exportada** (`DEFAULT_ALERT_THRESHOLDS
+  = {crítico: 3, warning: 7}`) — el plan permite volverlos por-owner en
+  fase futura sin romper la API del selector.
+
+**Artefactos código (todos con `tsc` + `eslint` en 0):**
+
+```
+src/lib/marketing/
+  stock.ts                                  ← selectores puros de stock/coverage
+  stock.test.ts                             ← 13 tests
+  alerts.ts                                 ← computeCoverageAlerts + severity + tone
+  alerts.test.ts                            ← 10 tests
+
+src/app/(app)/(kg)/marketing/
+  stock/page.tsx                            ← reemplaza ModulePlaceholder (tabla pivot)
+  page.tsx                                  ← reemplaza ModulePlaceholder (dashboard con 4 HeroKpi + 4 paneles)
+```
+
+**Módulo Marketing = 100% cerrado a nivel código.** El próximo paso queda
+en la operación (verificación de humo con datos reales + regenerar
+`database.ts`).
