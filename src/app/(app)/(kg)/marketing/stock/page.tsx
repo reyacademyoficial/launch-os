@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
+import { KgFilterSelect } from "@/components/kg/filter-select";
 import { IconMkt } from "@/components/kg/icons";
 import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { KgPageFilters } from "@/components/kg/page-menu";
@@ -247,35 +248,44 @@ export default async function StockPage({
       />
 
       <KgPageFilters activeCount={activeFilters}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <KgParamPills
-            ariaLabel="Filtrar por estado del dueño"
-            options={[
-              {
-                label: "Solo activos",
-                href: buildHref({ onlyActive: true }),
-                active: onlyActive,
-              },
-              {
-                label: "Incluir archivados",
-                href: buildHref({ onlyActive: false }),
-                active: !onlyActive,
-              },
-            ]}
-          />
-          {ownerFilterOptions.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div>
+            <div
+              className="kg-t7"
+              style={{ color: "var(--kg-text-3)", fontWeight: 600, marginBottom: 6 }}
+            >
+              Alcance
+            </div>
             <KgParamPills
-              ariaLabel="Filtrar por dueño"
+              ariaLabel="Filtrar por estado del dueño"
+              options={[
+                {
+                  label: "Solo activos",
+                  href: buildHref({ onlyActive: true }),
+                  active: onlyActive,
+                },
+                {
+                  label: "Incluir archivados",
+                  href: buildHref({ onlyActive: false }),
+                  active: !onlyActive,
+                },
+              ]}
+            />
+          </div>
+          {ownerFilterOptions.length > 0 && (
+            <KgFilterSelect
+              label="Dueño"
+              active={ownerFilter ?? "__all__"}
               options={[
                 {
                   label: "Todos los dueños",
+                  value: "__all__",
                   href: buildHref({ owner: null }),
-                  active: ownerFilter == null,
                 },
                 ...ownerFilterOptions.map((o) => ({
                   label: o.name,
+                  value: o.id,
                   href: buildHref({ owner: o.id }),
-                  active: ownerFilter === o.id,
                 })),
               ]}
             />

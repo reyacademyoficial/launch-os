@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
+import { KgFilterSelect } from "@/components/kg/filter-select";
 import { IconMkt } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
-import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
 import { createClient } from "@/lib/supabase/server";
@@ -117,18 +117,19 @@ export default async function DisponibilidadPage({
 
       {personFilterOptions.length > 0 && (
         <KgPageFilters activeCount={personFilter != null ? 1 : 0}>
-          <KgParamPills
-            ariaLabel="Filtrar por persona"
+          <KgFilterSelect
+            label="Persona"
+            active={personFilter ?? "__all__"}
             options={[
               {
                 label: "Todas las personas",
+                value: "__all__",
                 href: buildHref({ person: null }),
-                active: personFilter == null,
               },
               ...personFilterOptions.map((p) => ({
                 label: p.full_name,
+                value: p.id,
                 href: buildHref({ person: p.id }),
-                active: personFilter === p.id,
               })),
             ]}
           />

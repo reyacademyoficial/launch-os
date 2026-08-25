@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
+import { KgFilterSelect } from "@/components/kg/filter-select";
 import { IconCalendar, IconMkt, IconTable } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
-import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { KgViewToggle } from "@/components/kg/view-toggle";
 import { fCount } from "@/lib/finance/format";
@@ -300,8 +300,8 @@ export default async function SubidasPage({
   if (ownerFilter) preserveParams.owner = ownerFilter;
   if (statusFilter !== "open") preserveParams.status = statusFilter;
 
+  // Vista tabla/calendario NO cuenta al badge — vive fuera del drawer.
   const activeFilters =
-    (view !== "tabla" ? 1 : 0) +
     (statusFilter !== "open" ? 1 : 0) +
     (platformFilter !== "all" ? 1 : 0) +
     (ownerFilter != null ? 1 : 0) +
@@ -320,26 +320,29 @@ export default async function SubidasPage({
         ]}
       />
 
-      <KgPageFilters activeCount={activeFilters}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <KgViewToggle
-            active={view}
-            options={[
-              {
-                value: "tabla",
-                label: "Vista tabla",
-                icon: <IconTable size={16} />,
-                href: buildHref({ view: "tabla" }),
-              },
-              {
-                value: "calendario",
-                label: "Vista calendario",
-                icon: <IconCalendar size={16} />,
-                href: buildHref({ view: "calendario" }),
-              },
-            ]}
-          />
+      {/* Toggle de vista — vive inline en la page, no en el drawer. */}
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <KgViewToggle
+          active={view}
+          options={[
+            {
+              value: "tabla",
+              label: "Vista tabla",
+              icon: <IconTable size={16} />,
+              href: buildHref({ view: "tabla" }),
+            },
+            {
+              value: "calendario",
+              label: "Vista calendario",
+              icon: <IconCalendar size={16} />,
+              href: buildHref({ view: "calendario" }),
+            },
+          ]}
+        />
+      </div>
 
+      <KgPageFilters activeCount={activeFilters}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {view === "tabla" && (
             <RangePills
               presets={RANGE_PRESETS}
@@ -350,44 +353,47 @@ export default async function SubidasPage({
             />
           )}
 
-          <KgParamPills
-            ariaLabel="Filtrar por estado"
+          <KgFilterSelect
+            label="Estado"
+            active={statusFilter}
             options={statusOptions.map((o) => ({
               label: o.label,
+              value: o.value,
               href: buildHref({ status: o.value }),
-              active: statusFilter === o.value,
             }))}
           />
 
-          <KgParamPills
-            ariaLabel="Filtrar por plataforma"
+          <KgFilterSelect
+            label="Plataforma"
+            active={platformFilter}
             options={[
               {
                 label: "Todas las plataformas",
+                value: "all",
                 href: buildHref({ platform: "all" }),
-                active: platformFilter === "all",
               },
               ...MARKETING_PLATFORMS.map((p) => ({
                 label: PLATFORM_LABEL[p],
+                value: p,
                 href: buildHref({ platform: p }),
-                active: platformFilter === p,
               })),
             ]}
           />
 
           {ownerFilterOptions.length > 0 && (
-            <KgParamPills
-              ariaLabel="Filtrar por dueño"
+            <KgFilterSelect
+              label="Dueño"
+              active={ownerFilter ?? "__all__"}
               options={[
                 {
                   label: "Todos los dueños",
+                  value: "__all__",
                   href: buildHref({ owner: null }),
-                  active: ownerFilter == null,
                 },
                 ...ownerFilterOptions.map((o) => ({
                   label: o.name,
+                  value: o.id,
                   href: buildHref({ owner: o.id }),
-                  active: ownerFilter === o.id,
                 })),
               ]}
             />

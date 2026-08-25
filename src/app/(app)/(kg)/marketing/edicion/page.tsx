@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
+import { KgFilterSelect } from "@/components/kg/filter-select";
 import { IconMkt } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
-import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
 import {
@@ -309,64 +309,68 @@ export default async function EdicionPage({
       />
 
       <KgPageFilters activeCount={activeFilters}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <KgParamPills
-            ariaLabel="Filtrar por estado"
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <KgFilterSelect
+            label="Estado"
+            active={statusFilter}
             options={[
-              { label: "Todos", href: buildHref({ status: "all" }), active: statusFilter === "all" },
-              { label: "En cola", href: buildHref({ status: "queued" }), active: statusFilter === "queued" },
-              { label: "Editados", href: buildHref({ status: "edited" }), active: statusFilter === "edited" },
+              { label: "Todos", value: "all", href: buildHref({ status: "all" }) },
+              { label: "En cola", value: "queued", href: buildHref({ status: "queued" }) },
+              { label: "Editados", value: "edited", href: buildHref({ status: "edited" }) },
             ]}
           />
 
           {editorFilterOptions.length > 0 && (
-            <KgParamPills
-              ariaLabel="Filtrar por editor"
+            <KgFilterSelect
+              label="Editor"
+              active={editorFilter ?? "__all__"}
               options={[
                 {
                   label: "Todos los editores",
+                  value: "__all__",
                   href: buildHref({ editor: null }),
-                  active: editorFilter == null,
                 },
                 ...editorFilterOptions.map((p) => ({
                   label: p.full_name,
+                  value: p.id,
                   href: buildHref({ editor: p.id }),
-                  active: editorFilter === p.id,
                 })),
               ]}
             />
           )}
 
           {ownerFilterOptions.length > 0 && (
-            <KgParamPills
-              ariaLabel="Filtrar por dueño"
+            <KgFilterSelect
+              label="Dueño"
+              active={ownerFilter ?? "__all__"}
               options={[
                 {
                   label: "Todos los dueños",
+                  value: "__all__",
                   href: buildHref({ owner: null }),
-                  active: ownerFilter == null,
                 },
                 ...ownerFilterOptions.map((o) => ({
                   label: o.name,
+                  value: o.id,
                   href: buildHref({ owner: o.id }),
-                  active: ownerFilter === o.id,
                 })),
               ]}
             />
           )}
 
-          <KgParamPills
-            ariaLabel="Filtrar por formato"
+          <KgFilterSelect
+            label="Formato"
+            active={formatFilter}
             options={[
               {
                 label: "Todos los formatos",
+                value: "all",
                 href: buildHref({ format: "all" }),
-                active: formatFilter === "all",
               },
               ...MARKETING_FORMATS.map((f) => ({
                 label: FORMAT_LABEL[f],
+                value: f,
                 href: buildHref({ format: f }),
-                active: formatFilter === f,
               })),
             ]}
           />

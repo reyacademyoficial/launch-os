@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
+import { KgFilterSelect } from "@/components/kg/filter-select";
 import { IconMkt } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
-import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
 import {
@@ -246,62 +246,66 @@ export default async function PlanificacionPage({
       />
 
       <KgPageFilters activeCount={activeFilters}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <KgParamPills
-            ariaLabel="Filtrar por estado"
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <KgFilterSelect
+            label="Estado"
+            active={stageFilter}
             options={stageOptions.map((o) => ({
               label: o.label,
+              value: o.value,
               href: buildHref({ stage: o.value }),
-              active: stageFilter === o.value,
             }))}
           />
 
           {ownerFilterOptions.length > 0 && (
-            <KgParamPills
-              ariaLabel="Filtrar por dueño"
+            <KgFilterSelect
+              label="Dueño"
+              active={ownerFilter ?? "__all__"}
               options={[
                 {
                   label: "Todos los dueños",
+                  value: "__all__",
                   href: buildHref({ owner: null }),
-                  active: ownerFilter == null,
                 },
                 ...ownerFilterOptions.map((o) => ({
                   label: o.name,
+                  value: o.id,
                   href: buildHref({ owner: o.id }),
-                  active: ownerFilter === o.id,
                 })),
               ]}
             />
           )}
 
-          <KgParamPills
-            ariaLabel="Filtrar por categoría"
+          <KgFilterSelect
+            label="Categoría"
+            active={categoryFilter}
             options={[
               {
                 label: "Todas las categorías",
+                value: "all",
                 href: buildHref({ category: "all" }),
-                active: categoryFilter === "all",
               },
               ...MARKETING_CATEGORIES.map((c) => ({
                 label: CATEGORY_LABEL[c],
+                value: c,
                 href: buildHref({ category: c }),
-                active: categoryFilter === c,
               })),
             ]}
           />
 
-          <KgParamPills
-            ariaLabel="Filtrar por formato"
+          <KgFilterSelect
+            label="Formato"
+            active={formatFilter}
             options={[
               {
                 label: "Todos los formatos",
+                value: "all",
                 href: buildHref({ format: "all" }),
-                active: formatFilter === "all",
               },
               ...MARKETING_FORMATS.map((f) => ({
                 label: FORMAT_LABEL[f],
+                value: f,
                 href: buildHref({ format: f }),
-                active: formatFilter === f,
               })),
             ]}
           />

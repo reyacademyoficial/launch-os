@@ -3,7 +3,6 @@ import type { Metadata } from "next";
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconCalendar, IconMkt, IconTable } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
-import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { KgViewToggle } from "@/components/kg/view-toggle";
 import { fCount } from "@/lib/finance/format";
@@ -285,10 +284,11 @@ export default async function GrabacionPage({
     pendingGroupsMap.values(),
   ).sort((a, b) => a.firstIsoAt.localeCompare(b.firstIsoAt));
 
-  // Suma para el badge de filtros: view custom + rango custom cuentan como 1.
+  // Suma para el badge de filtros. La vista tabla/calendario NO cuenta —
+  // vive fuera del drawer, en la page. Sólo el rango temporal (custom range
+  // o preset != "todo") cuenta como filtro activo.
   const activeFilters =
-    (view !== "tabla" ? 1 : 0) +
-    (view === "tabla" && (rangeParam !== "todo" || isCustom) ? 1 : 0);
+    view === "tabla" && (rangeParam !== "todo" || isCustom) ? 1 : 0;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-5">
@@ -303,36 +303,38 @@ export default async function GrabacionPage({
         ]}
       />
 
-      <KgPageFilters activeCount={activeFilters}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <KgViewToggle
-            active={view}
-            options={[
-              {
-                value: "tabla",
-                label: "Vista tabla",
-                icon: <IconTable size={16} />,
-                href: buildViewHref("tabla", year, month),
-              },
-              {
-                value: "calendario",
-                label: "Vista calendario",
-                icon: <IconCalendar size={16} />,
-                href: buildViewHref("calendario", year, month),
-              },
-            ]}
+      {/* Toggle de vista — vive inline en la page, no en el drawer. */}
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <KgViewToggle
+          active={view}
+          options={[
+            {
+              value: "tabla",
+              label: "Vista tabla",
+              icon: <IconTable size={16} />,
+              href: buildViewHref("tabla", year, month),
+            },
+            {
+              value: "calendario",
+              label: "Vista calendario",
+              icon: <IconCalendar size={16} />,
+              href: buildViewHref("calendario", year, month),
+            },
+          ]}
+        />
+      </div>
+
+      {view === "tabla" && (
+        <KgPageFilters activeCount={activeFilters}>
+          <RangePills
+            presets={RANGE_PRESETS}
+            activePreset={isCustom ? null : rangeParam === "custom" ? null : rangeParam}
+            activeFrom={period?.fromYmd ?? null}
+            activeTo={period?.toYmd ?? null}
+            baseHref="/marketing/grabacion"
           />
-          {view === "tabla" && (
-            <RangePills
-              presets={RANGE_PRESETS}
-              activePreset={isCustom ? null : rangeParam === "custom" ? null : rangeParam}
-              activeFrom={period?.fromYmd ?? null}
-              activeTo={period?.toYmd ?? null}
-              baseHref="/marketing/grabacion"
-            />
-          )}
-        </div>
-      </KgPageFilters>
+        </KgPageFilters>
+      )}
 
       {pendingGroups.length > 0 && (
         <Panel title={`Pieces con fecha sin sesión (${pendingGroups.length})`}>
