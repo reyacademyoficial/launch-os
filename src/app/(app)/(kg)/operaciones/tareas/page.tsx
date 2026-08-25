@@ -9,7 +9,7 @@ import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { resolveCurrentPersonId } from "@/lib/ops/current-person";
 import { fCount } from "@/lib/finance/format";
-import { requireSessionProfile, type Role } from "@/lib/supabase/auth";
+import { requireSessionProfile } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
 import type {
@@ -23,10 +23,12 @@ export const metadata: Metadata = { title: "Tareas · Operaciones" };
 // ═══════════════════════════════════════════════════════════════════════════
 // Lista global de tareas.
 //
-// SCOPE (§2.0 del plan):
-//   - superadmin / dev  → default "todas", toggle "mis tareas" disponible.
-//   - resto (operador/coordinador/admin) → default "mis tareas", toggle NO
-//     visible. Si fuerza ?scope=all por URL, se ignora silenciosamente.
+// SCOPE:
+//   Default para TODOS los roles = "mis tareas" (filtrado por persona
+//   vinculada al user actual). Toggle "Todas / Mis tareas" siempre visible —
+//   cualquier rol puede ver todas las tareas de la org cuando quiera, pero
+//   arranca centrado en lo suyo. RLS ya deja leer todo (0166) — el gate ahora
+//   es puramente de UX / default.
 //
 // Filtros extras:
 //   ?status=abiertas|cerradas|todas   default abiertas
@@ -53,8 +55,6 @@ const OPEN_STATUSES: ReadonlySet<Status> = new Set([
   "bloqueado",
   "alerta_maxima",
 ]);
-
-const CAN_SEE_ALL_ROLES: ReadonlySet<Role> = new Set(["superadmin", "dev"]);
 
 const STATUS_FILTER_OPTIONS: ReadonlyArray<{
   value: StatusFilter;
@@ -122,8 +122,7 @@ export default async function TareasPage({
     searchParams,
   ]);
 
-  const canSeeAll = CAN_SEE_ALL_ROLES.has(session.role);
-  const scope: Scope = resolveScope(sp.scope, canSeeAll);
+  const scope: Scope = resolveScope(sp.scope);
   const statusFilter = parseStatus(sp.status);
   const priorityFilter = parsePriority(sp.priority);
   const projectIdFilter = parseUuidParam(sp.projectId);
@@ -321,10 +320,9 @@ export default async function TareasPage({
         ? overrides.projectId
         : projectIdFilter;
     const params = new URLSearchParams();
-    // Default scope depende del rol — solo escribimos el query si difiere
-    // del default para dejar URLs limpias.
-    const defaultScope: Scope = canSeeAll ? "all" : "mine";
-    if (nextScope !== defaultScope) params.set("scope", nextScope);
+    // Default scope = "mine" para TODOS los roles — solo escribimos el query
+    // si difiere del default para dejar URLs limpias.
+    if (nextScope !== "mine") params.set("scope", nextScope);
     if (nextStatus !== "abiertas") params.set("status", nextStatus);
     if (nextPriority !== "todas") params.set("priority", nextPriority);
     if (nextProjectId != null) params.set("projectId", nextProjectId);
@@ -364,23 +362,21 @@ export default async function TareasPage({
         }
       >
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          {canSeeAll && (
-            <KgParamPills
-              ariaLabel="Alcance"
-              options={[
-                {
-                  label: "Todas",
-                  href: buildHref({ scope: "all" }),
-                  active: scope === "all",
-                },
-                {
-                  label: "Mis tareas",
-                  href: buildHref({ scope: "mine" }),
-                  active: scope === "mine",
-                },
-              ]}
-            />
-          )}
+          <KgParamPills
+            ariaLabel="Alcance"
+            options={[
+              {
+                label: "Mis tareas",
+                href: buildHref({ scope: "mine" }),
+                active: scope === "mine",
+              },
+              {
+                label: "Todas",
+                href: buildHref({ scope: "all" }),
+                active: scope === "all",
+              },
+            ]}
+          />
           <KgParamPills
             ariaLabel="Filtrar por estado"
             options={STATUS_FILTER_OPTIONS.map((o) => ({
@@ -463,15 +459,10 @@ export default async function TareasPage({
   );
 }
 
-function resolveScope(
-  v: string | string[] | undefined,
-  canSeeAll: boolean,
-): Scope {
+function resolveScope(v: string | string[] | undefined): Scope {
   const raw = typeof v === "string" ? v : null;
-  if (!canSeeAll) return "mine";
-  if (raw === "mine") return "mine";
-  // Default para superadmin/dev = "all". Cualquier otro valor cae a all.
-  return "all";
+  // Default = "mine" para TODOS los roles; solo "all" explícito cambia el scope.
+  return raw === "all" ? "all" : "mine";
 }
 
 function parseStatus(v: string | string[] | undefined): StatusFilter {

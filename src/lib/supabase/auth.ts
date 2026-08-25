@@ -104,9 +104,10 @@ export async function requireSessionProfile(): Promise<SessionProfile> {
 /**
  * Defense-in-depth layer 2 with a role gate.
  * If the caller's role isn't in the allowed list, redirect based on role:
- *   cliente   → /lanzamientos (su única vista en KG)
- *   operador  → /operaciones  (su módulo principal)
- *   others    → /             (dashboard ejecutivo)
+ *   cliente      → /lanzamientos (su única vista en KG)
+ *   operador     → /operaciones  (su módulo principal)
+ *   coordinador  → /operaciones  (no ve Ejecutivo/Financiero/Comercial)
+ *   others       → /             (dashboard ejecutivo)
  * 'dev' siempre pasa — rol de override fuera del modelo de permisos.
  */
 export async function requireRole(
@@ -117,6 +118,7 @@ export async function requireRole(
   if (!allowed.includes(profile.role)) {
     if (profile.role === "cliente") redirect("/lanzamientos");
     if (profile.role === "operador") redirect("/operaciones");
+    if (profile.role === "coordinador") redirect("/operaciones");
     redirect("/");
   }
   return profile;
