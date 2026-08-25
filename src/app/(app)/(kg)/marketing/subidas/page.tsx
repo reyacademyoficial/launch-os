@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
-import { IconMkt } from "@/components/kg/icons";
+import { IconCalendar, IconMkt, IconTable } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
+import { KgViewToggle } from "@/components/kg/view-toggle";
 import { fCount } from "@/lib/finance/format";
 import { resolvePeriod, type Period } from "@/lib/finance/period";
 import {
@@ -321,18 +322,20 @@ export default async function SubidasPage({
 
       <KgPageFilters activeCount={activeFilters}>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <KgParamPills
-            ariaLabel="Cambiar vista"
+          <KgViewToggle
+            active={view}
             options={[
               {
-                label: "Tabla",
+                value: "tabla",
+                label: "Vista tabla",
+                icon: <IconTable size={16} />,
                 href: buildHref({ view: "tabla" }),
-                active: view === "tabla",
               },
               {
-                label: "Calendario",
+                value: "calendario",
+                label: "Vista calendario",
+                icon: <IconCalendar size={16} />,
                 href: buildHref({ view: "calendario" }),
-                active: view === "calendario",
               },
             ]}
           />

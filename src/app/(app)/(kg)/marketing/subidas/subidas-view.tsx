@@ -281,6 +281,7 @@ export function SubidasView({
           preserveParams={preserveParams}
           eventsByDate={eventsByDate}
           onDaySelect={(k) => setDayDrawerKey(k)}
+          fillHeight
           trailingAction={
             <button
               type="button"
