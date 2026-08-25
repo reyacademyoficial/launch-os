@@ -330,22 +330,6 @@ export function GrabacionView({
           eventsByDate={eventsByDate}
           onDaySelect={(k) => setDayDrawerKey(k)}
           fillHeight
-          trailingAction={
-            <button
-              type="button"
-              onClick={() => setCreating({ open: true })}
-              disabled={noOwners}
-              className="kg-focus"
-              style={{ ...primaryBtn, opacity: noOwners ? 0.5 : 1 }}
-              title={
-                noOwners
-                  ? "Primero creá al menos un dueño en /marketing/duenos"
-                  : undefined
-              }
-            >
-              + Nueva sesión
-            </button>
-          }
         />
       )}
 
