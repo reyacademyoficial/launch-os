@@ -208,3 +208,35 @@ export interface ContentPieceRow {
   readonly isDailyRecurring: boolean;
   readonly notes: string | null;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Content assets (0162) — piezas editadas listas para subir.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface ContentAssetRow {
+  readonly id: string;
+  readonly contentOwnerId: string;
+  readonly sourceRecordingSessionId: string | null;
+  readonly sourceContentPieceId: string | null;
+  readonly name: string;
+  readonly format: MarketingFormat;
+  readonly driveFolderUrl: string | null;
+  readonly driveAssetUrl: string | null;
+  readonly durationSeconds: number | null;
+  readonly editorPersonId: string | null;
+  readonly editedAt: string | null;
+  readonly notes: string | null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Editor availability (0164) — bloques de disponibilidad por persona.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface EditorAvailabilityRow {
+  readonly id: string;
+  readonly personId: string;
+  readonly dateFrom: string; // yyyy-mm-dd
+  readonly dateTo: string; // yyyy-mm-dd
+  readonly available: boolean;
+  readonly notes: string | null;
+}

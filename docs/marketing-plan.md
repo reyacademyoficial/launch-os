@@ -25,53 +25,75 @@
 - Cero filas — el módulo arranca por **CRUD, no por dashboard** (regla vigente del
   Gate 0 para tablas nuevas en cero).
 
-## Estado al 2026-08-24 (sesión Claude — sub-gate + Configuración + Bloques 1 y 2)
+## Estado al 2026-08-24 (sesión Claude — Bloque 3 · Edición + Disponibilidad)
 
-**Cerrado por Claude (código escrito y en verde local):**
+**Cerrado por Claude en sesiones previas (Config + Bloques 1 y 2):**
 
-- Sub-gate del bloque, Configuración (Dueños + Cadencias), Bloque 1 · Planificación
+- Sub-gate del módulo, Configuración (Dueños + Cadencias), Bloque 1 · Planificación
   y Bloque 2 · Grabación con calendario dual tabla/calendario.
-- Migraciones **0157-0161 escritas** (5 de 9). Están en `supabase/migrations/`
-  esperando que el usuario las corra en Studio en orden — regla del proyecto.
-- Componente reutilizable **`src/components/kg/calendar.tsx`** (grid mensual custom,
-  ~400 líneas con helpers). Sirve también para el Bloque 4 · Subidas.
-- `src/lib/marketing/types.ts` con todos los enums (platforms, formats, categories,
-  stages, session statuses, roles), labels, tones y type guards.
-- `tsc --noEmit` = 0. `eslint` marketing = 0. Suite: 698/699 (fallo pre-existente en
-  `sync-ghl`, ver deuda de Kingrow).
+- Migraciones 0157-0161 escritas **y aplicadas** en la DB remota (el usuario las
+  corrió en Studio antes de arrancar esta sesión).
+- `src/components/kg/calendar.tsx` (grid mensual custom reutilizable para Bloque 4).
+- `src/lib/marketing/types.ts` con todos los enums, labels, tones y type guards.
+
+**Cerrado por Claude en esta sesión (Bloque 3 + config Disponibilidad):**
+
+- Migraciones **0162 y 0164 escritas** — pendientes de correr en Studio.
+  - `0162_marketing_content_assets.sql`: tabla `content_assets` + trigger
+    `content_piece_stage_from_asset` (INSERT y UPDATE de `edited_at`) que mueve
+    la piece origen a `listo_para_subir` cuando queda en Edición y el asset se
+    marca editado. Guard org-match cross-org (owner + sesión + piece).
+  - `0164_marketing_editor_availability.sql`: tabla `editor_availability`
+    (rangos por persona + flag available). Guard org-match person.
+- Ampliado `src/lib/marketing/types.ts` con `ContentAssetRow` y
+  `EditorAvailabilityRow` (no rompen los shapes existentes).
+- Nuevo selector puro **`src/lib/marketing/editor-load.ts`** con
+  `computeEditorLoadByWeek(assets, availability, since, until, personIds)`
+  + helpers (`mondayOf`, `enumerateWeekStarts`, `isoWeekLabel`,
+  `countAvailableDaysInRange`, `addDaysYmd`, `takeDatePart`). **21 tests en verde**
+  cubriendo overrides de licencia, cambios de mes y buckets de assets.
+- `/marketing/edicion` (page + edicion-view + asset-form-drawer + actions):
+  - Fetch en paralelo de owners/persons/sessions/pieces/assets/availability.
+  - Filtros server-side vía `KgParamPills`: estado (`queued|edited|all`), editor,
+    dueño, formato.
+  - Vista dual local (tab) tabla ⇄ planning semanal.
+  - Planning pivot person × week (4 semanas rolling desde el lunes actual) con
+    warning visual `overloaded` (assets asignados y 0 días disponibles).
+  - Drawer 620px con owner → filtra sesión/piece; toggle "Marcar como editado"
+    con datetime-local + default `now()`.
+- `/marketing/disponibilidad` (page + disponibilidad-view + availability-form-drawer
+  + actions): tabla plana con filtro `?person=`, drawer create/edit/delete.
+- `tsc --noEmit` = 0. `eslint` sobre `src/lib/marketing` y
+  `src/app/(app)/(kg)/marketing` = 0. Suite: 719/720 (fallo pre-existente en
+  `sync-ghl`, deuda ya documentada).
 
 **Pendiente cuando se retome:**
 
-1. **Correr en Studio (orden):** `0157_marketing_content_owners.sql`,
-   `0158_marketing_publishing_cadences.sql`, `0159_marketing_content_pieces.sql`,
-   `0160_marketing_recording_sessions.sql`, `0161_marketing_recording_assignees.sql`.
-2. **Verificación de humo** con 1-2 dueños + 1 cadencia + 2 pieces + 1 session con
-   assignees: (a) piece asignado a session → stage salta de `planificado` a
-   `en_grabacion`; (b) session pasada a `realizada` → pieces asociadas saltan a
-   `en_edicion`. Ambos triggers viven en 0160.
-3. **Bloques restantes (4 de 8):**
-   - Bloque 3 · Edición — migración 0162 (`content_assets`) + `/marketing/edicion`
-     con planning semanal por editor. Diferido: 0164 (`editor_availability`) para
-     alimentar el planning.
+1. **Correr en Studio (orden):** `0162_marketing_content_assets.sql`,
+   `0164_marketing_editor_availability.sql`. Después regenerar
+   `src/lib/types/database.ts` para eliminar los `as never` en assets/availability.
+2. **Verificación de humo Bloque 3:**
+   - Crear 1 asset con `source_content_piece_id = X` en piece con
+     `stage = 'en_edicion'` y `mark_edited=on` → trigger avanza el piece a
+     `listo_para_subir`.
+   - Crear 1 asset sin `edited_at`, después editarlo con checkbox activado →
+     trigger dispara igual sobre UPDATE.
+   - Cargar 1 bloque `available=true` y 1 bloque `available=false` que se solapen
+     → el planning pivot muestra la resta correcta (regla rango-más-específico).
+3. **Bloques restantes (3 de 8):**
    - Bloque 4 · Subidas — migración 0163 (`content_uploads`) + `/marketing/subidas`
-     reusando el `KgCalendar` de Bloque 2.
-   - Stock y alertas — `/marketing/stock` + selectores `src/lib/marketing/stock.ts`
-     + `alerts.ts`.
+     con vista dual tabla/calendario (reusa `KgCalendar`).
+   - Stock y alertas — `/marketing/stock` + selectores
+     `src/lib/marketing/stock.ts` + `alerts.ts`.
    - Dashboard `/marketing` — reemplaza el ModulePlaceholder actual con KPIs
-     (`HeroKpi` con tone según umbral) + 4 paneles (alertas, próximas grabaciones,
-     editores esta semana, últimas subidas).
-   - Migración 0165 pendiente: solo los triggers de asset/upload → stage
-     (`content_piece_stage_from_asset`, `content_piece_stage_from_upload`,
-     `content_piece_daily_regenerate`). Los triggers de session ya viven en 0160.
-   - Migración 0164 (`editor_availability`) se puede correr junto con 0162 —
-     el bloque de Edición necesita ambas.
-4. **Placeholder actual del dashboard** (`marketing/page.tsx`) va a ser reemplazado
-   cuando se cierre el bloque Dashboard. Ídem las páginas placeholder de
-   `edicion/`, `subidas/`, `stock/` y `disponibilidad/`.
+     (`HeroKpi` con tone según umbral) + 4 paneles.
+   - Migración 0165 (`content_piece_stage_from_upload` +
+     `content_piece_daily_regenerate`) pendiente — se corre con Bloque 4.
 
-**Cuenta:** hechos 3 sub-bloques (Config + Planificación + Grabación) de 8 total.
-Quedan **5 sub-bloques**: Edición, Subidas, Stock, Dashboard, Tareas recurrentes
-(este último es solo verificación del trigger que ya está codeado en 0165 pendiente).
+**Cuenta:** hechos 5 sub-bloques (Config + Planificación + Grabación + Edición +
+Disponibilidad) de 8 total. Quedan **3 sub-bloques**: Subidas, Stock/Alertas y
+Dashboard (Tareas recurrentes cae dentro de la verificación del trigger 0165
+que llega con Bloque 4).
 
 ---
 
@@ -382,10 +404,9 @@ lib externa.
       por dueño × plataforma × formato. `upsertCadence` con PK compuesta,
       `deleteCadence` por triada. Picker de owners activos.
       `allow_repeat_asset` como toggle por fila.
-- [ ] **CRUD `editor_availability`** (`/marketing/disponibilidad`): drawer
+- [x] **CRUD `editor_availability`** (`/marketing/disponibilidad`): drawer
       simple (person + rango + available + notes). Vista tabla con filtro
-      por persona y mes. _(Diferido a Bloque 3 — se hace junto con el
-      planning semanal que la consume.)_
+      por persona. Cerrado junto con Bloque 3 (2026-08-24).
 
 ### 2. Bloque 1 — Planificación
 
@@ -431,18 +452,22 @@ lib externa.
 
 ### 4. Bloque 3 — Edición
 
-- [ ] **CRUD `content_assets`** (`/marketing/edicion`): drawer para
+- [x] **CRUD `content_assets`** (`/marketing/edicion`): drawer 620px para
       registrar cada corte editado (name, format, duration, drive_folder_url,
       drive_asset_url, editor_person_id, source_recording_session_id,
-      source_content_piece_id, edited_at, notes).
-- [ ] **Planning semanal por editor**: vista pivot (persona × semana) con
-      count de assets asignados y disponibilidad. Alerta visual si un editor
-      tiene X assets asignados pero está marcado como no-disponible.
-- [ ] Al setear `edited_at` sobre un asset con `source_content_piece_id`,
-      el piece pasa a `listo_para_subir` (trigger).
-- [ ] Vista principal: tabla con filtros por editor, dueño, formato, rango
-      de `edited_at`.
-- [ ] Estado vacío: "Los assets aparecen acá después de una grabación
+      source_content_piece_id, edited_at, notes). Owner filtra los pickers
+      de sesión/piece; toggle "Marcar como editado" con datetime-local +
+      default `now()`.
+- [x] **Planning semanal por editor**: vista pivot (persona × semana, 4
+      semanas rolling desde el lunes actual) con count de assets asignados
+      y días disponibles. Punto rojo cuando `assignedAssets > 0 &&
+      availableDays === 0`. Toggle local tabla ⇄ planning (no en searchParams).
+- [x] Al setear `edited_at` sobre un asset con `source_content_piece_id`,
+      el piece pasa a `listo_para_subir` (trigger `content_piece_stage_from_asset`
+      de 0162, dispara en INSERT y en UPDATE de `edited_at`).
+- [x] Vista principal: tabla con filtros por estado (`queued|edited|all`),
+      editor, dueño, formato. 4 `KgParamPills` apiladas.
+- [x] Estado vacío: "Los assets aparecen acá después de una grabación
       realizada. Un asset por cada corte final que salga de la sesión."
 
 ### 5. Bloque 4 — Subidas / Publicación
@@ -660,5 +685,60 @@ en `content_assets` y assignee filtering en `recording_sessions`.
 - `editor_availability` (0164) y triggers finales (0165) siguen pendientes.
 - Dashboard `/marketing` sigue como `ModulePlaceholder` — se cierra al final
   cuando existan las 9 migraciones + selectores de stock y alertas.
+
+### 2026-08-24 — sesión Claude Opus 4.7 (Bloque 3 · Edición + Disponibilidad)
+
+**Migraciones escritas (esperando run en Studio):**
+
+| Archivo | Contenido | Notas |
+|---|---|---|
+| `0162_marketing_content_assets.sql` | assets editados + editor + drive URLs | trigger `content_piece_stage_from_asset` (INSERT y UPDATE de `edited_at`) mueve piece origen a `listo_para_subir`. Guard org-match cross-org (owner + sesión + piece) |
+| `0164_marketing_editor_availability.sql` | rangos de disponibilidad por persona | `check (date_to >= date_from)`. Guard org-match person. Filas superpuestas permitidas |
+
+Próximo ordinal libre: **0163** (queda para `content_uploads` del Bloque 4).
+
+**Decisiones cerradas que difieren del plan original:**
+
+- **`allow_repeat_asset` en `content_uploads`**: sin cambios; se enforceará en
+  la UI del picker de asset cuando se cierre Bloque 4, no como constraint DB.
+- **Regla de "rango-más-específico gana"** en `countAvailableDaysInRange`:
+  cuando dos filas de availability se solapan para la misma persona, el rango
+  MÁS CORTO (típicamente una licencia puntual) sobrescribe la disponibilidad
+  general. Es una heurística intencional para modelar "disponible todo agosto,
+  excepto vacaciones 24-26". Documentada en el JSDoc del selector.
+- **Vista dual tabla ⇄ planning** en `/marketing/edicion` es **state local**
+  (useState), NO `?view=` en searchParams. Motivación: el planning es
+  visualmente completo por sí solo y no comparte filtros de tabla — no vale
+  la pena la ceremonia. En Grabación sí es searchParams porque la tabla y
+  el calendario son proyecciones del mismo dataset con distintos filtros.
+- **Planning window**: 4 semanas rolling desde el lunes actual. Se puede
+  parametrizar por `?weeks=` si aparece demanda; por ahora hardcoded.
+
+**Artefactos código (todos con `tsc` + `eslint` en 0):**
+
+```
+supabase/migrations/
+  0162_marketing_content_assets.sql
+  0164_marketing_editor_availability.sql
+
+src/lib/marketing/
+  types.ts                                           ← + ContentAssetRow + EditorAvailabilityRow
+  editor-load.ts                                     ← selector puro (computeEditorLoadByWeek + helpers)
+  editor-load.test.ts                                ← 21 tests en verde
+
+src/app/(app)/(kg)/marketing/
+  edicion/{page,edicion-view,asset-form-drawer,actions}.tsx     ← reemplaza ModulePlaceholder
+  disponibilidad/{page,disponibilidad-view,availability-form-drawer,actions}.tsx  ← reemplaza ModulePlaceholder
+```
+
+**Deuda técnica del módulo (sin cambios respecto a sesión anterior):**
+
+- Regenerar `src/lib/types/database.ts` cuando se corran 0162+0164
+  (`npx supabase gen types typescript --project-id <REF>`). Mientras tanto los
+  INSERT/UPDATE de assets y availability usan `as never`.
+- Dashboard `/marketing`, `/marketing/subidas`, `/marketing/stock` siguen como
+  `ModulePlaceholder` — se cierran con Bloque 4 (0163) y Stock/Dashboard.
+- Migración 0165 (`content_piece_stage_from_upload` + `content_piece_daily_regenerate`)
+  pendiente — llega con Bloque 4.
 
 ### _(completar en la próxima sesión)_
