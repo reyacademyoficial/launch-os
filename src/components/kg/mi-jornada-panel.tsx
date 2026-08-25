@@ -5,16 +5,18 @@ import { createClient } from "@/lib/supabase/server";
 
 /**
  * KG · MiJornadaPanel — resumen compacto en el sidebar de los proyectos
- * sincronizados desde Notion (0132-0138) que le pertenecen al usuario logueado.
+ * abiertos que le pertenecen al usuario logueado (fuente del proyecto es
+ * indiferente — Notion sync o alta manual).
  *
- * DISEÑO (v4 — 0140 M2M)
- *   El sync trae TODOS los proyectos de las databases habilitadas y persiste
- *   los responsables en `internal_project_owners` (mapeados desde el
- *   assignee de Notion vía notion_users.kg_person_id — pueden ser N por
- *   proyecto). Este widget:
- *     1) Fetch los project_ids donde yo (persona actual) estoy como owner.
- *     2) Fetch los proyectos que además tengan notion_page_id + status abierto.
- *   Dos queries pequeñas, mantiene la simetría con el nuevo modelo.
+ * DISEÑO (v5 — alineado con /operaciones/proyectos scope=mine)
+ *   Los responsables viven en `internal_project_owners` (M2M desde 0140,
+ *   alimentado por el sync de Notion vía notion_users.kg_person_id o por el
+ *   drawer nativo). Este widget:
+ *     1) Fetch los project_ids donde yo (persona actual) figuro como owner.
+ *     2) Fetch esos proyectos que además estén abiertos (status abierto).
+ *   Sin filtro por notion_page_id — un proyecto manual asignado también
+ *   cuenta como "tu jornada". Antes se restringía a Notion, generaba
+ *   discrepancia con /operaciones/proyectos scope=mine.
  *
  *   Muestra hasta 3 contadores según haya:
  *     · Urgente: status='alerta_maxima' O derived atrasado
@@ -28,11 +30,6 @@ import { createClient } from "@/lib/supabase/server";
  *
  *   Si el user no tiene persona vinculada, el widget no se muestra.
  *   Si tiene 0 proyectos abiertos, muestra empty state.
- *
- * PERFORMANCE
- *   Una sola query por render: `internal_projects` con filtros por owner +
- *   notion_page_id NOT NULL + status abierto. Estimación: < 100 rows por
- *   persona, no vale paginar. Trae solo los campos necesarios.
  */
 
 type ProjectStatus =
@@ -51,7 +48,7 @@ const OPEN_STATUSES: readonly ProjectStatus[] = [
   "alerta_maxima",
 ];
 
-interface NotionProjectRow {
+interface OwnedProjectRow {
   readonly id: string;
   readonly status: ProjectStatus;
   readonly priority: ProjectPriority;
@@ -73,19 +70,22 @@ export async function MiJornadaPanel() {
     (myOwnerRes.data ?? []) as Array<{ internal_project_id: string }>
   ).map((r) => r.internal_project_id);
 
-  // 2) Traigo esos proyectos que además vengan de Notion y estén abiertos.
-  //    Si no soy owner de ningún proyecto, skippeamos la 2da query.
+  // 2) Traigo esos proyectos que además estén abiertos.
+  //    Sin filtro por notion_page_id — mantiene simetría con
+  //    /operaciones/proyectos scope=mine + statusFilter=activos. Antes se
+  //    restringía a proyectos sincronizados desde Notion, lo que ocultaba
+  //    proyectos manuales asignados y generaba mismatch entre el sidebar y
+  //    la lista completa.
   const projectsRes =
     myProjectIds.length === 0
-      ? { data: [] as NotionProjectRow[] }
+      ? { data: [] as OwnedProjectRow[] }
       : await supabase
           .from("internal_projects")
           .select("id, status, priority, due_on")
           .in("id", myProjectIds)
-          .not("notion_page_id", "is", null)
           .in("status", [...OPEN_STATUSES]);
 
-  const rows = (projectsRes.data ?? []) as NotionProjectRow[];
+  const rows = (projectsRes.data ?? []) as OwnedProjectRow[];
   const total = rows.length;
 
   const today = todayYmd();
@@ -147,6 +147,30 @@ export async function MiJornadaPanel() {
             lineHeight: 1.35,
           }}
         >
+          <div
+            style={{
+              color: "var(--kg-text-1)",
+              fontWeight: 600,
+              fontSize: 13,
+            }}
+          >
+            <span style={{ fontVariantNumeric: "tabular-nums" }}>{total}</span>{" "}
+            {plural(total, "proyecto abierto", "proyectos abiertos")}
+          </div>
+          {(urgentCount > 0 || altaCount > 0 || sinEmpezarCount > 0) && (
+            <div
+              className="kg-t7"
+              style={{
+                color: "var(--kg-text-3)",
+                fontSize: 10,
+                fontStyle: "italic",
+                marginTop: 2,
+              }}
+              title="Las categorías se solapan: un proyecto puede aparecer en varias."
+            >
+              De los cuales:
+            </div>
+          )}
           {urgentCount > 0 && (
             <CounterLine
               n={urgentCount}
@@ -157,7 +181,7 @@ export async function MiJornadaPanel() {
           {altaCount > 0 && (
             <CounterLine
               n={altaCount}
-              label={plural(altaCount, "alta", "altas")}
+              label={plural(altaCount, "de alta prioridad", "de alta prioridad")}
               color="#FFB800"
             />
           )}

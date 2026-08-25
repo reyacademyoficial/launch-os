@@ -8,7 +8,7 @@ import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { resolveCurrentPersonId } from "@/lib/ops/current-person";
 import { fCount } from "@/lib/finance/format";
-import { requireSessionProfile, type Role } from "@/lib/supabase/auth";
+import { requireSessionProfile } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
 import type {
@@ -27,8 +27,9 @@ export const metadata: Metadata = { title: "Tiempo · Operaciones" };
 // Lista global de registros de tiempo.
 //
 // Mismo patrón de scope que /operaciones/tareas:
-//   - superadmin/dev → default "todos", toggle "mis registros".
-//   - resto → default "mis registros", sin toggle.
+//   Default para TODOS los roles = "mine". Toggle "Mi tiempo / Todos"
+//   siempre visible. RLS ya deja leer todos los time_entries (0166); el gate
+//   ahora es puramente de UX / default.
 //
 // Filtros:
 //   ?range=mes|semana|hoy|90d|todo    default mes
@@ -38,8 +39,6 @@ export const metadata: Metadata = { title: "Tiempo · Operaciones" };
 
 type Scope = "mine" | "all";
 type RangeFilter = "hoy" | "semana" | "mes" | "90d" | "todo";
-
-const CAN_SEE_ALL_ROLES: ReadonlySet<Role> = new Set(["superadmin", "dev"]);
 
 const RANGE_OPTIONS: ReadonlyArray<{ value: RangeFilter; label: string }> = [
   { value: "hoy", label: "Hoy" },
@@ -94,8 +93,7 @@ export default async function TiempoPage({
     searchParams,
   ]);
 
-  const canSeeAll = CAN_SEE_ALL_ROLES.has(session.role);
-  const scope: Scope = resolveScope(sp.scope, canSeeAll);
+  const scope: Scope = resolveScope(sp.scope);
   const rangeFilter = parseRange(sp.range);
   const personIdFilter =
     scope === "all" ? parseUuidParam(sp.personId) : null;
@@ -213,9 +211,9 @@ export default async function TiempoPage({
       overrides.projectId !== undefined
         ? overrides.projectId
         : projectIdFilter;
-    const defaultScope: Scope = canSeeAll ? "all" : "mine";
     const params = new URLSearchParams();
-    if (nextScope !== defaultScope) params.set("scope", nextScope);
+    // Default scope = "mine" para TODOS los roles.
+    if (nextScope !== "mine") params.set("scope", nextScope);
     if (nextRange !== "mes") params.set("range", nextRange);
     if (nextScope === "all" && nextPersonId != null) {
       params.set("personId", nextPersonId);
@@ -242,23 +240,21 @@ export default async function TiempoPage({
       />
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        {canSeeAll && (
-          <KgParamPills
-            ariaLabel="Alcance"
-            options={[
-              {
-                label: "Todos",
-                href: buildHref({ scope: "all" }),
-                active: scope === "all",
-              },
-              {
-                label: "Mi tiempo",
-                href: buildHref({ scope: "mine" }),
-                active: scope === "mine",
-              },
-            ]}
-          />
-        )}
+        <KgParamPills
+          ariaLabel="Alcance"
+          options={[
+            {
+              label: "Mi tiempo",
+              href: buildHref({ scope: "mine" }),
+              active: scope === "mine",
+            },
+            {
+              label: "Todos",
+              href: buildHref({ scope: "all" }),
+              active: scope === "all",
+            },
+          ]}
+        />
         <KgParamPills
           ariaLabel="Rango"
           options={RANGE_OPTIONS.map((o) => ({
@@ -318,14 +314,10 @@ export default async function TiempoPage({
   );
 }
 
-function resolveScope(
-  v: string | string[] | undefined,
-  canSeeAll: boolean,
-): Scope {
+function resolveScope(v: string | string[] | undefined): Scope {
   const raw = typeof v === "string" ? v : null;
-  if (!canSeeAll) return "mine";
-  if (raw === "mine") return "mine";
-  return "all";
+  // Default = "mine" para TODOS los roles; solo "all" explícito cambia el scope.
+  return raw === "all" ? "all" : "mine";
 }
 
 function parseRange(v: string | string[] | undefined): RangeFilter {

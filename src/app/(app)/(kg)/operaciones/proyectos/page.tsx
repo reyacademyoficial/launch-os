@@ -1,10 +1,14 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
+import { EmptyState } from "@/components/kg/empty-state";
 import { IconOps } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
+import { Panel } from "@/components/kg/panel";
+import { resolveCurrentPersonId } from "@/lib/ops/current-person";
 import { fCount } from "@/lib/finance/format";
+import { requireSessionProfile } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
 import type { OwnerOption } from "./internal-project-form-drawer";
@@ -20,11 +24,17 @@ export const metadata: Metadata = { title: "Proyectos internos · Operaciones" }
 // Lista de proyectos internos.
 //
 // Filtros por searchParams:
+//   ?scope=mine|all                   default mine (TODOS los roles).
+//                                     "mine" filtra a proyectos donde la
+//                                     persona vinculada al user actual figura
+//                                     en internal_project_owners. Toggle
+//                                     "Mis proyectos / Todos" siempre visible.
 //   ?status=activos|cerrados|todos    default activos
 //                                      (activos = todo lo que no es 'listo';
 //                                       cerrados = 'listo')
 //   ?ownerId=<uuid>                   opcional — filtra a los proyectos donde
 //                                     la persona figura en internal_project_owners.
+//                                     Solo aplica cuando scope=all.
 // ═══════════════════════════════════════════════════════════════════════════
 
 type Status =
@@ -35,6 +45,7 @@ type Status =
   | "listo";
 type Priority = "alta" | "media" | "baja";
 
+type Scope = "mine" | "all";
 type StatusFilter = "activos" | "cerrados" | "todos";
 
 const STATUS_FILTER_OPTIONS: ReadonlyArray<{
@@ -88,9 +99,16 @@ export default async function ProyectosInternosPage({
 }: {
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const sp = await searchParams;
+  const [, sp] = await Promise.all([requireSessionProfile(), searchParams]);
+  const scope: Scope = sp.scope === "all" ? "all" : "mine";
+  const isScopedToMe = scope === "mine";
   const statusFilter = parseStatus(sp.status);
-  const ownerIdFilter = parseUuidParam(sp.ownerId);
+  // ownerId manual solo aplica en scope=all — en "mine" la lista ya está
+  // implícitamente scopeada a mi persona vía internal_project_owners.
+  const ownerIdFilter = isScopedToMe ? null : parseUuidParam(sp.ownerId);
+
+  const currentPersonId = isScopedToMe ? await resolveCurrentPersonId() : null;
+  const showPersonMissing = isScopedToMe && currentPersonId == null;
 
   const supabase = await createClient();
 
@@ -167,7 +185,15 @@ export default async function ProyectosInternosPage({
   const filtered = allProjects.filter((p) => {
     if (statusFilter === "activos" && !OPEN_STATUSES.has(p.status)) return false;
     if (statusFilter === "cerrados" && OPEN_STATUSES.has(p.status)) return false;
-    if (ownerIdFilter != null) {
+    // Scope "mine": el proyecto tiene que tener a mi persona como owner. Si
+    // no tengo persona vinculada (showPersonMissing), no llega acá — la UI
+    // rebota al empty state antes de renderizar la lista.
+    if (isScopedToMe && currentPersonId != null) {
+      const projectOwners = ownersByProject.get(p.id) ?? [];
+      if (!projectOwners.includes(currentPersonId)) return false;
+    }
+    // Filtro manual por owner — solo activo cuando scope=all.
+    if (!isScopedToMe && ownerIdFilter != null) {
       const projectOwners = ownersByProject.get(p.id) ?? [];
       if (!projectOwners.includes(ownerIdFilter)) return false;
     }
@@ -211,27 +237,73 @@ export default async function ProyectosInternosPage({
   ).length;
 
   function buildHref(overrides: {
+    scope?: Scope;
     status?: StatusFilter;
     ownerId?: string | null;
   }): string {
+    const nextScope = overrides.scope ?? scope;
     const nextStatus = overrides.status ?? statusFilter;
     const nextOwnerId =
       overrides.ownerId !== undefined ? overrides.ownerId : ownerIdFilter;
     const params = new URLSearchParams();
+    // Default scope = "mine" — solo escribimos el query si difiere.
+    if (nextScope !== "mine") params.set("scope", nextScope);
     if (nextStatus !== "activos") params.set("status", nextStatus);
-    if (nextOwnerId != null) params.set("ownerId", nextOwnerId);
+    // ownerId manual solo tiene sentido en scope=all.
+    if (nextScope === "all" && nextOwnerId != null) {
+      params.set("ownerId", nextOwnerId);
+    }
     const qs = params.toString();
     return qs ? `/operaciones/proyectos?${qs}` : "/operaciones/proyectos";
+  }
+
+  const scopePills = (
+    <KgParamPills
+      ariaLabel="Alcance"
+      options={[
+        {
+          label: "Mis proyectos",
+          href: buildHref({ scope: "mine" }),
+          active: isScopedToMe,
+        },
+        {
+          label: "Todos",
+          href: buildHref({ scope: "all" }),
+          active: !isScopedToMe,
+        },
+      ]}
+    />
+  );
+
+  if (showPersonMissing) {
+    return (
+      <div className="flex h-full min-h-0 flex-col gap-5">
+        <ContextBar
+          icon={<IconOps size={16} />}
+          title="Mis proyectos"
+          stats={[]}
+        />
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          {scopePills}
+        </div>
+        <Panel title="Mis proyectos">
+          <EmptyState
+            title="Tu usuario no está vinculado a una persona"
+            hint="Pedile al administrador que te vincule con tu persona en Configuración → Personas. Mientras tanto podés cambiar a 'Todos' para ver la vista global."
+          />
+        </Panel>
+      </div>
+    );
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconOps size={16} />}
-        title="Proyectos internos"
+        title={isScopedToMe ? "Mis proyectos" : "Proyectos internos"}
         stats={[
           { l: "Total", v: fCount(totalCount) },
-          { l: "Abiertos", v: fCount(openCount) },
+          { l: isScopedToMe ? "Míos abiertos" : "Abiertos", v: fCount(openCount) },
           { l: "Bloqueados", v: fCount(blockedCount) },
           { l: "Sin empezar", v: fCount(notStartedCount) },
         ]}
@@ -244,6 +316,7 @@ export default async function ProyectosInternosPage({
         }
       >
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          {scopePills}
           <KgParamPills
             ariaLabel="Filtrar por estado"
             options={STATUS_FILTER_OPTIONS.map((o) => ({
@@ -252,10 +325,12 @@ export default async function ProyectosInternosPage({
               active: statusFilter === o.value,
             }))}
           />
-          <OwnerFilterSelect
-            people={owners}
-            currentId={ownerIdFilter}
-          />
+          {!isScopedToMe && (
+            <OwnerFilterSelect
+              people={owners}
+              currentId={ownerIdFilter}
+            />
+          )}
         </div>
       </KgPageFilters>
 

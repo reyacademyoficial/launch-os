@@ -1,10 +1,13 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
+import { EmptyState } from "@/components/kg/empty-state";
 import { IconOps } from "@/components/kg/icons";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
+import { resolveCurrentPersonId } from "@/lib/ops/current-person";
 import { fCount } from "@/lib/finance/format";
+import { requireSessionProfile } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
 import type {
@@ -20,12 +23,18 @@ export const metadata: Metadata = { title: "Bloqueadores · Operaciones" };
 // Vista global de bloqueadores.
 //
 // Filtros por searchParams:
+//   ?scope=mine|all                   default mine (TODOS los roles).
+//                                     "mine" filtra a bloqueadores donde la
+//                                     task tiene a mi persona como assignee,
+//                                     o el proyecto tiene a mi persona como
+//                                     owner. Toggle siempre visible.
 //   ?status=abiertos|resueltos|todos  default abiertos
 //
 // Antigüedad calculada server-side (opened_at → hoy). Se pinta ámbar a
 // los 3+ días y rojo a los 7+ días.
 // ═══════════════════════════════════════════════════════════════════════════
 
+type Scope = "mine" | "all";
 type StatusFilter = "abiertos" | "resueltos" | "todos";
 
 const STATUS_FILTER_OPTIONS: ReadonlyArray<{
@@ -78,12 +87,24 @@ export default async function BloqueadoresPage({
 }: {
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const sp = await searchParams;
+  const [, sp] = await Promise.all([requireSessionProfile(), searchParams]);
+  const scope: Scope = sp.scope === "all" ? "all" : "mine";
+  const isScopedToMe = scope === "mine";
   const statusFilter = parseStatus(sp.status);
+
+  const currentPersonId = isScopedToMe ? await resolveCurrentPersonId() : null;
+  const showPersonMissing = isScopedToMe && currentPersonId == null;
 
   const supabase = await createClient();
 
-  const [blockersRes, tasksRes, projectsRes, peopleRes] = await Promise.all([
+  const [
+    blockersRes,
+    tasksRes,
+    projectsRes,
+    peopleRes,
+    taskAssigneesRes,
+    projectOwnersRes,
+  ] = await Promise.all([
     supabase
       .from("blockers")
       .select(
@@ -103,6 +124,22 @@ export default async function BloqueadoresPage({
       .from("organization_people")
       .select("id, full_name, active")
       .order("full_name", { ascending: true }),
+    // Junctions para scope=mine: qué tasks tengo asignadas + qué proyectos
+    // tengo como owner. Con eso filtramos los blockers linkeados.
+    isScopedToMe && currentPersonId != null
+      ? supabase
+          .from("task_assignees")
+          .select("task_id")
+          .eq("person_id", currentPersonId)
+      : Promise.resolve({ data: [] as Array<{ task_id: string }> }),
+    isScopedToMe && currentPersonId != null
+      ? supabase
+          .from("internal_project_owners")
+          .select("internal_project_id")
+          .eq("person_id", currentPersonId)
+      : Promise.resolve({
+          data: [] as Array<{ internal_project_id: string }>,
+        }),
   ]);
 
   const allBlockers = (blockersRes.data ?? []) as unknown as BlockerDbRow[];
@@ -110,6 +147,16 @@ export default async function BloqueadoresPage({
   const allProjects =
     (projectsRes.data ?? []) as unknown as ProjectDbRow[];
   const allPeople = (peopleRes.data ?? []) as unknown as PersonDbRow[];
+  const myTaskIdSet = new Set<string>(
+    ((taskAssigneesRes.data ?? []) as Array<{ task_id: string }>).map(
+      (r) => r.task_id,
+    ),
+  );
+  const myProjectIdSet = new Set<string>(
+    (
+      (projectOwnersRes.data ?? []) as Array<{ internal_project_id: string }>
+    ).map((r) => r.internal_project_id),
+  );
 
   const taskById = new Map<string, TaskDbRow>();
   for (const t of allTasks) taskById.set(t.id, t);
@@ -120,7 +167,19 @@ export default async function BloqueadoresPage({
 
   const now = new Date();
 
-  const filtered = allBlockers.filter((b) => {
+  const scopedBlockers = !isScopedToMe
+    ? allBlockers
+    : allBlockers.filter((b) => {
+        // Blocker vinculado a task: mi persona debe estar asignada a esa task.
+        if (b.task_id != null) return myTaskIdSet.has(b.task_id);
+        // Blocker vinculado a project: mi persona debe ser owner del project.
+        if (b.internal_project_id != null)
+          return myProjectIdSet.has(b.internal_project_id);
+        // Sin task ni project: no puede ser "mío" — se cae.
+        return false;
+      });
+
+  const filtered = scopedBlockers.filter((b) => {
     if (statusFilter === "abiertos") return b.resolved_at == null;
     if (statusFilter === "resueltos") return b.resolved_at != null;
     return true;
@@ -186,28 +245,79 @@ export default async function BloqueadoresPage({
     .filter((p) => p.active)
     .map((p) => ({ id: p.id, fullName: p.full_name }));
 
-  // Stats sobre TODOS (no filtrados). "Viejos" = abiertos ≥7 días.
-  const openBlockers = allBlockers.filter((b) => b.resolved_at == null);
+  // Stats sobre el subset del scope activo (no sobre los filtered — los
+  // stats respetan el scope para que "abiertos" muestre "mis abiertos"
+  // cuando estoy en scope=mine).
+  const openBlockers = scopedBlockers.filter((b) => b.resolved_at == null);
   const oldOpenCount = openBlockers.filter((b) => {
     const openedMs = new Date(b.opened_at).getTime();
     const days = Math.floor((now.getTime() - openedMs) / 86_400_000);
     return days >= 7;
   }).length;
 
-  function buildHref(nextStatus: StatusFilter): string {
+  function buildHref(overrides: {
+    scope?: Scope;
+    status?: StatusFilter;
+  }): string {
+    const nextScope = overrides.scope ?? scope;
+    const nextStatus = overrides.status ?? statusFilter;
     const params = new URLSearchParams();
+    // Default scope = "mine" — solo escribimos el query si difiere.
+    if (nextScope !== "mine") params.set("scope", nextScope);
     if (nextStatus !== "abiertos") params.set("status", nextStatus);
     const qs = params.toString();
     return qs ? `/operaciones/bloqueadores?${qs}` : "/operaciones/bloqueadores";
+  }
+
+  const scopePills = (
+    <KgParamPills
+      ariaLabel="Alcance"
+      options={[
+        {
+          label: "Míos",
+          href: buildHref({ scope: "mine" }),
+          active: isScopedToMe,
+        },
+        {
+          label: "Todos",
+          href: buildHref({ scope: "all" }),
+          active: !isScopedToMe,
+        },
+      ]}
+    />
+  );
+
+  if (showPersonMissing) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <ContextBar
+          icon={<IconOps size={16} />}
+          title="Mis bloqueadores"
+          stats={[]}
+        />
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {scopePills}
+        </div>
+        <Panel title="Mis bloqueadores">
+          <EmptyState
+            title="Tu usuario no está vinculado a una persona"
+            hint="Pedile al administrador que te vincule con tu persona en Configuración → Personas. Mientras tanto podés cambiar a 'Todos' para ver la vista global."
+          />
+        </Panel>
+      </div>
+    );
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <ContextBar
         icon={<IconOps size={16} />}
-        title="Bloqueadores"
+        title={isScopedToMe ? "Mis bloqueadores" : "Bloqueadores"}
         stats={[
-          { l: "Abiertos", v: fCount(openBlockers.length) },
+          {
+            l: isScopedToMe ? "Míos abiertos" : "Abiertos",
+            v: fCount(openBlockers.length),
+          },
           {
             l: "Viejos (7d+)",
             v: fCount(oldOpenCount),
@@ -215,17 +325,18 @@ export default async function BloqueadoresPage({
           },
           {
             l: "Resueltos",
-            v: fCount(allBlockers.length - openBlockers.length),
+            v: fCount(scopedBlockers.length - openBlockers.length),
           },
         ]}
       />
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        {scopePills}
         <KgParamPills
           ariaLabel="Filtrar por estado"
           options={STATUS_FILTER_OPTIONS.map((o) => ({
             label: o.label,
-            href: buildHref(o.value),
+            href: buildHref({ status: o.value }),
             active: statusFilter === o.value,
           }))}
         />
