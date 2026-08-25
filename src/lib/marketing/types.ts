@@ -240,3 +240,45 @@ export interface EditorAvailabilityRow {
   readonly available: boolean;
   readonly notes: string | null;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Content uploads (0163) — subidas a plataformas.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const UPLOAD_STATUSES = [
+  "planificada",
+  "subida",
+  "fallida",
+  "cancelada",
+] as const;
+
+export type UploadStatus = (typeof UPLOAD_STATUSES)[number];
+
+export const UPLOAD_STATUS_LABEL: Record<UploadStatus, string> = {
+  planificada: "Planificada",
+  subida: "Subida",
+  fallida: "Fallida",
+  cancelada: "Cancelada",
+};
+
+export const UPLOAD_STATUS_TONE: Record<UploadStatus, string> = {
+  planificada: "var(--kg-neutral-500)",
+  subida: "var(--kg-positive-500)",
+  fallida: "var(--kg-negative-500)",
+  cancelada: "var(--kg-neutral-500)",
+};
+
+export function isUploadStatus(v: string): v is UploadStatus {
+  return (UPLOAD_STATUSES as readonly string[]).includes(v);
+}
+
+export interface ContentUploadRow {
+  readonly id: string;
+  readonly contentAssetId: string;
+  readonly platform: MarketingPlatform;
+  readonly scheduledFor: string; // yyyy-mm-dd
+  readonly uploadedAt: string | null;
+  readonly status: UploadStatus;
+  readonly publicUrl: string | null;
+  readonly notes: string | null;
+}

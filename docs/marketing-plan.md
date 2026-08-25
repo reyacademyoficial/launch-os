@@ -25,7 +25,67 @@
 - Cero filas — el módulo arranca por **CRUD, no por dashboard** (regla vigente del
   Gate 0 para tablas nuevas en cero).
 
-## Estado al 2026-08-24 (sesión Claude — Bloque 3 · Edición + Disponibilidad)
+## Estado al 2026-08-24 (sesión Claude — Bloque 4 · Subidas + triggers finales)
+
+**Cerrado por Claude en esta sesión (Bloque 4):**
+
+- Migraciones **0163 y 0165 escritas** — pendientes de correr en Studio.
+  - `0163_marketing_content_uploads.sql`: tabla `content_uploads` + triggers
+    org-match cross-org (upload.org = asset.org) + `uploaded_at` auto-fill en
+    INSERT y UPDATE de status (respeta timestamps explícitos del operador).
+  - `0165_marketing_upload_stage_and_daily.sql`: dos triggers finales del
+    pipeline. `content_piece_stage_from_upload` (INSERT y UPDATE) resuelve
+    upload → asset → piece y avanza `listo_para_subir` → `publicado`.
+    `content_piece_daily_regenerate` clona hermano al día siguiente cuando
+    un piece con `is_daily_recurring=true` pasa a `publicado` (fallback
+    `current_date + 1` si el piece no tenía scheduled_publish_at).
+- Ampliado `src/lib/marketing/types.ts` con `UPLOAD_STATUSES`,
+  `UPLOAD_STATUS_LABEL`, `UPLOAD_STATUS_TONE`, `isUploadStatus`,
+  `ContentUploadRow`.
+- `/marketing/subidas` (page + subidas-view + upload-form-drawer + actions):
+  - Fetch en paralelo de owners/assets/uploads/cadencias.
+  - Filtros server-side: view (`tabla|calendario`), estado
+    (`open|all|individual`), plataforma, dueño.
+  - Vista dual reutilizando `KgCalendar` de Bloque 2 (same-day drawer +
+    trailingAction "+ Nueva subida").
+  - Drawer con picker de asset filtrado por owner + platform + regla
+    `allow_repeat_asset`. Assets ya subidos a esa platform (con cadencia
+    sin repetir) se ocultan — excepto el propio en modo edit.
+  - Botón inline "Marcar subida" → drawer separado con opcional
+    `public_url`; dispara `markUploaded` que activa la cadena de triggers.
+- `tsc --noEmit` = 0. `eslint` sobre `src/lib/marketing` y
+  `src/app/(app)/(kg)/marketing` = 0. Suite: 719/720 (fallo pre-existente
+  en `sync-ghl`, deuda ya documentada).
+
+**Pendiente cuando se retome:**
+
+1. **Correr en Studio (orden):** `0163_marketing_content_uploads.sql`,
+   `0165_marketing_upload_stage_and_daily.sql`. Después regenerar
+   `src/lib/types/database.ts` para eliminar `as never` en uploads.
+2. **Verificación de humo Bloque 4:**
+   - Crear 1 upload en 'planificada' → marcar como subida → verificar que
+     el piece origen (si tiene `source_content_piece_id`) pasa a `publicado`.
+   - Crear un piece con `is_daily_recurring=true` y flujo completo hasta
+     `publicado` → verificar que aparece un hermano con
+     `scheduled_publish_at = original + 1 día` y `stage='planificado'`.
+   - Intentar crear upload duplicado en mismo asset+platform con cadencia
+     `allow_repeat_asset=false` → el picker no muestra el asset.
+   - Cambiar cadencia a `allow_repeat_asset=true` → el picker lo muestra
+     de vuelta.
+3. **Bloques restantes (2 de 8):**
+   - Stock y alertas — `/marketing/stock` + selectores puros
+     `src/lib/marketing/stock.ts` + `alerts.ts`.
+   - Dashboard `/marketing` — reemplaza el ModulePlaceholder actual con
+     `HeroKpi` + 4 paneles.
+
+**Cuenta:** hechos 6 sub-bloques (Config + Disponibilidad + Planificación +
+Grabación + Edición + Subidas) de 8 total. Quedan **2 sub-bloques**: Stock
+y Dashboard. Todas las **9 migraciones** están escritas (0157-0161 aplicadas
+en Studio; 0162, 0163, 0164, 0165 escritas y pendientes).
+
+---
+
+## Estado histórico — 2026-08-24 (sesión previa · Bloque 3)
 
 **Cerrado por Claude en sesiones previas (Config + Bloques 1 y 2):**
 
@@ -472,18 +532,22 @@ lib externa.
 
 ### 5. Bloque 4 — Subidas / Publicación
 
-- [ ] **CRUD `content_uploads`** (`/marketing/subidas`): drawer con
-      content_asset_id (picker filtrado por owner + platform + assets no
-      usados si `allow_repeat_asset=false`), platform, scheduled_for,
-      status, notes.
-- [ ] Vista **tabla** default con filtros: platform, owner, status,
-      rango de fechas.
-- [ ] Vista **calendario** (`?view=calendario`) — mismo componente que
-      grabación, reutilizable. Click día → drawer con uploads planificadas +
-      "Marcar como subido".
-- [ ] Acción "Marcar como subido" popula `uploaded_at` + `status='subida'`
-      y opcionalmente pide `public_url`. Trigger dispara stage a `publicado`
-      del piece origen; si `is_daily_recurring`, regenera piece siguiente.
+- [x] **CRUD `content_uploads`** (`/marketing/subidas`): drawer 560px con
+      picker de asset filtrado por owner + platform, respetando
+      `allow_repeat_asset` (assets ya subidos a esa platform con cadencia
+      sin repetir → ocultos). En modo edit el asset original siempre
+      aparece para no perder la selección.
+- [x] Vista **tabla** default con filtros: estado (`open|all|individual`),
+      plataforma, dueño. Default `status=open` esconde subida + cancelada.
+- [x] Vista **calendario** (`?view=calendario`) reutilizando `KgCalendar`
+      de Bloque 2. Click día → `<Drawer>` con lista de subidas + botón
+      "Marcar subida" inline + "+ Nueva subida este día".
+- [x] Acción "Marcar como subido" (`markUploaded`) — drawer separado pide
+      `public_url` opcional, setea `status='subida'` y el trigger 0163
+      pobla `uploaded_at`. El trigger 0165 dispara stage `listo_para_subir`
+      → `publicado` del piece origen; si `is_daily_recurring`, regenera
+      hermano al día siguiente (nueva migración 0165, con fallback
+      `current_date + 1` si el piece no tenía scheduled_publish_at).
 
 ### 6. Stock y alertas
 
@@ -740,5 +804,68 @@ src/app/(app)/(kg)/marketing/
   `ModulePlaceholder` — se cierran con Bloque 4 (0163) y Stock/Dashboard.
 - Migración 0165 (`content_piece_stage_from_upload` + `content_piece_daily_regenerate`)
   pendiente — llega con Bloque 4.
+
+### 2026-08-24 — sesión Claude Opus 4.7 (Bloque 4 · Subidas)
+
+**Migraciones escritas (esperando run en Studio):**
+
+| Archivo | Contenido | Notas |
+|---|---|---|
+| `0163_marketing_content_uploads.sql` | subidas org-scope + trigger uploaded_at | 3 triggers: org-match cross-org (upload.org=asset.org), set_uploaded_at BEFORE UPDATE OF status (respeta valor explícito), set_uploaded_at_insert BEFORE INSERT |
+| `0165_marketing_upload_stage_and_daily.sql` | motor stage upload+daily | `content_piece_stage_from_upload` (INSERT + UPDATE de status): resuelve upload→asset→piece, avanza listo_para_subir→publicado. `content_piece_daily_regenerate` (AFTER UPDATE OF stage): clona hermano al día siguiente con fallback current_date+1 |
+
+Próximo ordinal libre después de esta sesión: **0166**. Todas las 9
+migraciones del plan Marketing están escritas.
+
+**Decisiones cerradas que difieren del plan original:**
+
+- **`uploaded_at` respeta valor explícito del operador** — si el operador
+  setea la fecha real de subida (ej. "ya se subió hace 3 días"), el trigger
+  NO la pisa. Solo pobla `now()` cuando `status='subida'` y `uploaded_at
+  IS NULL`. Retrocesos a otros statuses limpian el campo.
+- **NO unique constraint sobre (asset, platform, scheduled_for)** —
+  explícitamente permitido crear duplicados (retry manual, cadencia con
+  `allow_repeat_asset=true`). El "no repetir" es UX + flag de cadencia,
+  no restricción de datos.
+- **`content_piece_daily_regenerate` con fallback `current_date + 1`** —
+  el plan pedía `scheduled_publish_at + 1`, pero si el piece no tenía
+  `scheduled_publish_at` (nullable en 0159), no había fecha base. Usamos
+  hoy+1 como default sensato en vez de rebotar.
+- **Cascada natural del `is_daily_recurring`** — el clon hereda `true`,
+  así que también regenerará al publicarse. Se detiene solo si el operador
+  edita un piece particular a `is_daily_recurring=false` desde el drawer
+  de planificación.
+- **Vista dual tabla ⇄ calendario en searchParams** (a diferencia de
+  Edición que usó state local) — se comparte el mismo dataset con
+  filtros distintos, mismo criterio que Grabación.
+- **Botón "Marcar subida" separado del drawer edit** — evita que un
+  operador tenga que abrir el drawer completo solo para cambiar el
+  estado + pegar un link. Drawer chico dedicado (480px) con solo
+  `public_url` opcional.
+- **Filtro `?status=open` default** = planificada + fallida — las abiertas
+  que necesitan acción. Subidas y canceladas se esconden por default.
+
+**Artefactos código (todos con `tsc` + `eslint` en 0):**
+
+```
+supabase/migrations/
+  0163_marketing_content_uploads.sql
+  0165_marketing_upload_stage_and_daily.sql
+
+src/lib/marketing/
+  types.ts    ← + UPLOAD_STATUSES + UPLOAD_STATUS_LABEL + UPLOAD_STATUS_TONE + isUploadStatus + ContentUploadRow
+
+src/app/(app)/(kg)/marketing/
+  subidas/{page,subidas-view,upload-form-drawer,actions}.tsx  ← reemplaza ModulePlaceholder
+```
+
+**Deuda técnica del módulo (sin cambios respecto a sesión anterior):**
+
+- Regenerar `src/lib/types/database.ts` cuando se corran 0162+0163+0164+0165
+  (`npx supabase gen types typescript --project-id <REF>`). Mientras tanto
+  todos los INSERT/UPDATE usan `as never`.
+- `sync-ghl.test.ts` sigue con 1 test rojo — pre-existente, no relacionado.
+- Dashboard `/marketing` + `/marketing/stock` siguen como `ModulePlaceholder`
+  hasta que se cierren sus bloques (últimos 2).
 
 ### _(completar en la próxima sesión)_
