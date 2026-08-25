@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconMkt } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
@@ -23,6 +24,7 @@ import {
 } from "@/lib/marketing/types";
 import { createClient } from "@/lib/supabase/server";
 
+import { NewPieceButton } from "./new-piece-button";
 import {
   PlanificacionView,
   type PieceRowData,
@@ -80,7 +82,10 @@ export default async function PlanificacionPage({
 
   const supabase = await createClient();
 
-  const [ownersRes, piecesRes] = await Promise.all([
+  // Además de owners+pieces (lo propio de esta vista), traemos también
+  // organization_people activas — se pasan al drawer de sesión que se abre
+  // desde el botón "Programar grabación" en la fila de la piece.
+  const [ownersRes, piecesRes, personsRes] = await Promise.all([
     supabase
       .from("content_owners")
       .select("id, name, active")
@@ -92,10 +97,19 @@ export default async function PlanificacionPage({
       )
       .order("scheduled_publish_at", { ascending: true, nullsFirst: false })
       .order("created_at", { ascending: false }),
+    supabase
+      .from("organization_people")
+      .select("id, full_name, active")
+      .order("full_name", { ascending: true }),
   ]);
 
   const owners = (ownersRes.data ?? []) as unknown as OwnerLite[];
   const pieces = (piecesRes.data ?? []) as unknown as PieceDbRow[];
+  const persons = (personsRes.data ?? []) as unknown as ReadonlyArray<{
+    readonly id: string;
+    readonly full_name: string;
+    readonly active: boolean;
+  }>;
 
   const ownersById = new Map<string, OwnerLite>();
   for (const o of owners) ownersById.set(o.id, o);
@@ -201,8 +215,25 @@ export default async function PlanificacionPage({
     ...MARKETING_STAGES.map((s) => ({ value: s, label: STAGE_LABEL[s] })),
   ];
 
+  const activeFilters =
+    (stageFilter !== "open" ? 1 : 0) +
+    (ownerFilter != null ? 1 : 0) +
+    (categoryFilter !== "all" ? 1 : 0) +
+    (formatFilter !== "all" ? 1 : 0);
+
+  const personOptionsForDrawer = persons
+    .filter((p) => p.active)
+    .map((p) => ({ id: p.id, fullName: p.full_name }));
+  const pieceOptionsForDrawer = normalized.map((p) => ({
+    id: p.id,
+    title: p.title,
+    contentOwnerId: p.contentOwnerId,
+    stage: p.stage,
+    recordingSessionId: p.recordingSessionId,
+  }));
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconMkt size={16} />}
         title="Planificación de contenido"
@@ -214,69 +245,82 @@ export default async function PlanificacionPage({
         ]}
       />
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <KgParamPills
-          ariaLabel="Filtrar por estado"
-          options={stageOptions.map((o) => ({
-            label: o.label,
-            href: buildHref({ stage: o.value }),
-            active: stageFilter === o.value,
-          }))}
-        />
-
-        {ownerFilterOptions.length > 0 && (
+      <KgPageFilters activeCount={activeFilters}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <KgParamPills
-            ariaLabel="Filtrar por dueño"
+            ariaLabel="Filtrar por estado"
+            options={stageOptions.map((o) => ({
+              label: o.label,
+              href: buildHref({ stage: o.value }),
+              active: stageFilter === o.value,
+            }))}
+          />
+
+          {ownerFilterOptions.length > 0 && (
+            <KgParamPills
+              ariaLabel="Filtrar por dueño"
+              options={[
+                {
+                  label: "Todos los dueños",
+                  href: buildHref({ owner: null }),
+                  active: ownerFilter == null,
+                },
+                ...ownerFilterOptions.map((o) => ({
+                  label: o.name,
+                  href: buildHref({ owner: o.id }),
+                  active: ownerFilter === o.id,
+                })),
+              ]}
+            />
+          )}
+
+          <KgParamPills
+            ariaLabel="Filtrar por categoría"
             options={[
               {
-                label: "Todos los dueños",
-                href: buildHref({ owner: null }),
-                active: ownerFilter == null,
+                label: "Todas las categorías",
+                href: buildHref({ category: "all" }),
+                active: categoryFilter === "all",
               },
-              ...ownerFilterOptions.map((o) => ({
-                label: o.name,
-                href: buildHref({ owner: o.id }),
-                active: ownerFilter === o.id,
+              ...MARKETING_CATEGORIES.map((c) => ({
+                label: CATEGORY_LABEL[c],
+                href: buildHref({ category: c }),
+                active: categoryFilter === c,
               })),
             ]}
           />
-        )}
 
-        <KgParamPills
-          ariaLabel="Filtrar por categoría"
-          options={[
-            {
-              label: "Todas las categorías",
-              href: buildHref({ category: "all" }),
-              active: categoryFilter === "all",
-            },
-            ...MARKETING_CATEGORIES.map((c) => ({
-              label: CATEGORY_LABEL[c],
-              href: buildHref({ category: c }),
-              active: categoryFilter === c,
-            })),
-          ]}
+          <KgParamPills
+            ariaLabel="Filtrar por formato"
+            options={[
+              {
+                label: "Todos los formatos",
+                href: buildHref({ format: "all" }),
+                active: formatFilter === "all",
+              },
+              ...MARKETING_FORMATS.map((f) => ({
+                label: FORMAT_LABEL[f],
+                href: buildHref({ format: f }),
+                active: formatFilter === f,
+              })),
+            ]}
+          />
+        </div>
+      </KgPageFilters>
+
+      <Panel
+        title="Plan editorial"
+        pad={false}
+        fillHeight
+        actions={<NewPieceButton ownerOptions={ownerOptions} />}
+      >
+        <PlanificacionView
+          rows={filtered}
+          ownerOptions={ownerOptions}
+          sessionOwnerOptions={ownerOptions}
+          personOptions={personOptionsForDrawer}
+          pieceOptions={pieceOptionsForDrawer}
         />
-
-        <KgParamPills
-          ariaLabel="Filtrar por formato"
-          options={[
-            {
-              label: "Todos los formatos",
-              href: buildHref({ format: "all" }),
-              active: formatFilter === "all",
-            },
-            ...MARKETING_FORMATS.map((f) => ({
-              label: FORMAT_LABEL[f],
-              href: buildHref({ format: f }),
-              active: formatFilter === f,
-            })),
-          ]}
-        />
-      </div>
-
-      <Panel title="Plan editorial">
-        <PlanificacionView rows={filtered} ownerOptions={ownerOptions} />
       </Panel>
     </div>
   );

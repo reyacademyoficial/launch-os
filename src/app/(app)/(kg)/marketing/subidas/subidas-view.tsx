@@ -254,40 +254,25 @@ export function SubidasView({
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {error && <div style={errorStyle}>{error}</div>}
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      {error && (
+        <div style={{ ...errorStyle, margin: "12px 20px 0" }}>{error}</div>
+      )}
 
       {view === "tabla" ? (
-        <>
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <button
-              type="button"
-              onClick={() => setCreating({ open: true })}
-              disabled={noAssets}
-              className="kg-focus"
-              style={{ ...primaryBtn, opacity: noAssets ? 0.5 : 1 }}
-              title={
-                noAssets
-                  ? "Primero registrá al menos un asset en /marketing/edicion"
-                  : undefined
-              }
-            >
-              + Nueva subida
-            </button>
-          </div>
-          <KgDataTable
-            columns={columns}
-            rows={rows}
-            rowKey={(r) => r.id}
-            totalCount={rows.length}
-            emptyTitle="Sin subidas registradas"
-            emptyHint={
-              noAssets
-                ? "Primero registrá assets en la pestaña Edición."
-                : "Programá subidas para ver la agenda por plataforma y fecha."
-            }
-          />
-        </>
+        <KgDataTable
+          columns={columns}
+          rows={rows}
+          rowKey={(r) => r.id}
+          totalCount={rows.length}
+          emptyTitle="Sin subidas registradas"
+          emptyHint={
+            noAssets
+              ? "Primero registrá assets en la pestaña Edición."
+              : "Programá subidas para ver la agenda por plataforma y fecha."
+          }
+          fillHeight
+        />
       ) : (
         <KgCalendar
           year={year}

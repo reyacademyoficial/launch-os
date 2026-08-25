@@ -2,12 +2,14 @@ import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconMkt } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
 import { createClient } from "@/lib/supabase/server";
 
 import { DuenosView, type OwnerRowData } from "./duenos-view";
+import { NewOwnerButton } from "./new-owner-button";
 
 export const metadata: Metadata = { title: "Marketing · Dueños" };
 
@@ -106,7 +108,7 @@ export default async function DuenosPage({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconMkt size={16} />}
         title="Dueños de contenido"
@@ -118,16 +120,23 @@ export default async function DuenosPage({
         ]}
       />
 
-      <KgParamPills
-        ariaLabel="Filtrar por estado"
-        options={SHOW_OPTIONS.map((o) => ({
-          label: o.label,
-          href: buildHref(o.value),
-          active: show === o.value,
-        }))}
-      />
+      <KgPageFilters activeCount={show !== "active" ? 1 : 0}>
+        <KgParamPills
+          ariaLabel="Filtrar por estado"
+          options={SHOW_OPTIONS.map((o) => ({
+            label: o.label,
+            href: buildHref(o.value),
+            active: show === o.value,
+          }))}
+        />
+      </KgPageFilters>
 
-      <Panel title="Cuentas / marcas gestionadas">
+      <Panel
+        title="Cuentas / marcas gestionadas"
+        pad={false}
+        fillHeight
+        actions={<NewOwnerButton />}
+      >
         <DuenosView rows={rows} totalCount={rows.length} />
       </Panel>
     </div>

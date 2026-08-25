@@ -15,14 +15,21 @@ import {
   type RecordingSessionStatus,
 } from "@/lib/marketing/types";
 
-import { setSessionStatus } from "./actions";
+import { primaryBtn } from "@/components/kg/form-primitives";
+import {
+  ProductionBatchDrawer,
+  type PersonOptionForBatch,
+  type SessionOptionForBatch,
+} from "@/components/marketing/production-batch-drawer";
 import {
   SessionFormDrawer,
   type OwnerOption,
   type PersonOption,
   type PieceOption,
   type SessionInitial,
-} from "./session-form-drawer";
+} from "@/components/marketing/session-form-drawer";
+
+import { setSessionStatus } from "./actions";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Vista dual tabla / calendario para recording_sessions.
@@ -82,6 +89,7 @@ export function GrabacionView({
   >({ open: false });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [dayDrawerKey, setDayDrawerKey] = useState<string | null>(null);
+  const [batchFromSessionId, setBatchFromSessionId] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -227,6 +235,22 @@ export function GrabacionView({
       align: "right",
       render: (r) => (
         <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+          {r.status === "realizada" && (
+            <button
+              type="button"
+              onClick={() => setBatchFromSessionId(r.id)}
+              disabled={pending}
+              className="kg-focus"
+              style={{
+                ...rowBtn,
+                borderColor: "var(--kg-accent-500)",
+                color: "var(--kg-accent-text)",
+              }}
+              title="Cargar los cortes que salieron de esta grabación (van al stock)"
+            >
+              Registrar producción
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setEditingId(r.id)}
@@ -246,8 +270,32 @@ export function GrabacionView({
     },
   ];
 
+  // Mapeo para el batch drawer — SessionRowData → SessionOptionForBatch.
+  // Le pasamos SOLO la sesión pre-seleccionada; el picker queda locked.
+  const batchSessionOptions: readonly SessionOptionForBatch[] = rows
+    .filter((r) => r.status === "realizada")
+    .map((r) => ({
+      id: r.id,
+      contentOwnerId: r.contentOwnerId,
+      ownerName: r.ownerName,
+      scheduledAt: r.scheduledAt,
+      status: r.status,
+    }));
+
+  const batchPersonOptions: readonly PersonOptionForBatch[] = personOptions.map(
+    (p) => ({ id: p.id, fullName: p.fullName }),
+  );
+
+  // Preset del drawer create: en el day drawer del calendario se elige un día;
+  // acá lo convertimos a ISO con hora 09:00 local (default razonable para
+  // grabaciones). El usuario ajusta hora exacta en el drawer.
+  const presetInitial =
+    creating.open && creating.presetDate
+      ? { scheduledAt: `${creating.presetDate}T09:00` }
+      : undefined;
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
       {error && (
         <div
           style={{
@@ -264,32 +312,15 @@ export function GrabacionView({
       )}
 
       {view === "tabla" ? (
-        <>
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <button
-              type="button"
-              onClick={() => setCreating({ open: true })}
-              disabled={noOwners}
-              className="kg-focus"
-              style={{ ...primaryBtn, opacity: noOwners ? 0.5 : 1 }}
-              title={
-                noOwners
-                  ? "Primero creá al menos un dueño en /marketing/duenos"
-                  : undefined
-              }
-            >
-              + Nueva sesión
-            </button>
-          </div>
-          <KgDataTable
-            columns={columns}
-            rows={rows}
-            rowKey={(r) => r.id}
-            totalCount={rows.length}
-            emptyTitle="Sin sesiones planificadas"
-            emptyHint="Creá una sesión y asignale las pieces que se van a grabar."
-          />
-        </>
+        <KgDataTable
+          columns={columns}
+          rows={rows}
+          rowKey={(r) => r.id}
+          totalCount={rows.length}
+          emptyTitle="Sin sesiones planificadas"
+          emptyHint="Creá una sesión y asignale las pieces que se van a grabar."
+          fillHeight
+        />
       ) : (
         <KgCalendar
           year={year}
@@ -298,6 +329,7 @@ export function GrabacionView({
           preserveParams={preserveParams}
           eventsByDate={eventsByDate}
           onDaySelect={(k) => setDayDrawerKey(k)}
+          fillHeight
           trailingAction={
             <button
               type="button"
@@ -324,6 +356,12 @@ export function GrabacionView({
         ownerOptions={ownerOptions}
         personOptions={personOptions}
         pieceOptions={pieceOptions}
+        initial={presetInitial}
+        initialKey={
+          creating.open
+            ? (creating.presetDate ?? "no-preset")
+            : undefined
+        }
       />
 
       <SessionFormDrawer
@@ -334,6 +372,15 @@ export function GrabacionView({
         personOptions={personOptions}
         pieceOptions={pieceOptions}
         initial={editingInitial}
+      />
+
+      <ProductionBatchDrawer
+        open={batchFromSessionId != null}
+        onClose={() => setBatchFromSessionId(null)}
+        sessionOptions={batchSessionOptions}
+        personOptions={batchPersonOptions}
+        presetSessionId={batchFromSessionId ?? undefined}
+        initialKey={batchFromSessionId ?? undefined}
       />
 
       <Drawer
@@ -505,17 +552,6 @@ function formatDay(key: string): string {
   if (!y || !m || !d) return key;
   return `${d}/${m}/${y}`;
 }
-
-const primaryBtn: React.CSSProperties = {
-  padding: "8px 16px",
-  borderRadius: 999,
-  background: "var(--kg-accent-500)",
-  border: "none",
-  color: "#fff",
-  fontSize: 12,
-  fontWeight: 700,
-  cursor: "pointer",
-};
 
 const rowBtn: React.CSSProperties = {
   padding: "4px 10px",

@@ -5,6 +5,13 @@ import { useState, useTransition } from "react";
 import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { StatusPill } from "@/components/kg/status-pill";
 import {
+  SessionFormDrawer,
+  type OwnerOption as SessionOwnerOption,
+  type PersonOption,
+  type PieceOption,
+  type SessionInitial,
+} from "@/components/marketing/session-form-drawer";
+import {
   CATEGORY_LABEL,
   FORMAT_LABEL,
   PLATFORM_LABEL,
@@ -55,14 +62,21 @@ export interface PieceRowData {
 export function PlanificacionView({
   rows,
   ownerOptions,
+  sessionOwnerOptions,
+  personOptions,
+  pieceOptions,
 }: {
   readonly rows: readonly PieceRowData[];
   readonly ownerOptions: readonly OwnerOption[];
+  readonly sessionOwnerOptions: readonly SessionOwnerOption[];
+  readonly personOptions: readonly PersonOption[];
+  readonly pieceOptions: readonly PieceOption[];
 }) {
-  const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [schedulingFromPiece, setSchedulingFromPiece] =
+    useState<PieceRowData | null>(null);
 
   const editing =
     editingId != null ? rows.find((r) => r.id === editingId) ?? null : null;
@@ -94,8 +108,6 @@ export function PlanificacionView({
       if ("error" in result) setError(result.error);
     });
   }
-
-  const noOwners = ownerOptions.length === 0;
 
   const columns: Column<PieceRowData>[] = [
     {
@@ -180,68 +192,90 @@ export function PlanificacionView({
       key: "actions",
       label: "",
       align: "right",
-      render: (r) => (
-        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-          <button
-            type="button"
-            onClick={() => setEditingId(r.id)}
-            disabled={pending}
-            className="kg-focus"
-            style={rowBtn}
-            title="Editar"
-          >
-            Editar
-          </button>
-          {r.stage === "descartado" ? (
+      render: (r) => {
+        // "Programar grabación" — solo si la piece está lista para agendarse:
+        // stage=planificado, sin sesión previa, y hay algún filmaker/experto
+        // disponible en la org. El drawer arranca con owner+piece+fecha
+        // pre-cargados; el usuario completa personas/ubicación/materiales.
+        const canSchedule =
+          r.stage === "planificado" && r.recordingSessionId == null;
+        return (
+          <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+            {canSchedule && (
+              <button
+                type="button"
+                onClick={() => setSchedulingFromPiece(r)}
+                disabled={pending}
+                className="kg-focus"
+                style={{
+                  ...rowBtn,
+                  borderColor: "var(--kg-accent-500)",
+                  color: "var(--kg-accent-text)",
+                }}
+                title="Programar grabación con esta pieza pre-seleccionada"
+              >
+                Programar grabación
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => handleStageChange(r, "planificado")}
+              onClick={() => setEditingId(r.id)}
               disabled={pending}
               className="kg-focus"
               style={rowBtn}
-              title="Restaurar a planificado"
+              title="Editar"
             >
-              Restaurar
+              Editar
             </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => handleStageChange(r, "descartado")}
-              disabled={pending}
-              className="kg-focus"
-              style={rowBtn}
-              title="Marcar como descartado (sale del pipeline sin borrar historial)"
-            >
-              Descartar
-            </button>
-          )}
-        </div>
-      ),
+            {r.stage === "descartado" ? (
+              <button
+                type="button"
+                onClick={() => handleStageChange(r, "planificado")}
+                disabled={pending}
+                className="kg-focus"
+                style={rowBtn}
+                title="Restaurar a planificado"
+              >
+                Restaurar
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => handleStageChange(r, "descartado")}
+                disabled={pending}
+                className="kg-focus"
+                style={rowBtn}
+                title="Marcar como descartado (sale del pipeline sin borrar historial)"
+              >
+                Descartar
+              </button>
+            )}
+          </div>
+        );
+      },
     },
   ];
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          disabled={noOwners}
-          className="kg-focus"
-          style={{ ...primaryBtn, opacity: noOwners ? 0.5 : 1 }}
-          title={
-            noOwners
-              ? "Primero creá al menos un dueño en /marketing/duenos"
-              : undefined
-          }
-        >
-          + Nueva planificación
-        </button>
-      </div>
+  // Preset del drawer de grabación cuando venís desde "Programar grabación".
+  // Fecha: la ya planificada en la piece si existe; si no, el drawer arranca
+  // vacío y el usuario elige.
+  const scheduleInitial: SessionInitial | undefined =
+    schedulingFromPiece != null
+      ? {
+          contentOwnerId: schedulingFromPiece.contentOwnerId,
+          scheduledAt: schedulingFromPiece.scheduledRecordingAt ?? undefined,
+          pieceIds: [schedulingFromPiece.id],
+        }
+      : undefined;
 
+  const noOwners = ownerOptions.length === 0;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
       {error && (
         <div
           style={{
+            margin: "12px 20px 0",
             padding: "10px 14px",
             borderRadius: "var(--kg-r-8)",
             background: "rgba(239,68,68,0.10)",
@@ -265,13 +299,7 @@ export function PlanificacionView({
             ? "Primero creá dueños en la pestaña Dueños."
             : "Cuando planificás un contenido, se lista acá y pasa a Grabación cuando lo asignás a una sesión."
         }
-      />
-
-      <PieceFormDrawer
-        mode="create"
-        open={creating}
-        onClose={() => setCreating(false)}
-        ownerOptions={ownerOptions}
+        fillHeight
       />
 
       <PieceFormDrawer
@@ -280,6 +308,17 @@ export function PlanificacionView({
         onClose={() => setEditingId(null)}
         ownerOptions={ownerOptions}
         initial={editingInitial}
+      />
+
+      <SessionFormDrawer
+        mode="create"
+        open={schedulingFromPiece != null}
+        onClose={() => setSchedulingFromPiece(null)}
+        ownerOptions={sessionOwnerOptions}
+        personOptions={personOptions}
+        pieceOptions={pieceOptions}
+        initial={scheduleInitial}
+        initialKey={schedulingFromPiece?.id}
       />
     </div>
   );
@@ -303,17 +342,6 @@ function formatDate(dateStr: string): string {
   if (!m || !d) return dateStr;
   return `${d}/${m}`;
 }
-
-const primaryBtn: React.CSSProperties = {
-  padding: "8px 16px",
-  borderRadius: 999,
-  background: "var(--kg-accent-500)",
-  border: "none",
-  color: "#fff",
-  fontSize: 12,
-  fontWeight: 700,
-  cursor: "pointer",
-};
 
 const rowBtn: React.CSSProperties = {
   padding: "4px 10px",

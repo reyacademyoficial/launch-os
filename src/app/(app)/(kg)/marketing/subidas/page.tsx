@@ -2,9 +2,11 @@ import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconMkt } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
+import { resolvePeriod, type Period } from "@/lib/finance/period";
 import {
   isMarketingFormat,
   isMarketingPlatform,
@@ -19,6 +21,9 @@ import {
 } from "@/lib/marketing/types";
 import { createClient } from "@/lib/supabase/server";
 
+import { RangePills, type PresetOption } from "../../financiero/range-pills";
+
+import { NewUploadButton } from "./new-upload-button";
 import {
   SubidasView,
   type UploadRowData,
@@ -44,6 +49,14 @@ export const metadata: Metadata = { title: "Marketing · Subidas" };
 // ═══════════════════════════════════════════════════════════════════════════
 
 type StatusFilter = UploadStatus | "open" | "all";
+type RangeParam = "todo" | "mes-actual" | "mes-anterior" | "90d" | "custom";
+
+const RANGE_PRESETS: readonly PresetOption[] = [
+  { value: "todo", label: "Todo" },
+  { value: "mes-actual", label: "Mes actual" },
+  { value: "mes-anterior", label: "Mes anterior" },
+  { value: "90d", label: "90 días" },
+];
 
 interface OwnerLite {
   readonly id: string;
@@ -88,8 +101,34 @@ export default async function SubidasPage({
   const platformFilter = parsePlatformFilter(sp.platform);
   const ownerFilter = parseSingle(sp.owner);
   const statusFilter = parseStatusFilter(sp.status);
+  const rangeParam = parseRange(sp.range);
+  const fromParam = parseYmd(sp.from);
+  const toParam = parseYmd(sp.to);
+
+  // Rango temporal SOLO se aplica en vista tabla (en calendario navegás por mes).
+  const isCustom = fromParam != null && toParam != null;
+  const effectiveRange: RangeParam = isCustom ? "custom" : rangeParam;
+  const period: Period | null =
+    view !== "tabla" || effectiveRange === "todo"
+      ? null
+      : isCustom
+        ? resolvePeriod({ from: fromParam, to: toParam })
+        : resolvePeriod({ range: effectiveRange });
 
   const supabase = await createClient();
+
+  let uploadsQuery = supabase
+    .from("content_uploads")
+    .select(
+      "id, content_asset_id, platform, scheduled_for, uploaded_at, status, public_url, notes",
+    )
+    .order("scheduled_for", { ascending: false });
+  if (period) {
+    // scheduled_for es `date` (yyyy-mm-dd), comparación lexicográfica OK.
+    uploadsQuery = uploadsQuery
+      .gte("scheduled_for", period.fromYmd)
+      .lte("scheduled_for", period.toYmd);
+  }
 
   const [ownersRes, assetsRes, uploadsRes, cadencesRes] = await Promise.all([
     supabase
@@ -100,12 +139,7 @@ export default async function SubidasPage({
       .from("content_assets")
       .select("id, content_owner_id, name, format, edited_at")
       .order("created_at", { ascending: false }),
-    supabase
-      .from("content_uploads")
-      .select(
-        "id, content_asset_id, platform, scheduled_for, uploaded_at, status, public_url, notes",
-      )
-      .order("scheduled_for", { ascending: false }),
+    uploadsQuery,
     supabase
       .from("publishing_cadences")
       .select("content_owner_id, platform, format, allow_repeat_asset"),
@@ -236,6 +270,16 @@ export default async function SubidasPage({
     if (nextPlatform !== "all") params.set("platform", nextPlatform);
     if (nextOwner) params.set("owner", nextOwner);
     if (nextStatus !== "open") params.set("status", nextStatus);
+    // Rango sólo tiene sentido en vista tabla — evita URLs contaminadas al
+    // navegar entre vistas.
+    if (nextView === "tabla") {
+      if (isCustom && fromParam && toParam) {
+        params.set("from", fromParam);
+        params.set("to", toParam);
+      } else if (rangeParam !== "todo") {
+        params.set("range", rangeParam);
+      }
+    }
 
     const qs = params.toString();
     return qs ? `/marketing/subidas?${qs}` : "/marketing/subidas";
@@ -255,8 +299,15 @@ export default async function SubidasPage({
   if (ownerFilter) preserveParams.owner = ownerFilter;
   if (statusFilter !== "open") preserveParams.status = statusFilter;
 
+  const activeFilters =
+    (view !== "tabla" ? 1 : 0) +
+    (statusFilter !== "open" ? 1 : 0) +
+    (platformFilter !== "all" ? 1 : 0) +
+    (ownerFilter != null ? 1 : 0) +
+    (view === "tabla" && (rangeParam !== "todo" || isCustom) ? 1 : 0);
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconMkt size={16} />}
         title="Subidas"
@@ -268,70 +319,91 @@ export default async function SubidasPage({
         ]}
       />
 
-      <KgParamPills
-        ariaLabel="Cambiar vista"
-        options={[
-          {
-            label: "Tabla",
-            href: buildHref({ view: "tabla" }),
-            active: view === "tabla",
-          },
-          {
-            label: "Calendario",
-            href: buildHref({ view: "calendario" }),
-            active: view === "calendario",
-          },
-        ]}
-      />
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <KgParamPills
-          ariaLabel="Filtrar por estado"
-          options={statusOptions.map((o) => ({
-            label: o.label,
-            href: buildHref({ status: o.value }),
-            active: statusFilter === o.value,
-          }))}
-        />
-
-        <KgParamPills
-          ariaLabel="Filtrar por plataforma"
-          options={[
-            {
-              label: "Todas las plataformas",
-              href: buildHref({ platform: "all" }),
-              active: platformFilter === "all",
-            },
-            ...MARKETING_PLATFORMS.map((p) => ({
-              label: PLATFORM_LABEL[p],
-              href: buildHref({ platform: p }),
-              active: platformFilter === p,
-            })),
-          ]}
-        />
-
-        {ownerFilterOptions.length > 0 && (
+      <KgPageFilters activeCount={activeFilters}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <KgParamPills
-            ariaLabel="Filtrar por dueño"
+            ariaLabel="Cambiar vista"
             options={[
               {
-                label: "Todos los dueños",
-                href: buildHref({ owner: null }),
-                active: ownerFilter == null,
+                label: "Tabla",
+                href: buildHref({ view: "tabla" }),
+                active: view === "tabla",
               },
-              ...ownerFilterOptions.map((o) => ({
-                label: o.name,
-                href: buildHref({ owner: o.id }),
-                active: ownerFilter === o.id,
+              {
+                label: "Calendario",
+                href: buildHref({ view: "calendario" }),
+                active: view === "calendario",
+              },
+            ]}
+          />
+
+          {view === "tabla" && (
+            <RangePills
+              presets={RANGE_PRESETS}
+              activePreset={isCustom ? null : rangeParam === "custom" ? null : rangeParam}
+              activeFrom={period?.fromYmd ?? null}
+              activeTo={period?.toYmd ?? null}
+              baseHref="/marketing/subidas"
+            />
+          )}
+
+          <KgParamPills
+            ariaLabel="Filtrar por estado"
+            options={statusOptions.map((o) => ({
+              label: o.label,
+              href: buildHref({ status: o.value }),
+              active: statusFilter === o.value,
+            }))}
+          />
+
+          <KgParamPills
+            ariaLabel="Filtrar por plataforma"
+            options={[
+              {
+                label: "Todas las plataformas",
+                href: buildHref({ platform: "all" }),
+                active: platformFilter === "all",
+              },
+              ...MARKETING_PLATFORMS.map((p) => ({
+                label: PLATFORM_LABEL[p],
+                href: buildHref({ platform: p }),
+                active: platformFilter === p,
               })),
             ]}
           />
-        )}
-      </div>
+
+          {ownerFilterOptions.length > 0 && (
+            <KgParamPills
+              ariaLabel="Filtrar por dueño"
+              options={[
+                {
+                  label: "Todos los dueños",
+                  href: buildHref({ owner: null }),
+                  active: ownerFilter == null,
+                },
+                ...ownerFilterOptions.map((o) => ({
+                  label: o.name,
+                  href: buildHref({ owner: o.id }),
+                  active: ownerFilter === o.id,
+                })),
+              ]}
+            />
+          )}
+        </div>
+      </KgPageFilters>
 
       <Panel
         title={
           view === "tabla" ? "Subidas planificadas" : "Calendario mensual"
+        }
+        pad={false}
+        fillHeight
+        actions={
+          <NewUploadButton
+            ownerOptions={ownerOptions}
+            assetOptions={assetOptions}
+            cadences={cadences}
+          />
         }
       >
         <SubidasView
@@ -392,4 +464,21 @@ function parseStatusFilter(
   if (v === "open" || v === "all") return v;
   if (isUploadStatus(v)) return v;
   return "open";
+}
+
+function parseRange(v: string | string[] | undefined): RangeParam {
+  if (typeof v !== "string") return "todo";
+  const allowed: RangeParam[] = [
+    "todo",
+    "mes-actual",
+    "mes-anterior",
+    "90d",
+    "custom",
+  ];
+  return (allowed as string[]).includes(v) ? (v as RangeParam) : "todo";
+}
+
+function parseYmd(v: string | string[] | undefined): string | null {
+  if (typeof v !== "string") return null;
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
 }

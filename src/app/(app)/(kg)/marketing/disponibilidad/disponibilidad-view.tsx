@@ -33,7 +33,6 @@ export function DisponibilidadView({
   readonly rows: readonly AvailabilityRowData[];
   readonly personOptions: readonly PersonOption[];
 }) {
-  const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const editing =
@@ -50,8 +49,6 @@ export function DisponibilidadView({
           notes: editing.notes,
         }
       : undefined;
-
-  const noPersons = personOptions.length === 0;
 
   const columns: Column<AvailabilityRowData>[] = [
     {
@@ -133,24 +130,7 @@ export function DisponibilidadView({
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          disabled={noPersons}
-          className="kg-focus"
-          style={{ ...primaryBtn, opacity: noPersons ? 0.5 : 1 }}
-          title={
-            noPersons
-              ? "Primero cargá al menos una persona en la org."
-              : undefined
-          }
-        >
-          + Nuevo bloque
-        </button>
-      </div>
-
+    <div className="flex min-h-0 flex-1 flex-col">
       <KgDataTable
         columns={columns}
         rows={rows}
@@ -158,14 +138,9 @@ export function DisponibilidadView({
         totalCount={rows.length}
         emptyTitle="Sin bloques de disponibilidad cargados"
         emptyHint="Cargá bloques para que el planning semanal de edición muestre días disponibles por persona."
+        fillHeight
       />
 
-      <AvailabilityFormDrawer
-        mode="create"
-        open={creating}
-        onClose={() => setCreating(false)}
-        personOptions={personOptions}
-      />
       <AvailabilityFormDrawer
         mode="edit"
         open={editingId != null}
@@ -191,17 +166,6 @@ function daysBetween(fromYmd: string, toYmd: string): number {
   const b = Date.UTC(ty!, tm! - 1, td!);
   return Math.floor((b - a) / (24 * 60 * 60 * 1000)) + 1;
 }
-
-const primaryBtn: React.CSSProperties = {
-  padding: "8px 16px",
-  borderRadius: 999,
-  background: "var(--kg-accent-500)",
-  border: "none",
-  color: "#fff",
-  fontSize: 12,
-  fontWeight: 700,
-  cursor: "pointer",
-};
 
 const rowBtn: React.CSSProperties = {
   padding: "4px 10px",

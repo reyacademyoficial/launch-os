@@ -41,6 +41,17 @@ interface KgCalendarProps {
   readonly onDaySelect: (dateKey: string) => void;
   /** Slot arriba a la derecha (ej. botón "Nueva sesión"). */
   readonly trailingAction?: ReactNode;
+  /**
+   * true = el calendario aplica padding interno + hace que el grid scrollee
+   * verticalmente si excede el alto disponible del parent flex. El header
+   * de navegación queda pinned arriba (no scrollea). Requiere que el parent
+   * tenga `flex-1 min-h-0`.
+   *
+   * Se usa cuando el calendario vive dentro de un `Panel pad={false} fillHeight`
+   * — el pad=false permite que la tabla llene edge-to-edge y este flag
+   * devuelve el padding al calendario, que sí lo necesita.
+   */
+  readonly fillHeight?: boolean;
 }
 
 const WEEKDAY_LABELS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"] as const;
@@ -68,6 +79,7 @@ export function KgCalendar({
   eventsByDate,
   onDaySelect,
   trailingAction,
+  fillHeight = false,
 }: KgCalendarProps) {
   const cells = useMemo(() => buildMonthCells(year, month), [year, month]);
   const today = new Date();
@@ -92,16 +104,37 @@ export function KgCalendar({
     return `${baseHref}?${params.toString()}`;
   }
 
+  // Estructura del container:
+  //   - fillHeight=false → flex col simple, sin padding (default histórico).
+  //   - fillHeight=true  → flex col con flex-1 min-h-0 + padding, header
+  //     pinned (flex-shrink 0), grid scrolleable dentro de un wrapper
+  //     overflow-auto que se estira con flex-1.
+  const containerStyle: React.CSSProperties = fillHeight
+    ? {
+        display: "flex",
+        flexDirection: "column",
+        flex: 1,
+        minHeight: 0,
+        padding: 16,
+        gap: 12,
+      }
+    : { display: "flex", flexDirection: "column", gap: 12 };
+
+  const headerStyle: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    ...(fillHeight ? { flexShrink: 0 } : {}),
+  };
+
+  const gridWrapperStyle: React.CSSProperties = fillHeight
+    ? { flex: 1, minHeight: 0, overflowY: "auto" }
+    : {};
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 8,
-        }}
-      >
+    <div style={containerStyle}>
+      <div style={headerStyle}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <Link
             href={buildHref(prev.year, prev.month)}
@@ -141,6 +174,7 @@ export function KgCalendar({
         {trailingAction}
       </div>
 
+      <div style={gridWrapperStyle}>
       <div
         style={{
           display: "grid",
@@ -262,6 +296,7 @@ export function KgCalendar({
             </button>
           );
         })}
+      </div>
       </div>
     </div>
   );

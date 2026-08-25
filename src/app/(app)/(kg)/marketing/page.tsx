@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
-import { HeroKpi, type HeroKpiTone } from "@/components/kg/hero-kpi";
+import type { HeroKpiTone } from "@/components/kg/hero-kpi";
 import { IconMkt } from "@/components/kg/icons";
 import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { Panel } from "@/components/kg/panel";
@@ -43,6 +43,8 @@ import {
   type UploadStatus,
 } from "@/lib/marketing/types";
 import { createClient } from "@/lib/supabase/server";
+
+import { MarketingHeroKpis } from "./_hero-kpis";
 
 export const metadata: Metadata = { title: "Marketing" };
 
@@ -314,43 +316,13 @@ export default async function MarketingDashboardPage() {
       />
 
       {/* ═════════════════════ Fila 1 · HeroKpi × 4 ═════════════════════ */}
-      <div className="grid grid-cols-1 items-start gap-5 sm:grid-cols-2 lg:grid-cols-4">
-        <HeroKpi
-          label="Contenido en stock"
-          value={totalStockCount}
-          format={fCount}
-          sub="Assets editados listos para subir"
-          tone="accent"
-          featured
-          help="Assets con edited_at seteado y todavía no consumidos (respetando allow_repeat_asset de cada cadencia)."
-        />
-        <HeroKpi
-          label="Días mínimos de cobertura"
-          value={minDays ?? Number.NaN}
-          format={(n) => (Number.isFinite(n) ? String(n) : "—")}
-          sub={
-            minDays == null
-              ? "Sin cadencias configuradas"
-              : "El par owner×platform peor parado"
-          }
-          tone={minDaysTone}
-          help="Se calcula por (owner, platform) sumando stock a través de formats y dividiendo por posts_per_day."
-        />
-        <HeroKpi
-          label="Grabaciones próximas"
-          value={upcomingSessions.length}
-          format={fCount}
-          sub="Próximos 14 días"
-          tone="neutral"
-        />
-        <HeroKpi
-          label="Editados esta semana"
-          value={editedLast7d}
-          format={fCount}
-          sub="Últimos 7 días"
-          tone="neutral"
-        />
-      </div>
+      <MarketingHeroKpis
+        totalStockCount={totalStockCount}
+        minDays={minDays}
+        minDaysTone={minDaysTone}
+        upcomingSessionsCount={upcomingSessions.length}
+        editedLast7d={editedLast7d}
+      />
 
       {/* ═════════════════════ Fila 2 · Alertas + Grabaciones ══════════ */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">

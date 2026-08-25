@@ -69,7 +69,6 @@ export function EdicionView({
   readonly availability: readonly EditorAvailabilityInput[];
   readonly planningWindow: { readonly since: string; readonly until: string };
 }) {
-  const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [view, setView] = useState<"tabla" | "planning">("tabla");
 
@@ -261,20 +260,17 @@ export function EdicionView({
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <div className="flex min-h-0 flex-1 flex-col">
       <div
         style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 8,
-          alignItems: "center",
+          padding: "12px 20px 0",
         }}
       >
         <div
           role="tablist"
           aria-label="Cambiar vista"
           style={{
-            display: "flex",
+            display: "inline-flex",
             gap: 6,
             padding: 4,
             borderRadius: 999,
@@ -293,20 +289,6 @@ export function EdicionView({
             label="Planning semanal"
           />
         </div>
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          disabled={noOwners}
-          className="kg-focus"
-          style={{ ...primaryBtn, opacity: noOwners ? 0.5 : 1 }}
-          title={
-            noOwners
-              ? "Primero creá al menos un dueño en /marketing/duenos"
-              : undefined
-          }
-        >
-          + Nuevo asset
-        </button>
       </div>
 
       {view === "tabla" ? (
@@ -321,25 +303,18 @@ export function EdicionView({
               ? "Primero creá dueños en la pestaña Dueños."
               : "Los assets aparecen acá después de una grabación realizada. Un asset por cada corte final que salga de la sesión."
           }
+          fillHeight
         />
       ) : (
-        <PlanningPivot
-          cells={planningCells}
-          weekStarts={weekStarts}
-          editorPersonIds={editorPersonIds}
-          personById={personById}
-        />
+        <div style={{ padding: "12px 20px 20px" }}>
+          <PlanningPivot
+            cells={planningCells}
+            weekStarts={weekStarts}
+            editorPersonIds={editorPersonIds}
+            personById={personById}
+          />
+        </div>
       )}
-
-      <AssetFormDrawer
-        mode="create"
-        open={creating}
-        onClose={() => setCreating(false)}
-        ownerOptions={ownerOptions}
-        personOptions={personOptions}
-        sessionOptions={sessionOptions}
-        pieceOptions={pieceOptions}
-      />
 
       <AssetFormDrawer
         mode="edit"
@@ -573,17 +548,6 @@ function formatDayShort(ymd: string): string {
 function formatWeekLabel(mondayYmd: string): string {
   return formatDayShort(mondayYmd);
 }
-
-const primaryBtn: React.CSSProperties = {
-  padding: "8px 16px",
-  borderRadius: 999,
-  background: "var(--kg-accent-500)",
-  border: "none",
-  color: "#fff",
-  fontSize: 12,
-  fontWeight: 700,
-  cursor: "pointer",
-};
 
 const rowBtn: React.CSSProperties = {
   padding: "4px 10px",

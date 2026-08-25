@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconMkt } from "@/components/kg/icons";
 import { KgDataTable, type Column } from "@/components/kg/data-table";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { StateDot } from "@/components/kg/state-dot";
@@ -226,8 +227,11 @@ export default async function StockPage({
 
   const hasCadences = cadences.length > 0;
 
+  const activeFilters =
+    (onlyActive === false ? 1 : 0) + (ownerFilter != null ? 1 : 0);
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconMkt size={16} />}
         title="Stock de contenido"
@@ -242,42 +246,48 @@ export default async function StockPage({
         ]}
       />
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <KgParamPills
-          ariaLabel="Filtrar por estado del dueño"
-          options={[
-            {
-              label: "Solo activos",
-              href: buildHref({ onlyActive: true }),
-              active: onlyActive,
-            },
-            {
-              label: "Incluir archivados",
-              href: buildHref({ onlyActive: false }),
-              active: !onlyActive,
-            },
-          ]}
-        />
-        {ownerFilterOptions.length > 0 && (
+      <KgPageFilters activeCount={activeFilters}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <KgParamPills
-            ariaLabel="Filtrar por dueño"
+            ariaLabel="Filtrar por estado del dueño"
             options={[
               {
-                label: "Todos los dueños",
-                href: buildHref({ owner: null }),
-                active: ownerFilter == null,
+                label: "Solo activos",
+                href: buildHref({ onlyActive: true }),
+                active: onlyActive,
               },
-              ...ownerFilterOptions.map((o) => ({
-                label: o.name,
-                href: buildHref({ owner: o.id }),
-                active: ownerFilter === o.id,
-              })),
+              {
+                label: "Incluir archivados",
+                href: buildHref({ onlyActive: false }),
+                active: !onlyActive,
+              },
             ]}
           />
-        )}
-      </div>
+          {ownerFilterOptions.length > 0 && (
+            <KgParamPills
+              ariaLabel="Filtrar por dueño"
+              options={[
+                {
+                  label: "Todos los dueños",
+                  href: buildHref({ owner: null }),
+                  active: ownerFilter == null,
+                },
+                ...ownerFilterOptions.map((o) => ({
+                  label: o.name,
+                  href: buildHref({ owner: o.id }),
+                  active: ownerFilter === o.id,
+                })),
+              ]}
+            />
+          )}
+        </div>
+      </KgPageFilters>
 
-      <Panel title="Cobertura por dueño × plataforma × formato">
+      <Panel
+        title="Cobertura por dueño × plataforma × formato"
+        pad={!hasCadences}
+        fillHeight
+      >
         {!hasCadences ? (
           <div
             className="kg-t7"
@@ -405,6 +415,7 @@ function StockTable({ rows }: { readonly rows: readonly StockPivotRow[] }) {
       totalCount={rows.length}
       emptyTitle="Sin combinaciones para mostrar"
       emptyHint={`Cambiá el filtro (${DEFAULT_ALERT_THRESHOLDS.criticalUnderDays}d crítico, ${DEFAULT_ALERT_THRESHOLDS.warningUnderDays}d warning) o revisá que haya cadencias.`}
+      fillHeight
     />
   );
 }

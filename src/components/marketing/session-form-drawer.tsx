@@ -4,31 +4,44 @@ import { useActionState, useEffect, useMemo, useState, useTransition } from "rea
 
 import { Drawer } from "@/components/kg/drawer";
 import {
-  RECORDING_ROLES,
-  ROLE_LABEL,
-  type RecordingRole,
-} from "@/lib/marketing/types";
-
+  ErrorBanner,
+  Field,
+  dangerBtn,
+  inputStyle,
+  primaryBtn,
+  secondaryBtn,
+  smallBtn,
+} from "@/components/kg/form-primitives";
 import {
   createSession,
   deleteSession,
   updateSession,
   type CreateSessionState,
   type UpdateSessionState,
-} from "./actions";
+} from "@/app/(app)/(kg)/marketing/grabacion/actions";
+import {
+  RECORDING_ROLES,
+  ROLE_LABEL,
+  type RecordingRole,
+} from "@/lib/marketing/types";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Drawer create/edit de recording_session.
+// Drawer create/edit de recording_session. Reusable cross-ruta:
 //
-// Sincroniza 3 cosas en un submit:
+//   - /marketing/grabacion (nueva sesión desde cero o edit)
+//   - /marketing/planificacion (pre-cargado con piece + fecha desde una
+//     content_piece en stage='planificado' — botón "Programar grabación")
+//   - /marketing/grabacion panel "Pieces sin sesión" (pre-cargado con
+//     conjunto de piezas del mismo owner+día)
+//
+// El submit sincroniza 3 cosas en una sola action:
 //   - session (fields fijos)
 //   - assignees (multi filas persona + rol; el drawer permite +/- filas)
-//   - pieces asociadas (checkboxes de content_pieces filtradas por owner
-//     seleccionado en el drawer; el filtro es client-side sobre el listado
-//     que la page precarga).
+//   - pieces asociadas (checkboxes de content_pieces filtradas por owner)
 //
-// El picker de pieces solo muestra las del owner elegido — cambiar el owner
-// resetea la selección de pieces (semánticamente son de otro dueño).
+// PRESET: en modo 'create', `initial` puede llegar con owner + scheduledAt +
+// pieceIds pre-poblados. `initialKey` sirve para forzar remount del body
+// cuando el preset cambia (ej: abrir el drawer desde otra piece).
 // ═══════════════════════════════════════════════════════════════════════════
 
 export interface OwnerOption {
@@ -51,18 +64,19 @@ export interface PieceOption {
 }
 
 export interface SessionInitial {
-  readonly id: string;
-  readonly contentOwnerId: string;
-  readonly scheduledAt: string;
-  readonly durationMinutes: number | null;
-  readonly location: string | null;
-  readonly materials: string | null;
-  readonly notes: string | null;
-  readonly assignees: readonly {
+  /** Sólo en modo edit. */
+  readonly id?: string;
+  readonly contentOwnerId?: string;
+  readonly scheduledAt?: string;
+  readonly durationMinutes?: number | null;
+  readonly location?: string | null;
+  readonly materials?: string | null;
+  readonly notes?: string | null;
+  readonly assignees?: readonly {
     readonly personId: string;
     readonly role: RecordingRole;
   }[];
-  readonly pieceIds: readonly string[];
+  readonly pieceIds?: readonly string[];
 }
 
 export function SessionFormDrawer({
@@ -73,6 +87,7 @@ export function SessionFormDrawer({
   personOptions,
   pieceOptions,
   initial,
+  initialKey,
 }: {
   readonly mode: "create" | "edit";
   readonly open: boolean;
@@ -81,12 +96,19 @@ export function SessionFormDrawer({
   readonly personOptions: readonly PersonOption[];
   readonly pieceOptions: readonly PieceOption[];
   readonly initial?: SessionInitial;
+  /**
+   * Cambiar este valor entre aperturas fuerza remount del body — usar
+   * cuando el mismo drawer se reabre con un preset distinto (ej: click en
+   * otra piece "Programar grabación").
+   */
+  readonly initialKey?: string;
 }) {
   if (!open) return null;
   const title = mode === "create" ? "Nueva grabación" : "Editar grabación";
   return (
     <Drawer open={open} onClose={onClose} title={title} width={640}>
       <SessionFormBody
+        key={initialKey ?? initial?.id ?? "create"}
         mode={mode}
         onClose={onClose}
         ownerOptions={ownerOptions}
@@ -99,7 +121,7 @@ export function SessionFormDrawer({
 }
 
 interface AssigneeRow {
-  readonly key: string; // clave estable para React
+  readonly key: string;
   readonly personId: string;
   readonly role: RecordingRole;
 }
@@ -119,11 +141,11 @@ function SessionFormBody({
   readonly pieceOptions: readonly PieceOption[];
   readonly initial?: SessionInitial;
 }) {
-  const isEdit = mode === "edit" && initial != null;
+  const isEdit = mode === "edit" && initial?.id != null;
 
   const updateBound = useMemo(() => {
     if (!isEdit) return null;
-    const id = initial!.id;
+    const id = initial!.id!;
     return async (prev: UpdateSessionState, fd: FormData) =>
       updateSession(id, prev, fd);
   }, [isEdit, initial]);
@@ -151,8 +173,8 @@ function SessionFormBody({
 
   const [ownerId, setOwnerId] = useState(initial?.contentOwnerId ?? "");
   const [assignees, setAssignees] = useState<AssigneeRow[]>(() => {
-    if (!initial) return [];
-    return initial.assignees.map((a, i) => ({
+    const src = initial?.assignees ?? [];
+    return src.map((a, i) => ({
       key: `${a.personId}-${a.role}-${i}`,
       personId: a.personId,
       role: a.role,
@@ -174,13 +196,12 @@ function SessionFormBody({
       (p) =>
         p.contentOwnerId === ownerId &&
         (p.recordingSessionId == null ||
-          (initial != null && p.recordingSessionId === initial.id)),
+          (initial?.id != null && p.recordingSessionId === initial.id)),
     );
   }, [ownerId, pieceOptions, initial]);
 
   function handleOwnerChange(nextOwner: string) {
     setOwnerId(nextOwner);
-    // Resetear pieces si el owner cambia — semánticamente son de otro dueño.
     if (nextOwner !== ownerId) setSelectedPieceIds(new Set());
   }
 
@@ -211,14 +232,14 @@ function SessionFormBody({
   }
 
   function handleDelete() {
-    if (!isEdit || !initial) return;
+    if (!isEdit || !initial?.id) return;
     const ok = window.confirm(
       "¿Eliminar la sesión definitivamente? Las pieces asociadas quedan desatadas (no se borran) y conservan el stage al que hayan llegado.",
     );
     if (!ok) return;
     setDeleteError(null);
     startDeleteTransition(async () => {
-      const result = await deleteSession(initial.id);
+      const result = await deleteSession(initial.id!);
       if ("error" in result) {
         setDeleteError(result.error);
         return;
@@ -309,10 +330,7 @@ function SessionFormBody({
             marginBottom: 6,
           }}
         >
-          <span
-            className="kg-t7"
-            style={{ color: "var(--kg-text-3)" }}
-          >
+          <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
             Personas asignadas
           </span>
           <button
@@ -325,19 +343,7 @@ function SessionFormBody({
           </button>
         </div>
         {assignees.length === 0 ? (
-          <div
-            className="kg-t7"
-            style={{
-              padding: "10px 14px",
-              borderRadius: "var(--kg-r-8)",
-              background: "var(--kg-surface-2-solid)",
-              border: "1px dashed var(--kg-border-subtle)",
-              color: "var(--kg-text-3)",
-              textAlign: "center",
-            }}
-          >
-            Sin personas asignadas. Agregá filmaker y experto al menos.
-          </div>
+          <EmptyHint text="Sin personas asignadas. Agregá filmaker y experto al menos." />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {assignees.map((a) => (
@@ -406,41 +412,14 @@ function SessionFormBody({
       <div>
         <div
           className="kg-t7"
-          style={{
-            color: "var(--kg-text-3)",
-            marginBottom: 6,
-          }}
+          style={{ color: "var(--kg-text-3)", marginBottom: 6 }}
         >
           Content pieces asociadas
         </div>
         {!ownerId ? (
-          <div
-            className="kg-t7"
-            style={{
-              padding: "10px 14px",
-              borderRadius: "var(--kg-r-8)",
-              background: "var(--kg-surface-2-solid)",
-              border: "1px dashed var(--kg-border-subtle)",
-              color: "var(--kg-text-3)",
-              textAlign: "center",
-            }}
-          >
-            Elegí un dueño arriba para ver sus pieces disponibles.
-          </div>
+          <EmptyHint text="Elegí un dueño arriba para ver sus pieces disponibles." />
         ) : availablePieces.length === 0 ? (
-          <div
-            className="kg-t7"
-            style={{
-              padding: "10px 14px",
-              borderRadius: "var(--kg-r-8)",
-              background: "var(--kg-surface-2-solid)",
-              border: "1px dashed var(--kg-border-subtle)",
-              color: "var(--kg-text-3)",
-              textAlign: "center",
-            }}
-          >
-            Este dueño no tiene pieces libres. Creá algunas en Planificación.
-          </div>
+          <EmptyHint text="Este dueño no tiene pieces libres. Creá algunas en Planificación." />
         ) : (
           <div
             style={{
@@ -487,7 +466,6 @@ function SessionFormBody({
             })}
           </div>
         )}
-        {/* Hidden inputs — enviamos los pieceIds seleccionados. */}
         {Array.from(selectedPieceIds).map((id) => (
           <input key={id} type="hidden" name="piece_ids" value={id} />
         ))}
@@ -504,35 +482,8 @@ function SessionFormBody({
         />
       </Field>
 
-      {state && "error" in state && (
-        <div
-          style={{
-            padding: "10px 14px",
-            borderRadius: "var(--kg-r-8)",
-            background: "rgba(239,68,68,0.10)",
-            border: "1px solid #EF4444",
-            color: "#EF4444",
-            fontSize: 12,
-          }}
-        >
-          {state.error}
-        </div>
-      )}
-
-      {deleteError && (
-        <div
-          style={{
-            padding: "10px 14px",
-            borderRadius: "var(--kg-r-8)",
-            background: "rgba(239,68,68,0.10)",
-            border: "1px solid #EF4444",
-            color: "#EF4444",
-            fontSize: 12,
-          }}
-        >
-          {deleteError}
-        </div>
-      )}
+      {state && "error" in state && <ErrorBanner message={state.error} />}
+      {deleteError && <ErrorBanner message={deleteError} />}
 
       <div
         style={{
@@ -587,6 +538,24 @@ function SessionFormBody({
   );
 }
 
+function EmptyHint({ text }: { readonly text: string }) {
+  return (
+    <div
+      className="kg-t7"
+      style={{
+        padding: "10px 14px",
+        borderRadius: "var(--kg-r-8)",
+        background: "var(--kg-surface-2-solid)",
+        border: "1px dashed var(--kg-border-subtle)",
+        color: "var(--kg-text-3)",
+        textAlign: "center",
+      }}
+    >
+      {text}
+    </div>
+  );
+}
+
 function toDatetimeLocal(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -594,88 +563,3 @@ function toDatetimeLocal(iso: string | null | undefined): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
-
-function Field({
-  label,
-  htmlFor,
-  required,
-  children,
-}: {
-  readonly label: string;
-  readonly htmlFor: string;
-  readonly required?: boolean;
-  readonly children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label
-        htmlFor={htmlFor}
-        className="kg-t7"
-        style={{ display: "block", color: "var(--kg-text-3)", marginBottom: 6 }}
-      >
-        {label}
-        {required && (
-          <span aria-hidden="true" style={{ color: "#EF4444", marginLeft: 4 }}>
-            *
-          </span>
-        )}
-      </label>
-      {children}
-    </div>
-  );
-}
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "9px 12px",
-  borderRadius: "var(--kg-r-8)",
-  background: "var(--kg-surface-2-solid)",
-  border: "1px solid var(--kg-border-subtle)",
-  color: "var(--kg-text-1)",
-  fontSize: 13,
-  colorScheme: "dark",
-};
-
-const primaryBtn: React.CSSProperties = {
-  padding: "8px 16px",
-  borderRadius: 999,
-  background: "var(--kg-accent-500)",
-  border: "none",
-  color: "#fff",
-  fontSize: 12,
-  fontWeight: 700,
-  cursor: "pointer",
-};
-
-const secondaryBtn: React.CSSProperties = {
-  padding: "8px 16px",
-  borderRadius: 999,
-  background: "transparent",
-  border: "1px solid var(--kg-border-subtle)",
-  color: "var(--kg-text-2)",
-  fontSize: 12,
-  fontWeight: 700,
-  cursor: "pointer",
-};
-
-const smallBtn: React.CSSProperties = {
-  padding: "6px 10px",
-  borderRadius: 999,
-  background: "transparent",
-  border: "1px solid var(--kg-border-subtle)",
-  color: "var(--kg-text-2)",
-  fontSize: 11,
-  fontWeight: 600,
-  cursor: "pointer",
-};
-
-const dangerBtn: React.CSSProperties = {
-  padding: "8px 14px",
-  borderRadius: 999,
-  background: "transparent",
-  border: "1px solid #EF4444",
-  color: "#EF4444",
-  fontSize: 11,
-  fontWeight: 700,
-  cursor: "pointer",
-};

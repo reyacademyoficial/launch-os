@@ -462,6 +462,3 @@ export async function deleteSession(
   revalidatePath("/marketing/planificacion");
   return { ok: true };
 }
-
-// Re-export para clientes.
-export type { RecordingRole, RecordingSessionStatus };

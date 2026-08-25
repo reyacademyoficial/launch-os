@@ -9,7 +9,6 @@ import {
   isMarketingFormat,
   isMarketingPlatform,
   isMarketingStage,
-  MARKETING_PLATFORMS,
   type MarketingCategory,
   type MarketingFormat,
   type MarketingPlatform,
@@ -336,7 +335,3 @@ export async function deletePiece(
   revalidatePath("/marketing/planificacion");
   return { ok: true };
 }
-
-// Re-exportar la lista de plataformas por si un cliente lo necesita — evita
-// que cada cliente re-importe de types.ts sabiendo que ya vino por acá.
-export { MARKETING_PLATFORMS };

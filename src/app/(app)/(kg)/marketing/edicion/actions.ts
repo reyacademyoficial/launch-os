@@ -232,6 +232,141 @@ export async function updateAsset(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// createProductionBatch — bulk insert de N assets desde una misma sesión.
+//
+// Uso típico: el editor termina el corte de una grabación y registra en un
+// solo submit los "3 reels + 2 nuggets + 1 short" que salieron. Todos
+// comparten owner + session + drive_folder_url, y por default se marcan como
+// editados (edited_at = ahora). Cada fila lleva su nombre exacto (el del
+// archivo en Drive), formato, editor opcional, duración opcional y
+// drive_asset_url opcional (link al archivo puntual).
+//
+// La sesión de origen (`source_recording_session_id`) es obligatoria — este
+// action es específico del flujo post-grabación. Para importar assets
+// huérfanos (video de stock, etc.) usar `createAsset` singular.
+//
+// Trigger 0165: al insert con edited_at seteado, cada asset dispara la
+// transición de su piece origen (si tiene) a `listo_para_subir`. Los assets
+// que no tienen piece (Opción 3A confirmada) simplemente entran al stock.
+//
+// Se hace un solo INSERT con array de payloads para minimizar RTT. Si un row
+// rebota (guard org, formato inválido), postgrest devuelve error y NINGÚN row
+// se inserta — es un all-or-nothing por transacción implícita del REST.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface ProductionBatchRow {
+  readonly name: string;
+  readonly format: MarketingFormat;
+  readonly editorPersonId: string | null;
+  readonly durationSeconds: number | null;
+  readonly driveAssetUrl: string | null;
+}
+
+export interface ProductionBatchInput {
+  readonly sourceRecordingSessionId: string;
+  readonly contentOwnerId: string;
+  readonly driveFolderUrl: string | null;
+  /** Si se omite, cada asset queda con edited_at = ahora. */
+  readonly editedAt: string | null;
+  readonly rows: readonly ProductionBatchRow[];
+}
+
+export type CreateProductionBatchResult =
+  | { ok: true; assetIds: readonly string[] }
+  | { error: string };
+
+export async function createProductionBatch(
+  input: ProductionBatchInput,
+): Promise<CreateProductionBatchResult> {
+  if (!input.sourceRecordingSessionId) {
+    return { error: "Falta la sesión de grabación de origen." };
+  }
+  if (!input.contentOwnerId) {
+    return { error: "Falta el dueño de contenido." };
+  }
+  if (input.rows.length === 0) {
+    return { error: "Agregá al menos un asset a la producción." };
+  }
+
+  // Validación defensiva por fila. La UI ya valida pero un submit manipulado
+  // podría burlarla — reafirmamos.
+  for (let i = 0; i < input.rows.length; i++) {
+    const r = input.rows[i]!;
+    if (!r.name || r.name.trim().length === 0) {
+      return { error: `Fila ${i + 1}: el nombre es obligatorio.` };
+    }
+    if (r.name.length > 200) {
+      return { error: `Fila ${i + 1}: nombre demasiado largo (máx 200).` };
+    }
+    if (!isMarketingFormat(r.format)) {
+      return { error: `Fila ${i + 1}: formato inválido.` };
+    }
+    if (
+      r.durationSeconds != null &&
+      (!Number.isFinite(r.durationSeconds) || r.durationSeconds <= 0)
+    ) {
+      return { error: `Fila ${i + 1}: la duración debe ser un entero positivo.` };
+    }
+  }
+
+  let organizationId: string | null;
+  try {
+    organizationId = await resolveCurrentOrganizationId();
+  } catch (e) {
+    return {
+      error: e instanceof Error ? e.message : "Error resolviendo la organización.",
+    };
+  }
+  if (!organizationId) {
+    return { error: "No pudimos resolver tu organización. Revisá tus permisos." };
+  }
+
+  const supabase = await createSupabaseClient();
+  const editedAt = input.editedAt ?? new Date().toISOString();
+
+  const payload = input.rows.map((r) => ({
+    organization_id: organizationId,
+    content_owner_id: input.contentOwnerId,
+    source_recording_session_id: input.sourceRecordingSessionId,
+    // Opción 3A: no atamos a piece; la trazabilidad la da la session.
+    source_content_piece_id: null,
+    name: r.name.trim(),
+    format: r.format,
+    drive_folder_url: input.driveFolderUrl,
+    drive_asset_url: r.driveAssetUrl,
+    duration_seconds: r.durationSeconds,
+    editor_person_id: r.editorPersonId,
+    edited_at: editedAt,
+    notes: null,
+  })) as never;
+
+  const { data, error } = await supabase
+    .from("content_assets")
+    .insert(payload)
+    .select("id");
+
+  if (error) {
+    if (error.code === "23514") {
+      return {
+        error:
+          "El batch rebotó un guard de coherencia. Verificá que la sesión y el dueño pertenecen a tu organización.",
+      };
+    }
+    if (error.code === "23503") {
+      return { error: "La sesión o el dueño no existen. Refrescá la página." };
+    }
+    return { error: error.message };
+  }
+
+  const rows = (data ?? []) as { id: string }[];
+  revalidatePath("/marketing/edicion");
+  revalidatePath("/marketing/stock");
+  revalidatePath("/marketing/grabacion");
+  revalidatePath("/marketing/planificacion");
+  return { ok: true, assetIds: rows.map((r) => r.id) };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // deleteAsset — hard delete.
 //
 // Sin uploads todavía (0163 pendiente); cuando se agreguen, la FK con

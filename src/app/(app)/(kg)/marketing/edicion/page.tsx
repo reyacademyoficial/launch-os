@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconMkt } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
@@ -17,6 +18,7 @@ import {
   EdicionView,
   type AssetRowData,
 } from "./edicion-view";
+import { NewAssetButton } from "./new-asset-button";
 
 export const metadata: Metadata = { title: "Marketing · Edición" };
 
@@ -55,6 +57,7 @@ interface SessionLite {
   readonly id: string;
   readonly content_owner_id: string;
   readonly scheduled_at: string;
+  readonly status: string;
 }
 
 interface PieceLite {
@@ -114,7 +117,7 @@ export default async function EdicionPage({
         .order("full_name", { ascending: true }),
       supabase
         .from("recording_sessions")
-        .select("id, content_owner_id, scheduled_at")
+        .select("id, content_owner_id, scheduled_at, status")
         .order("scheduled_at", { ascending: false }),
       supabase
         .from("content_pieces")
@@ -160,6 +163,19 @@ export default async function EdicionPage({
       ownersById.get(s.content_owner_id)?.name ?? "(dueño)"
     }`,
   }));
+  // Sesiones elegibles para el batch drawer del "+ Registrar producción".
+  // Sólo las 'realizada' — no tiene sentido cargar producción de una sesión
+  // que todavía no se grabó.
+  const batchSessionOptions = sessions
+    .filter((s) => s.status === "realizada")
+    .map((s) => ({
+      id: s.id,
+      contentOwnerId: s.content_owner_id,
+      ownerName:
+        ownersById.get(s.content_owner_id)?.name ?? "(dueño desconocido)",
+      scheduledAt: s.scheduled_at,
+      status: s.status,
+    }));
   const pieceOptions = pieces.map((p) => ({
     id: p.id,
     contentOwnerId: p.content_owner_id,
@@ -273,8 +289,14 @@ export default async function EdicionPage({
     return qs ? `/marketing/edicion?${qs}` : "/marketing/edicion";
   }
 
+  const activeFilters =
+    (statusFilter !== "all" ? 1 : 0) +
+    (editorFilter != null ? 1 : 0) +
+    (ownerFilter != null ? 1 : 0) +
+    (formatFilter !== "all" ? 1 : 0);
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconMkt size={16} />}
         title="Edición de contenido"
@@ -286,70 +308,82 @@ export default async function EdicionPage({
         ]}
       />
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <KgParamPills
-          ariaLabel="Filtrar por estado"
-          options={[
-            { label: "Todos", href: buildHref({ status: "all" }), active: statusFilter === "all" },
-            { label: "En cola", href: buildHref({ status: "queued" }), active: statusFilter === "queued" },
-            { label: "Editados", href: buildHref({ status: "edited" }), active: statusFilter === "edited" },
-          ]}
-        />
-
-        {editorFilterOptions.length > 0 && (
+      <KgPageFilters activeCount={activeFilters}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <KgParamPills
-            ariaLabel="Filtrar por editor"
+            ariaLabel="Filtrar por estado"
+            options={[
+              { label: "Todos", href: buildHref({ status: "all" }), active: statusFilter === "all" },
+              { label: "En cola", href: buildHref({ status: "queued" }), active: statusFilter === "queued" },
+              { label: "Editados", href: buildHref({ status: "edited" }), active: statusFilter === "edited" },
+            ]}
+          />
+
+          {editorFilterOptions.length > 0 && (
+            <KgParamPills
+              ariaLabel="Filtrar por editor"
+              options={[
+                {
+                  label: "Todos los editores",
+                  href: buildHref({ editor: null }),
+                  active: editorFilter == null,
+                },
+                ...editorFilterOptions.map((p) => ({
+                  label: p.full_name,
+                  href: buildHref({ editor: p.id }),
+                  active: editorFilter === p.id,
+                })),
+              ]}
+            />
+          )}
+
+          {ownerFilterOptions.length > 0 && (
+            <KgParamPills
+              ariaLabel="Filtrar por dueño"
+              options={[
+                {
+                  label: "Todos los dueños",
+                  href: buildHref({ owner: null }),
+                  active: ownerFilter == null,
+                },
+                ...ownerFilterOptions.map((o) => ({
+                  label: o.name,
+                  href: buildHref({ owner: o.id }),
+                  active: ownerFilter === o.id,
+                })),
+              ]}
+            />
+          )}
+
+          <KgParamPills
+            ariaLabel="Filtrar por formato"
             options={[
               {
-                label: "Todos los editores",
-                href: buildHref({ editor: null }),
-                active: editorFilter == null,
+                label: "Todos los formatos",
+                href: buildHref({ format: "all" }),
+                active: formatFilter === "all",
               },
-              ...editorFilterOptions.map((p) => ({
-                label: p.full_name,
-                href: buildHref({ editor: p.id }),
-                active: editorFilter === p.id,
+              ...MARKETING_FORMATS.map((f) => ({
+                label: FORMAT_LABEL[f],
+                href: buildHref({ format: f }),
+                active: formatFilter === f,
               })),
             ]}
           />
-        )}
+        </div>
+      </KgPageFilters>
 
-        {ownerFilterOptions.length > 0 && (
-          <KgParamPills
-            ariaLabel="Filtrar por dueño"
-            options={[
-              {
-                label: "Todos los dueños",
-                href: buildHref({ owner: null }),
-                active: ownerFilter == null,
-              },
-              ...ownerFilterOptions.map((o) => ({
-                label: o.name,
-                href: buildHref({ owner: o.id }),
-                active: ownerFilter === o.id,
-              })),
-            ]}
+      <Panel
+        title="Assets producidos"
+        pad={false}
+        fillHeight
+        actions={
+          <NewAssetButton
+            sessionOptions={batchSessionOptions}
+            personOptions={personOptions}
           />
-        )}
-
-        <KgParamPills
-          ariaLabel="Filtrar por formato"
-          options={[
-            {
-              label: "Todos los formatos",
-              href: buildHref({ format: "all" }),
-              active: formatFilter === "all",
-            },
-            ...MARKETING_FORMATS.map((f) => ({
-              label: FORMAT_LABEL[f],
-              href: buildHref({ format: f }),
-              active: formatFilter === f,
-            })),
-          ]}
-        />
-      </div>
-
-      <Panel title="Assets producidos">
+        }
+      >
         <EdicionView
           rows={filtered}
           ownerOptions={ownerOptions}

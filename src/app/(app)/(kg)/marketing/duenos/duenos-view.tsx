@@ -32,7 +32,6 @@ export function DuenosView({
   readonly rows: readonly OwnerRowData[];
   readonly totalCount: number;
 }) {
-  const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -139,21 +138,11 @@ export function DuenosView({
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="kg-focus"
-          style={primaryBtn}
-        >
-          + Nuevo dueño
-        </button>
-      </div>
-
+    <div className="flex min-h-0 flex-1 flex-col">
       {error && (
         <div
           style={{
+            margin: "12px 20px 0",
             padding: "10px 14px",
             borderRadius: "var(--kg-r-8)",
             background: "rgba(239,68,68,0.10)",
@@ -173,12 +162,7 @@ export function DuenosView({
         totalCount={totalCount}
         emptyTitle="Sin dueños que coincidan con el filtro"
         emptyHint="Cambiá el filtro o creá un dueño nuevo."
-      />
-
-      <OwnerFormDrawer
-        mode="create"
-        open={creating}
-        onClose={() => setCreating(false)}
+        fillHeight
       />
 
       <OwnerFormDrawer
@@ -190,17 +174,6 @@ export function DuenosView({
     </div>
   );
 }
-
-const primaryBtn: React.CSSProperties = {
-  padding: "8px 16px",
-  borderRadius: 999,
-  background: "var(--kg-accent-500)",
-  border: "none",
-  color: "#fff",
-  fontSize: 12,
-  fontWeight: 700,
-  cursor: "pointer",
-};
 
 const rowBtn: React.CSSProperties = {
   padding: "4px 10px",

@@ -13,6 +13,7 @@ import {
 import { createClient } from "@/lib/supabase/server";
 
 import { CadenciasView, type CadenceRowData } from "./cadencias-view";
+import { NewCadenceButton } from "./new-cadence-button";
 
 export const metadata: Metadata = { title: "Marketing · Cadencias" };
 
@@ -97,7 +98,7 @@ export default async function CadenciasPage() {
   const dailyTotal = rows.reduce((sum, r) => sum + r.postsPerDay, 0);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconMkt size={16} />}
         title="Cadencias de publicación"
@@ -109,7 +110,12 @@ export default async function CadenciasPage() {
         ]}
       />
 
-      <Panel title="Regla por dueño × plataforma × formato">
+      <Panel
+        title="Regla por dueño × plataforma × formato"
+        pad={false}
+        fillHeight
+        actions={<NewCadenceButton ownerOptions={ownerOptions} />}
+      >
         <CadenciasView rows={rows} ownerOptions={ownerOptions} />
       </Panel>
     </div>

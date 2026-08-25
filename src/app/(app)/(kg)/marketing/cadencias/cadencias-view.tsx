@@ -40,7 +40,6 @@ export function CadenciasView({
   readonly rows: readonly CadenceRowData[];
   readonly ownerOptions: readonly OwnerOption[];
 }) {
-  const [creating, setCreating] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
 
   function rowKey(r: CadenceRowData): string {
@@ -125,24 +124,7 @@ export function CadenciasView({
   const noOwners = ownerOptions.length === 0;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          disabled={noOwners}
-          className="kg-focus"
-          style={{ ...primaryBtn, opacity: noOwners ? 0.5 : 1 }}
-          title={
-            noOwners
-              ? "Primero creá al menos un dueño en /marketing/duenos"
-              : undefined
-          }
-        >
-          + Nueva cadencia
-        </button>
-      </div>
-
+    <div className="flex min-h-0 flex-1 flex-col">
       <KgDataTable
         columns={columns}
         rows={rows}
@@ -154,13 +136,7 @@ export function CadenciasView({
             ? "Primero creá dueños en la pestaña Dueños."
             : "Definí cuántos posts por día publicás para cada dueño × plataforma × formato. El módulo Stock usa esto para calcular días de cobertura."
         }
-      />
-
-      <CadenceFormDrawer
-        mode="create"
-        open={creating}
-        onClose={() => setCreating(false)}
-        ownerOptions={ownerOptions}
+        fillHeight
       />
 
       <CadenceFormDrawer
@@ -173,17 +149,6 @@ export function CadenciasView({
     </div>
   );
 }
-
-const primaryBtn: React.CSSProperties = {
-  padding: "8px 16px",
-  borderRadius: 999,
-  background: "var(--kg-accent-500)",
-  border: "none",
-  color: "#fff",
-  fontSize: 12,
-  fontWeight: 700,
-  cursor: "pointer",
-};
 
 const rowBtn: React.CSSProperties = {
   padding: "4px 10px",

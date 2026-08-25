@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconMkt } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
@@ -11,6 +12,7 @@ import {
   DisponibilidadView,
   type AvailabilityRowData,
 } from "./disponibilidad-view";
+import { NewAvailabilityButton } from "./new-availability-button";
 
 export const metadata: Metadata = { title: "Marketing · Disponibilidad" };
 
@@ -102,7 +104,7 @@ export default async function DisponibilidadPage({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconMkt size={16} />}
         title="Disponibilidad de editores"
@@ -114,24 +116,31 @@ export default async function DisponibilidadPage({
       />
 
       {personFilterOptions.length > 0 && (
-        <KgParamPills
-          ariaLabel="Filtrar por persona"
-          options={[
-            {
-              label: "Todas las personas",
-              href: buildHref({ person: null }),
-              active: personFilter == null,
-            },
-            ...personFilterOptions.map((p) => ({
-              label: p.full_name,
-              href: buildHref({ person: p.id }),
-              active: personFilter === p.id,
-            })),
-          ]}
-        />
+        <KgPageFilters activeCount={personFilter != null ? 1 : 0}>
+          <KgParamPills
+            ariaLabel="Filtrar por persona"
+            options={[
+              {
+                label: "Todas las personas",
+                href: buildHref({ person: null }),
+                active: personFilter == null,
+              },
+              ...personFilterOptions.map((p) => ({
+                label: p.full_name,
+                href: buildHref({ person: p.id }),
+                active: personFilter === p.id,
+              })),
+            ]}
+          />
+        </KgPageFilters>
       )}
 
-      <Panel title="Bloques de disponibilidad">
+      <Panel
+        title="Bloques de disponibilidad"
+        pad={false}
+        fillHeight
+        actions={<NewAvailabilityButton personOptions={personOptions} />}
+      >
         <DisponibilidadView rows={filtered} personOptions={personOptions} />
       </Panel>
     </div>
