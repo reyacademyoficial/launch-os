@@ -247,14 +247,14 @@ export default async function LaunchKpiPage({
       <CommunityKpiBlock kpi={kpi} />
 
       <section className="space-y-4">
-        <header className="flex items-center justify-between gap-4">
-          <div>
+        <header className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
             <h2 className="text-base font-semibold text-fg">Datos diarios</h2>
             <p className="text-xs text-fg-subtle">
               Leads por canal por día. Alimenta el gráfico de abajo.
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {canEditLaunchValue && mergedDaily.length > 0 && (
               <a
                 href={`/api/proyectos/${projectId}/launches/${launchId}/daily/export?format=csv`}

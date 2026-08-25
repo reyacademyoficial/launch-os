@@ -38,8 +38,8 @@ export function ProjectShell({
         </MobileSidebar>
         <div className="flex min-w-0 flex-1 flex-col">
           <ProjectTopbar projects={projects} theme={theme} />
-          <main className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 md:px-8 md:py-8">
-            {children}
+          <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-6 sm:px-6 md:px-8 md:py-8">
+            <div className="min-w-0">{children}</div>
           </main>
         </div>
       </div>

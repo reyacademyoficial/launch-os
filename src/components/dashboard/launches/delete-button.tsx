@@ -46,7 +46,7 @@ export function DeleteButton({
           role="dialog"
           aria-modal="true"
           aria-labelledby="delete-launch-title"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6"
+          className="fixed inset-0 z-[2100] flex items-center justify-center bg-black/70 p-6"
           onClick={(e) => {
             if (e.target === e.currentTarget && !isPending) close();
           }}

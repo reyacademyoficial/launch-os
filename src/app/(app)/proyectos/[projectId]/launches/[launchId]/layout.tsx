@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { DeleteButton } from "@/components/dashboard/launches/delete-button";
-import { LaunchFormModal } from "@/components/dashboard/launches/launch-form-modal";
+import { LaunchHeaderActions } from "@/components/dashboard/launches/launch-header-actions";
 import { LaunchTabs } from "@/components/dashboard/launches/launch-tabs";
 import { StatusBadge } from "@/components/dashboard/launches/status-badge";
 import { fmtDate, fmtLaunchWindow } from "@/lib/format";
@@ -75,51 +74,70 @@ export default async function LaunchLayout({
   const tabsBase = `/proyectos/${projectId}/launches/${launchId}`;
 
   return (
-    <section className="space-y-6">
-      <div className="text-xs text-fg-subtle">
-        <Link href={`/proyectos/${projectId}/launches`} className="hover:text-fg">
-          ← Volver al listado
-        </Link>
-      </div>
+    <section className="min-w-0 space-y-6">
+      {/*
+        Breadcrumb estilo KG (kg-t7 microlabel). Reemplaza el link "← Volver al
+        listado" en text-xs. El drawer del sidebar ya tiene "← Volver a Kingrow"
+        y el ítem Lanzamientos, así que este breadcrumb queda como shortcut
+        contextual dentro del launch.
+      */}
+      <Link
+        href={`/proyectos/${projectId}/launches`}
+        className="kg-t7 inline-flex items-center gap-1 hover:opacity-80"
+        style={{ color: "var(--kg-text-3)" }}
+      >
+        ← Lanzamientos
+      </Link>
 
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-2">
-          <h1 className="text-2xl font-bold">{launch.name}</h1>
-          <div className="flex flex-wrap items-center gap-3 text-sm text-fg-muted">
+      {/*
+        Header al estilo KG:
+          - Título en kg-t3 (matchea kg-t3 = 22px/800 usado en cards de módulo).
+          - Chips fluidos con `flex-wrap` (fecha, tipo, status, closed, evergreen).
+          - Acciones a la derecha en desktop; en mobile solo "Editar" + kebab
+            con bottom-sheet (LaunchHeaderActions maneja el toggle).
+        El `<header>` es `flex-col` en mobile y `md:flex-row` para que las
+        acciones queden abajo del bloque de título en pantallas chicas — antes
+        el `flex-wrap` las empujaba al final pero pegadas al borde derecho.
+      */}
+      <header className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0 flex-1 space-y-2">
+          <h1
+            className="kg-t3 break-words"
+            style={{ color: "var(--kg-text-1)" }}
+          >
+            {launch.name}
+          </h1>
+          <div
+            className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"
+            style={{ color: "var(--kg-text-2)" }}
+          >
             <span>{fmtLaunchWindow(launch.date_start, launch.date_end)}</span>
             {launch.type && (
               <>
-                <span className="text-fg-subtle">·</span>
+                <span style={{ color: "var(--kg-text-3)" }}>·</span>
                 <span>{launch.type}</span>
               </>
             )}
-            <span className="text-fg-subtle">·</span>
+            <span style={{ color: "var(--kg-text-3)" }}>·</span>
             <StatusBadge status={launch.status} />
             {isClosed && (
-              <>
-                <span className="text-fg-subtle">·</span>
-                <span className="rounded bg-fg-subtle/15 px-2 py-0.5 text-xs font-medium text-fg-muted">
-                  Cerrado {fmtDate(launch.closed_at)}
+              <span className="rounded bg-fg-subtle/15 px-2 py-0.5 text-xs font-medium text-fg-muted">
+                Cerrado {fmtDate(launch.closed_at)}
+              </span>
+            )}
+            {isEvergreen &&
+              (targetLaunch ? (
+                <span className="rounded bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
+                  Evergreen → {targetLaunch.name}
                 </span>
-              </>
-            )}
-            {isEvergreen && (
-              <>
-                <span className="text-fg-subtle">·</span>
-                {targetLaunch ? (
-                  <span className="rounded bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
-                    Evergreen → {targetLaunch.name}
-                  </span>
-                ) : (
-                  <span
-                    title="Configurá el lanzamiento destino para que el reciclado funcione al cerrar."
-                    className="rounded bg-warning/15 px-2 py-0.5 text-xs font-medium text-warning"
-                  >
-                    Evergreen sin destino
-                  </span>
-                )}
-              </>
-            )}
+              ) : (
+                <span
+                  title="Configurá el lanzamiento destino para que el reciclado funcione al cerrar."
+                  className="rounded bg-warning/15 px-2 py-0.5 text-xs font-medium text-warning"
+                >
+                  Evergreen sin destino
+                </span>
+              ))}
           </div>
           {evergreenSources.length > 0 && (
             <p className="pt-1 text-xs text-fg-muted">
@@ -152,68 +170,21 @@ export default async function LaunchLayout({
         </div>
 
         {showAnyAction && (
-          <div className="flex items-center gap-3">
-            {canEditLaunchValue && (
-              <a
-                href={`/api/proyectos/${projectId}/launches/${launchId}/report/executive`}
-                className="inline-flex items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-bg-elevated"
-              >
-                ⬇ PDF ejecutivo
-              </a>
-            )}
-            {canEditProjectValue && (
-              <a
-                href={`/api/proyectos/${projectId}/launches/${launchId}/report/commissions`}
-                className="inline-flex items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-bg-elevated"
-              >
-                ⬇ PDF comisiones
-              </a>
-            )}
-            {canEditLaunchValue && (
-              <LaunchFormModal
-                triggerLabel="Editar"
-                triggerVariant="secondary"
-                title="Editar lanzamiento"
-                submitLabel="Guardar cambios"
-                action={updateAction}
-                initial={launch}
-                recycleTargetOptions={recycleTargetOptions}
-              />
-            )}
-            {canEditLaunchValue && (
-              <form action={duplicateAction}>
-                <button
-                  type="submit"
-                  className="inline-flex items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-bg-elevated"
-                >
-                  Duplicar
-                </button>
-              </form>
-            )}
-            {canEditLaunchValue &&
-              (isClosed ? (
-                <form action={reopenAction}>
-                  <button
-                    type="submit"
-                    className="inline-flex items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-bg-elevated"
-                  >
-                    Reabrir
-                  </button>
-                </form>
-              ) : (
-                <form action={closeAction}>
-                  <button
-                    type="submit"
-                    className="inline-flex items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-bg-elevated"
-                  >
-                    Cerrar lanzamiento
-                  </button>
-                </form>
-              ))}
-            {canEditLaunchValue && (
-              <DeleteButton launchName={launch.name} onConfirm={deleteAction} />
-            )}
-          </div>
+          <LaunchHeaderActions
+            launchName={launch.name}
+            isClosed={isClosed}
+            canEditLaunch={canEditLaunchValue}
+            canEditProject={canEditProjectValue}
+            pdfExecutiveUrl={`/api/proyectos/${projectId}/launches/${launchId}/report/executive`}
+            pdfCommissionsUrl={`/api/proyectos/${projectId}/launches/${launchId}/report/commissions`}
+            updateAction={updateAction}
+            deleteAction={deleteAction}
+            closeAction={closeAction}
+            reopenAction={reopenAction}
+            duplicateAction={duplicateAction}
+            initial={launch}
+            recycleTargetOptions={recycleTargetOptions}
+          />
         )}
       </header>
 

@@ -27,9 +27,14 @@ export function ProjectTopbar({
   return (
     <header className="flex items-center gap-3 border-b border-border bg-bg-elevated px-4 py-3 sm:gap-4 sm:px-8">
       <SidebarToggle />
+      {/*
+        En mobile el link "← Kingrow" vive dentro del drawer del sidebar
+        (ver ProjectSidebar). Acá queda solo en `md+` para no comerle espacio
+        al ProjectSwitcher, que es la acción central de la topbar.
+      */}
       <Link
         href="/"
-        className="flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-xs font-medium text-fg-muted transition-colors hover:border-accent hover:text-fg"
+        className="hidden items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-xs font-medium text-fg-muted transition-colors hover:border-accent hover:text-fg md:flex"
       >
         <IconArrowLeft size={14} />
         <span>Kingrow</span>

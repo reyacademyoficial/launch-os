@@ -1,7 +1,10 @@
+import Link from "next/link";
+
 import type { SessionProfile } from "@/lib/supabase/auth";
 
 import { NavGroup } from "../dashboard/nav-group";
 import { NavLink } from "../dashboard/nav-link";
+import { IconArrowLeft } from "../kg/icons";
 import { KgUserBlock } from "../kg/user-block";
 
 /**
@@ -33,6 +36,21 @@ export function ProjectSidebar({ profile }: { readonly profile: SessionProfile }
             Vista del proyecto
           </div>
         </div>
+      </div>
+
+      {/*
+        "← Kingrow" en el tope del drawer. En desktop el botón vive también en
+        la topbar; en mobile la topbar está apretada, así que este link es la
+        vía principal para salir del proyecto de vuelta a la plataforma.
+      */}
+      <div className="px-4 pt-3">
+        <Link
+          href="/"
+          className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-xs font-medium text-fg-muted transition-colors hover:border-accent hover:text-fg"
+        >
+          <IconArrowLeft size={14} />
+          <span>Volver a Kingrow</span>
+        </Link>
       </div>
 
       <nav className="flex-1 space-y-1 px-4 pb-4 pt-4">
