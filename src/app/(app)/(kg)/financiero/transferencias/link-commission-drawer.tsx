@@ -43,6 +43,7 @@ export interface UnconciledOutMovement {
   readonly occurredAt: string;
   readonly bankName: string;
   readonly description: string;
+  readonly transactionNumber: string | null;
 }
 
 export interface TransferForLinking {
@@ -79,7 +80,13 @@ export function LinkCommissionDrawer({
       const desc = m.description.toLowerCase();
       const bank = m.bankName.toLowerCase();
       const amt = String(m.amount);
-      return desc.includes(q) || bank.includes(q) || amt.includes(q);
+      const tx = (m.transactionNumber ?? "").toLowerCase();
+      return (
+        desc.includes(q) ||
+        bank.includes(q) ||
+        amt.includes(q) ||
+        tx.includes(q)
+      );
     });
   }, [unconciledMovements, query]);
 
@@ -260,7 +267,7 @@ export function LinkCommissionDrawer({
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Buscar por descripción, banco o monto…"
+                placeholder="Buscar por Nº transacción, descripción, banco o monto…"
                 className="kg-focus"
                 style={{
                   width: "100%",
@@ -339,6 +346,17 @@ export function LinkCommissionDrawer({
                         }}
                       >
                         {fmtDate(m.occurredAt)} · {m.bankName}
+                        {m.transactionNumber && (
+                          <>
+                            {" · "}
+                            <span
+                              style={{ color: "var(--kg-text-3)" }}
+                              title="Nº transacción del movimiento"
+                            >
+                              Nº {m.transactionNumber}
+                            </span>
+                          </>
+                        )}
                       </div>
                     </div>
                     <div

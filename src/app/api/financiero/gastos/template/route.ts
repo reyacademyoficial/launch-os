@@ -11,7 +11,11 @@ import {
  * Plantilla xlsx para importar expenses.
  *
  * Obligatorio: Descripción, Bruto, Fecha.
- * Opcional: Categoría, IVA, Moneda, Vencimiento, Notas.
+ * Opcional: Categoría, IVA, Moneda, Vencimiento, Notas, Nº transacción.
+ *
+ * El Nº transacción sirve para pre-matchear el gasto contra un movimiento
+ * bancario que traiga el mismo identificador — el drawer de vincular pago
+ * lo sugiere primero cuando coincide.
  *
  * paid_at + bank_movement_id NO se importan — la conciliación se hace desde
  * la UI vinculando el gasto a un movimiento bancario (mismo criterio que la
@@ -33,6 +37,7 @@ export async function GET() {
     { header: "Fecha", key: "date", width: 14 },
     { header: "Vencimiento", key: "due", width: 14 },
     { header: "Notas", key: "notes", width: 36 },
+    { header: "Nº transacción", key: "transaction_number", width: 22 },
   ];
   sheet.getRow(1).font = { bold: true };
 
@@ -45,6 +50,7 @@ export async function GET() {
     date: new Date(),
     due: "",
     notes: "Borrá esta fila antes de subir",
+    transaction_number: "TX-EJEMPLO-0001",
   });
   example.font = { italic: true, color: { argb: "FF888888" } };
 

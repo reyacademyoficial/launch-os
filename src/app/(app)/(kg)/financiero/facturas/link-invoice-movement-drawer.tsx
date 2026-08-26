@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 
 import { Drawer } from "@/components/kg/drawer";
 import { EmptyState } from "@/components/kg/empty-state";
@@ -49,6 +49,12 @@ export interface InvoiceForLinking {
   readonly currency: string;
   readonly issueDate: string;
   readonly status: "emitida" | "cobrada" | "vencida" | "anulada";
+  /**
+   * Nº transacción de la factura (0114). Cuando coincide con el de un
+   * movimiento sin conciliar, el drawer lo pre-selecciona y le da prioridad
+   * en el listado.
+   */
+  readonly transactionNumber: string | null;
   readonly linkedMovements: readonly InvoiceLinkedMovement[];
 }
 
@@ -56,6 +62,7 @@ export interface UnconciledMovementForInvoice extends InvoiceMovementCandidate {
   readonly bankName: string;
   readonly projectName: string;
   readonly description: string;
+  readonly transactionNumber: string | null;
 }
 
 export interface LinkInvoiceMovementDrawerProps {
@@ -292,18 +299,31 @@ function PickMovement({
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<LinkInvoiceMovementResult | null>(null);
 
-  const scored = useMemo(
-    () =>
-      scoreInvoiceMatches(
-        {
-          invoiceAmountGross: invoice.amountGross,
-          invoiceDateYmd: invoice.issueDate,
-          invoiceCurrency: invoice.currency,
-        },
-        unconciledMovements,
-      ),
-    [invoice, unconciledMovements],
+  const invoiceTxNormalized = useMemo(
+    () => normalizeTx(invoice.transactionNumber),
+    [invoice.transactionNumber],
   );
+
+  const scored = useMemo(() => {
+    const base = scoreInvoiceMatches(
+      {
+        invoiceAmountGross: invoice.amountGross,
+        invoiceDateYmd: invoice.issueDate,
+        invoiceCurrency: invoice.currency,
+      },
+      unconciledMovements,
+    );
+    if (!invoiceTxNormalized) return base;
+    return [...base].sort((a, b) => {
+      const aMatch =
+        normalizeTx(a.movement.transactionNumber) === invoiceTxNormalized;
+      const bMatch =
+        normalizeTx(b.movement.transactionNumber) === invoiceTxNormalized;
+      if (aMatch && !bMatch) return -1;
+      if (bMatch && !aMatch) return 1;
+      return 0;
+    });
+  }, [invoice, unconciledMovements, invoiceTxNormalized]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -313,14 +333,28 @@ function PickMovement({
       const bank = s.movement.bankName.toLowerCase();
       const project = s.movement.projectName.toLowerCase();
       const amount = String(s.movement.amount);
+      const tx = (s.movement.transactionNumber ?? "").toLowerCase();
       return (
         desc.includes(q) ||
         bank.includes(q) ||
         project.includes(q) ||
-        amount.includes(q)
+        amount.includes(q) ||
+        tx.includes(q)
       );
     });
   }, [scored, query]);
+
+  // Auto-select del movimiento con mismo Nº transacción — solo al abrir.
+  const [autoAppliedFor, setAutoAppliedFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (!invoiceTxNormalized) return;
+    if (autoAppliedFor === invoice.id) return;
+    const match = unconciledMovements.find(
+      (m) => normalizeTx(m.transactionNumber) === invoiceTxNormalized,
+    );
+    if (match) setSelectedId(match.id);
+    setAutoAppliedFor(invoice.id);
+  }, [invoice.id, invoiceTxNormalized, unconciledMovements, autoAppliedFor]);
 
   const selected = filtered.find((s) => s.movement.id === selectedId) ?? null;
   const currencyMismatch = selected?.currencyMatches === false;
@@ -380,7 +414,7 @@ function PickMovement({
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Buscar por descripción, banco, proyecto o monto…"
+          placeholder="Buscar por Nº transacción, descripción, banco, proyecto o monto…"
           className="kg-focus"
           style={{
             width: "100%",
@@ -428,6 +462,11 @@ function PickMovement({
               scored={s}
               selected={s.movement.id === selectedId}
               onSelect={() => setSelectedId(s.movement.id)}
+              txMatches={
+                invoiceTxNormalized != null &&
+                normalizeTx(s.movement.transactionNumber) ===
+                  invoiceTxNormalized
+              }
             />
           ))
         )}
@@ -548,12 +587,14 @@ function MovementRow({
   scored,
   selected,
   onSelect,
+  txMatches,
 }: {
   readonly scored: ReturnType<
     typeof scoreInvoiceMatches<UnconciledMovementForInvoice>
   >[number];
   readonly selected: boolean;
   readonly onSelect: () => void;
+  readonly txMatches: boolean;
 }) {
   const m = scored.movement;
   const isOut = m.kind === "out";
@@ -606,6 +647,25 @@ function MovementRow({
           style={{ color: "var(--kg-text-3)", marginTop: 2 }}
         >
           {fmtDate(m.occurredAt)} · {m.projectName} · {m.bankName}
+          {m.transactionNumber && (
+            <>
+              {" · "}
+              <span
+                style={{
+                  color: txMatches ? "#00D084" : "var(--kg-text-3)",
+                  fontWeight: txMatches ? 700 : 500,
+                }}
+                title={
+                  txMatches
+                    ? "Nº transacción coincide con el de la factura"
+                    : "Nº transacción del movimiento"
+                }
+              >
+                Nº {m.transactionNumber}
+                {txMatches ? " ✓" : ""}
+              </span>
+            </>
+          )}
           {isOut && (
             <>
               {" "}
@@ -639,6 +699,17 @@ function MovementRow({
       </div>
     </button>
   );
+}
+
+/**
+ * Normaliza un Nº transacción para comparar: trim + uppercase. null/"" → null.
+ * Mismo helper que en gastos/nomina/transferencias — mantener DRY exige un
+ * lib helper compartido; por ahora está duplicado en los 4 drawers.
+ */
+function normalizeTx(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const t = s.trim().toUpperCase();
+  return t.length > 0 ? t : null;
 }
 
 // ─── Sub-componentes visuales ────────────────────────────────────────────

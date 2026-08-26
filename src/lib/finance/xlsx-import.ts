@@ -32,6 +32,7 @@ export interface MovementImportRow {
   readonly amount: number;
   readonly occurred_at: string;
   readonly description: string | null;
+  readonly transaction_number: string | null;
 }
 
 export interface ParseError {
@@ -55,7 +56,12 @@ export interface ParseResult<T> {
  * su header exacto está primero en cada lista.
  */
 const MOVEMENT_ALIASES: Record<
-  "banco" | "tipo" | "monto" | "fecha" | "descripcion",
+  | "banco"
+  | "tipo"
+  | "monto"
+  | "fecha"
+  | "descripcion"
+  | "numeroTransaccion",
   ReadonlyArray<string>
 > = {
   banco: ["banco", "banco nombre", "nombre del banco", "cuenta", "cuenta bancaria"],
@@ -69,6 +75,23 @@ const MOVEMENT_ALIASES: Record<
     "date",
   ],
   descripcion: ["descripcion", "detalle", "concepto", "description", "notas"],
+  // Nº transacción: opcional. Se usa después para auto-matchear el movimiento
+  // con el gasto/factura que comparte el mismo número al conciliar.
+  numeroTransaccion: [
+    "numero transaccion",
+    "numero de transaccion",
+    "nº transaccion",
+    "n transaccion",
+    "n° transaccion",
+    "nro transaccion",
+    "nro de transaccion",
+    "transaccion",
+    "id transaccion",
+    "referencia",
+    "transaction number",
+    "transaction id",
+    "reference",
+  ],
 };
 
 const MOVEMENT_REQUIRED: ReadonlyArray<
@@ -83,7 +106,8 @@ const EXPENSE_ALIASES: Record<
   | "moneda"
   | "fecha"
   | "vencimiento"
-  | "notas",
+  | "notas"
+  | "numeroTransaccion",
   ReadonlyArray<string>
 > = {
   descripcion: ["descripcion", "detalle", "concepto", "description"],
@@ -94,6 +118,21 @@ const EXPENSE_ALIASES: Record<
   fecha: ["fecha", "fecha gasto", "fecha del gasto", "date"],
   vencimiento: ["vencimiento", "vence", "due", "due date"],
   notas: ["notas", "observaciones", "notes"],
+  numeroTransaccion: [
+    "numero transaccion",
+    "numero de transaccion",
+    "nº transaccion",
+    "n transaccion",
+    "n° transaccion",
+    "nro transaccion",
+    "nro de transaccion",
+    "transaccion",
+    "id transaccion",
+    "referencia",
+    "transaction number",
+    "transaction id",
+    "reference",
+  ],
 };
 
 const EXPENSE_REQUIRED: ReadonlyArray<
@@ -152,6 +191,7 @@ export async function parseMovementsWorkbook(
   let colMonto: string | null = null;
   let colFecha: string | null = null;
   let colDescripcion: string | null = null;
+  let colTxNumber: string | null = null;
 
   const bankNamesVisible = Array.from(banksByName.keys());
 
@@ -164,6 +204,7 @@ export async function parseMovementsWorkbook(
       colMonto = map.monto;
       colFecha = map.fecha;
       colDescripcion = map.descripcion;
+      colTxNumber = map.numeroTransaccion;
       const missing: string[] = [];
       for (const req of MOVEMENT_REQUIRED) {
         if (!map[req]) missing.push(capitalize(req));
@@ -235,12 +276,14 @@ export async function parseMovementsWorkbook(
       }
 
       const description = colDescripcion ? str(record[colDescripcion]) : "";
+      const txNumber = colTxNumber ? str(record[colTxNumber]) : "";
       rows.push({
         bank_id: bankId as string,
         kind: kind as "in" | "out",
         amount: amount as number,
         occurred_at: occurredAt as string,
         description: description || null,
+        transaction_number: txNumber || null,
       });
     },
   );
@@ -267,6 +310,7 @@ export interface ExpenseImportRow {
   readonly expense_date: string;
   readonly due_date: string | null;
   readonly notes: string | null;
+  readonly transaction_number: string | null;
 }
 
 export async function parseExpensesWorkbook(
@@ -285,6 +329,7 @@ export async function parseExpensesWorkbook(
   let colFecha: string | null = null;
   let colVencimiento: string | null = null;
   let colNotas: string | null = null;
+  let colTxNumber: string | null = null;
 
   await readSheet(
     buffer,
@@ -298,6 +343,7 @@ export async function parseExpensesWorkbook(
       colFecha = map.fecha;
       colVencimiento = map.vencimiento;
       colNotas = map.notas;
+      colTxNumber = map.numeroTransaccion;
       const missing: string[] = [];
       for (const req of EXPENSE_REQUIRED) {
         if (!map[req]) missing.push(capitalize(req));
@@ -377,6 +423,7 @@ export async function parseExpensesWorkbook(
       const currency = currencyRaw || "ARS";
 
       const notes = colNotas ? str(record[colNotas]) : "";
+      const txNumber = colTxNumber ? str(record[colTxNumber]) : "";
 
       rows.push({
         description,
@@ -387,6 +434,7 @@ export async function parseExpensesWorkbook(
         expense_date: expenseDate as string,
         due_date: dueDate,
         notes: notes || null,
+        transaction_number: txNumber || null,
       });
     },
   );

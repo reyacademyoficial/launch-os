@@ -284,7 +284,9 @@ export default async function TransferenciasPage({
     payFkRes, ctFkRes] = await Promise.all([
     supabase
       .from("bank_movements")
-      .select("id, bank_id, amount, occurred_at, description")
+      .select(
+        "id, bank_id, amount, occurred_at, description, transaction_number",
+      )
       .eq("kind", "out")
       .gte("occurred_at", twelveMonthsAgo)
       .order("occurred_at", { ascending: false }),
@@ -307,6 +309,7 @@ export default async function TransferenciasPage({
     readonly amount: number;
     readonly occurred_at: string;
     readonly description: string | null;
+    readonly transaction_number: string | null;
   }
   const outMovs = (outMovsRes.data ?? []) as unknown as OutMovRow[];
   const linkedForFilter = new Set<string>();
@@ -328,6 +331,7 @@ export default async function TransferenciasPage({
       occurredAt: m.occurred_at,
       bankName: bankNameById.get(m.bank_id) ?? "—",
       description: m.description ?? "",
+      transactionNumber: m.transaction_number,
     }));
 
   const pendingCount = pendingSettlements.length;

@@ -42,7 +42,7 @@ export function ImportExpensesButton() {
         onClose={() => setOpen(false)}
         title="Importar gastos"
         templateHref="/api/financiero/gastos/template"
-        templateDescription="Descargá la plantilla, completá una fila por gasto y volvé a subirla. Obligatorias: Descripción, Bruto y Fecha. Los gastos entran como impagos — para conciliarlos con un movimiento bancario usá el botón 'Vincular pago' en cada fila."
+        templateDescription="Descargá la plantilla, completá una fila por gasto y volvé a subirla. Obligatorias: Descripción, Bruto y Fecha. Los gastos entran como impagos — para conciliarlos con un movimiento bancario usá el botón 'Vincular pago' en cada fila. Si cargás el Nº transacción y coincide con el del movimiento bancario, el drawer lo pre-selecciona automáticamente."
         onPreview={(fd) => previewExpensesImport(null, fd)}
         onConfirm={(fd) => confirmExpensesImport(null, fd)}
       />

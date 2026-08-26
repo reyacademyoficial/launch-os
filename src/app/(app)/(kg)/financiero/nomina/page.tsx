@@ -69,6 +69,7 @@ interface BankMovementDbRow {
   readonly amount: number;
   readonly occurred_at: string;
   readonly description: string | null;
+  readonly transaction_number: string | null;
 }
 
 interface BankRow {
@@ -141,7 +142,9 @@ export default async function NominaPage({
     await Promise.all([
       supabase
         .from("bank_movements")
-        .select("id, bank_id, kind, amount, occurred_at, description")
+        .select(
+          "id, bank_id, kind, amount, occurred_at, description, transaction_number",
+        )
         .gte("occurred_at", twelveMonthsAgo)
         .order("occurred_at", { ascending: false }),
       supabase
@@ -188,6 +191,7 @@ export default async function NominaPage({
     kind: m.kind,
     bankName: bankNameById.get(m.bank_id) ?? "—",
     description: m.description ?? "",
+    transactionNumber: m.transaction_number,
   }));
 
   // ─── Movimientos ya vinculados por bridge, agrupados por payroll_id ──

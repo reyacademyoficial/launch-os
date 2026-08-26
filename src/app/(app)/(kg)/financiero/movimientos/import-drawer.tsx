@@ -53,7 +53,7 @@ export function ImportMovementsButton({
         onClose={() => setOpen(false)}
         title="Importar movimientos"
         templateHref="/api/financiero/movimientos/template"
-        templateDescription="Descargá la plantilla, completá una fila por movimiento y volvé a subirla. Las columnas obligatorias son Banco, Tipo (Entrada/Salida), Monto y Fecha. El nombre del banco tiene que coincidir con uno existente."
+        templateDescription="Descargá la plantilla, completá una fila por movimiento y volvé a subirla. Las columnas obligatorias son Banco, Tipo (Entrada/Salida), Monto y Fecha. El nombre del banco tiene que coincidir con uno existente. Si cargás el Nº transacción del movimiento, después el drawer de conciliación va a auto-sugerir el gasto o factura que traiga ese mismo número."
         onPreview={(fd) => previewMovementsImport(null, fd)}
         onConfirm={(fd) => confirmMovementsImport(null, fd)}
       />

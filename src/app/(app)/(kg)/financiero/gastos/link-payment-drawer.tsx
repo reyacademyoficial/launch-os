@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 
 import { Drawer } from "@/components/kg/drawer";
 import { EmptyState } from "@/components/kg/empty-state";
@@ -46,6 +46,11 @@ export interface ExpenseForLinking {
   readonly expenseDate: string;
   readonly paidAt: string | null;
   readonly bankMovementId: string | null;
+  /**
+   * Nº transacción del gasto (0113). Cuando coincide con el de un movimiento,
+   * el drawer lo pre-selecciona y le suma peso en el orden del listado.
+   */
+  readonly transactionNumber: string | null;
   /** Movimientos ya linkeados vía bridge (paso 6). */
   readonly linkedMovements?: readonly ExpenseLinkedMovement[];
 }
@@ -54,6 +59,7 @@ export interface UnconciledMovement extends MovementCandidate {
   readonly bankName: string;
   readonly projectName: string;
   readonly description: string;
+  readonly transactionNumber: string | null;
 }
 
 export interface LinkPaymentDrawerProps {
@@ -260,23 +266,42 @@ function PickMovement({
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<LinkPaymentResult | null>(null);
 
-  // Score ORDENA, no filtra. Feedback 6c-write.A.
-  const scored = useMemo(
-    () =>
-      scoreExpenseMatches(
-        {
-          expenseAmountGross: expense.amountGross,
-          expenseDateYmd: expense.expenseDate,
-          expenseCurrency: expense.currency,
-        },
-        unconciledMovements,
-      ),
-    [expense, unconciledMovements],
+  // Nº transacción del gasto normalizado (case-insensitive, trim). Cuando
+  // aparece, prioriza el movimiento con el mismo Nº al tope del listado y
+  // permite auto-seleccionarlo abajo con un useEffect.
+  const expenseTxNormalized = useMemo(
+    () => normalizeTx(expense.transactionNumber),
+    [expense.transactionNumber],
   );
 
-  // Buscador aplicado sobre el listado ORDENADO. Filtra por descripción o
-  // monto (parcial). Es el mecanismo para cuando la coincidencia por scoring
-  // no alcanza — ej. el humano se acuerda de la descripción exacta.
+  // Score ORDENA, no filtra. Feedback 6c-write.A. Después del scoring puro,
+  // reordenamos poniendo primero los que matchean por Nº transacción — es la
+  // señal más fuerte cuando existe.
+  const scored = useMemo(() => {
+    const base = scoreExpenseMatches(
+      {
+        expenseAmountGross: expense.amountGross,
+        expenseDateYmd: expense.expenseDate,
+        expenseCurrency: expense.currency,
+      },
+      unconciledMovements,
+    );
+    if (!expenseTxNormalized) return base;
+    return [...base].sort((a, b) => {
+      const aMatch =
+        normalizeTx(a.movement.transactionNumber) === expenseTxNormalized;
+      const bMatch =
+        normalizeTx(b.movement.transactionNumber) === expenseTxNormalized;
+      if (aMatch && !bMatch) return -1;
+      if (bMatch && !aMatch) return 1;
+      return 0;
+    });
+  }, [expense, unconciledMovements, expenseTxNormalized]);
+
+  // Buscador aplicado sobre el listado ORDENADO. Filtra por descripción,
+  // banco, proyecto, monto o Nº transacción (parcial). Es el mecanismo para
+  // cuando el scoring no alcanza — ej. el humano se acuerda del Nº que dio
+  // el banco pero el monto viene con recargo.
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return scored;
@@ -285,14 +310,31 @@ function PickMovement({
       const bank = s.movement.bankName.toLowerCase();
       const project = s.movement.projectName.toLowerCase();
       const amount = String(s.movement.amount);
+      const tx = (s.movement.transactionNumber ?? "").toLowerCase();
       return (
         desc.includes(q) ||
         bank.includes(q) ||
         project.includes(q) ||
-        amount.includes(q)
+        amount.includes(q) ||
+        tx.includes(q)
       );
     });
   }, [scored, query]);
+
+  // Auto-select del movimiento cuyo Nº transacción coincide con el del
+  // gasto — solo al abrir el drawer (mientras no haya selección manual).
+  // Si el humano lo deselecciona o elige otro, respetamos su elección y
+  // no re-imponemos el auto-select en re-renders.
+  const [autoAppliedFor, setAutoAppliedFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (!expenseTxNormalized) return;
+    if (autoAppliedFor === expense.id) return;
+    const match = unconciledMovements.find(
+      (m) => normalizeTx(m.transactionNumber) === expenseTxNormalized,
+    );
+    if (match) setSelectedId(match.id);
+    setAutoAppliedFor(expense.id);
+  }, [expense.id, expenseTxNormalized, unconciledMovements, autoAppliedFor]);
 
   const selected = filtered.find((s) => s.movement.id === selectedId) ?? null;
   const currencyMismatch = selected?.currencyMatches === false;
@@ -353,7 +395,7 @@ function PickMovement({
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Buscar por descripción, banco, proyecto o monto…"
+          placeholder="Buscar por Nº transacción, descripción, banco, proyecto o monto…"
           className="kg-focus"
           style={{
             width: "100%",
@@ -401,6 +443,11 @@ function PickMovement({
               scored={s}
               selected={s.movement.id === selectedId}
               onSelect={() => setSelectedId(s.movement.id)}
+              txMatches={
+                expenseTxNormalized != null &&
+                normalizeTx(s.movement.transactionNumber) ===
+                  expenseTxNormalized
+              }
             />
           ))
         )}
@@ -512,10 +559,12 @@ function MovementRow({
   scored,
   selected,
   onSelect,
+  txMatches,
 }: {
   readonly scored: ReturnType<typeof scoreExpenseMatches<UnconciledMovement>>[number];
   readonly selected: boolean;
   readonly onSelect: () => void;
+  readonly txMatches: boolean;
 }) {
   const m = scored.movement;
   const isIn = m.kind === "in";
@@ -570,6 +619,25 @@ function MovementRow({
           style={{ color: "var(--kg-text-3)", marginTop: 2 }}
         >
           {fmtDate(m.occurredAt)} · {m.projectName} · {m.bankName}
+          {m.transactionNumber && (
+            <>
+              {" · "}
+              <span
+                style={{
+                  color: txMatches ? "#00D084" : "var(--kg-text-3)",
+                  fontWeight: txMatches ? 700 : 500,
+                }}
+                title={
+                  txMatches
+                    ? "Nº transacción coincide con el del gasto"
+                    : "Nº transacción del movimiento"
+                }
+              >
+                Nº {m.transactionNumber}
+                {txMatches ? " ✓" : ""}
+              </span>
+            </>
+          )}
           {isIn && (
             <>
               {" "}
@@ -601,6 +669,17 @@ function MovementRow({
       </div>
     </button>
   );
+}
+
+/**
+ * Normaliza un Nº transacción para comparar: trim + uppercase. null/"" → null.
+ * No borramos guiones ni espacios internos — dos bancos que usan "TX-001" y
+ * "TX 001" son transacciones distintas, no queremos falsos positivos.
+ */
+function normalizeTx(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const t = s.trim().toUpperCase();
+  return t.length > 0 ? t : null;
 }
 
 // ─── Sub-componentes visuales ────────────────────────────────────────────

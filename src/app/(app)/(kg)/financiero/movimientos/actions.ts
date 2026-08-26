@@ -503,6 +503,7 @@ export async function confirmMovementsImport(
         amount: r.amount,
         occurred_at: r.occurred_at,
         description: r.description,
+        transaction_number: r.transaction_number,
         created_by: createdBy,
       })) as never;
 

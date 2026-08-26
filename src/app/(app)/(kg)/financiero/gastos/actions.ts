@@ -631,6 +631,7 @@ export async function confirmExpensesImport(
         paid_at: null,
         bank_movement_id: null,
         notes: r.notes,
+        transaction_number: r.transaction_number,
       })) as never;
 
       const { data, error } = await supabase

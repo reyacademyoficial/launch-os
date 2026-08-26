@@ -373,6 +373,7 @@ export function GastosView({
             expenseDate: linkingRow.expenseDate,
             paidAt: linkingRow.paidAt,
             bankMovementId: linkingRow.bankMovementId,
+            transactionNumber: linkingRow.transactionNumber,
             linkedMovements: linkingRow.linkedMovements,
           }}
           unconciledMovements={unconciledMovements}

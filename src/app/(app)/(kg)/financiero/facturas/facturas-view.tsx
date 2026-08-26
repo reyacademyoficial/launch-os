@@ -289,6 +289,7 @@ export function FacturasView({
             currency: linkingRow.currency,
             issueDate: linkingRow.issueDate,
             status: linkingRow.status,
+            transactionNumber: linkingRow.transactionNumber,
             linkedMovements: linkingRow.linkedMovements,
           }}
           unconciledMovements={unconciledMovements}

@@ -60,6 +60,7 @@ export interface PayrollForLinking {
 export interface UnconciledMovement extends MovementCandidate {
   readonly bankName: string;
   readonly description: string;
+  readonly transactionNumber: string | null;
 }
 
 export interface LinkPaymentDrawerProps {
@@ -286,7 +287,13 @@ function PickMovement({
       const desc = s.movement.description.toLowerCase();
       const bank = s.movement.bankName.toLowerCase();
       const amount = String(s.movement.amount);
-      return desc.includes(q) || bank.includes(q) || amount.includes(q);
+      const tx = (s.movement.transactionNumber ?? "").toLowerCase();
+      return (
+        desc.includes(q) ||
+        bank.includes(q) ||
+        amount.includes(q) ||
+        tx.includes(q)
+      );
     });
   }, [scored, query]);
 
@@ -344,7 +351,7 @@ function PickMovement({
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Buscar por descripción, banco o monto…"
+          placeholder="Buscar por Nº transacción, descripción, banco o monto…"
           className="kg-focus"
           style={{
             width: "100%",
@@ -559,6 +566,17 @@ function MovementRow({
           style={{ color: "var(--kg-text-3)", marginTop: 2 }}
         >
           {fmtDate(m.occurredAt)} · {m.bankName}
+          {m.transactionNumber && (
+            <>
+              {" · "}
+              <span
+                style={{ color: "var(--kg-text-3)", fontWeight: 500 }}
+                title="Nº transacción del movimiento"
+              >
+                Nº {m.transactionNumber}
+              </span>
+            </>
+          )}
           {isIn && (
             <>
               {" "}

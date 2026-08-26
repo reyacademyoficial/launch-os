@@ -12,7 +12,10 @@ import ExcelJS from "exceljs";
  *   - Monto     → número > 0 (siempre positivo, el signo lo da Tipo)
  *   - Fecha     → date (Excel reconoce el date-typed) o texto YYYY-MM-DD
  * Opcional:
- *   - Descripción → texto
+ *   - Descripción     → texto
+ *   - Nº transacción  → texto, el id que da el banco / pasarela. Cuando
+ *                       matchea con el mismo Nº transacción de un gasto o
+ *                       factura, el drawer de conciliación lo sugiere primero.
  *
  * En la hoja "Bancos disponibles" se listan los bancos activos para que el
  * usuario copie el nombre exacto (evita typos que rompen el match).
@@ -35,6 +38,7 @@ export async function GET() {
     { header: "Monto", key: "amount", width: 14, style: { numFmt: "#,##0.00" } },
     { header: "Fecha", key: "date", width: 14 },
     { header: "Descripción", key: "description", width: 36 },
+    { header: "Nº transacción", key: "transaction_number", width: 22 },
   ];
   sheet.getRow(1).font = { bold: true };
 
@@ -45,6 +49,7 @@ export async function GET() {
     amount: 12500,
     date: new Date(),
     description: "Ejemplo — borrá esta fila antes de subir",
+    transaction_number: "TX-EJEMPLO-0001",
   });
   example.font = { italic: true, color: { argb: "FF888888" } };
 

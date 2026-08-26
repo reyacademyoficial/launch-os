@@ -199,7 +199,9 @@ export default async function FacturasPage({
         : Promise.resolve({ data: [] }),
       supabase
         .from("bank_movements")
-        .select("id, bank_id, kind, amount, occurred_at, description")
+        .select(
+          "id, bank_id, kind, amount, occurred_at, description, transaction_number",
+        )
         .gte("occurred_at", twelveMonthsAgo)
         .order("occurred_at", { ascending: false }),
       supabase
@@ -297,6 +299,7 @@ export default async function FacturasPage({
     readonly amount: number;
     readonly occurred_at: string;
     readonly description: string | null;
+    readonly transaction_number: string | null;
   }
   const allMovements =
     (allMovementsRes.data ?? []) as unknown as BankMovementDbRow[];
@@ -414,6 +417,7 @@ export default async function FacturasPage({
           ? bankProjectNameById.get(bank.project_id) ?? "—"
           : "—",
         description: m.description ?? "",
+        transactionNumber: m.transaction_number,
       };
     },
   );
