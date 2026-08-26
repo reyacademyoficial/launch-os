@@ -12,6 +12,10 @@ import {
   type StudentInitial,
 } from "./student-form-drawer";
 
+// Nota: los botones "+ Crear manual" y "⇪ Importar Excel" viven en
+// student-panel-actions.tsx y se pasan como `actions` del Panel desde
+// page.tsx (patrón marketing). Esta view solo maneja edit + búsqueda.
+
 const SEARCH_KEY = "academia:search:estudiantes";
 
 type Status = "active" | "inactive" | "graduated";
@@ -24,6 +28,7 @@ export interface StudentRowData {
   readonly email: string | null;
   readonly phone: string | null;
   readonly status: Status;
+  readonly enrolledAt: string;
   readonly notes: string | null;
   readonly enrollmentsCount: number;
 }
@@ -42,14 +47,13 @@ const STATUS_TONE: Record<Status, string> = {
 
 export function StudentsView({
   rows,
-  totalCount,
+  totalCount: _totalCount,
   projects,
 }: {
   readonly rows: readonly StudentRowData[];
   readonly totalCount: number;
   readonly projects: readonly ProjectOptionForStudent[];
 }) {
-  const [creatingManual, setCreatingManual] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
@@ -105,6 +109,7 @@ export function StudentsView({
         email: editing.email,
         phone: editing.phone,
         status: editing.status,
+        enrolledAt: editing.enrolledAt,
         notes: editing.notes,
       }
     : undefined;
@@ -197,64 +202,42 @@ export function StudentsView({
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <div className="flex min-h-0 flex-1 flex-col">
       <div
         style={{
           display: "flex",
-          justifyContent: "space-between",
           alignItems: "center",
-          gap: 10,
-          flexWrap: "wrap",
+          gap: 8,
+          padding: "12px 20px",
+          borderBottom: "1px solid var(--kg-border-subtle)",
+          flexShrink: 0,
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            flex: 1,
-            minWidth: 220,
-            maxWidth: 420,
-          }}
-        >
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Buscar por nombre, email o teléfono…"
-            aria-label="Buscar estudiantes"
-            style={searchInputStyle}
-          />
-          {query.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setQuery("")}
-              className="kg-focus"
-              style={rowBtn}
-              aria-label="Limpiar búsqueda"
-            >
-              Limpiar
-            </button>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={() => setCreatingManual(true)}
-          className="kg-focus"
-          style={primaryBtn}
-        >
-          + Crear manual
-        </button>
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Buscar por nombre, email o teléfono…"
+          aria-label="Buscar estudiantes"
+          style={{ ...searchInputStyle, maxWidth: 420 }}
+        />
+        {query.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setQuery("")}
+            className="kg-focus"
+            style={rowBtn}
+            aria-label="Limpiar búsqueda"
+          >
+            Limpiar
+          </button>
+        )}
+        {query.trim().length > 0 && (
+          <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+            {filteredRows.length} de {rows.length}
+          </div>
+        )}
       </div>
-
-      {query.trim().length > 0 && (
-        <div
-          className="kg-t7"
-          style={{ color: "var(--kg-text-3)", padding: "0 2px" }}
-        >
-          {filteredRows.length} de {rows.length} coinciden con “{query}”
-        </div>
-      )}
 
       <KgDataTable
         columns={columns}
@@ -263,13 +246,7 @@ export function StudentsView({
         totalCount={filteredRows.length}
         emptyTitle="Sin estudiantes que coincidan"
         emptyHint="Los estudiantes son los alumnos de las empresas propias. Se cargan desde una venta LaunchOS (auto-fill) o manual."
-      />
-
-      <StudentFormDrawer
-        mode="create"
-        open={creatingManual}
-        onClose={() => setCreatingManual(false)}
-        projects={projects}
+        fillHeight
       />
 
       <StudentFormDrawer
@@ -282,17 +259,6 @@ export function StudentsView({
     </div>
   );
 }
-
-const primaryBtn: React.CSSProperties = {
-  padding: "8px 16px",
-  borderRadius: 999,
-  background: "var(--kg-accent-500)",
-  border: "none",
-  color: "#fff",
-  fontSize: 12,
-  fontWeight: 700,
-  cursor: "pointer",
-};
 
 const rowBtn: React.CSSProperties = {
   padding: "4px 10px",

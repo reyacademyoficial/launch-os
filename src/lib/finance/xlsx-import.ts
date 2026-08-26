@@ -419,7 +419,7 @@ export async function parseExpensesWorkbook(
  * es la forma canónica y robusta de obtener el string de display de una celda
  * independientemente del tipo underlying (sharedString, formula, richText).
  */
-async function readSheet(
+export async function readSheet(
   buffer: Buffer,
   onHeaders: (headers: string[]) => void,
   onRow: (record: Record<string, unknown>, rowNumber: number) => void,
@@ -534,7 +534,7 @@ function isEmpty(record: Record<string, unknown>): boolean {
   return true;
 }
 
-function str(v: unknown): string {
+export function str(v: unknown): string {
   if (v === null || v === undefined) return "";
   if (v instanceof Date) return v.toISOString();
   return String(v).trim();

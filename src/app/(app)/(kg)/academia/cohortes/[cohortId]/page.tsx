@@ -37,7 +37,12 @@ import { ExamsPanel, type ExamRowData } from "./exams/exams-panel";
 export const metadata: Metadata = { title: "Generación · Academia" };
 
 type CohortStatus = "planned" | "active" | "finished" | "cancelled";
-type EnrollmentStatus = "active" | "completed" | "dropped" | "suspended";
+type EnrollmentStatus =
+  | "active"
+  | "completed"
+  | "dropped"
+  | "suspended"
+  | "expired";
 
 interface CohortDbRow {
   readonly id: string;
@@ -82,6 +87,7 @@ interface EnrollmentDbRow {
   readonly student_id: string;
   readonly sale_id: string | null;
   readonly enrolled_at: string;
+  readonly access_expires_at: string | null;
   readonly status: EnrollmentStatus;
   readonly progress_percent: number;
   readonly notes: string | null;
@@ -183,7 +189,7 @@ export default async function CohortFichaPage({
     supabase
       .from("enrollments")
       .select(
-        "id, student_id, sale_id, enrolled_at, status, progress_percent, notes",
+        "id, student_id, sale_id, enrolled_at, access_expires_at, status, progress_percent, notes",
       )
       .eq("cohort_id", cohortId)
       .order("enrolled_at", { ascending: false }),
@@ -395,6 +401,7 @@ export default async function CohortFichaPage({
     studentName: studentNameById.get(e.student_id) ?? "—",
     saleId: e.sale_id,
     enrolledAt: e.enrolled_at,
+    accessExpiresAt: e.access_expires_at,
     status: e.status,
     progressPercent: e.progress_percent,
     notes: e.notes,

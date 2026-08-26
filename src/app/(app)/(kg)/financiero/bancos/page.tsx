@@ -451,7 +451,7 @@ export default async function BancosPage({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-5">
+    <div className="flex flex-col gap-5">
       <ContextBar
         icon={<IconFin size={16} />}
         title="Bancos"
@@ -486,7 +486,6 @@ export default async function BancosPage({
       <Panel
         title="Bancos de Kingrow"
         pad={false}
-        fillHeight
         actions={<NewBankButton />}
       >
         <BancosView rows={rows} totalCount={totalCount} />

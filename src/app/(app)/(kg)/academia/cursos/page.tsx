@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconAca } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
@@ -12,6 +13,7 @@ import type {
   ProductOptionForCourse,
 } from "./course-form-drawer";
 import { CoursesView, type CourseRowData } from "./courses-view";
+import { NewCourseButton } from "./new-course-button";
 import type { ParameterRowData } from "./parameters-editor";
 
 export const metadata: Metadata = { title: "Cursos · Academia" };
@@ -209,7 +211,7 @@ export default async function CursosPage({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconAca size={16} />}
         title="Cursos"
@@ -220,16 +222,25 @@ export default async function CursosPage({
         ]}
       />
 
-      <KgParamPills
-        ariaLabel="Filtrar por estado"
-        options={SHOW_OPTIONS.map((o) => ({
-          label: o.label,
-          href: buildHref(o.value),
-          active: show === o.value,
-        }))}
-      />
+      <KgPageFilters activeCount={show !== "active" ? 1 : 0}>
+        <KgParamPills
+          ariaLabel="Filtrar por estado"
+          options={SHOW_OPTIONS.map((o) => ({
+            label: o.label,
+            href: buildHref(o.value),
+            active: show === o.value,
+          }))}
+        />
+      </KgPageFilters>
 
-      <Panel title="Cursos">
+      <Panel
+        title="Cursos"
+        pad={false}
+        fillHeight
+        actions={
+          <NewCourseButton products={products} externalApps={externalApps} />
+        }
+      >
         <CoursesView
           rows={rows}
           totalCount={rows.length}

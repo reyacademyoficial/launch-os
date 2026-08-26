@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconAca } from "@/components/kg/icons";
+import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
@@ -17,6 +18,7 @@ import type {
   SystemOptionForCohort,
 } from "./cohort-form-drawer";
 import { CohortsView, type CohortRowData } from "./cohorts-view";
+import { NewCohortButton } from "./new-cohort-button";
 
 export const metadata: Metadata = { title: "Generaciones · Academia" };
 
@@ -200,7 +202,7 @@ export default async function CohortesPage({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconAca size={16} />}
         title="Generaciones"
@@ -214,14 +216,7 @@ export default async function CohortesPage({
 
       <PersistentFilterSync storageKey="academia:filters:cohortes" />
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          flexWrap: "wrap",
-        }}
-      >
+      <KgPageFilters activeCount={statusFilter !== "activas" ? 1 : 0}>
         <KgParamPills
           ariaLabel="Filtrar por estado"
           options={STATUS_FILTER_OPTIONS.map((o) => ({
@@ -234,9 +229,20 @@ export default async function CohortesPage({
           storageKey="academia:filters:cohortes"
           basePath="/academia/cohortes"
         />
-      </div>
+      </KgPageFilters>
 
-      <Panel title="Generaciones">
+      <Panel
+        title="Generaciones"
+        pad={false}
+        fillHeight
+        actions={
+          <NewCohortButton
+            projects={projectOptions}
+            courses={courseOptions}
+            systems={systemOptions}
+          />
+        }
+      >
         <CohortsView
           rows={rows}
           totalCount={rows.length}

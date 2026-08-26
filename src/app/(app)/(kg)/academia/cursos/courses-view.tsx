@@ -43,7 +43,6 @@ export function CoursesView({
     Record<string, readonly ParameterRowData[]>
   >;
 }) {
-  const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const editing =
@@ -159,18 +158,7 @@ export function CoursesView({
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="kg-focus"
-          style={primaryBtn}
-        >
-          + Nuevo curso
-        </button>
-      </div>
-
+    <div className="flex min-h-0 flex-1 flex-col">
       <KgDataTable
         columns={columns}
         rows={rows}
@@ -178,14 +166,7 @@ export function CoursesView({
         totalCount={totalCount}
         emptyTitle="Sin cursos cargados"
         emptyHint="Un curso es una capa académica sobre un producto existente. Elegí un producto de un proyecto propio para convertirlo en curso."
-      />
-
-      <CourseFormDrawer
-        mode="create"
-        open={creating}
-        onClose={() => setCreating(false)}
-        products={products}
-        externalApps={externalApps}
+        fillHeight
       />
 
       <CourseFormDrawer
@@ -204,17 +185,6 @@ export function CoursesView({
     </div>
   );
 }
-
-const primaryBtn: React.CSSProperties = {
-  padding: "8px 16px",
-  borderRadius: 999,
-  background: "var(--kg-accent-500)",
-  border: "none",
-  color: "#fff",
-  fontSize: 12,
-  fontWeight: 700,
-  cursor: "pointer",
-};
 
 const rowBtn: React.CSSProperties = {
   padding: "4px 10px",

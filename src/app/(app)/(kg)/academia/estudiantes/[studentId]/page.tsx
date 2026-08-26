@@ -80,6 +80,7 @@ interface EnrollmentBrief {
   readonly status: EnrollStatus;
   readonly progress_percent: number;
   readonly access_expires_at: string | null;
+  readonly notes: string | null;
 }
 
 interface CertBriefDbRow {
@@ -167,7 +168,7 @@ export default async function StudentFichaPage({
     supabase
       .from("enrollments")
       .select(
-        "id, cohort_id, sale_id, enrolled_at, status, progress_percent, access_expires_at",
+        "id, cohort_id, sale_id, enrolled_at, status, progress_percent, access_expires_at, notes",
       )
       .eq("student_id", studentId)
       .order("enrolled_at", { ascending: false }),
@@ -205,6 +206,7 @@ export default async function StudentFichaPage({
     email: student.email,
     phone: student.phone,
     status: student.status,
+    enrolledAt: student.enrolled_at,
     notes: student.notes,
   };
 
@@ -478,6 +480,9 @@ export default async function StudentFichaPage({
       enrolledAt: e.enrolled_at,
       accessExpiresAt: e.access_expires_at,
       saleId: e.sale_id,
+      notes: e.notes,
+      studentName: student.name,
+      studentEmail: student.email,
       progressSource,
       modules,
       parameters,
@@ -573,6 +578,7 @@ export default async function StudentFichaPage({
                 studentId={student.id}
                 data={card}
                 canExpire={canExpire}
+                canEdit={canEditParameters}
                 canEditParameters={canEditParameters}
                 canEditModules={canEditModules}
               />
@@ -585,8 +591,8 @@ export default async function StudentFichaPage({
                 fontStyle: "italic",
               }}
             >
-              Editar o quitar inscripciones se hace desde la ficha de cada
-              generación.
+              Para quitar una inscripción (o linkearla a una venta), andá a la
+              ficha de la generación.
             </div>
           </div>
         )}

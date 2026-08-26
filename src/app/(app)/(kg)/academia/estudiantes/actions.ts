@@ -79,8 +79,11 @@ interface StudentPayload {
   readonly email: string | null;
   readonly phone: string | null;
   readonly status: Status;
+  readonly enrolledAt: string;
   readonly notes: string | null;
 }
+
+const YMD_RX = /^\d{4}-\d{2}-\d{2}$/;
 
 function parseStudentFormData(
   formData: FormData,
@@ -103,9 +106,13 @@ function parseStudentFormData(
   }
   const status = statusRaw as Status;
 
+  const enrolledAtRaw = nullIfEmpty(formData.get("enrolled_at"));
+  const enrolledAt = enrolledAtRaw ?? todayYmd();
+  if (!YMD_RX.test(enrolledAt)) return "La fecha de alta no es válida.";
+
   const notes = nullIfEmpty(formData.get("notes"));
 
-  return { projectId, name, email, phone, status, notes };
+  return { projectId, name, email, phone, status, enrolledAt, notes };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -126,7 +133,7 @@ export async function createStudentManual(
     email: parsed.email,
     phone: parsed.phone,
     status: parsed.status,
-    enrolled_at: todayYmd(),
+    enrolled_at: parsed.enrolledAt,
     notes: parsed.notes,
   } as never;
 
@@ -382,6 +389,7 @@ export async function updateStudent(
     email: parsed.email,
     phone: parsed.phone,
     status: parsed.status,
+    enrolled_at: parsed.enrolledAt,
     notes: parsed.notes,
   } as never;
 

@@ -38,7 +38,6 @@ export function CertificadosView({
   readonly students: readonly StudentOptionForCert[];
   readonly courses: readonly CourseOptionForCert[];
 }) {
-  const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const editing = useMemo(
@@ -61,29 +60,7 @@ export function CertificadosView({
     : undefined;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
-          {certificates.length === 0
-            ? "Sin certificados emitidos"
-            : `${certificates.length} certificado${certificates.length === 1 ? "" : "s"}`}
-        </div>
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="kg-focus"
-          style={primaryBtn}
-        >
-          + Emitir certificado
-        </button>
-      </div>
-
+    <div className="flex min-h-0 flex-1 flex-col">
       {certificates.length === 0 ? (
         <EmptyState
           title="Sin certificados emitidos"
@@ -92,9 +69,9 @@ export function CertificadosView({
       ) : (
         <div
           style={{
-            overflowX: "auto",
-            borderRadius: "var(--kg-r-8)",
-            border: "1px solid var(--kg-border-subtle)",
+            overflow: "auto",
+            flex: 1,
+            minHeight: 0,
           }}
         >
           <table
@@ -109,6 +86,9 @@ export function CertificadosView({
                 style={{
                   background: "var(--kg-surface-2-solid)",
                   borderBottom: "1px solid var(--kg-border-subtle)",
+                  position: "sticky",
+                  top: 0,
+                  zIndex: 1,
                 }}
               >
                 <Th>Estudiante</Th>
@@ -192,14 +172,6 @@ export function CertificadosView({
       )}
 
       <CertificateFormDrawer
-        mode="create"
-        open={creating}
-        onClose={() => setCreating(false)}
-        students={students}
-        courses={courses}
-      />
-
-      <CertificateFormDrawer
         mode="edit"
         open={editingId != null}
         onClose={() => setEditingId(null)}
@@ -274,17 +246,6 @@ function formatDate(ymd: string): string {
     return ymd.slice(0, 10);
   }
 }
-
-const primaryBtn: React.CSSProperties = {
-  padding: "6px 14px",
-  borderRadius: 999,
-  background: "var(--kg-accent-500)",
-  border: "none",
-  color: "#fff",
-  fontSize: 11,
-  fontWeight: 700,
-  cursor: "pointer",
-};
 
 const rowBtn: React.CSSProperties = {
   padding: "4px 10px",

@@ -32,6 +32,7 @@ export interface StudentInitial {
   readonly email: string | null;
   readonly phone: string | null;
   readonly status: Status;
+  readonly enrolledAt: string;
   readonly notes: string | null;
 }
 
@@ -197,20 +198,32 @@ function StudentFormBody({
         </Field>
       </div>
 
-      <Field label="Estado" htmlFor="status" required>
-        <select
-          id="status"
-          name="status"
-          defaultValue={initial?.status ?? "active"}
-          style={inputStyle}
-        >
-          {STATUS_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Field label="Estado" htmlFor="status" required>
+          <select
+            id="status"
+            name="status"
+            defaultValue={initial?.status ?? "active"}
+            style={inputStyle}
+          >
+            {STATUS_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Fecha de alta" htmlFor="enrolled_at" required>
+          <input
+            id="enrolled_at"
+            name="enrolled_at"
+            type="date"
+            defaultValue={initial?.enrolledAt ?? todayYmd()}
+            required
+            style={inputStyle}
+          />
+        </Field>
+      </div>
 
       <Field label="Notas" htmlFor="notes">
         <textarea
@@ -293,6 +306,14 @@ function ErrorBanner({ text }: { readonly text: string }) {
       {text}
     </div>
   );
+}
+
+function todayYmd(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function Field({

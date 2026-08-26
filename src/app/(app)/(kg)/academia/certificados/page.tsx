@@ -6,10 +6,7 @@ import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
 import { createClient } from "@/lib/supabase/server";
 
-import {
-  ClearFiltersButton,
-  PersistentFilterSync,
-} from "../_shared/persistent-filters";
+import { PersistentFilterSync } from "../_shared/persistent-filters";
 import type {
   CourseOptionForCert,
   StudentOptionForCert,
@@ -18,6 +15,7 @@ import {
   CertificadosView,
   type CertificateRowData,
 } from "./certificados-view";
+import { NewCertificateButton } from "./new-certificate-button";
 
 export const metadata: Metadata = { title: "Certificados · Academia" };
 
@@ -141,7 +139,7 @@ export default async function CertificadosPage() {
     .sort((a, b) => a.productName.localeCompare(b.productName));
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconAca size={16} />}
         title="Certificados"
@@ -152,14 +150,17 @@ export default async function CertificadosPage() {
       />
       <PersistentFilterSync storageKey="academia:filters:certificados" />
 
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <ClearFiltersButton
-          storageKey="academia:filters:certificados"
-          basePath="/academia/certificados"
-        />
-      </div>
-
-      <Panel title="Certificados emitidos">
+      <Panel
+        title="Certificados emitidos"
+        pad={false}
+        fillHeight
+        actions={
+          <NewCertificateButton
+            students={studentOptions}
+            courses={courseOptions}
+          />
+        }
+      >
         <CertificadosView
           certificates={certificates}
           students={studentOptions}

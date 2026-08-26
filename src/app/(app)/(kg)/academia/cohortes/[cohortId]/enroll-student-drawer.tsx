@@ -17,6 +17,7 @@ const STATUS_OPTIONS = [
   { value: "completed", label: "Completado" },
   { value: "dropped", label: "Abandonó" },
   { value: "suspended", label: "Suspendido" },
+  { value: "expired", label: "Vencido" },
 ] as const;
 
 type Status = (typeof STATUS_OPTIONS)[number]["value"];
@@ -42,6 +43,7 @@ export interface EnrollmentInitial {
   readonly cohortId: string;
   readonly saleId: string | null;
   readonly enrolledAt: string;
+  readonly accessExpiresAt: string | null;
   readonly status: Status;
   readonly progressPercent: number;
   readonly notes: string | null;
@@ -57,6 +59,7 @@ export function EnrollStudentDrawer({
   students,
   sales,
   initial,
+  hideSaleField,
 }: {
   readonly mode: "create" | "edit";
   readonly open: boolean;
@@ -67,6 +70,8 @@ export function EnrollStudentDrawer({
   readonly students: readonly StudentOptionForEnroll[];
   readonly sales: readonly SaleOptionForEnroll[];
   readonly initial?: EnrollmentInitial;
+  /** Si true, oculta el selector de venta y persiste el sale_id actual sin cambios. */
+  readonly hideSaleField?: boolean;
 }) {
   if (!open) return null;
   const title = mode === "create" ? "Inscribir estudiante" : "Editar inscripción";
@@ -85,6 +90,7 @@ export function EnrollStudentDrawer({
         students={students}
         sales={sales}
         initial={initial}
+        hideSaleField={hideSaleField ?? false}
         onClose={onClose}
       />
     </Drawer>
@@ -98,6 +104,7 @@ function EnrollBody({
   students,
   sales,
   initial,
+  hideSaleField,
   onClose,
 }: {
   readonly mode: "create" | "edit";
@@ -106,6 +113,7 @@ function EnrollBody({
   readonly students: readonly StudentOptionForEnroll[];
   readonly sales: readonly SaleOptionForEnroll[];
   readonly initial?: EnrollmentInitial;
+  readonly hideSaleField: boolean;
   readonly onClose: () => void;
 }) {
   const isEdit = mode === "edit" && initial != null;
@@ -195,34 +203,38 @@ function EnrollBody({
         )}
       </Field>
 
-      <Field label="Venta asociada (opcional)" htmlFor="sale_id">
-        <select
-          id="sale_id"
-          name="sale_id"
-          value={saleId}
-          onChange={(e) => setSaleId(e.target.value)}
-          disabled={!cohortHasCourse}
-          style={inputStyle}
-        >
-          <option value="">— Sin venta (carga manual) —</option>
-          {sales.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.leadName} · {formatMoney(s.amount, s.currency)} ·{" "}
-              {formatDate(s.createdAt)}
-            </option>
-          ))}
-        </select>
-        <div
-          className="kg-t7"
-          style={{ color: "var(--kg-text-3)", marginTop: 6 }}
-        >
-          {!cohortHasCourse
-            ? "La generación no tiene curso asociado — no se pueden vincular ventas. Asignale un curso primero."
-            : sales.length === 0
-              ? "No hay ventas del mismo producto que este curso, sin inscripción previa."
-              : "Solo se listan ventas del mismo producto que el curso de esta generación. El vínculo alimenta la trazabilidad LTV / cohort."}
-        </div>
-      </Field>
+      {hideSaleField ? (
+        <input type="hidden" name="sale_id" value={saleId} />
+      ) : (
+        <Field label="Venta asociada (opcional)" htmlFor="sale_id">
+          <select
+            id="sale_id"
+            name="sale_id"
+            value={saleId}
+            onChange={(e) => setSaleId(e.target.value)}
+            disabled={!cohortHasCourse}
+            style={inputStyle}
+          >
+            <option value="">— Sin venta (carga manual) —</option>
+            {sales.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.leadName} · {formatMoney(s.amount, s.currency)} ·{" "}
+                {formatDate(s.createdAt)}
+              </option>
+            ))}
+          </select>
+          <div
+            className="kg-t7"
+            style={{ color: "var(--kg-text-3)", marginTop: 6 }}
+          >
+            {!cohortHasCourse
+              ? "La generación no tiene curso asociado — no se pueden vincular ventas. Asignale un curso primero."
+              : sales.length === 0
+                ? "No hay ventas del mismo producto que este curso, sin inscripción previa."
+                : "Solo se listan ventas del mismo producto que el curso de esta generación. El vínculo alimenta la trazabilidad LTV / cohort."}
+          </div>
+        </Field>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Field label="Fecha inscripción" htmlFor="enrolled_at" required>
@@ -250,6 +262,24 @@ function EnrollBody({
           </select>
         </Field>
       </div>
+
+      <Field label="Vigencia hasta (opcional)" htmlFor="access_expires_at">
+        <input
+          id="access_expires_at"
+          name="access_expires_at"
+          type="date"
+          defaultValue={initial?.accessExpiresAt ?? ""}
+          style={inputStyle}
+        />
+        <div
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)", marginTop: 6, lineHeight: 1.5 }}
+        >
+          Si lo dejás vacío, en create se calcula automáticamente según la venta
+          (pago único → sin vencimiento, cuotas → 1 año) o el override del curso.
+          Si lo seteás, ese valor gana siempre. En edit, vacío = sin vencimiento.
+        </div>
+      </Field>
 
       <Field label="Progreso (%)" htmlFor="progress_percent">
         <input

@@ -8,6 +8,7 @@ import type { ParameterType } from "@/lib/academia/parameters-shared";
 
 import { toggleModuleCompletionAction } from "../module-progress-actions";
 import { setParameterValueAction } from "../parameter-values-actions";
+import { EditEnrollmentButton } from "./edit-enrollment-button";
 import { EnrollmentExpireButton } from "./enrollment-expire-button";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -54,6 +55,9 @@ export interface EnrollmentCardData {
   readonly enrolledAt: string;
   readonly accessExpiresAt: string | null;
   readonly saleId: string | null;
+  readonly notes: string | null;
+  readonly studentName: string;
+  readonly studentEmail: string | null;
   readonly progressSource: "attendance" | "ghl_tags" | "manual";
   readonly modules: readonly EnrollmentCardModule[];
   readonly parameters: readonly EnrollmentCardParameter[];
@@ -105,12 +109,14 @@ export function EnrollmentCard({
   studentId,
   data,
   canExpire,
+  canEdit,
   canEditParameters,
   canEditModules,
 }: {
   readonly studentId: string;
   readonly data: EnrollmentCardData;
   readonly canExpire: boolean;
+  readonly canEdit: boolean;
   readonly canEditParameters: boolean;
   readonly canEditModules: boolean;
 }) {
@@ -243,13 +249,35 @@ export function EnrollmentCard({
             tone={ENROLL_STATUS_TONE[data.status]}
           />
           {badge && <StatusPill text={badge.label} tone={badge.tone} />}
-          {canExpire && data.status === "active" && (
-            <EnrollmentExpireButton
-              enrollmentId={data.enrollmentId}
-              studentId={studentId}
-              cohortLabel={data.cohortName}
-            />
-          )}
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {canEdit && (
+              <EditEnrollmentButton
+                studentId={studentId}
+                initial={{
+                  id: data.enrollmentId,
+                  studentId,
+                  cohortId: data.cohortId,
+                  saleId: data.saleId,
+                  enrolledAt: data.enrolledAt,
+                  accessExpiresAt: data.accessExpiresAt,
+                  status: data.status,
+                  progressPercent: data.progressPercent,
+                  notes: data.notes,
+                }}
+                cohortName={data.cohortName}
+                cohortHasCourse={data.courseId != null}
+                studentName={data.studentName}
+                studentEmail={data.studentEmail}
+              />
+            )}
+            {canExpire && data.status === "active" && (
+              <EnrollmentExpireButton
+                enrollmentId={data.enrollmentId}
+                studentId={studentId}
+                cohortLabel={data.cohortName}
+              />
+            )}
+          </div>
         </div>
       </div>
 

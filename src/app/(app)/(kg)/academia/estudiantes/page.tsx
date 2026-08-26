@@ -12,11 +12,13 @@ import {
   ClearFiltersButton,
   PersistentFilterSync,
 } from "../_shared/persistent-filters";
+import type { ImportProjectOption } from "./import-students-button";
 import {
   PendingBuyersView,
   type CohortOptionForBulk,
   type PendingBuyer,
 } from "./pending-buyers-view";
+import { StudentPanelActions } from "./student-panel-actions";
 import type { ProjectOptionForStudent } from "./student-form-drawer";
 import { StudentsView, type StudentRowData } from "./students-view";
 
@@ -44,6 +46,7 @@ interface StudentDbRow {
   readonly email: string | null;
   readonly phone: string | null;
   readonly status: Status;
+  readonly enrolled_at: string;
   readonly notes: string | null;
 }
 
@@ -92,6 +95,7 @@ interface ExpiringEnrollmentRow {
 
 interface CohortDbRow {
   readonly id: string;
+  readonly project_id: string;
   readonly course_id: string | null;
   readonly name: string;
   readonly status: "planned" | "active" | "finished" | "cancelled";
@@ -117,7 +121,7 @@ export default async function EstudiantesPage({
   ] = await Promise.all([
     supabase
       .from("students")
-      .select("id, project_id, name, email, phone, status, notes")
+      .select("id, project_id, name, email, phone, status, notes, enrolled_at")
       .order("name", { ascending: true }),
     supabase
       .from("projects")
@@ -129,7 +133,7 @@ export default async function EstudiantesPage({
       .eq("active", true),
     supabase.from("products").select("id, name"),
     supabase.from("enrollments").select("student_id"),
-    supabase.from("cohorts").select("id, course_id, name, status"),
+    supabase.from("cohorts").select("id, project_id, course_id, name, status"),
   ]);
 
   const allStudents =
@@ -312,6 +316,7 @@ export default async function EstudiantesPage({
     email: s.email,
     phone: s.phone,
     status: s.status,
+    enrolledAt: s.enrolled_at,
     notes: s.notes,
     enrollmentsCount: enrollmentsByStudent.get(s.id) ?? 0,
   }));
@@ -319,6 +324,12 @@ export default async function EstudiantesPage({
   const projectOptions: ProjectOptionForStudent[] = propiaProjects
     .map((p) => ({ id: p.id, name: p.name }))
     .sort((a, b) => a.name.localeCompare(b.name));
+
+  // Proyectos para el picker del ImportStudentsButton. La resolución de
+  // productos + cohortes se hace server-side en /api/academia/estudiantes/
+  // template y en las server actions preview/confirm — el picker solo elige
+  // a qué proyecto pertenecen los alumnos.
+  const importProjects: ImportProjectOption[] = projectOptions;
 
   const SHOW_OPTIONS: ReadonlyArray<{
     value: ShowFilter;
@@ -349,7 +360,7 @@ export default async function EstudiantesPage({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconAca size={16} />}
         title="Estudiantes"
@@ -384,14 +395,24 @@ export default async function EstudiantesPage({
       </KgPageFilters>
 
       {show === "pending" ? (
-        <Panel title="Compradores pendientes de alta">
+        <Panel title="Compradores pendientes de alta" pad={false} fillHeight>
           <PendingBuyersView
             buyers={pendingBuyers}
             cohortsByCourse={cohortsByCourse}
           />
         </Panel>
       ) : (
-        <Panel title="Estudiantes">
+        <Panel
+          title="Estudiantes"
+          pad={false}
+          fillHeight
+          actions={
+            <StudentPanelActions
+              projects={projectOptions}
+              importProjects={importProjects}
+            />
+          }
+        >
           <StudentsView
             rows={rows}
             totalCount={rows.length}

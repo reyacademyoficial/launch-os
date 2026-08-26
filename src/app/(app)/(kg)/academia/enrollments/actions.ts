@@ -3,6 +3,12 @@
 import { revalidatePath } from "next/cache";
 
 import { resolveAccessExpiryForEnrollment } from "@/lib/academia/access-expiration-server";
+import {
+  parseStudentsWorkbook,
+  type ProductForImport,
+  type StudentImportRow,
+} from "@/lib/academia/xlsx-import";
+import { normalizeName, type ParseError } from "@/lib/finance/xlsx-import";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -20,7 +26,13 @@ import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 // a la misma generación.
 // ═══════════════════════════════════════════════════════════════════════════
 
-const STATUSES = ["active", "completed", "dropped", "suspended"] as const;
+const STATUSES = [
+  "active",
+  "completed",
+  "dropped",
+  "suspended",
+  "expired",
+] as const;
 
 type Status = (typeof STATUSES)[number];
 
@@ -64,6 +76,12 @@ interface EnrollmentPayload {
   readonly cohortId: string;
   readonly saleId: string | null;
   readonly enrolledAt: string;
+  /**
+   * null = el operador dejó el campo vacío. En create se resuelve con la
+   * regla auto (método de pago + override del curso). En update se persiste
+   * como null (sin vencimiento).
+   */
+  readonly accessExpiresAt: string | null;
   readonly status: Status;
   readonly progressPercent: number;
   readonly notes: string | null;
@@ -83,6 +101,12 @@ function parseEnrollmentFormData(
   const enrolledAtRaw = nullIfEmpty(formData.get("enrolled_at"));
   const enrolledAt = enrolledAtRaw ?? todayYmd();
   if (!YMD_RX.test(enrolledAt)) return "La fecha de inscripción no es válida.";
+
+  const accessExpiresAtRaw = nullIfEmpty(formData.get("access_expires_at"));
+  if (accessExpiresAtRaw != null && !YMD_RX.test(accessExpiresAtRaw)) {
+    return "La fecha de vigencia no es válida.";
+  }
+  const accessExpiresAt = accessExpiresAtRaw;
 
   const statusRaw = String(formData.get("status") ?? "active").trim();
   if (!(STATUSES as readonly string[]).includes(statusRaw)) {
@@ -104,6 +128,7 @@ function parseEnrollmentFormData(
     cohortId,
     saleId,
     enrolledAt,
+    accessExpiresAt,
     status,
     progressPercent,
     notes,
@@ -150,12 +175,14 @@ export async function createEnrollment(
   });
 
   // project_id se autofillea via trigger desde cohorts.
+  // Vigencia: si el operador la escribió explícita, gana; si no, cae al
+  // cálculo automático.
   const payload = {
     student_id: parsed.studentId,
     cohort_id: parsed.cohortId,
     sale_id: parsed.saleId ?? resolved.saleId,
     enrolled_at: parsed.enrolledAt,
-    access_expires_at: resolved.accessExpiresAt,
+    access_expires_at: parsed.accessExpiresAt ?? resolved.accessExpiresAt,
     status: parsed.status,
     progress_percent: parsed.progressPercent,
     notes: parsed.notes,
@@ -205,11 +232,15 @@ export async function updateEnrollment(
   if (typeof parsed === "string") return { error: parsed };
 
   const supabase = await createSupabaseClient();
+  // En update, la vigencia se persiste tal cual llega del form (null = sin
+  // vencimiento). No re-invocamos el auto-calc para no pisar valores que el
+  // operador quiso limpiar a propósito.
   const payload = {
     student_id: parsed.studentId,
     cohort_id: parsed.cohortId,
     sale_id: parsed.saleId,
     enrolled_at: parsed.enrolledAt,
+    access_expires_at: parsed.accessExpiresAt,
     status: parsed.status,
     progress_percent: parsed.progressPercent,
     notes: parsed.notes,
@@ -304,6 +335,339 @@ export async function bulkEnrollStudents(
   revalidatePath("/academia");
 
   return { ok: true, enrolledCount, failures };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Import xlsx — preview + confirm
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Import masivo desde la página /academia/estudiantes. Cada fila del xlsx
+// es UN enrollment: alumno + producto + cohorte + fecha + vigencia.
+//
+// Un mismo alumno puede aparecer en varias filas (distintos productos/
+// cohortes) — se matchea por email y se reusa el student_id (o se crea
+// una sola vez y las filas siguientes hittean el cache del batch).
+//
+// Mismo shape que /financiero/gastos y /financiero/movimientos:
+//   - previewStudentsImport(prev, fd)  → cuenta filas válidas + errores
+//   - confirmStudentsImport(prev, fd)  → inserta students + enrollments
+//   - Ambas leen `file` (File) y `projectId` (string) de FormData.
+
+export interface StudentsImportPreviewOk {
+  readonly ok: true;
+  readonly validCount: number;
+  readonly errorCount: number;
+  readonly totalRows: number;
+  readonly errors: ReadonlyArray<ParseError>;
+}
+export type StudentsImportPreviewResult =
+  | StudentsImportPreviewOk
+  | { ok: false; error: string };
+
+export interface StudentsImportConfirmOk {
+  readonly ok: true;
+  readonly imported: number;
+  readonly errors: ReadonlyArray<ParseError>;
+}
+export type StudentsImportConfirmResult =
+  | StudentsImportConfirmOk
+  | { ok: false; error: string };
+
+const IMPORT_BATCH_SIZE = 200;
+
+interface ImportContext {
+  readonly buffer: Buffer;
+  readonly projectId: string;
+}
+
+async function readXlsxAndProject(
+  formData: FormData,
+): Promise<{ ok: true } & ImportContext | { ok: false; error: string }> {
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) {
+    return { ok: false, error: "Seleccioná un archivo .xlsx" };
+  }
+  if (!file.name.toLowerCase().endsWith(".xlsx")) {
+    return { ok: false, error: "El archivo tiene que ser .xlsx" };
+  }
+  const projectId = String(formData.get("projectId") ?? "").trim();
+  if (!projectId) {
+    return { ok: false, error: "Falta el proyecto." };
+  }
+  const buffer = Buffer.from(await file.arrayBuffer());
+  return { ok: true, buffer, projectId };
+}
+
+async function loadProductsByName(
+  projectId: string,
+): Promise<
+  | { ok: true; productsByName: Map<string, ProductForImport> }
+  | { ok: false; error: string }
+> {
+  const supabase = await createSupabaseClient();
+
+  // Guard: proyecto existe y es propia.
+  const { data: projectRow } = await supabase
+    .from("projects")
+    .select("id, ownership")
+    .eq("id", projectId)
+    .maybeSingle();
+  const project = projectRow as { id: string; ownership: string } | null;
+  if (!project) return { ok: false, error: "No se encontró el proyecto." };
+  if (project.ownership !== "propia") {
+    return {
+      ok: false,
+      error:
+        "El proyecto no es propia. Academia solo admite ownership='propia'.",
+    };
+  }
+
+  const [coursesRes, productsRes, cohortsRes] = await Promise.all([
+    supabase
+      .from("courses")
+      .select("id, product_id")
+      .eq("project_id", projectId)
+      .eq("active", true),
+    supabase.from("products").select("id, name"),
+    supabase
+      .from("cohorts")
+      .select("id, name, course_id")
+      .eq("project_id", projectId),
+  ]);
+
+  const courses = (coursesRes.data ?? []) as unknown as ReadonlyArray<{
+    id: string;
+    product_id: string;
+  }>;
+  const products = (productsRes.data ?? []) as unknown as ReadonlyArray<{
+    id: string;
+    name: string;
+  }>;
+  const cohorts = (cohortsRes.data ?? []) as unknown as ReadonlyArray<{
+    id: string;
+    name: string;
+    course_id: string | null;
+  }>;
+
+  const productNameById = new Map<string, string>();
+  for (const p of products) productNameById.set(p.id, p.name);
+
+  const productsByName = new Map<string, ProductForImport>();
+  for (const course of courses) {
+    const productName = productNameById.get(course.product_id) ?? "—";
+    const cohortsByNormalizedName = new Map<string, string>();
+    for (const c of cohorts) {
+      if (c.course_id === course.id) {
+        cohortsByNormalizedName.set(normalizeName(c.name), c.id);
+      }
+    }
+    productsByName.set(normalizeName(productName), {
+      productName,
+      courseId: course.id,
+      cohortsByNormalizedName,
+    });
+  }
+
+  return { ok: true, productsByName };
+}
+
+export async function previewStudentsImport(
+  _prev: StudentsImportPreviewResult | null,
+  formData: FormData,
+): Promise<StudentsImportPreviewResult> {
+  const ctx = await readXlsxAndProject(formData);
+  if (!ctx.ok) return { ok: false, error: ctx.error };
+
+  const productsRes = await loadProductsByName(ctx.projectId);
+  if (!productsRes.ok) return { ok: false, error: productsRes.error };
+
+  try {
+    const parsed = await parseStudentsWorkbook(
+      ctx.buffer,
+      productsRes.productsByName,
+    );
+    if (parsed.headerError) {
+      return { ok: false, error: parsed.headerError };
+    }
+    return {
+      ok: true,
+      validCount: parsed.rows.length,
+      errorCount: parsed.errors.length,
+      totalRows: parsed.totalRows,
+      errors: parsed.errors,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Error parseando el xlsx",
+    };
+  }
+}
+
+export async function confirmStudentsImport(
+  _prev: StudentsImportConfirmResult | null,
+  formData: FormData,
+): Promise<StudentsImportConfirmResult> {
+  const ctx = await readXlsxAndProject(formData);
+  if (!ctx.ok) return { ok: false, error: ctx.error };
+
+  const productsRes = await loadProductsByName(ctx.projectId);
+  if (!productsRes.ok) return { ok: false, error: productsRes.error };
+
+  try {
+    const parsed = await parseStudentsWorkbook(
+      ctx.buffer,
+      productsRes.productsByName,
+    );
+    if (parsed.headerError) {
+      return { ok: false, error: parsed.headerError };
+    }
+
+    if (parsed.rows.length === 0) {
+      return { ok: true, imported: 0, errors: parsed.errors };
+    }
+
+    const supabase = await createSupabaseClient();
+    const insertErrors: ParseError[] = [];
+    let imported = 0;
+
+    // Cache student ids por email dentro del batch para no crear dos veces
+    // el mismo alumno cuando aparece en varias filas.
+    const studentIdByEmail = new Map<string, string>();
+
+    for (let i = 0; i < parsed.rows.length; i += IMPORT_BATCH_SIZE) {
+      const slice = parsed.rows.slice(i, i + IMPORT_BATCH_SIZE);
+
+      for (const [offset, row] of slice.entries()) {
+        const rowNumber = i + offset + 2; // fila 1 = header
+        const outcome = await insertStudentAndEnrollment(
+          supabase,
+          ctx.projectId,
+          row,
+          studentIdByEmail,
+        );
+        if (!outcome.ok) {
+          insertErrors.push({ rowNumber, reason: outcome.error });
+          continue;
+        }
+        imported++;
+      }
+    }
+
+    // Revalidate paths tocados.
+    const touchedCohorts = new Set(parsed.rows.map((r) => r.cohort_id));
+    for (const cId of touchedCohorts) {
+      revalidatePath(`/academia/cohortes/${cId}`);
+    }
+    revalidatePath("/academia/cohortes");
+    revalidatePath("/academia/estudiantes");
+    revalidatePath("/academia");
+
+    return {
+      ok: true,
+      imported,
+      errors: [...parsed.errors, ...insertErrors],
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Error procesando el xlsx",
+    };
+  }
+}
+
+async function insertStudentAndEnrollment(
+  supabase: Awaited<ReturnType<typeof createSupabaseClient>>,
+  projectId: string,
+  row: StudentImportRow,
+  studentIdByEmail: Map<string, string>,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  // 1) Match por email.
+  let studentId: string | null = null;
+  const emailLower = row.email ? row.email.trim().toLowerCase() : null;
+  if (emailLower) {
+    const cached = studentIdByEmail.get(emailLower);
+    if (cached) {
+      studentId = cached;
+    } else {
+      const { data: existing } = await supabase
+        .from("students")
+        .select("id")
+        .eq("project_id", projectId)
+        .ilike("email", emailLower)
+        .maybeSingle();
+      const found = existing as { id: string } | null;
+      if (found) {
+        studentId = found.id;
+        studentIdByEmail.set(emailLower, found.id);
+      }
+    }
+  }
+
+  // 2) Crear si no existe.
+  if (studentId == null) {
+    const studentPayload = {
+      project_id: projectId,
+      name: row.name,
+      email: emailLower,
+      phone: row.phone,
+      status: "active",
+      enrolled_at: row.enrolled_at,
+      notes: null,
+    } as never;
+
+    const { data: created, error: createErr } = await supabase
+      .from("students")
+      .insert(studentPayload)
+      .select("id")
+      .single();
+
+    if (createErr) {
+      let message = createErr.message;
+      if (createErr.code === "23505") {
+        message =
+          "Alumno duplicado (email o teléfono coincide con otro del proyecto).";
+      } else if (createErr.code === "23514") {
+        message = "El proyecto no acepta el insert (ownership o guard).";
+      }
+      return { ok: false, error: `Alta de alumno: ${message}` };
+    }
+
+    const createdRow = created as { id: string } | null;
+    if (!createdRow) {
+      return { ok: false, error: "Alta de alumno: insert sin fila devuelta." };
+    }
+    studentId = createdRow.id;
+    if (emailLower) studentIdByEmail.set(emailLower, studentId);
+  }
+
+  // 3) Insert enrollment.
+  const enrPayload = {
+    student_id: studentId,
+    cohort_id: row.cohort_id,
+    sale_id: null,
+    enrolled_at: row.enrolled_at,
+    access_expires_at: row.access_expires_at,
+    status: "active",
+    progress_percent: 0,
+    notes: row.notes,
+  } as never;
+
+  const { error: enrErr } = await supabase
+    .from("enrollments")
+    .insert(enrPayload);
+
+  if (enrErr) {
+    let message = enrErr.message;
+    if (enrErr.code === "23505") {
+      message = "El alumno ya estaba inscripto en esta cohorte.";
+    } else if (enrErr.code === "23514") {
+      message = "La cohorte pertenece a otro proyecto que el alumno.";
+    }
+    return { ok: false, error: `Inscripción: ${message}` };
+  }
+
+  return { ok: true };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

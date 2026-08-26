@@ -14,6 +14,10 @@ import {
   type SystemOptionForCohort,
 } from "./cohort-form-drawer";
 
+// Nota: el botón "+ Nueva generación" vive en new-cohort-button.tsx y se
+// pasa como `actions` del Panel desde page.tsx (patrón marketing). Esta view
+// solo maneja edit + render de la tabla.
+
 type Status = "planned" | "active" | "finished" | "cancelled";
 
 export interface CohortRowData {
@@ -58,7 +62,6 @@ export function CohortsView({
   readonly courses: readonly CourseOptionForCohort[];
   readonly systems?: readonly SystemOptionForCohort[];
 }) {
-  const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const editing =
@@ -153,18 +156,7 @@ export function CohortsView({
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="kg-focus"
-          style={primaryBtn}
-        >
-          + Nueva generación
-        </button>
-      </div>
-
+    <div className="flex min-h-0 flex-1 flex-col">
       <KgDataTable
         columns={columns}
         rows={rows}
@@ -172,15 +164,7 @@ export function CohortsView({
         totalCount={totalCount}
         emptyTitle="Sin generaciones que coincidan con el filtro"
         emptyHint="Cambiá el filtro o creá una generación nueva."
-      />
-
-      <CohortFormDrawer
-        mode="create"
-        open={creating}
-        onClose={() => setCreating(false)}
-        projects={projects}
-        courses={courses}
-        systems={systems}
+        fillHeight
       />
 
       <CohortFormDrawer
@@ -207,17 +191,6 @@ function formatDate(ymd: string): string {
     return ymd.slice(0, 10);
   }
 }
-
-const primaryBtn: React.CSSProperties = {
-  padding: "8px 16px",
-  borderRadius: 999,
-  background: "var(--kg-accent-500)",
-  border: "none",
-  color: "#fff",
-  fontSize: 12,
-  fontWeight: 700,
-  cursor: "pointer",
-};
 
 const rowBtn: React.CSSProperties = {
   padding: "4px 10px",

@@ -40,7 +40,6 @@ export function AppsExternasView({
   readonly rows: readonly AppRow[];
   readonly projectOptions: readonly ProjectOption[];
 }) {
-  const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const editing =
@@ -109,33 +108,21 @@ export function AppsExternasView({
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <div className="flex min-h-0 flex-1 flex-col">
       <div
+        className="kg-t7"
         style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 12,
+          color: "var(--kg-text-3)",
+          lineHeight: 1.55,
+          padding: "12px 20px",
+          borderBottom: "1px solid var(--kg-border-subtle)",
+          flexShrink: 0,
         }}
       >
-        <div
-          className="kg-t7"
-          style={{ color: "var(--kg-text-3)", lineHeight: 1.55 }}
-        >
-          Apps externas del ecosistema (ej: Nitro tiene una app de agenda de
-          turnos con expertos). El link app↔curso se hace desde el formulario
-          del curso (campo &ldquo;App externa&rdquo;). El botón del curso abre
-          la URL en nueva pestaña.
-        </div>
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          disabled={projectOptions.length === 0}
-          className="kg-focus"
-          style={{ ...primaryBtn, opacity: projectOptions.length === 0 ? 0.5 : 1 }}
-        >
-          + Nueva app
-        </button>
+        Apps externas del ecosistema (ej: Nitro tiene una app de agenda de
+        turnos con expertos). El link app↔curso se hace desde el formulario
+        del curso (campo &ldquo;App externa&rdquo;). El botón del curso abre
+        la URL en nueva pestaña.
       </div>
 
       <KgDataTable
@@ -145,15 +132,9 @@ export function AppsExternasView({
         totalCount={rows.length}
         emptyTitle="Sin apps externas"
         emptyHint="No hay apps externas registradas. Creá la primera para vincular un curso con una plataforma externa."
+        fillHeight
       />
 
-      {creating && (
-        <AppFormOverlay
-          mode="create"
-          projectOptions={projectOptions}
-          onClose={() => setCreating(false)}
-        />
-      )}
       {editing && (
         <AppFormOverlay
           mode="edit"
@@ -166,7 +147,7 @@ export function AppsExternasView({
   );
 }
 
-function AppFormOverlay({
+export function AppFormOverlay({
   mode,
   initial,
   projectOptions,

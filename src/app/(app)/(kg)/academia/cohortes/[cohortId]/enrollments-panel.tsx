@@ -18,7 +18,7 @@ import {
   type StudentOptionForEnroll,
 } from "./enroll-student-drawer";
 
-type Status = "active" | "completed" | "dropped" | "suspended";
+type Status = "active" | "completed" | "dropped" | "suspended" | "expired";
 
 export interface EnrollmentRowData {
   readonly id: string;
@@ -26,6 +26,7 @@ export interface EnrollmentRowData {
   readonly studentName: string;
   readonly saleId: string | null;
   readonly enrolledAt: string;
+  readonly accessExpiresAt: string | null;
   readonly status: Status;
   readonly progressPercent: number;
   readonly notes: string | null;
@@ -36,6 +37,7 @@ const STATUS_LABEL: Record<Status, string> = {
   completed: "Completado",
   dropped: "Abandonó",
   suspended: "Suspendido",
+  expired: "Vencido",
 };
 
 const STATUS_TONE: Record<Status, string> = {
@@ -43,6 +45,7 @@ const STATUS_TONE: Record<Status, string> = {
   completed: "var(--kg-accent-500)",
   dropped: "var(--kg-negative-500)",
   suspended: "var(--kg-warning-500)",
+  expired: "var(--kg-negative-500)",
 };
 
 export function EnrollmentsPanel({
@@ -79,6 +82,7 @@ export function EnrollmentsPanel({
         cohortId,
         saleId: editing.saleId,
         enrolledAt: editing.enrolledAt,
+        accessExpiresAt: editing.accessExpiresAt,
         status: editing.status,
         progressPercent: editing.progressPercent,
         notes: editing.notes,
@@ -111,7 +115,7 @@ export function EnrollmentsPanel({
             ? "Sin inscriptos"
             : `${enrollments.length} inscripto${enrollments.length === 1 ? "" : "s"}`}
         </div>
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           <button
             type="button"
             onClick={() => setBulkEnrolling(true)}

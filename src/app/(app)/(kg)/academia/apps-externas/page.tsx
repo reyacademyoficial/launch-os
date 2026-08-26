@@ -7,6 +7,7 @@ import { listAllExternalApps } from "@/lib/academia/external-apps";
 import { requireRole } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
+import { NewAppButton } from "./new-app-button";
 import { AppsExternasView, type AppRow, type ProjectOption } from "./view";
 
 export const metadata: Metadata = { title: "Apps externas · Academia" };
@@ -55,7 +56,7 @@ export default async function AppsExternasPage() {
   }));
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
         icon={<IconAca size={16} />}
         title="Apps externas"
@@ -69,11 +70,13 @@ export default async function AppsExternasPage() {
         ]}
       />
 
-      <Panel title="Apps configuradas">
-        <AppsExternasView
-          rows={rows}
-          projectOptions={projectOptions}
-        />
+      <Panel
+        title="Apps configuradas"
+        pad={false}
+        fillHeight
+        actions={<NewAppButton projectOptions={projectOptions} />}
+      >
+        <AppsExternasView rows={rows} projectOptions={projectOptions} />
       </Panel>
     </div>
   );
