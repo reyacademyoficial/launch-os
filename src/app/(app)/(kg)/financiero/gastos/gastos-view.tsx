@@ -319,7 +319,14 @@ export function GastosView({
     ) : null;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        flex: 1,
+        minHeight: 0,
+      }}
+    >
       {selectionBar}
 
       <KgDataTable
