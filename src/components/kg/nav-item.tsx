@@ -35,6 +35,7 @@ export function KgNavItem({
   return (
     <Link
       href={href}
+      prefetch={false}
       onClick={onNavigate}
       aria-current={isActive ? "page" : undefined}
       className="kg-hov kg-focus group flex items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-[13px] font-medium transition-colors"

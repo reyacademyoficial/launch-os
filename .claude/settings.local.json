@@ -114,7 +114,8 @@
       "Bash(pnpm typecheck *)",
       "Bash(tasklist *)",
       "Bash(powershell *)",
-      "Bash(echo \"tsc_exit=$?\")"
+      "Bash(echo \"tsc_exit=$?\")",
+      "Bash(taskkill //F //IM node.exe)"
     ]
   }
 }

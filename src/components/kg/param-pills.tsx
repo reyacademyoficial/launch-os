@@ -29,12 +29,15 @@ export function KgParamPills({
       role="tablist"
       aria-label={ariaLabel}
       style={{
-        display: "inline-flex",
+        display: "flex",
+        flexWrap: "wrap",
         gap: 4,
         padding: 4,
         borderRadius: "var(--kg-r-full)",
         background: "var(--kg-surface-2-solid)",
         border: "1px solid var(--kg-border-subtle)",
+        maxWidth: "100%",
+        minWidth: 0,
       }}
     >
       {options.map((o) => (

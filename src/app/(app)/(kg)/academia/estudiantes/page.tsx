@@ -86,6 +86,7 @@ interface ProductDbRow {
 
 interface EnrollmentLink {
   readonly student_id: string;
+  readonly cohort_id: string;
 }
 
 interface ExpiringEnrollmentRow {
@@ -132,7 +133,7 @@ export default async function EstudiantesPage({
       .select("id, product_id, project_id")
       .eq("active", true),
     supabase.from("products").select("id, name"),
-    supabase.from("enrollments").select("student_id"),
+    supabase.from("enrollments").select("student_id, cohort_id"),
     supabase.from("cohorts").select("id, project_id, course_id, name, status"),
   ]);
 
@@ -155,12 +156,48 @@ export default async function EstudiantesPage({
   const productNameById = new Map<string, string>();
   for (const p of allProducts) productNameById.set(p.id, p.name);
 
-  const enrollmentsByStudent = new Map<string, number>();
+  // Map cohort_id → cohort para poder resolver nombres/status por enrollment.
+  const cohortById = new Map<string, CohortDbRow>();
+  for (const c of allCohorts) cohortById.set(c.id, c);
+
+  // Cohortes por student (todas las que tiene inscriptas). Ordenamos active
+  // primero, después finished, después el resto — para que la primera sea la
+  // más relevante para mostrar en la tabla.
+  const cohortsByStudent = new Map<string, CohortDbRow[]>();
   for (const e of enrollments) {
-    enrollmentsByStudent.set(
-      e.student_id,
-      (enrollmentsByStudent.get(e.student_id) ?? 0) + 1,
+    const cohort = cohortById.get(e.cohort_id);
+    if (!cohort) continue;
+    const bucket = cohortsByStudent.get(e.student_id) ?? [];
+    bucket.push(cohort);
+    cohortsByStudent.set(e.student_id, bucket);
+  }
+  const cohortStatusRank: Record<CohortDbRow["status"], number> = {
+    active: 0,
+    planned: 1,
+    finished: 2,
+    cancelled: 3,
+  };
+  for (const bucket of cohortsByStudent.values()) {
+    bucket.sort(
+      (a, b) => cohortStatusRank[a.status] - cohortStatusRank[b.status],
     );
+  }
+
+  // Derivar el status "efectivo" del alumno desde sus cohortes:
+  //   - Si tiene alguna cohort activa → activo.
+  //   - Si no, y tiene alguna cohort terminada → graduado.
+  //   - Si el alumno está marcado inactive manualmente → respetamos ese
+  //     override (dropout explícito) por encima de la cohort.
+  //   - Sin cohortes / cohortes solo planned/cancelled → fallback al status
+  //     que trae la fila de students.
+  function deriveStatus(student: StudentDbRow): Status {
+    if (student.status === "inactive") return "inactive";
+    const bucket = cohortsByStudent.get(student.id);
+    if (bucket && bucket.length > 0) {
+      if (bucket.some((c) => c.status === "active")) return "active";
+      if (bucket.some((c) => c.status === "finished")) return "graduated";
+    }
+    return student.status;
   }
 
   // Enrollments activos con vigencia dentro de los próximos 7 días — para el
@@ -291,35 +328,46 @@ export default async function EstudiantesPage({
       };
     });
 
-  const activeCount = allStudents.filter((s) => s.status === "active").length;
+  // Todos los counts + filtros usan el status DERIVADO (cohort-driven) para
+  // que lo que muestra la ContextBar coincida con lo que filtra el drawer.
+  const derivedStatusById = new Map<string, Status>();
+  for (const s of allStudents) derivedStatusById.set(s.id, deriveStatus(s));
+
+  const activeCount = allStudents.filter(
+    (s) => derivedStatusById.get(s.id) === "active",
+  ).length;
   const graduatedCount = allStudents.filter(
-    (s) => s.status === "graduated",
+    (s) => derivedStatusById.get(s.id) === "graduated",
   ).length;
   const inactiveCount = allStudents.filter(
-    (s) => s.status === "inactive",
+    (s) => derivedStatusById.get(s.id) === "inactive",
   ).length;
 
   const filtered = allStudents.filter((s) => {
-    if (show === "active") return s.status === "active";
-    if (show === "graduated") return s.status === "graduated";
-    if (show === "inactive") return s.status === "inactive";
+    const st = derivedStatusById.get(s.id) ?? s.status;
+    if (show === "active") return st === "active";
+    if (show === "graduated") return st === "graduated";
+    if (show === "inactive") return st === "inactive";
     if (show === "pending") return false; // el otro tab gobierna
     if (show === "expiring") return expiringStudentIds.has(s.id);
     return true;
   });
 
-  const rows: StudentRowData[] = filtered.map((s) => ({
-    id: s.id,
-    projectId: s.project_id,
-    projectName: projectNameById.get(s.project_id) ?? null,
-    name: s.name,
-    email: s.email,
-    phone: s.phone,
-    status: s.status,
-    enrolledAt: s.enrolled_at,
-    notes: s.notes,
-    enrollmentsCount: enrollmentsByStudent.get(s.id) ?? 0,
-  }));
+  const rows: StudentRowData[] = filtered.map((s) => {
+    const cohorts = cohortsByStudent.get(s.id) ?? [];
+    return {
+      id: s.id,
+      projectId: s.project_id,
+      projectName: projectNameById.get(s.project_id) ?? null,
+      name: s.name,
+      email: s.email,
+      phone: s.phone,
+      status: derivedStatusById.get(s.id) ?? s.status,
+      enrolledAt: s.enrolled_at,
+      notes: s.notes,
+      cohortNames: cohorts.map((c) => c.name),
+    };
+  });
 
   const projectOptions: ProjectOptionForStudent[] = propiaProjects
     .map((p) => ({ id: p.id, name: p.name }))

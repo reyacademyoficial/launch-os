@@ -30,7 +30,12 @@ export interface StudentRowData {
   readonly status: Status;
   readonly enrolledAt: string;
   readonly notes: string | null;
-  readonly enrollmentsCount: number;
+  /**
+   * Nombres de las cohortes en las que está inscripto (ordenadas por
+   * relevancia — activa primero, luego terminada). Vacío si el alumno no
+   * tiene enrollment.
+   */
+  readonly cohortNames: readonly string[];
 }
 
 const STATUS_LABEL: Record<Status, string> = {
@@ -168,20 +173,32 @@ export function StudentsView({
       ),
     },
     {
-      key: "enrollments",
-      label: "Generaciones",
-      align: "right",
-      numeric: true,
+      key: "cohort",
+      label: "Generación",
       render: (r) =>
-        r.enrollmentsCount === 0 ? (
+        r.cohortNames.length === 0 ? (
           <span
-            style={{ color: "var(--kg-text-3)", fontSize: 12, fontStyle: "italic" }}
+            style={{
+              color: "var(--kg-text-3)",
+              fontSize: 12,
+              fontStyle: "italic",
+            }}
             title="Estudiante sin generación asignada"
           >
             sin asignar
           </span>
+        ) : r.cohortNames.length === 1 ? (
+          <span style={{ fontSize: 12 }}>{r.cohortNames[0]}</span>
         ) : (
-          String(r.enrollmentsCount)
+          <span
+            style={{ fontSize: 12 }}
+            title={r.cohortNames.join(", ")}
+          >
+            {r.cohortNames[0]}
+            <span style={{ color: "var(--kg-text-3)", marginLeft: 4 }}>
+              +{r.cohortNames.length - 1}
+            </span>
+          </span>
         ),
     },
     {
