@@ -58,6 +58,20 @@ export interface LaunchSettlementInsert {
   project_id: string;
   settlement_rule_snapshot: SettlementRuleSnapshot;
   collected_total: number;
+  /**
+   * Σ payments que entraron por MIS bancos (is_external_collector=false).
+   * Congelado al liquidar. Junto con collected_by_client_external suma
+   * collected_total (CHECK en 0170). Usado por calc del neto de transferencia
+   * (calc.ts:computeSettlementNetTransfer). Es la única fuente de verdad
+   * DE ESTA LIQUIDACIÓN sobre qué parte del cobrado ya está en Kingrow.
+   */
+  collected_by_me: number;
+  /**
+   * Σ payments cuyo método rutea a un banco is_external_collector=true del
+   * proyecto del launch. Congelado al liquidar. Representa plata que el
+   * cliente ya tiene por su cuenta y jamás entró a los bancos de Kingrow.
+   */
+  collected_by_client_external: number;
   kingrow_retained: number;
   owed_to_client: number;
   status: LaunchSettlementStatus;
@@ -230,10 +244,13 @@ export async function createSettlement(
   // Delegado a computeLaunchAggregates — misma función que consume el
   // simulador del formulario de reglas. Antes había dos implementaciones
   // idénticas de este cálculo; unificarlas evita que diverjan.
-  const { collectedTotal, totalSold, salesCount } = await computeLaunchAggregates(
-    supabase,
-    input.launchId,
-  );
+  const {
+    collectedTotal,
+    collectedByMe,
+    collectedByClientExternal,
+    totalSold,
+    salesCount,
+  } = await computeLaunchAggregates(supabase, input.launchId, projectId);
 
   if (collectedTotal === 0) {
     return {
@@ -256,6 +273,8 @@ export async function createSettlement(
     project_id: projectId,
     settlement_rule_snapshot: snapshot,
     collected_total: collectedTotal,
+    collected_by_me: collectedByMe,
+    collected_by_client_external: collectedByClientExternal,
     kingrow_retained: breakdown.kingrowRetained,
     owed_to_client: breakdown.owedToClient,
     status: "abierta",
@@ -460,9 +479,13 @@ export async function createComplementarySettlement(
   const parentSettlementId = closedRows[0]!.id;
 
   // ─── 4) Delta: total actual − previamente liquidado ─────────────────
+  // Pasamos projectId para respetar la firma nueva; el split por canal
+  // se computa igual pero para la complementaria NO lo usamos (ver más
+  // abajo — fallback conservador).
   const { collectedTotal: currentTotal } = await computeLaunchAggregates(
     supabase,
     input.launchId,
+    projectId,
   );
   const newlyCollected = currentTotal - previouslyCollected;
 
@@ -498,12 +521,22 @@ export async function createComplementarySettlement(
   };
   const breakdown = computeSettlement(complementarySnapshot, inputs);
 
+  // TODO Kingrow: distinguir canal en complementarias. Hoy asignamos el
+  // delta entero a `collected_by_me` como fallback conservador. El split
+  // real requiere identificar qué payments son "nuevos" (created_at >
+  // closed_at del parent settlement) y correr la clasificación por canal
+  // sobre ESE subconjunto — el aggregate actual arma el split sobre el
+  // total del launch, que ya no es representativo del delta. La
+  // complementaria es un caso raro (Maratón G7) → priorizamos no
+  // bloquear el motor y volvemos si aparece la necesidad.
   const payload: LaunchSettlementInsert = {
     organization_id: organizationId,
     launch_id: input.launchId,
     project_id: projectId,
     settlement_rule_snapshot: complementarySnapshot,
     collected_total: newlyCollected,
+    collected_by_me: newlyCollected,
+    collected_by_client_external: 0,
     kingrow_retained: breakdown.kingrowRetained,
     owed_to_client: breakdown.owedToClient,
     status: "abierta",

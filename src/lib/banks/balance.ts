@@ -18,6 +18,13 @@ function toNum(v: unknown): number {
  *
  * Cobrado por método sigue existiendo — vive en `/financiero/metodos-pago`
  * como métrica de trazabilidad, sin sumar a balances.
+ *
+ * Post 0169: los bancos con `is_external_collector = true` NO son cuenta de
+ * Kingrow (son canales de cobro del cliente externo). Se excluyen por
+ * completo del Map — ni siquiera aparecen con saldo 0. Los movimientos que
+ * apunten a esos bancos también se descartan defensivamente (no debería
+ * haberlos, pero si el operador cargó movimientos informativos no deben
+ * afectar la contabilidad de Kingrow).
  */
 export function computeBankBalances(
   banks: ReadonlyArray<BankRow>,
@@ -25,6 +32,7 @@ export function computeBankBalances(
 ): Map<string, BankBalance> {
   const out = new Map<string, BankBalance>();
   for (const b of banks) {
+    if (b.is_external_collector) continue;
     out.set(b.id, {
       bank_id: b.id,
       opening: toNum(b.opening_balance),

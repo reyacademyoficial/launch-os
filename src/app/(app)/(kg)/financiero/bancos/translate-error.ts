@@ -29,6 +29,9 @@ export function translateBankError(error: BankErrorLike): string {
   }
 
   if (code === "23514") {
+    if (message.includes("banks_external_collector_coherence")) {
+      return "Configuración incoherente: cobro externo requiere proyecto.";
+    }
     // opening_balance no tiene CHECK explícito hoy, pero por si aparece.
     return "El banco no cumple una restricción de validez.";
   }

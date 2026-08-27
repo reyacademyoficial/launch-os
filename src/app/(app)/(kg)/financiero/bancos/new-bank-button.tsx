@@ -2,11 +2,18 @@
 
 import { useState } from "react";
 
-import { BankFormDrawer } from "./bank-form-drawer";
+import {
+  BankFormDrawer,
+  type BankFormProject,
+} from "./bank-form-drawer";
 
 // Botón "+ Nuevo banco" + drawer. Se pasa como `actions` del Panel para
 // que quede en la misma fila que el título (patrón Facturas).
-export function NewBankButton() {
+export function NewBankButton({
+  projects,
+}: {
+  readonly projects: ReadonlyArray<BankFormProject>;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -31,6 +38,7 @@ export function NewBankButton() {
         mode="create"
         open={open}
         onClose={() => setOpen(false)}
+        projects={projects}
       />
     </>
   );

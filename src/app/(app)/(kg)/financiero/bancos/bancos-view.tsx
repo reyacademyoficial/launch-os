@@ -6,7 +6,10 @@ import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { fmtNative, fmtUsd } from "@/lib/money";
 
 import { setBankActive } from "./actions";
-import { BankFormDrawer } from "./bank-form-drawer";
+import {
+  BankFormDrawer,
+  type BankFormProject,
+} from "./bank-form-drawer";
 
 // GastosView / FacturasView pattern: la vista se encarga del edit drawer y
 // de la tabla; el "+ Nuevo banco" vive en el header del Panel via `actions`
@@ -23,14 +26,19 @@ export interface BankRowData {
   /** Equivalente USD. Para bancos USD = total; para ARS = total / última tasa; null si no hay tasa. */
   readonly totalUsd: number | null;
   readonly active: boolean;
+  readonly isExternalCollector: boolean;
+  readonly externalProjectId: string | null;
+  readonly externalProjectName: string | null;
 }
 
 export function BancosView({
   rows,
   totalCount,
+  projects,
 }: {
   readonly rows: readonly BankRowData[];
   readonly totalCount: number;
+  readonly projects: ReadonlyArray<BankFormProject>;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const editingRow = editingId
@@ -38,7 +46,23 @@ export function BancosView({
     : null;
 
   const columns: Column<BankRowData>[] = [
-    { key: "name", label: "Nombre", render: (r) => r.name },
+    {
+      key: "name",
+      label: "Nombre",
+      render: (r) => (
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          {r.name}
+          {r.isExternalCollector && <ExternalPill name={r.externalProjectName} />}
+        </span>
+      ),
+    },
     {
       key: "currency",
       label: "Moneda",
@@ -115,15 +139,40 @@ export function BancosView({
           mode="edit"
           open
           onClose={() => setEditingId(null)}
+          projects={projects}
           initial={{
             id: editingRow.id,
             name: editingRow.name,
             openingBalance: editingRow.openingBalance,
             currency: editingRow.currency,
+            isExternalCollector: editingRow.isExternalCollector,
+            externalProjectId: editingRow.externalProjectId,
           }}
         />
       )}
     </>
+  );
+}
+
+function ExternalPill({ name }: { readonly name: string | null }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "3px 10px",
+        borderRadius: 999,
+        background: "rgba(245,158,11,0.15)",
+        color: "#F59E0B",
+        fontSize: 10,
+        fontWeight: 700,
+        whiteSpace: "nowrap",
+      }}
+      title="Este banco representa un canal de cobro de un cliente externo. Los cobros no impactan el saldo de Kingrow."
+    >
+      Externo · {name ?? "s/proyecto"}
+    </span>
   );
 }
 

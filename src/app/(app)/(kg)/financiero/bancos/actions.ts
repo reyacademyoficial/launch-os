@@ -33,6 +33,8 @@ interface BankPayload {
   readonly name: string;
   readonly openingBalance: number;
   readonly currency: "ARS" | "USD";
+  readonly isExternalCollector: boolean;
+  readonly externalProjectId: string | null;
 }
 
 function parseBankFormData(formData: FormData): BankPayload | string {
@@ -53,7 +55,30 @@ function parseBankFormData(formData: FormData): BankPayload | string {
     return "La moneda del banco tiene que ser ARS o USD.";
   }
 
-  return { name, openingBalance, currency };
+  // Cobro externo: checkbox → boolean; el proyecto solo tiene sentido si el
+  // checkbox está tildado. Si el checkbox NO está tildado, forzamos null aunque
+  // el form mande algo (bicondicional enforced por CHECK banks_external_collector_coherence).
+  const isExternalCollector =
+    formData.get("is_external_collector") === "on";
+  const externalProjectRaw = String(
+    formData.get("external_project_id") ?? "",
+  ).trim();
+  const externalProjectId = isExternalCollector
+    ? externalProjectRaw.length > 0
+      ? externalProjectRaw
+      : null
+    : null;
+  if (isExternalCollector && externalProjectId == null) {
+    return "Al marcar 'cobro externo', tenés que elegir a qué proyecto pertenece.";
+  }
+
+  return {
+    name,
+    openingBalance,
+    currency,
+    isExternalCollector,
+    externalProjectId,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -90,6 +115,8 @@ export async function createBank(
     opening_balance: parsed.openingBalance,
     currency: parsed.currency,
     active: true,
+    is_external_collector: parsed.isExternalCollector,
+    external_project_id: parsed.externalProjectId,
   } as never;
 
   const { data, error } = await supabase
@@ -127,6 +154,8 @@ export async function updateBank(
     name: parsed.name,
     opening_balance: parsed.openingBalance,
     currency: parsed.currency,
+    is_external_collector: parsed.isExternalCollector,
+    external_project_id: parsed.externalProjectId,
   } as never;
 
   const { error } = await supabase

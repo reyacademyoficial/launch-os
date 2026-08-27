@@ -251,7 +251,9 @@ export default async function EjecutivoDashboardPage({
     supabase.from("projects").select("id, name, ownership"),
     supabase
       .from("banks")
-      .select("id, balance, opening_balance, currency, active"),
+      .select(
+        "id, balance, opening_balance, currency, active, is_external_collector, external_project_id",
+      ),
     supabase
       .from("bank_movements")
       .select("bank_id, amount, kind, occurred_at"),
@@ -301,7 +303,15 @@ export default async function EjecutivoDashboardPage({
       opening_balance: number;
       currency: "ARS" | "USD";
       active: boolean;
+      is_external_collector: boolean;
+      external_project_id: string | null;
     }>;
+  // Post 0169: los bancos externos no son plata de Kingrow (canales del
+  // cliente externo). Fuera del ejecutivo: no suman a caja ni a cash flow.
+  const externalBankIds = new Set<string>();
+  for (const b of banks) {
+    if (b.is_external_collector) externalBankIds.add(b.id);
+  }
   const bankMovements =
     (bankMovementsRes.data ?? []) as unknown as (FinanceBankMovementRow & {
       bank_id: string;
@@ -510,7 +520,11 @@ export default async function EjecutivoDashboardPage({
   // moneda; los ARS se convierten con la tasa org más reciente. Si hay
   // saldo ARS y no hay tasa, `bankBalanceTotalUsd` queda null y el runway
   // muestra "—" con hint.
-  const activeBanks = banks.filter((b) => b.active);
+  // Post 0169: descartamos externos antes del loop; `computeBankBalances`
+  // ya los excluye del Map pero el `?? opening_balance` los sumaría igual.
+  const activeBanks = banks.filter(
+    (b) => b.active && !b.is_external_collector,
+  );
   const bankBalancesMap = computeBankBalances(
     activeBanks as never,
     bankMovements.map((m) => ({
@@ -599,14 +613,21 @@ export default async function EjecutivoDashboardPage({
   // de su banco (banks.currency). Los cobros de ventas ya están en
   // bank_movements como 'in' cuando entran al banco — sumar `payments`
   // aparte sería doble conteo.
+  // Post 0169: los movimientos de bancos externos NO son cash flow de
+  // Kingrow — se descartan antes de convertir.
   const bankCurrencyById = new Map<string, "ARS" | "USD">();
-  for (const b of banks) bankCurrencyById.set(b.id, b.currency);
-  const bankMovementsInPeriodUsd = bankMovementsInPeriod.map((m) => {
-    const currency = bankCurrencyById.get(m.bank_id) ?? "ARS";
-    if (currency === "USD") return m;
-    const rate = resolveOrgRateForMonth(m.occurred_at);
-    return { ...m, amount: rate != null ? m.amount / rate : m.amount };
-  });
+  for (const b of banks) {
+    if (b.is_external_collector) continue;
+    bankCurrencyById.set(b.id, b.currency);
+  }
+  const bankMovementsInPeriodUsd = bankMovementsInPeriod
+    .filter((m) => !externalBankIds.has(m.bank_id))
+    .map((m) => {
+      const currency = bankCurrencyById.get(m.bank_id) ?? "ARS";
+      if (currency === "USD") return m;
+      const rate = resolveOrgRateForMonth(m.occurred_at);
+      return { ...m, amount: rate != null ? m.amount / rate : m.amount };
+    });
   const cashFlow = computeCashFlow({
     bankMovements: bankMovementsInPeriodUsd,
   });

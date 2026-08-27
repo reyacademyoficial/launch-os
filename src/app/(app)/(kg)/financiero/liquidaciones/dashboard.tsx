@@ -10,6 +10,10 @@ import { IconFin } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { Panel } from "@/components/kg/panel";
 import { fCount, fMoney } from "@/lib/finance/format";
+import {
+  computeSettlementNetTransfer,
+  type SettlementNetTransfer,
+} from "@/lib/settlements/calc";
 import type { LaunchSettlementStatus } from "@/lib/settlements/types";
 import type { LaunchSettlementInsert } from "@/lib/settlements/create";
 
@@ -30,6 +34,10 @@ export interface SettlementRow {
   readonly id: string;
   readonly status: LaunchSettlementStatus;
   readonly collectedTotal: number;
+  /** Σ cobrado por bancos NO externos (plata que ya tiene Kingrow). Ver mig 0170. */
+  readonly collectedByMe: number;
+  /** Σ cobrado por bancos externos del proyecto (plata que ya tiene el cliente). */
+  readonly collectedByClientExternal: number;
   readonly kingrowRetained: number;
   readonly owedToClient: number;
   readonly closedAt: string | null;
@@ -871,6 +879,15 @@ function CreateDrawer({
             fmtFn={fMoney}
           />
 
+          <ChannelBreakdown
+            collectedByMe={previewState.payload.collected_by_me}
+            collectedByClientExternal={
+              previewState.payload.collected_by_client_external
+            }
+            kingrowRetained={previewState.payload.kingrow_retained}
+            fmtFn={fMoney}
+          />
+
           {previewState.draftsCount > 0 && (
             <Callout tone="warning">
               Ya existen {fCount(previewState.draftsCount)} borrador
@@ -1005,6 +1022,13 @@ function CloseDrawer({
               v: settlement.owedToClient,
             },
           ]}
+          fmtFn={fMoney}
+        />
+
+        <ChannelBreakdown
+          collectedByMe={settlement.collectedByMe}
+          collectedByClientExternal={settlement.collectedByClientExternal}
+          kingrowRetained={settlement.kingrowRetained}
           fmtFn={fMoney}
         />
 
@@ -1226,6 +1250,15 @@ function ComplementaryDrawer({
             fmtFn={fMoney}
           />
 
+          <ChannelBreakdown
+            collectedByMe={previewState.payload.collected_by_me}
+            collectedByClientExternal={
+              previewState.payload.collected_by_client_external
+            }
+            kingrowRetained={previewState.payload.kingrow_retained}
+            fmtFn={fMoney}
+          />
+
           {committed && (
             <Callout tone="positive">
               Complementaria creada en borrador. Cerrala desde el listado para
@@ -1401,6 +1434,127 @@ function ReopenDrawer({
         {error && <Callout tone="negative">{error}</Callout>}
       </div>
     </Drawer>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Canal de cobro + neto de transferencia (post 0169/0170)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Solo se renderiza el bloque cuando el launch tuvo COBRO POR CANAL EXTERNO
+// (`collectedByClientExternal > 0`). Si toda la plata entró por bancos
+// propios, el flujo clásico (kingrow retiene → transferir a cliente) alcanza
+// y no vale la pena agregar ruido visual.
+//
+// El neto se calcula con `computeSettlementNetTransfer` (pure). Cuando es 0
+// dejamos un callout neutro con la aclaración de que no hay transferencia
+// pendiente — más útil que ocultarlo (el usuario querría saber "quedó
+// saldado" explícitamente).
+
+function ChannelBreakdown({
+  collectedByMe,
+  collectedByClientExternal,
+  kingrowRetained,
+  fmtFn,
+}: {
+  readonly collectedByMe: number;
+  readonly collectedByClientExternal: number;
+  readonly kingrowRetained: number;
+  readonly fmtFn: (v: number) => string;
+}) {
+  if (collectedByClientExternal <= 0) return null;
+
+  // computeSettlementNetTransfer solo lee `kingrowRetained` del breakdown —
+  // no necesitamos reconstruir el objeto completo. El cast al shape mínimo
+  // es intencional para evitar cargar el breakdown entero solo para el neto.
+  const net: SettlementNetTransfer = computeSettlementNetTransfer(
+    { kingrowRetained } as Parameters<typeof computeSettlementNetTransfer>[0],
+    collectedByMe,
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div
+        className="kg-t7"
+        style={{
+          color: "var(--kg-text-3)",
+          textTransform: "uppercase",
+          letterSpacing: ".5px",
+        }}
+      >
+        Cobro por canal
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <ChannelRow label="Cobrado por Kingrow (mis bancos)" v={collectedByMe} fmtFn={fmtFn} />
+        <ChannelRow
+          label="Cobrado por el cliente (banco externo)"
+          v={collectedByClientExternal}
+          fmtFn={fmtFn}
+        />
+      </div>
+
+      <NetTransferCallout net={net} fmtFn={fmtFn} />
+    </div>
+  );
+}
+
+function ChannelRow({
+  label,
+  v,
+  fmtFn,
+}: {
+  readonly label: string;
+  readonly v: number;
+  readonly fmtFn: (v: number) => string;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        fontSize: 12,
+      }}
+    >
+      <span style={{ color: "var(--kg-text-3)" }}>{label}</span>
+      <strong
+        className="kg-num"
+        style={{ color: "var(--kg-text-2)", fontWeight: 600 }}
+      >
+        {fmtFn(v)}
+      </strong>
+    </div>
+  );
+}
+
+function NetTransferCallout({
+  net,
+  fmtFn,
+}: {
+  readonly net: SettlementNetTransfer;
+  readonly fmtFn: (v: number) => string;
+}) {
+  if (net.direction === "none") {
+    return (
+      <Callout tone="positive">
+        Neto de transferencia: <strong>saldado</strong>. Lo cobrado por
+        Kingrow coincide con la retención — no hay plata que mover.
+      </Callout>
+    );
+  }
+  if (net.direction === "kingrow_to_client") {
+    return (
+      <Callout tone="warning">
+        Kingrow le transfiere al cliente <strong>{fmtFn(net.amount)}</strong>.
+        (Cobré más de lo que retengo, la diferencia es del cliente.)
+      </Callout>
+    );
+  }
+  return (
+    <Callout tone="warning">
+      El cliente le transfiere a Kingrow <strong>{fmtFn(net.amount)}</strong>.
+      (Retengo más de lo que cobré por mis bancos — la diferencia me la debe.)
+    </Callout>
   );
 }
 

@@ -353,8 +353,18 @@ export default async function FinancieroPage({
 
   // Currency de bank_movements = currency del banco (0103). Movimientos
   // suman al cash flow — cada uno se convierte según su banco.
+  // Post 0169: los bancos externos (is_external_collector) no son plata de
+  // Kingrow — se excluyen del mapa para que sus movimientos queden como
+  // "banco desconocido" y sean descartados por el filtro de más abajo.
   const bankCurrencyById = new Map<string, "ARS" | "USD">();
-  for (const b of banksList) bankCurrencyById.set(b.id, b.currency);
+  const externalBankIds = new Set<string>();
+  for (const b of banksList) {
+    if (b.is_external_collector) {
+      externalBankIds.add(b.id);
+      continue;
+    }
+    bankCurrencyById.set(b.id, b.currency);
+  }
 
   function movementToUsd(m: FinanceBankMovementRow & { bank_id: string }): number {
     const currency = bankCurrencyById.get(m.bank_id) ?? "ARS";
@@ -559,10 +569,14 @@ export default async function FinancieroPage({
   // ya se concilian como bank_movements 'in' cuando entran al banco (por
   // eso los métodos de pago tienen bank_id y el saldo se reconstruye desde
   // los movimientos). Sumar `payments` sería doble conteo.
-  const bankMovementsInPeriodUsd = bankMovementsInPeriod.map((m) => ({
-    ...m,
-    amount: movementToUsd(m),
-  }));
+  // Post 0169: los movimientos que apunten a bancos externos se descartan
+  // — no son plata de Kingrow.
+  const bankMovementsInPeriodUsd = bankMovementsInPeriod
+    .filter((m) => !externalBankIds.has(m.bank_id))
+    .map((m) => ({
+      ...m,
+      amount: movementToUsd(m),
+    }));
   const cashFlow = computeCashFlow({
     bankMovements: bankMovementsInPeriodUsd,
   });
@@ -572,7 +586,13 @@ export default async function FinancieroPage({
   // manuales. ARS convertido a USD con la última tasa mensual disponible a
   // nivel org. Si hay ARS y no hay tasa cargada, `banksTotalUsd` queda null y
   // la UI muestra em-dash + hint.
-  const activeBanks = banksList.filter((b) => b.active);
+  // Post 0169: descartamos los externos antes de sumar (no son plata de
+  // Kingrow). `computeBankBalances` ya los excluye del Map, pero el loop
+  // usa `?? opening_balance` como fallback — sin el filtro, un externo
+  // sumaría su opening al KPI de caja.
+  const activeBanks = banksList.filter(
+    (b) => b.active && !b.is_external_collector,
+  );
   const bankBalances = computeBankBalances(activeBanks, allBankMovements);
   let banksTotalArsNative = 0;
   let banksTotalUsdNative = 0;

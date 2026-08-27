@@ -12,6 +12,8 @@ function makeBank(overrides: Partial<BankRow> = {}): BankRow {
     opening_balance: 0,
     currency: "ARS",
     active: true,
+    is_external_collector: false,
+    external_project_id: null,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     ...overrides,
@@ -104,5 +106,35 @@ describe("buildBankReport", () => {
       makeMovement({ bank_id: "otro", kind: "in", amount: 999 }),
     ];
     expect(buildBankReport([b], movs).byBank[0]?.closing).toBe(100);
+  });
+
+  it("excluye bancos externos y sus movimientos del reporte y consolidado", () => {
+    // Post 0169: is_external_collector no debe aparecer ni sumar al
+    // consolidado por moneda. Sus movimientos huérfanos también se
+    // descartan.
+    const propio = makeBank({
+      id: "propio",
+      currency: "ARS",
+      opening_balance: 100,
+    });
+    const externo = makeBank({
+      id: "externo",
+      currency: "ARS",
+      opening_balance: 9_999,
+      is_external_collector: true,
+      external_project_id: "proj-x",
+    });
+    const movs = [
+      makeMovement({ id: "m1", bank_id: "propio", kind: "in", amount: 50 }),
+      makeMovement({ id: "m2", bank_id: "externo", kind: "in", amount: 8_000 }),
+      makeMovement({ id: "m3", bank_id: "externo", kind: "out", amount: 3_000 }),
+    ];
+    const rep = buildBankReport([propio, externo], movs);
+    expect(rep.byBank).toHaveLength(1);
+    expect(rep.byBank[0]?.bankId).toBe("propio");
+    expect(rep.byBank[0]?.closing).toBe(150);
+    expect(rep.consolidated).toHaveLength(1);
+    expect(rep.consolidated[0]?.currency).toBe("ARS");
+    expect(rep.consolidated[0]?.closing).toBe(150);
   });
 });

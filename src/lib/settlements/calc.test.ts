@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { computeSettlement } from "./calc";
+import {
+  computeSettlement,
+  computeSettlementNetTransfer,
+  type SettlementBreakdown,
+} from "./calc";
 import type { SettlementRuleSnapshot } from "./types";
 
 /**
@@ -194,5 +198,62 @@ describe("computeSettlement — casos del Bloque 1", () => {
       expect(r.kingrowRetained).toBeLessThanOrEqual(inputs.collectedTotal);
       expect(r.owedToClient).toBeGreaterThanOrEqual(0);
     }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// computeSettlementNetTransfer — split por canal post 0170
+// ═══════════════════════════════════════════════════════════════════════════
+
+function breakdown(kingrowRetained: number): SettlementBreakdown {
+  // Los otros campos no importan para el neto — solo kingrowRetained.
+  return {
+    base: 0,
+    percentPart: 0,
+    fixedLaunchPart: 0,
+    fixedSalePart: 0,
+    rawRetention: 0,
+    retainedAfterGuarantee: 0,
+    kingrowRetained,
+    owedToClient: 0,
+  };
+}
+
+describe("computeSettlementNetTransfer", () => {
+  it("collectedByMe > kingrowRetained → kingrow_to_client con la diferencia", () => {
+    // 10.000 cobrado por mí, retengo 3.000 → le debo transferir 7.000.
+    const net = computeSettlementNetTransfer(breakdown(3_000), 10_000);
+    expect(net.direction).toBe("kingrow_to_client");
+    expect(net.amount).toBe(7_000);
+  });
+
+  it("collectedByMe < kingrowRetained → client_to_kingrow con |diferencia|", () => {
+    // El cliente cobró todo por su banco externo; yo cobré 0 pero me
+    // corresponde retener 3.000 (30% sobre 10.000 total). Él me transfiere 3.000.
+    const net = computeSettlementNetTransfer(breakdown(3_000), 0);
+    expect(net.direction).toBe("client_to_kingrow");
+    expect(net.amount).toBe(3_000);
+  });
+
+  it("collectedByMe == kingrowRetained → none, monto 0", () => {
+    // Caso balanceado: cobré exactamente mi retención.
+    const net = computeSettlementNetTransfer(breakdown(1_500), 1_500);
+    expect(net.direction).toBe("none");
+    expect(net.amount).toBe(0);
+  });
+
+  it("propia (100%): cobrado por mí, retengo todo → none", () => {
+    // Regla 100%: retengo el TOTAL cobrado. Si todo entró por mis bancos,
+    // no hay transferencia pendiente.
+    const net = computeSettlementNetTransfer(breakdown(10_000), 10_000);
+    expect(net.direction).toBe("none");
+    expect(net.amount).toBe(0);
+  });
+
+  it("todo externo (100% cliente): retengo 0, cobré 0 → none", () => {
+    // Regla 0%, sin retención y sin cobros propios → nada que transferir.
+    const net = computeSettlementNetTransfer(breakdown(0), 0);
+    expect(net.direction).toBe("none");
+    expect(net.amount).toBe(0);
   });
 });

@@ -42,6 +42,16 @@ interface SettlementDbRow {
   readonly project_id: string;
   readonly organization_id: string;
   readonly collected_total: number;
+  /**
+   * Post 0170. Σ payments cuyo método rutea a un banco NO externo. Junto con
+   * collected_by_client_external suma collected_total (CHECK en DB).
+   */
+  readonly collected_by_me: number;
+  /**
+   * Post 0170. Σ payments cuyo método rutea a un banco is_external_collector
+   * del proyecto del launch. Plata que jamás pasó por bancos de Kingrow.
+   */
+  readonly collected_by_client_external: number;
   readonly kingrow_retained: number;
   readonly owed_to_client: number;
   readonly status: LaunchSettlementStatus;
@@ -82,7 +92,7 @@ export default async function LiquidacionesPage() {
       supabase
         .from("launch_settlements")
         .select(
-          "id, launch_id, project_id, organization_id, collected_total, kingrow_retained, owed_to_client, status, closed_at, created_at, settlement_rule_snapshot",
+          "id, launch_id, project_id, organization_id, collected_total, collected_by_me, collected_by_client_external, kingrow_retained, owed_to_client, status, closed_at, created_at, settlement_rule_snapshot",
         )
         .order("created_at", { ascending: false }),
       supabase
@@ -143,6 +153,8 @@ export default async function LiquidacionesPage() {
           id: s.id,
           status: s.status,
           collectedTotal: Number(s.collected_total),
+          collectedByMe: Number(s.collected_by_me),
+          collectedByClientExternal: Number(s.collected_by_client_external),
           kingrowRetained: Number(s.kingrow_retained),
           owedToClient: Number(s.owed_to_client),
           closedAt: s.closed_at,

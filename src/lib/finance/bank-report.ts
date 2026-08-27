@@ -23,6 +23,11 @@ import type { BankMovementRow, BankRow } from "@/lib/banks/types";
  * El selector es PURO: no toca DB. El caller trae banks + movements ya
  * filtrados por período y le pasa el set de ids linkeados si quiere el
  * cross-check de conciliación.
+ *
+ * Post 0169: los bancos con `is_external_collector = true` NO son cuenta de
+ * Kingrow. Quedan excluidos por completo del reporte — no aparecen en
+ * `byBank` ni suman al `consolidated`. Los movimientos huérfanos que
+ * apunten a un banco externo también se descartan (defensivo).
  */
 
 export interface BankReportBucket {
@@ -70,6 +75,7 @@ export function buildBankReport(
   linkedMovementIds: ReadonlySet<string> = new Set(),
 ): BankReport {
   // Inicializar buckets por banco (incluidos los sin movimientos en el rango).
+  // Externos (0169) quedan fuera — no son plata de Kingrow.
   const bucketMap = new Map<string, {
     bank: BankRow;
     movementsIn: number;
@@ -78,6 +84,7 @@ export function buildBankReport(
     linkedCount: number;
   }>();
   for (const b of banks) {
+    if (b.is_external_collector) continue;
     bucketMap.set(b.id, {
       bank: b,
       movementsIn: 0,

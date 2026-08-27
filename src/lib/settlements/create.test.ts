@@ -273,6 +273,163 @@ describe("createSettlement", () => {
     expect(insertSpy).not.toHaveBeenCalled();
   });
 
+  // ═════════════════════════════════════════════════════════════════════
+  // Split por canal (post mig 0170)
+  // ═════════════════════════════════════════════════════════════════════
+
+  it("split canal — todos los pagos por banco propio → collected_by_me = collected, external = 0", async () => {
+    // 2 pagos por método "M-propio" que rutea al banco "B-propio"
+    // (is_external_collector=false). Todo va a collected_by_me.
+    const { supabase } = makeFake({
+      launches: [launchOk],
+      settlement_rules: [ok(activeRule)],
+      launch_settlements: [empty, ok([])],
+      sales: [ok([{ id: "s1", total_amount: 1000 }])],
+      payments: [
+        ok([
+          { amount: 400, payment_method_id: "M-propio" },
+          { amount: 300, payment_method_id: "M-propio" },
+        ]),
+      ],
+      payment_methods: [ok([{ id: "M-propio", bank_id: "B-propio" }])],
+      banks: [
+        ok([
+          {
+            id: "B-propio",
+            is_external_collector: false,
+            external_project_id: null,
+          },
+        ]),
+      ],
+    });
+
+    const res = await createSettlement(supabase as never, {
+      launchId: LAUNCH_ID,
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.payload.collected_total).toBe(700);
+    expect(res.payload.collected_by_me).toBe(700);
+    expect(res.payload.collected_by_client_external).toBe(0);
+  });
+
+  it("split canal — todos los pagos por banco externo del MISMO proyecto → external = collected", async () => {
+    // Método rutea a banco externo cuyo external_project_id == PROJECT_ID.
+    const externalRuleLocal = { ...activeRule, percent_of_collected: 30 };
+    const { supabase } = makeFake({
+      launches: [launchOk],
+      settlement_rules: [ok(externalRuleLocal)],
+      launch_settlements: [empty, ok([])],
+      sales: [ok([{ id: "s1", total_amount: 1000 }])],
+      payments: [ok([{ amount: 1000, payment_method_id: "M-ext" }])],
+      payment_methods: [ok([{ id: "M-ext", bank_id: "B-ext" }])],
+      banks: [
+        ok([
+          {
+            id: "B-ext",
+            is_external_collector: true,
+            external_project_id: PROJECT_ID,
+          },
+        ]),
+      ],
+    });
+
+    const res = await createSettlement(supabase as never, {
+      launchId: LAUNCH_ID,
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.payload.collected_total).toBe(1000);
+    expect(res.payload.collected_by_me).toBe(0);
+    expect(res.payload.collected_by_client_external).toBe(1000);
+    // 30% retención sobre el TOTAL = 300 (no importa el canal)
+    expect(res.payload.kingrow_retained).toBe(300);
+    expect(res.payload.owed_to_client).toBe(700);
+  });
+
+  it("split canal — mixto: parte propio, parte externo (invariante suma = total)", async () => {
+    // 600 por banco propio + 400 por banco externo (mismo proyecto).
+    // collected_by_me=600, external=400, total=1000.
+    const { supabase } = makeFake({
+      launches: [launchOk],
+      settlement_rules: [ok({ ...activeRule, percent_of_collected: 30 })],
+      launch_settlements: [empty, ok([])],
+      sales: [ok([{ id: "s1", total_amount: 1000 }])],
+      payments: [
+        ok([
+          { amount: 600, payment_method_id: "M-propio" },
+          { amount: 400, payment_method_id: "M-ext" },
+        ]),
+      ],
+      payment_methods: [
+        ok([
+          { id: "M-propio", bank_id: "B-propio" },
+          { id: "M-ext", bank_id: "B-ext" },
+        ]),
+      ],
+      banks: [
+        ok([
+          {
+            id: "B-propio",
+            is_external_collector: false,
+            external_project_id: null,
+          },
+          {
+            id: "B-ext",
+            is_external_collector: true,
+            external_project_id: PROJECT_ID,
+          },
+        ]),
+      ],
+    });
+
+    const res = await createSettlement(supabase as never, {
+      launchId: LAUNCH_ID,
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.payload.collected_by_me).toBe(600);
+    expect(res.payload.collected_by_client_external).toBe(400);
+    expect(
+      res.payload.collected_by_me + res.payload.collected_by_client_external,
+    ).toBe(res.payload.collected_total);
+  });
+
+  it("split canal — banco externo de OTRO proyecto → fallback conservador a collected_by_me", async () => {
+    // Método rutea a un banco externo cuyo external_project_id NO coincide
+    // con el projectId del launch — situación "mal ruteado". El aggregate
+    // no debe clasificarlo como cliente-cobró; suma a collected_by_me.
+    const { supabase } = makeFake({
+      launches: [launchOk],
+      settlement_rules: [ok(activeRule)],
+      launch_settlements: [empty, ok([])],
+      sales: [ok([{ id: "s1", total_amount: 500 }])],
+      payments: [ok([{ amount: 500, payment_method_id: "M-otro-ext" }])],
+      payment_methods: [ok([{ id: "M-otro-ext", bank_id: "B-otro-ext" }])],
+      banks: [
+        ok([
+          {
+            id: "B-otro-ext",
+            is_external_collector: true,
+            external_project_id: "PROYECTO-DISTINTO",
+          },
+        ]),
+      ],
+    });
+
+    const res = await createSettlement(supabase as never, {
+      launchId: LAUNCH_ID,
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.payload.collected_by_me).toBe(500);
+    expect(res.payload.collected_by_client_external).toBe(0);
+  });
+
   it("payload de una liquidación original tiene parent_settlement_id=null", async () => {
     // Contrato: solo las complementarias setean parent_settlement_id.
     // Este test blinda contra regresiones si alguien mueve el default.
@@ -406,6 +563,37 @@ describe("createComplementarySettlement", () => {
     // El nombre se marca como complementaria para trazabilidad visual
     expect(res.payload.settlement_rule_snapshot.name).toContain("complementaria");
     expect(insertSpy).not.toHaveBeenCalled();
+  });
+
+  it("complementaria: fallback conservador → collected_by_me = delta, external = 0", async () => {
+    // TODO Kingrow documentado en create.ts: la complementaria no distingue
+    // canal del delta (mismo query devuelve el split del TOTAL, no del
+    // subconjunto nuevo). Verificamos el comportamiento actual: todo delta
+    // se asigna a collected_by_me.
+    const { supabase } = makeFake({
+      launches: [launchOk],
+      settlement_rules: [ok(externalRule)],
+      launch_settlements: [
+        ok([
+          {
+            id: "prev-1",
+            collected_total: 100_000,
+            created_at: "2026-02-01T00:00:00Z",
+          },
+        ]),
+      ],
+      sales: [ok([{ id: "s1", total_amount: 100_000 }])],
+      payments: [ok([{ amount: 100_000 }, { amount: 40_000 }])],
+    });
+
+    const res = await createComplementarySettlement(supabase as never, {
+      launchId: LAUNCH_ID,
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.payload.collected_by_me).toBe(40_000);
+    expect(res.payload.collected_by_client_external).toBe(0);
   });
 
   it("cadena: la nueva complementaria linkea al último cerrado (no al original)", async () => {

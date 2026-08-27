@@ -7,6 +7,7 @@ import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { computeBankBalances } from "@/lib/banks/balance";
 import { listBanks, listBankMovements } from "@/lib/banks/list";
+import { listAccessibleProjects } from "@/lib/projects/list";
 import {
   computeBankFees,
   type BankFeeRow,
@@ -80,12 +81,20 @@ export default async function BancosPage({
   // del banco. La única fuente que mueve el saldo son los `bank_movements`.
   // Los cobros por método siguen visibles en /financiero/metodos-pago como
   // métrica de trazabilidad.
-  const [banks, movements, latestFx, orgFxByMonth] = await Promise.all([
-    listBanks(),
-    listBankMovements(),
-    loadLatestOrgFxRate(supabase),
-    loadOrgFxRatesByMonth(supabase),
-  ]);
+  const [banks, movements, latestFx, orgFxByMonth, orgProjects] =
+    await Promise.all([
+      listBanks(),
+      listBankMovements(),
+      loadLatestOrgFxRate(supabase),
+      loadOrgFxRatesByMonth(supabase),
+      listAccessibleProjects(),
+    ]);
+
+  // Lookup para el badge "Externo · {proyecto}" en cada fila. Preferimos
+  // resolver en memoria a hacer un join por FK — la lista de proyectos ya la
+  // tenemos porque hay que pasársela al drawer.
+  const projectNameById = new Map<string, string>();
+  for (const p of orgProjects) projectNameById.set(p.id, p.name);
 
   const filteredBanks =
     activeParam === "activos"
@@ -115,6 +124,12 @@ export default async function BancosPage({
       total,
       totalUsd,
       active: b.active,
+      isExternalCollector: b.is_external_collector,
+      externalProjectId: b.external_project_id,
+      externalProjectName:
+        b.external_project_id != null
+          ? projectNameById.get(b.external_project_id) ?? null
+          : null,
     };
   });
 
@@ -122,7 +137,10 @@ export default async function BancosPage({
   // Sumamos separado por moneda: sumar ARS + USD en la misma numérica no tiene
   // sentido físico. El total consolidado en USD sale en el dashboard financiero
   // aplicando la conversión con las tasas del proyecto (task #9).
-  const activeRows = rows.filter((r) => r.active);
+  // Post 0169: los bancos externos (canales del cliente) NO son plata de
+  // Kingrow — se excluyen de los totales del ContextBar aunque aparezcan
+  // como filas en la lista.
+  const activeRows = rows.filter((r) => r.active && !r.isExternalCollector);
   const totalActivoARS = activeRows
     .filter((r) => r.currency === "ARS")
     .reduce((acc, r) => acc + r.total, 0);
@@ -171,8 +189,12 @@ export default async function BancosPage({
 
   // Cash flow del período (todos los movimientos del rango, no filtrado por
   // conciliación). Alimenta el ratio "fees / cash flow" del KPI hero.
-  const movementsInPeriod = movements.filter((m) =>
-    inPeriodDate(m.occurred_at, feesPeriod),
+  // Post 0169: descartamos movimientos de bancos externos — no son cash
+  // flow de Kingrow.
+  const movementsInPeriod = movements.filter(
+    (m) =>
+      !bankById.get(m.bank_id)?.is_external_collector &&
+      inPeriodDate(m.occurred_at, feesPeriod),
   );
   let cashInTotal = 0;
   let cashOutTotal = 0;
@@ -486,9 +508,13 @@ export default async function BancosPage({
       <Panel
         title="Bancos de Kingrow"
         pad={false}
-        actions={<NewBankButton />}
+        actions={<NewBankButton projects={orgProjects} />}
       >
-        <BancosView rows={rows} totalCount={totalCount} />
+        <BancosView
+          rows={rows}
+          totalCount={totalCount}
+          projects={orgProjects}
+        />
       </Panel>
 
       {/* ─── Panel de comisiones bancarias ─────────────────────────────── */}

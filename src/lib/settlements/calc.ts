@@ -99,3 +99,41 @@ export function computeSettlement(
     owedToClient,
   };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Neto de transferencia (post 0170)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// WHY: `computeSettlement` retiene sobre el TOTAL cobrado — es la parte
+// contable ("cuánto le corresponde al cliente"). Pero operativamente lo que
+// importa es: de lo que YO tengo en mis bancos (`collectedByMe`), cuánto
+// tengo que transferirle al cliente después de descontar mi retención. Si
+// el cliente cobró la mayor parte por su banco externo, puede que YO ya
+// tenga menos de lo que me corresponde retener — en ese caso él me debe
+// transferir la diferencia.
+//
+//   net_transfer = collectedByMe − kingrowRetained
+//     · > 0 → 'kingrow_to_client'
+//     · < 0 → 'client_to_kingrow' (monto = |net|)
+//     · = 0 → 'none'
+//
+// El `owedToClient` clásico NO se toca — sigue siendo la línea contable.
+
+export interface SettlementNetTransfer {
+  direction: "kingrow_to_client" | "client_to_kingrow" | "none";
+  amount: number;
+}
+
+export function computeSettlementNetTransfer(
+  breakdown: SettlementBreakdown,
+  collectedByMe: number,
+): SettlementNetTransfer {
+  const net = collectedByMe - breakdown.kingrowRetained;
+  if (net > 0) {
+    return { direction: "kingrow_to_client", amount: net };
+  }
+  if (net < 0) {
+    return { direction: "client_to_kingrow", amount: -net };
+  }
+  return { direction: "none", amount: 0 };
+}

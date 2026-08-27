@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 
 import { Drawer } from "@/components/kg/drawer";
 
@@ -19,6 +19,11 @@ import {
 // sistema, no el saldo actual. Todos los cobros posteriores (vía
 // payment_methods) y los bank_movements ajustan el total a partir de ahí.
 // Editarlo cambia el punto de arranque y desplaza todos los saldos calculados.
+//
+// Post 0169: además puede marcarse como "cobro externo" (representa el banco
+// por el que cobra un cliente externo). Cuando is_external_collector=true,
+// external_project_id pasa a ser obligatorio; los dos flags son bicondicionales
+// (CHECK `banks_external_collector_coherence` en DB).
 // ═══════════════════════════════════════════════════════════════════════════
 
 export interface BankInitial {
@@ -26,11 +31,19 @@ export interface BankInitial {
   readonly name?: string;
   readonly openingBalance?: number;
   readonly currency?: "ARS" | "USD";
+  readonly isExternalCollector?: boolean;
+  readonly externalProjectId?: string | null;
+}
+
+export interface BankFormProject {
+  readonly id: string;
+  readonly name: string;
 }
 
 export interface BankFormDrawerProps {
   readonly mode: "create" | "edit";
   readonly initial?: BankInitial;
+  readonly projects: ReadonlyArray<BankFormProject>;
   readonly open: boolean;
   readonly onClose: () => void;
 }
@@ -38,6 +51,7 @@ export interface BankFormDrawerProps {
 export function BankFormDrawer({
   mode,
   initial,
+  projects,
   open,
   onClose,
 }: BankFormDrawerProps) {
@@ -45,7 +59,12 @@ export function BankFormDrawer({
   const title = mode === "create" ? "Nuevo banco" : "Editar banco";
   return (
     <Drawer open={open} onClose={onClose} title={title} width={480}>
-      <BankFormBody mode={mode} initial={initial} onClose={onClose} />
+      <BankFormBody
+        mode={mode}
+        initial={initial}
+        projects={projects}
+        onClose={onClose}
+      />
     </Drawer>
   );
 }
@@ -53,10 +72,12 @@ export function BankFormDrawer({
 function BankFormBody({
   mode,
   initial,
+  projects,
   onClose,
 }: {
   readonly mode: "create" | "edit";
   readonly initial?: BankInitial;
+  readonly projects: ReadonlyArray<BankFormProject>;
   readonly onClose: () => void;
 }) {
   const isEdit = mode === "edit" && initial?.id;
@@ -79,6 +100,16 @@ function BankFormBody({
   const state = isEdit ? updateState : createState;
   const formAction = isEdit ? updateFormAction : createFormAction;
   const pending = isEdit ? updatePending : createPending;
+
+  // Estado local para el checkbox — controla la visibilidad del dropdown de
+  // proyecto y su requiredness. El value se envía vía input hidden por
+  // consistencia con el resto del form (server action lee formData).
+  const [isExternal, setIsExternal] = useState<boolean>(
+    initial?.isExternalCollector ?? false,
+  );
+  const [externalProjectId, setExternalProjectId] = useState<string>(
+    initial?.externalProjectId ?? "",
+  );
 
   useEffect(() => {
     if (state && "ok" in state && state.ok) onClose();
@@ -153,6 +184,72 @@ function BankFormBody({
           todos los saldos calculados hacia adelante.
         </div>
       </Field>
+
+      <div>
+        <label
+          htmlFor="is_external_collector"
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 10,
+            cursor: "pointer",
+          }}
+        >
+          <input
+            id="is_external_collector"
+            name="is_external_collector"
+            type="checkbox"
+            checked={isExternal}
+            onChange={(e) => {
+              const checked = e.target.checked;
+              setIsExternal(checked);
+              if (!checked) setExternalProjectId("");
+            }}
+            style={{ marginTop: 3 }}
+          />
+          <span style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span
+              className="kg-t7"
+              style={{ color: "var(--kg-text-1)", fontWeight: 600 }}
+            >
+              Es cobro externo (cliente cobra por su banco)
+            </span>
+            <span
+              className="kg-t7"
+              style={{ color: "var(--kg-text-3)" }}
+            >
+              Los cobros que rutan acá se registran como plata del cliente, no
+              de Kingrow. Se excluyen del saldo y del cash flow.
+            </span>
+          </span>
+        </label>
+      </div>
+
+      {isExternal && (
+        <Field label="Proyecto (cliente externo)" htmlFor="external_project_id" required>
+          <select
+            id="external_project_id"
+            name="external_project_id"
+            required
+            value={externalProjectId}
+            onChange={(e) => setExternalProjectId(e.target.value)}
+            style={inputStyle}
+          >
+            <option value="">— Elegí un proyecto —</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <div
+            className="kg-t7"
+            style={{ color: "var(--kg-text-3)", marginTop: 6 }}
+          >
+            A qué cliente pertenece este canal de cobro.
+          </div>
+        </Field>
+      )}
 
       {state && "error" in state && (
         <div

@@ -12,6 +12,8 @@ function makeBank(overrides: Partial<BankRow> = {}): BankRow {
     opening_balance: 0,
     currency: "ARS",
     active: true,
+    is_external_collector: false,
+    external_project_id: null,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     ...overrides,
@@ -72,5 +74,27 @@ describe("computeBankBalances", () => {
       makeMovement({ kind: "in", amount: "100.25" as unknown as number }),
     ];
     expect(computeBankBalances([b], movs).get(b.id)?.total).toBe(350.75);
+  });
+
+  it("excluye bancos externos y descarta sus movimientos", () => {
+    // Post 0169: is_external_collector=true representa un canal del cliente,
+    // NO plata de Kingrow. Ni aparece en el Map ni sus movimientos afectan
+    // a otros bancos (defensivo: los movimientos huérfanos se descartan).
+    const propio = makeBank({ id: "bank-propio", opening_balance: 500 });
+    const externo = makeBank({
+      id: "bank-externo",
+      opening_balance: 9_999,
+      is_external_collector: true,
+      external_project_id: "proj-cliente-x",
+    });
+    const movs = [
+      makeMovement({ bank_id: "bank-propio", kind: "in", amount: 100 }),
+      makeMovement({ bank_id: "bank-externo", kind: "in", amount: 7_000 }),
+      makeMovement({ bank_id: "bank-externo", kind: "out", amount: 3_000 }),
+    ];
+    const balances = computeBankBalances([propio, externo], movs);
+    expect(balances.has("bank-externo")).toBe(false);
+    expect(balances.get("bank-propio")?.total).toBe(600);
+    expect(balances.size).toBe(1);
   });
 });
