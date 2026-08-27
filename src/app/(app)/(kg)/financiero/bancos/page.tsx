@@ -8,7 +8,7 @@ import { Panel } from "@/components/kg/panel";
 import { computeBankBalances } from "@/lib/banks/balance";
 import { listBanks, listBankMovements } from "@/lib/banks/list";
 import { getOrgPeople } from "@/lib/finance/reference";
-import { listAccessibleProjects } from "@/lib/projects/list";
+import { getKgProjects } from "@/lib/kg/reference";
 import {
   computeBankFees,
   type BankFeeRow,
@@ -88,7 +88,7 @@ export default async function BancosPage({
       listBankMovements(),
       loadLatestOrgFxRate(supabase),
       loadOrgFxRatesByMonth(supabase),
-      listAccessibleProjects(),
+      getKgProjects(),
     ]);
 
   // Lookup para el badge "Externo · {proyecto}" en cada fila. Preferimos

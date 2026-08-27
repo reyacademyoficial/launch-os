@@ -15,7 +15,7 @@ import {
 } from "@/lib/finance/invoice-report";
 import { resolvePeriod, type Period } from "@/lib/finance/period";
 import { fmtNative } from "@/lib/money";
-import { listAccessibleProjects } from "@/lib/projects/list";
+import { getKgProjects } from "@/lib/kg/reference";
 import { createClient } from "@/lib/supabase/server";
 
 import { RangePills, type PresetOption } from "../../range-pills";
@@ -99,7 +99,7 @@ export default async function ReporteFacturasPage({
 
   const [invRes, allProjects] = await Promise.all([
     query,
-    listAccessibleProjects(),
+    getKgProjects(),
   ]);
   const rawInvoices = (invRes.data ?? []) as unknown as InvoiceDbRow[];
 

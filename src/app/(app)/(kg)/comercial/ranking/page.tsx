@@ -23,7 +23,7 @@ import {
 import { listPayoutsForProject } from "@/lib/payouts/list";
 import type { TeamMemberPayoutRow } from "@/lib/payouts/types";
 import { listProductsForProject } from "@/lib/products/list";
-import { listAccessibleProjects } from "@/lib/projects/list";
+import { getKgProjects } from "@/lib/kg/reference";
 import { requireRole } from "@/lib/supabase/auth";
 import { listTeamMembersForProject } from "@/lib/team/list";
 
@@ -60,7 +60,7 @@ export default async function RankingPage({
       ? sp.project
       : null;
 
-  const projects = await listAccessibleProjects();
+  const projects = await getKgProjects();
 
   if (!projectId) {
     return (

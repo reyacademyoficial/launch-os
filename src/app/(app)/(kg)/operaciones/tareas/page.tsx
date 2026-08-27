@@ -9,6 +9,7 @@ import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { resolveCurrentPersonId } from "@/lib/ops/current-person";
 import { fCount } from "@/lib/finance/format";
+import { getOrgPeople } from "@/lib/finance/reference";
 import { requireSessionProfile } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
@@ -166,22 +167,19 @@ export default async function TareasPage({
         : tasksQuery.in("id", scopedTaskIds)
       : tasksQuery;
 
-  const [tasksRes, projectsRes, peopleRes] = await Promise.all([
+  const [tasksRes, projectsRes, allPeopleRef] = await Promise.all([
     scopedTasksQuery,
     supabase
       .from("internal_projects")
       .select("id, name, status")
       .neq("status", "listo")
       .order("name", { ascending: true }),
-    supabase
-      .from("organization_people")
-      .select("id, full_name, active")
-      .order("full_name", { ascending: true }),
+    getOrgPeople(),
   ]);
 
   const allTasks = (tasksRes.data ?? []) as unknown as TaskDbRow[];
   const allProjects = (projectsRes.data ?? []) as unknown as ProjectDbRow[];
-  const allPeople = (peopleRes.data ?? []) as unknown as PersonDbRow[];
+  const allPeople = allPeopleRef as unknown as PersonDbRow[];
 
   // Fetch assignees para todas las tareas visibles — hidratamos names para
   // la vista. Los que no aparecen en la junction quedan sin dueños.

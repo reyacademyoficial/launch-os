@@ -4,7 +4,7 @@ import { ContextBar } from "@/components/kg/context-bar";
 import { IconFin } from "@/components/kg/icons";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
-import { listAccessibleProjects } from "@/lib/projects/list";
+import { getKgProjects } from "@/lib/kg/reference";
 import { createClient } from "@/lib/supabase/server";
 
 import { BackfillView } from "./backfill-view";
@@ -34,7 +34,7 @@ export default async function TasasPage() {
   const supabase = await createClient();
 
   const [projects, ratesRes] = await Promise.all([
-    listAccessibleProjects(),
+    getKgProjects(),
     supabase
       .from("project_fx_rates")
       .select("id, project_id, month, ars_per_usd")

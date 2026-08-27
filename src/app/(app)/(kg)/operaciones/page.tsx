@@ -21,6 +21,7 @@ import type {
   OpsTimeEntryRow,
 } from "@/lib/ops/types";
 import { fCount } from "@/lib/finance/format";
+import { getOrgPeople } from "@/lib/finance/reference";
 import { requireSessionProfile } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
@@ -153,25 +154,13 @@ export default async function OperacionesDashboardPage({
         ? entriesBaseQuery.eq("person_id", "__no-match__")
         : entriesBaseQuery;
 
-  const peopleBaseQuery = supabase
-    .from("organization_people")
-    .select("id, full_name, active")
-    .eq("active", true)
-    .order("full_name", { ascending: true });
-  const peopleQuery =
-    isScopedToMe && currentPersonId != null
-      ? peopleBaseQuery.eq("id", currentPersonId)
-      : isScopedToMe
-        ? peopleBaseQuery.eq("id", "__no-match__")
-        : peopleBaseQuery;
-
   const [
     projectsRes,
     tasksRes,
     taskAssigneesRes,
     blockersRes,
     entriesRes,
-    peopleRes,
+    allPeople,
   ] = await Promise.all([
     supabase.from("internal_projects").select("id, status"),
     tasksQuery,
@@ -184,7 +173,7 @@ export default async function OperacionesDashboardPage({
       .is("resolved_at", null)
       .order("opened_at", { ascending: true }),
     entriesQuery,
-    peopleQuery,
+    getOrgPeople(),
   ]);
 
   const projects = (projectsRes.data ?? []) as unknown as ProjectRow[];
@@ -217,7 +206,12 @@ export default async function OperacionesDashboardPage({
     : rawBlockers.filter((b) => b.task_id != null && myTaskIdSet.has(b.task_id));
   const entries =
     (entriesRes.data ?? []) as unknown as OpsTimeEntryRow[];
-  const people = (peopleRes.data ?? []) as unknown as OpsPersonRow[];
+  const people: OpsPersonRow[] =
+    isScopedToMe && currentPersonId != null
+      ? allPeople.filter((p) => p.id === currentPersonId && p.active)
+      : isScopedToMe
+        ? []
+        : allPeople.filter((p) => p.active);
 
   // Selectores puros.
   const load = computeLoadByPerson({

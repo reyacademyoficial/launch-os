@@ -6,6 +6,7 @@ import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
+import { getOrgPeople } from "@/lib/finance/reference";
 import type { TicketPriority, TicketStatus } from "@/lib/clients/types";
 import { createClient } from "@/lib/supabase/server";
 
@@ -104,7 +105,7 @@ export default async function TicketsPage({
 
   const supabase = await createClient();
 
-  const [ticketsRes, clientsRes, projectsRes, peopleRes] = await Promise.all([
+  const [ticketsRes, clientsRes, projectsRes, allPeopleRef] = await Promise.all([
     supabase
       .from("tickets")
       .select(
@@ -119,17 +120,14 @@ export default async function TicketsPage({
       .from("projects")
       .select("id, name, client_id")
       .not("client_id", "is", null),
-    supabase
-      .from("organization_people")
-      .select("id, full_name, active")
-      .order("full_name", { ascending: true }),
+    getOrgPeople(),
   ]);
 
   const allTickets = (ticketsRes.data ?? []) as unknown as TicketDbRow[];
   const allClients = (clientsRes.data ?? []) as unknown as ClientDbRow[];
   const attachedProjects =
     (projectsRes.data ?? []) as unknown as ProjectDbRow[];
-  const allPeople = (peopleRes.data ?? []) as unknown as PersonDbRow[];
+  const allPeople = allPeopleRef as unknown as PersonDbRow[];
 
   const activeClients = allClients.filter((c) => c.active);
   const activePeople = allPeople.filter((p) => p.active);

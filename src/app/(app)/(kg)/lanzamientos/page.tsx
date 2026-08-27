@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { listAccessibleProjects } from "@/lib/projects/list";
+import { getKgProjects } from "@/lib/kg/reference";
 
 export const metadata: Metadata = { title: "Lanzamientos" };
 
@@ -19,7 +19,7 @@ export const metadata: Metadata = { title: "Lanzamientos" };
  *   - N proyectos: grid.
  */
 export default async function LanzamientosPage() {
-  const projects = await listAccessibleProjects();
+  const projects = await getKgProjects();
 
   if (projects.length === 0) {
     return (

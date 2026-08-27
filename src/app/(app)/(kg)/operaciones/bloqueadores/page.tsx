@@ -7,6 +7,7 @@ import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { resolveCurrentPersonId } from "@/lib/ops/current-person";
 import { fCount } from "@/lib/finance/format";
+import { getOrgPeople } from "@/lib/finance/reference";
 import { requireSessionProfile } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
@@ -101,7 +102,7 @@ export default async function BloqueadoresPage({
     blockersRes,
     tasksRes,
     projectsRes,
-    peopleRes,
+    allPeopleRef,
     taskAssigneesRes,
     projectOwnersRes,
   ] = await Promise.all([
@@ -120,10 +121,7 @@ export default async function BloqueadoresPage({
       .select("id, name, status")
       .neq("status", "listo")
       .order("name", { ascending: true }),
-    supabase
-      .from("organization_people")
-      .select("id, full_name, active")
-      .order("full_name", { ascending: true }),
+    getOrgPeople(),
     // Junctions para scope=mine: qué tasks tengo asignadas + qué proyectos
     // tengo como owner. Con eso filtramos los blockers linkeados.
     isScopedToMe && currentPersonId != null
@@ -146,7 +144,7 @@ export default async function BloqueadoresPage({
   const allTasks = (tasksRes.data ?? []) as unknown as TaskDbRow[];
   const allProjects =
     (projectsRes.data ?? []) as unknown as ProjectDbRow[];
-  const allPeople = (peopleRes.data ?? []) as unknown as PersonDbRow[];
+  const allPeople = allPeopleRef as unknown as PersonDbRow[];
   const myTaskIdSet = new Set<string>(
     ((taskAssigneesRes.data ?? []) as Array<{ task_id: string }>).map(
       (r) => r.task_id,

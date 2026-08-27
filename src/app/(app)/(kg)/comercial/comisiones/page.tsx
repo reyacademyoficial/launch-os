@@ -12,7 +12,7 @@ import {
 import { fCount } from "@/lib/finance/format";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { listProductsForProject } from "@/lib/products/list";
-import { listAccessibleProjects } from "@/lib/projects/list";
+import { getKgProjects } from "@/lib/kg/reference";
 
 import {
   createCommissionRule,
@@ -43,7 +43,7 @@ export default async function ComisionesPage({
       ? sp.project
       : null;
 
-  const projects = await listAccessibleProjects();
+  const projects = await getKgProjects();
 
   if (!projectId) {
     return (

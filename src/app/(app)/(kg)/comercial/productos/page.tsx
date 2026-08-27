@@ -7,7 +7,7 @@ import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
 import { listAllProducts } from "@/lib/products/list";
-import { listAccessibleProjects } from "@/lib/projects/list";
+import { getKgProjects } from "@/lib/kg/reference";
 import { createClient } from "@/lib/supabase/server";
 
 import type { ProjectOption } from "./product-form-drawer";
@@ -43,7 +43,7 @@ export default async function ProductosPage({
   const supabase = await createClient();
   const [products, projects, salesRes] = await Promise.all([
     listAllProducts(),
-    listAccessibleProjects(),
+    getKgProjects(),
     // Conteo de ventas por producto — para mostrar el uso y decidir si se
     // puede borrar (product con sales asociadas → DB RESTRICT).
     supabase.from("sales").select("product_id"),

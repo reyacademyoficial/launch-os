@@ -1,9 +1,22 @@
 "use server";
 
+import { updateTag } from "next/cache";
 import { redirect } from "next/navigation";
 
+import { currentOrgTagsAcademia } from "@/lib/academia/reference";
+import { currentOrgTagsKg } from "@/lib/kg/reference";
 import { requireRole } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
+
+async function bustProjectsCache(): Promise<void> {
+  // Projects impactan (kg) shell + selector de propia en Academia.
+  const [kg, aca] = await Promise.all([
+    currentOrgTagsKg(),
+    currentOrgTagsAcademia(),
+  ]);
+  if (kg) updateTag(kg.projects);
+  if (aca) updateTag(aca.projects);
+}
 
 export type ProjectActionState = { error: string } | null;
 
@@ -57,6 +70,7 @@ export async function createProject(
   const { error } = await supabase.from("projects").insert(insertPayload);
   if (error) return { error: error.message };
 
+  await bustProjectsCache();
   redirect("/admin/proyectos");
 }
 
@@ -82,6 +96,7 @@ export async function updateProject(
 
   if (error) return { error: error.message };
 
+  await bustProjectsCache();
   redirect("/admin/proyectos");
 }
 
@@ -97,5 +112,6 @@ export async function deleteProject(projectId: string): Promise<void> {
   const supabase = await createClient();
   await supabase.from("projects").delete().eq("id", projectId);
 
+  await bustProjectsCache();
   redirect("/admin/proyectos");
 }

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createClient } from "@/lib/supabase/server";
+import { getKgTeamMembers } from "@/lib/kg/reference";
 
 import type { TeamMemberRow } from "./types";
 
@@ -11,58 +11,35 @@ import type { TeamMemberRow } from "./types";
  * Post 0124: team_members es org-scope. Antes tomaba projectId y filtraba por
  * project_id; ahora el mismo equipo comercial funciona para todos los
  * proyectos de la org.
+ *
+ * En single-org (hoy) equivale a `getKgTeamMembers()` — ambos filtran por la
+ * org actual. Se preserva la signature por compat de callers.
  */
 export async function listTeamMembers(
-  organizationId: string,
+  _organizationId: string,
 ): Promise<TeamMemberRow[]> {
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("team_members")
-    .select("*")
-    .eq("organization_id", organizationId)
-    .order("active", { ascending: false })
-    .order("name", { ascending: true });
-
-  return (data ?? []) as unknown as TeamMemberRow[];
+  return getKgTeamMembers();
 }
 
 /**
  * Conveniencia para pantallas project-scope (leads/ventas/cobros/ranking de un
- * proyecto). Resuelve el organization_id del proyecto y llama a
- * listTeamMembers. Si el projectId no existe o no es accesible, devuelve [].
+ * proyecto). En el modelo actual todos los team_members son de la única org,
+ * así que devuelve el mismo listado que `listAllTeamMembers` — igual
+ * mantenemos la signature por compat.
  */
 export async function listTeamMembersForProject(
-  projectId: string,
+  _projectId: string,
 ): Promise<TeamMemberRow[]> {
-  const supabase = await createClient();
-  const { data: project } = await supabase
-    .from("projects")
-    .select("organization_id")
-    .eq("id", projectId)
-    .maybeSingle();
-  const orgId = (project as { organization_id: string } | null)?.organization_id;
-  if (!orgId) return [];
-
-  const { data } = await supabase
-    .from("team_members")
-    .select("*")
-    .eq("organization_id", orgId)
-    .order("active", { ascending: false })
-    .order("name", { ascending: true });
-
-  return (data ?? []) as unknown as TeamMemberRow[];
+  return getKgTeamMembers();
 }
 
 /**
  * Todos los team_members accesibles al usuario por RLS (todas las orgs
  * visibles — hoy siempre una). Consumido por `/comercial/equipo`.
+ *
+ * Va por el cache de kg/reference (org-scope). Los callers son todos del
+ * shell (kg), no del portal.
  */
 export async function listAllTeamMembers(): Promise<TeamMemberRow[]> {
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("team_members")
-    .select("*")
-    .order("active", { ascending: false })
-    .order("name", { ascending: true });
-  return (data ?? []) as unknown as TeamMemberRow[];
+  return getKgTeamMembers();
 }

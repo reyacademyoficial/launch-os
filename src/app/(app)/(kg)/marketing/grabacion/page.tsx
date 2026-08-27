@@ -7,6 +7,7 @@ import { Panel } from "@/components/kg/panel";
 import { KgViewToggle } from "@/components/kg/view-toggle";
 import { fCount } from "@/lib/finance/format";
 import { resolvePeriod, type Period } from "@/lib/finance/period";
+import { getOrgPeople } from "@/lib/finance/reference";
 import {
   isRecordingRole,
   isRecordingSessionStatus,
@@ -136,16 +137,13 @@ export default async function GrabacionPage({
       .lt("scheduled_at", toNextDay);
   }
 
-  const [ownersRes, personsRes, sessionsRes, assigneesRes, piecesRes] =
+  const [ownersRes, personsRef, sessionsRes, assigneesRes, piecesRes] =
     await Promise.all([
       supabase
         .from("content_owners")
         .select("id, name, active")
         .order("name", { ascending: true }),
-      supabase
-        .from("organization_people")
-        .select("id, full_name, active")
-        .order("full_name", { ascending: true }),
+      getOrgPeople(),
       sessionsQuery,
       supabase
         .from("recording_assignees")
@@ -159,7 +157,7 @@ export default async function GrabacionPage({
     ]);
 
   const owners = (ownersRes.data ?? []) as unknown as OwnerLite[];
-  const persons = (personsRes.data ?? []) as unknown as PersonLite[];
+  const persons = personsRef as unknown as PersonLite[];
   const sessions = (sessionsRes.data ?? []) as unknown as SessionDbRow[];
   const assignees = (assigneesRes.data ?? []) as unknown as AssigneeDbRow[];
   const pieces = (piecesRes.data ?? []) as unknown as PieceDbRow[];

@@ -6,6 +6,7 @@ import { IconMkt } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
+import { getOrgPeople } from "@/lib/finance/reference";
 import { createClient } from "@/lib/supabase/server";
 
 import {
@@ -52,18 +53,15 @@ export default async function DisponibilidadPage({
 
   const supabase = await createClient();
 
-  const [personsRes, availRes] = await Promise.all([
-    supabase
-      .from("organization_people")
-      .select("id, full_name, active")
-      .order("full_name", { ascending: true }),
+  const [personsRef, availRes] = await Promise.all([
+    getOrgPeople(),
     supabase
       .from("editor_availability")
       .select("id, person_id, date_from, date_to, available, notes")
       .order("date_from", { ascending: false }),
   ]);
 
-  const persons = (personsRes.data ?? []) as unknown as PersonLite[];
+  const persons = personsRef as unknown as PersonLite[];
   const rowsRaw = (availRes.data ?? []) as unknown as AvailabilityDbRow[];
 
   const personsById = new Map<string, PersonLite>();

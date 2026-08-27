@@ -8,6 +8,7 @@ import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { resolveCurrentPersonId } from "@/lib/ops/current-person";
 import { fCount } from "@/lib/finance/format";
+import { getOrgPeople } from "@/lib/finance/reference";
 import { requireSessionProfile } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
@@ -112,7 +113,7 @@ export default async function ProyectosInternosPage({
 
   const supabase = await createClient();
 
-  const [projectsRes, peopleRes, tasksRes, ownersRes] = await Promise.all([
+  const [projectsRes, allPeopleRef, tasksRes, ownersRes] = await Promise.all([
     supabase
       .from("internal_projects")
       .select(
@@ -121,10 +122,7 @@ export default async function ProyectosInternosPage({
       .order("status", { ascending: true })
       .order("due_on", { ascending: true, nullsFirst: false })
       .order("name", { ascending: true }),
-    supabase
-      .from("organization_people")
-      .select("id, full_name, active")
-      .order("full_name", { ascending: true }),
+    getOrgPeople(),
     // Progreso: solo necesitamos status + project id. Tareas huérfanas
     // (internal_project_id null) se descartan en el agregado.
     supabase
@@ -140,7 +138,7 @@ export default async function ProyectosInternosPage({
 
   const allProjects =
     (projectsRes.data ?? []) as unknown as ProjectDbRow[];
-  const allPeople = (peopleRes.data ?? []) as unknown as PersonDbRow[];
+  const allPeople = allPeopleRef as unknown as PersonDbRow[];
   const allTasks = (tasksRes.data ?? []) as unknown as TaskProgressRow[];
   const allOwners = (ownersRes.data ?? []) as unknown as ProjectOwnerRow[];
 

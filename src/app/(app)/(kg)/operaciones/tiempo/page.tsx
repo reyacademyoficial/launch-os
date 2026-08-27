@@ -8,6 +8,7 @@ import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { resolveCurrentPersonId } from "@/lib/ops/current-person";
 import { fCount } from "@/lib/finance/format";
+import { getOrgPeople } from "@/lib/finance/reference";
 import { requireSessionProfile } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
@@ -131,12 +132,9 @@ export default async function TiempoPage({
     entriesQuery = entriesQuery.eq("internal_project_id", projectIdFilter);
   }
 
-  const [entriesRes, peopleRes, tasksRes, projectsRes] = await Promise.all([
+  const [entriesRes, allPeopleRef, tasksRes, projectsRes] = await Promise.all([
     entriesQuery,
-    supabase
-      .from("organization_people")
-      .select("id, full_name, active")
-      .order("full_name", { ascending: true }),
+    getOrgPeople(),
     supabase
       .from("tasks")
       .select("id, title, status")
@@ -151,7 +149,7 @@ export default async function TiempoPage({
 
   const allEntries =
     (entriesRes.data ?? []) as unknown as TimeEntryDbRow[];
-  const allPeople = (peopleRes.data ?? []) as unknown as PersonDbRow[];
+  const allPeople = allPeopleRef as unknown as PersonDbRow[];
   const allTasks = (tasksRes.data ?? []) as unknown as TaskDbRow[];
   const allProjects =
     (projectsRes.data ?? []) as unknown as ProjectDbRow[];

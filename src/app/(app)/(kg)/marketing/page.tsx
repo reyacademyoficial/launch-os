@@ -42,6 +42,7 @@ import {
   type RecordingSessionStatus,
   type UploadStatus,
 } from "@/lib/marketing/types";
+import { getOrgPeople } from "@/lib/finance/reference";
 import { createClient } from "@/lib/supabase/server";
 
 import { MarketingHeroKpis } from "./_hero-kpis";
@@ -121,7 +122,7 @@ export default async function MarketingDashboardPage() {
 
   const [
     ownersRes,
-    personsRes,
+    personsRef,
     assetsRes,
     uploadsRes,
     cadencesRes,
@@ -131,9 +132,7 @@ export default async function MarketingDashboardPage() {
     supabase
       .from("content_owners")
       .select("id, name, active"),
-    supabase
-      .from("organization_people")
-      .select("id, full_name, active"),
+    getOrgPeople(),
     supabase
       .from("content_assets")
       .select(
@@ -158,7 +157,7 @@ export default async function MarketingDashboardPage() {
   ]);
 
   const owners = (ownersRes.data ?? []) as unknown as OwnerLite[];
-  const persons = (personsRes.data ?? []) as unknown as PersonLite[];
+  const persons = personsRef as unknown as PersonLite[];
   const assetsRaw = (assetsRes.data ?? []) as unknown as AssetLite[];
   const uploadsRaw = (uploadsRes.data ?? []) as unknown as UploadLite[];
   const cadencesRaw = (cadencesRes.data ?? []) as unknown as CadenceLite[];

@@ -12,6 +12,7 @@ import {
   MARKETING_FORMATS,
   type MarketingFormat,
 } from "@/lib/marketing/types";
+import { getOrgPeople } from "@/lib/finance/reference";
 import { createClient } from "@/lib/supabase/server";
 
 import {
@@ -105,16 +106,13 @@ export default async function EdicionPage({
 
   const supabase = await createClient();
 
-  const [ownersRes, personsRes, sessionsRes, piecesRes, assetsRes, availRes] =
+  const [ownersRes, personsRef, sessionsRes, piecesRes, assetsRes, availRes] =
     await Promise.all([
       supabase
         .from("content_owners")
         .select("id, name, active")
         .order("name", { ascending: true }),
-      supabase
-        .from("organization_people")
-        .select("id, full_name, active")
-        .order("full_name", { ascending: true }),
+      getOrgPeople(),
       supabase
         .from("recording_sessions")
         .select("id, content_owner_id, scheduled_at, status")
@@ -135,7 +133,7 @@ export default async function EdicionPage({
     ]);
 
   const owners = (ownersRes.data ?? []) as unknown as OwnerLite[];
-  const persons = (personsRes.data ?? []) as unknown as PersonLite[];
+  const persons = personsRef as unknown as PersonLite[];
   const sessions = (sessionsRes.data ?? []) as unknown as SessionLite[];
   const pieces = (piecesRes.data ?? []) as unknown as PieceLite[];
   const assets = (assetsRes.data ?? []) as unknown as AssetDbRow[];

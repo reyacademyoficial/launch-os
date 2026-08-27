@@ -14,7 +14,7 @@ import {
 import { resolvePeriod, type Period } from "@/lib/finance/period";
 import type { FinanceInvoiceRow } from "@/lib/finance/types";
 import { listAllProducts } from "@/lib/products/list";
-import { listAccessibleProjects } from "@/lib/projects/list";
+import { getKgProjects } from "@/lib/kg/reference";
 import { createClient } from "@/lib/supabase/server";
 
 import { RangePills, type PresetOption } from "../range-pills";
@@ -187,7 +187,7 @@ export default async function FacturasPage({
       launchIds.length > 0
         ? supabase.from("launches").select("id, name").in("id", launchIds)
         : Promise.resolve({ data: [] as LaunchNameRow[] }),
-      listAccessibleProjects(),
+      getKgProjects(),
       listAllProducts(),
       invoiceIds.length > 0
         ? supabase

@@ -1,13 +1,19 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 
+import { currentOrgTagsKg } from "@/lib/kg/reference";
 import { resolveCurrentOrganizationId } from "@/lib/organization/current";
 import { requireRole } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import type { TeamMemberRole } from "@/lib/team/types";
 
 import { translateTeamMemberError } from "./translate-error";
+
+async function bustTeamMembersCache(): Promise<void> {
+  const tags = await currentOrgTagsKg();
+  if (tags) updateTag(tags.teamMembers);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Server actions para team_members — org-scope desde 0124.
@@ -69,7 +75,8 @@ function parseFormData(formData: FormData): TeamMemberPayload | string {
   return { name, role, commissionRate };
 }
 
-function revalidateCommon() {
+async function revalidateCommon() {
+  await bustTeamMembersCache();
   revalidatePath("/comercial/equipo");
   // El selector de miembro vive en cada proyecto (leads/cobros/ventas). Como
   // team_members es org-wide desde 0124, cualquier alta/edición afecta a
@@ -115,7 +122,7 @@ export async function createTeamMember(
   const created = data as { id: string } | null;
   if (!created) return { error: "El insert no devolvió fila." };
 
-  revalidateCommon();
+  await revalidateCommon();
   return { ok: true, memberId: created.id };
 }
 
@@ -147,7 +154,7 @@ export async function updateTeamMember(
 
   if (error) return { error: translateTeamMemberError(error) };
 
-  revalidateCommon();
+  await revalidateCommon();
   return { ok: true };
 }
 
@@ -171,7 +178,7 @@ export async function setTeamMemberActive(
 
   if (error) return { error: translateTeamMemberError(error) };
 
-  revalidateCommon();
+  await revalidateCommon();
   return { ok: true };
 }
 
@@ -192,6 +199,6 @@ export async function deleteTeamMember(
 
   if (error) return { error: translateTeamMemberError(error) };
 
-  revalidateCommon();
+  await revalidateCommon();
   return { ok: true };
 }

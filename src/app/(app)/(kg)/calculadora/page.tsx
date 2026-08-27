@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 
 import { Calculator } from "@/components/dashboard/calculator/calculator";
 import { canUseCalculator } from "@/lib/auth/permissions";
-import { listAccessibleProjects } from "@/lib/projects/list";
+import { getKgProjects } from "@/lib/kg/reference";
 import { listAccessibleProjections } from "@/lib/projections/list";
 import { requireSessionProfile } from "@/lib/supabase/auth";
 
@@ -25,7 +25,7 @@ export default async function CalculatorPage() {
     profile.isDevPrivileged;
   const [projections, editableProjects] = await Promise.all([
     listAccessibleProjections(),
-    canSave ? listAccessibleProjects() : Promise.resolve([]),
+    canSave ? getKgProjects() : Promise.resolve([]),
   ]);
 
   return (

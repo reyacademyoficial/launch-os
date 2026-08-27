@@ -6,6 +6,7 @@ import { IconMkt } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
+import { getOrgPeople } from "@/lib/finance/reference";
 import {
   CATEGORY_LABEL,
   FORMAT_LABEL,
@@ -85,7 +86,7 @@ export default async function PlanificacionPage({
   // Además de owners+pieces (lo propio de esta vista), traemos también
   // organization_people activas — se pasan al drawer de sesión que se abre
   // desde el botón "Programar grabación" en la fila de la piece.
-  const [ownersRes, piecesRes, personsRes] = await Promise.all([
+  const [ownersRes, piecesRes, personsRef] = await Promise.all([
     supabase
       .from("content_owners")
       .select("id, name, active")
@@ -97,19 +98,16 @@ export default async function PlanificacionPage({
       )
       .order("scheduled_publish_at", { ascending: true, nullsFirst: false })
       .order("created_at", { ascending: false }),
-    supabase
-      .from("organization_people")
-      .select("id, full_name, active")
-      .order("full_name", { ascending: true }),
+    getOrgPeople(),
   ]);
 
   const owners = (ownersRes.data ?? []) as unknown as OwnerLite[];
   const pieces = (piecesRes.data ?? []) as unknown as PieceDbRow[];
-  const persons = (personsRes.data ?? []) as unknown as ReadonlyArray<{
+  const persons: ReadonlyArray<{
     readonly id: string;
     readonly full_name: string;
     readonly active: boolean;
-  }>;
+  }> = personsRef;
 
   const ownersById = new Map<string, OwnerLite>();
   for (const o of owners) ownersById.set(o.id, o);
