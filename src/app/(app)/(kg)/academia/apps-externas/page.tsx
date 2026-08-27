@@ -4,18 +4,13 @@ import { ContextBar } from "@/components/kg/context-bar";
 import { IconAca } from "@/components/kg/icons";
 import { Panel } from "@/components/kg/panel";
 import { listAllExternalApps } from "@/lib/academia/external-apps";
+import { getPropiaProjects } from "@/lib/academia/reference";
 import { requireRole } from "@/lib/supabase/auth";
-import { createClient } from "@/lib/supabase/server";
 
 import { NewAppButton } from "./new-app-button";
 import { AppsExternasView, type AppRow, type ProjectOption } from "./view";
 
 export const metadata: Metadata = { title: "Apps externas · Academia" };
-
-interface ProjectRow {
-  readonly id: string;
-  readonly name: string;
-}
 
 /**
  * CRUD de external_apps del proyecto (Fase G · 0153). Visible para
@@ -28,15 +23,10 @@ interface ProjectRow {
 export default async function AppsExternasPage() {
   await requireRole("superadmin", "admin", "coordinador");
 
-  const supabase = await createClient();
-  const projectsRes = await supabase
-    .from("projects")
-    .select("id, name")
-    .eq("ownership", "propia")
-    .order("name", { ascending: true });
-  const projects = (projectsRes.data ?? []) as unknown as ProjectRow[];
-
-  const apps = await listAllExternalApps();
+  const [projects, apps] = await Promise.all([
+    getPropiaProjects(),
+    listAllExternalApps(),
+  ]);
 
   const nameByProject = new Map<string, string>();
   for (const p of projects) nameByProject.set(p.id, p.name);

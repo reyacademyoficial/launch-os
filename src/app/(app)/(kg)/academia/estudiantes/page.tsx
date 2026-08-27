@@ -5,6 +5,11 @@ import { IconAca } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
+import {
+  getActiveCourses,
+  getAllProducts,
+  getPropiaProjects,
+} from "@/lib/academia/reference";
 import { fCount } from "@/lib/finance/format";
 import { createClient } from "@/lib/supabase/server";
 
@@ -50,12 +55,6 @@ interface StudentDbRow {
   readonly notes: string | null;
 }
 
-interface ProjectDbRow {
-  readonly id: string;
-  readonly name: string;
-  readonly ownership: string;
-}
-
 interface CourseLink {
   readonly id: string;
   readonly product_id: string;
@@ -77,11 +76,6 @@ interface LeadDbRow {
   readonly name: string | null;
   readonly email: string | null;
   readonly phone_normalized: string | null;
-}
-
-interface ProductDbRow {
-  readonly id: string;
-  readonly name: string;
 }
 
 interface EnrollmentLink {
@@ -114,9 +108,9 @@ export default async function EstudiantesPage({
 
   const [
     studentsRes,
-    projectsRes,
-    coursesRes,
-    productsRes,
+    propiaProjects,
+    activeCoursesRef,
+    allProductsRef,
     enrollmentsRes,
     cohortsRes,
   ] = await Promise.all([
@@ -124,27 +118,21 @@ export default async function EstudiantesPage({
       .from("students")
       .select("id, project_id, name, email, phone, status, notes, enrolled_at")
       .order("name", { ascending: true }),
-    supabase
-      .from("projects")
-      .select("id, name, ownership")
-      .eq("ownership", "propia"),
-    supabase
-      .from("courses")
-      .select("id, product_id, project_id")
-      .eq("active", true),
-    supabase.from("products").select("id, name"),
+    getPropiaProjects(),
+    getActiveCourses(),
+    getAllProducts(),
     supabase.from("enrollments").select("student_id, cohort_id"),
     supabase.from("cohorts").select("id, project_id, course_id, name, status"),
   ]);
 
   const allStudents =
     (studentsRes.data ?? []) as unknown as StudentDbRow[];
-  const propiaProjects =
-    (projectsRes.data ?? []) as unknown as ProjectDbRow[];
-  const activeCourses =
-    (coursesRes.data ?? []) as unknown as CourseLink[];
-  const allProducts =
-    (productsRes.data ?? []) as unknown as ProductDbRow[];
+  const activeCourses: CourseLink[] = activeCoursesRef.map((c) => ({
+    id: c.id,
+    product_id: c.product_id,
+    project_id: c.project_id,
+  }));
+  const allProducts = allProductsRef;
   const enrollments =
     (enrollmentsRes.data ?? []) as unknown as EnrollmentLink[];
   const allCohorts =

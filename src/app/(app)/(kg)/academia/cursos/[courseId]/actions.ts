@@ -1,12 +1,18 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 
+import { currentOrgTagsAcademia } from "@/lib/academia/reference";
 import {
   createSystem,
   deleteSystem,
   updateSystem,
 } from "@/lib/academia/systems";
+
+async function bustSystemsCache(): Promise<void> {
+  const tags = await currentOrgTagsAcademia();
+  if (tags) updateTag(tags.systems);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Server actions para academia_systems (Fase E · 0150).
@@ -60,6 +66,7 @@ export async function createSystemAction(
       color,
       expert_team_member_id: expertRaw,
     });
+    await bustSystemsCache();
     revalidatePath(`/academia/cursos/${courseId}`);
     return { ok: true, systemId: row.id };
   } catch (e) {
@@ -96,6 +103,7 @@ export async function updateSystemAction(
       expert_team_member_id: expertRaw,
       active,
     });
+    await bustSystemsCache();
     revalidatePath(`/academia/cursos/${courseId}`);
     return { ok: true, systemId };
   } catch (e) {
@@ -117,6 +125,7 @@ export async function deleteSystemAction(
   if (!systemId) return { error: "Falta el id del sistema." };
   try {
     await deleteSystem(systemId);
+    await bustSystemsCache();
     revalidatePath(`/academia/cursos/${courseId}`);
     return { ok: true };
   } catch (e) {

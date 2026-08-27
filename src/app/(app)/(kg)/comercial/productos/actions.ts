@@ -1,11 +1,19 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 
+import { currentOrgTagsAcademia } from "@/lib/academia/reference";
 import { requireRole } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
 import { translateProductError } from "./translate-error";
+
+async function bustProductsCache(): Promise<void> {
+  // Academia consume products como referencia. Cualquier alta/edición/baja
+  // desde Comercial tiene que reflejarse en los dropdowns de Academia.
+  const tags = await currentOrgTagsAcademia();
+  if (tags) updateTag(tags.products);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Server actions para products desde Kingrow — org-wide con selector de
@@ -47,7 +55,8 @@ function parseFormData(formData: FormData): ProductPayload | string {
   return { projectId, name, description };
 }
 
-function revalidateCommon(projectId: string) {
+async function revalidateCommon(projectId: string) {
+  await bustProductsCache();
   revalidatePath("/comercial/productos");
   // Selector de producto en el sale-modal (LaunchOS): tab de leads + tab de
   // cobros + layout de launches. Un producto recién creado / desactivado
@@ -89,7 +98,7 @@ export async function createProduct(
   const created = data as { id: string } | null;
   if (!created) return { error: "El insert no devolvió fila." };
 
-  revalidateCommon(parsed.projectId);
+  await revalidateCommon(parsed.projectId);
   return { ok: true, productId: created.id };
 }
 
@@ -121,7 +130,7 @@ export async function updateProduct(
 
   if (error) return { error: translateProductError(error) };
 
-  revalidateCommon(parsed.projectId);
+  await revalidateCommon(parsed.projectId);
   return { ok: true };
 }
 
@@ -146,7 +155,7 @@ export async function setProductActive(
 
   if (error) return { error: translateProductError(error) };
 
-  revalidateCommon(projectId);
+  await revalidateCommon(projectId);
   return { ok: true };
 }
 
@@ -168,6 +177,6 @@ export async function deleteProduct(
 
   if (error) return { error: translateProductError(error) };
 
-  revalidateCommon(projectId);
+  await revalidateCommon(projectId);
   return { ok: true };
 }

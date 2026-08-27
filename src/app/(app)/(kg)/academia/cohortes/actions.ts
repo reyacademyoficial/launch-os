@@ -4,6 +4,11 @@ import { revalidatePath } from "next/cache";
 
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
+// NOTA: cohorts NO se cachea (varía por generación y tiene enrollments/
+// classes/exams que cambian seguido). Los tags de referencia (courses,
+// projects, systems) no se rompen desde acá — se rompen desde sus
+// respectivos actions.
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CRUD de cohorts (bloque 4 · 0073).
 //

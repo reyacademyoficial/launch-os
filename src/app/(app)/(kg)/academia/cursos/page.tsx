@@ -5,6 +5,12 @@ import { IconAca } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
+import {
+  getAllCourses,
+  getAllExternalApps,
+  getAllProducts,
+  getPropiaProjects,
+} from "@/lib/academia/reference";
 import { fCount } from "@/lib/finance/format";
 import { createClient } from "@/lib/supabase/server";
 
@@ -25,37 +31,6 @@ const SHOW_OPTIONS: ReadonlyArray<{ value: ShowFilter; label: string }> = [
   { value: "inactive", label: "Archivados" },
   { value: "all", label: "Todos" },
 ];
-
-interface CourseDbRow {
-  readonly id: string;
-  readonly product_id: string;
-  readonly project_id: string;
-  readonly duration_hours: number | null;
-  readonly modules_count: number | null;
-  readonly active: boolean;
-  readonly default_access_days: number | null;
-  readonly ghl_expiration_webhook_url: string | null;
-  readonly external_app_id: string | null;
-}
-
-interface ExternalAppDbRow {
-  readonly id: string;
-  readonly name: string;
-  readonly project_id: string;
-  readonly active: boolean;
-}
-
-interface ProductDbRow {
-  readonly id: string;
-  readonly name: string;
-  readonly project_id: string;
-}
-
-interface ProjectDbRow {
-  readonly id: string;
-  readonly name: string;
-  readonly ownership: string;
-}
 
 interface CohortLink {
   readonly course_id: string | null;
@@ -82,39 +57,24 @@ export default async function CursosPage({
   const supabase = await createClient();
 
   const [
-    coursesRes,
-    productsRes,
-    projectsRes,
+    allCourses,
+    allProducts,
+    propiaProjects,
+    allExternalApps,
     cohortsRes,
     parametersRes,
-    externalAppsRes,
   ] = await Promise.all([
-    supabase
-      .from("courses")
-      .select(
-        "id, product_id, project_id, duration_hours, modules_count, active, default_access_days, ghl_expiration_webhook_url, external_app_id",
-      )
-      .order("active", { ascending: false }),
-    supabase.from("products").select("id, name, project_id"),
-    supabase
-      .from("projects")
-      .select("id, name, ownership")
-      .eq("ownership", "propia"),
+    getAllCourses(),
+    getAllProducts(),
+    getPropiaProjects(),
+    getAllExternalApps(),
     supabase.from("cohorts").select("course_id").not("course_id", "is", null),
     supabase
       .from("course_parameters")
       .select("id, course_id, key, label, type, required, order_index")
       .order("order_index", { ascending: true }),
-    supabase
-      .from("external_apps")
-      .select("id, name, project_id, active")
-      .order("name", { ascending: true }),
   ]);
 
-  const allCourses = (coursesRes.data ?? []) as unknown as CourseDbRow[];
-  const allProducts = (productsRes.data ?? []) as unknown as ProductDbRow[];
-  const propiaProjects =
-    (projectsRes.data ?? []) as unknown as ProjectDbRow[];
   const cohortLinks =
     (cohortsRes.data ?? []) as unknown as CohortLink[];
 
@@ -122,7 +82,7 @@ export default async function CursosPage({
   const projectNameById = new Map<string, string>();
   for (const p of propiaProjects) projectNameById.set(p.id, p.name);
 
-  const productById = new Map<string, ProductDbRow>();
+  const productById = new Map<string, { id: string; name: string; project_id: string }>();
   for (const p of allProducts) productById.set(p.id, p);
 
   const cohortsByCourse = new Map<string, number>();
@@ -188,8 +148,6 @@ export default async function CursosPage({
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  const allExternalApps =
-    (externalAppsRes.data ?? []) as unknown as ExternalAppDbRow[];
   const externalApps: ExternalAppOptionForCourse[] = allExternalApps
     .filter((a) => propiaProjectIds.has(a.project_id))
     .map((a) => ({

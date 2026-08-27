@@ -6,6 +6,12 @@ import { ContextBar } from "@/components/kg/context-bar";
 import { IconAca } from "@/components/kg/icons";
 import { Panel } from "@/components/kg/panel";
 import { StatusPill } from "@/components/kg/status-pill";
+import {
+  getActiveCourses,
+  getActiveSystems,
+  getAllProducts,
+  getPropiaProjects,
+} from "@/lib/academia/reference";
 import { createClient } from "@/lib/supabase/server";
 
 import type {
@@ -110,6 +116,13 @@ interface SaleDbRow {
   readonly created_at: string;
 }
 
+interface SaleWithLead extends SaleDbRow {
+  readonly leads:
+    | { id: string; name: string | null }
+    | { id: string; name: string | null }[]
+    | null;
+}
+
 interface LeadDbRow {
   readonly id: string;
   readonly name: string | null;
@@ -161,14 +174,16 @@ export default async function CohortFichaPage({
 
   const supabase = await createClient();
 
+  // ── Round-trip 1: cohort + queries scoped al cohortId + refs cacheados ─
   const [
     cohortRes,
-    projectsRes,
-    coursesRes,
-    productsRes,
     enrollmentsRes,
     classesRes,
     examsRes,
+    propiaProjects,
+    activeCourses,
+    allProducts,
+    activeSystems,
   ] = await Promise.all([
     supabase
       .from("cohorts")
@@ -177,15 +192,6 @@ export default async function CohortFichaPage({
       )
       .eq("id", cohortId)
       .maybeSingle(),
-    supabase
-      .from("projects")
-      .select("id, name, ownership")
-      .eq("ownership", "propia"),
-    supabase
-      .from("courses")
-      .select("id, product_id, project_id, active, has_systems")
-      .eq("active", true),
-    supabase.from("products").select("id, name"),
     supabase
       .from("enrollments")
       .select(
@@ -203,18 +209,19 @@ export default async function CohortFichaPage({
       .select("id, student_id, title, taken_at, score, passed, notes")
       .eq("cohort_id", cohortId)
       .order("taken_at", { ascending: false }),
+    getPropiaProjects(),
+    getActiveCourses(),
+    getAllProducts(),
+    getActiveSystems(),
   ]);
 
   const cohort = cohortRes.data as CohortDbRow | null;
   if (!cohort) notFound();
 
-  const propiaProjects =
-    (projectsRes.data ?? []) as unknown as ProjectDbRow[];
-  const activeCourses =
-    (coursesRes.data ?? []) as unknown as CourseDbRow[];
-  const allProducts = (productsRes.data ?? []) as unknown as ProductDbRow[];
   const enrollmentRows =
     (enrollmentsRes.data ?? []) as unknown as EnrollmentDbRow[];
+  const classRows = (classesRes.data ?? []) as unknown as ClassDbRow[];
+  const examRows = (examsRes.data ?? []) as unknown as ExamDbRow[];
 
   const productNameById = new Map<string, string>();
   for (const p of allProducts) productNameById.set(p.id, p.name);
@@ -228,67 +235,71 @@ export default async function CohortFichaPage({
     ? courseNameById.get(cohort.course_id) ?? null
     : null;
 
-  // Segundo batch: students del proyecto de la cohort (para el dropdown de
-  // inscribir) + sales del mismo producto que el curso (para el vínculo
-  // opcional). El vínculo solo aplica si la cohort tiene curso.
-  const [studentsRes, salesRes] = await Promise.all([
+  // ── Round-trip 2: todo lo que depende de cohort/classes en paralelo ────
+  //
+  //   1. projectStudents — todos los del proyecto (activos/inactivos).
+  //   2. cohortSales     — sales del producto del curso, con leads embed
+  //                        (evita un round-trip separado por leads).
+  //   3. attendance      — asistencias de todas las clases de esta cohort.
+  //   4. projectEnrollments — conteo de otras cohorts por alumno del
+  //                        proyecto, via inner-join sobre students.
+  //
+  // No hay round-trip 3: leads viene embed en sales, systems se resuelve
+  // desde el cache de activeSystems.
+
+  const cohortCourseProductId = cohort.course_id
+    ? activeCourses.find((c) => c.id === cohort.course_id)?.product_id ?? null
+    : null;
+
+  const classIds = classRows.map((c) => c.id);
+
+  const [
+    projectStudentsRes,
+    salesRes,
+    attendanceRes,
+    projectEnrollmentsRes,
+  ] = await Promise.all([
     supabase
       .from("students")
-      .select("id, project_id, name, email, status")
+      .select("id, name, email, status")
       .eq("project_id", cohort.project_id)
-      .eq("status", "active")
       .order("name", { ascending: true }),
-    cohort.course_id
-      ? (async () => {
-          const course = activeCourses.find((c) => c.id === cohort.course_id);
-          if (!course) return { data: [] as SaleDbRow[] };
-          return supabase
-            .from("sales")
-            .select(
-              "id, product_id, lead_id, total_amount, currency, created_at",
-            )
-            .eq("product_id", course.product_id)
-            .order("created_at", { ascending: false });
-        })()
-      : Promise.resolve({ data: [] as SaleDbRow[] }),
+    cohortCourseProductId
+      ? supabase
+          .from("sales")
+          .select(
+            "id, product_id, lead_id, total_amount, currency, created_at, leads(id, name)",
+          )
+          .eq("product_id", cohortCourseProductId)
+          .order("created_at", { ascending: false })
+      : Promise.resolve({ data: [] as SaleWithLead[] }),
+    classIds.length === 0
+      ? Promise.resolve({ data: [] as AttendanceDbRow[] })
+      : supabase
+          .from("attendance")
+          .select("class_id, student_id, present")
+          .in("class_id", classIds),
+    supabase
+      .from("enrollments")
+      .select("student_id, students!inner(project_id)")
+      .eq("students.project_id", cohort.project_id),
   ]);
 
-  const activeStudents =
-    (studentsRes.data ?? []) as unknown as StudentDbRow[];
-  const cohortSales = (salesRes.data ?? []) as unknown as SaleDbRow[];
-
-  const studentNameById = new Map<string, string>();
-  for (const s of activeStudents) studentNameById.set(s.id, s.name);
-
-  // Fetch todos los students del proyecto (incluye inactivos y graduados).
-  // Uso doble: (a) poblar studentNameById para nombres en el listado
-  // aunque haya cambiado a inactivo después de inscribirse, y (b)
-  // alimentar el bulk-enroll con candidatos.
-  const projectStudentsRes = await supabase
-    .from("students")
-    .select("id, name, email, status")
-    .eq("project_id", cohort.project_id)
-    .order("name", { ascending: true });
   const projectStudents = (projectStudentsRes.data ?? []) as unknown as {
     id: string;
     name: string;
     email: string | null;
     status: "active" | "inactive" | "graduated";
   }[];
-  for (const s of projectStudents) {
-    studentNameById.set(s.id, s.name);
-  }
+  const cohortSalesWithLeads =
+    (salesRes.data ?? []) as unknown as SaleWithLead[];
+  const attendanceRows =
+    (attendanceRes.data ?? []) as unknown as AttendanceDbRow[];
 
-  // Enrollments de todos los students del proyecto — para saber en cuántas
-  // otras generaciones ya están inscriptos (badge en el bulk-enroll).
-  const projectStudentIds = projectStudents.map((s) => s.id);
-  const projectEnrollmentsRes =
-    projectStudentIds.length === 0
-      ? { data: [] as { student_id: string }[] }
-      : await supabase
-          .from("enrollments")
-          .select("student_id")
-          .in("student_id", projectStudentIds);
+  const studentNameById = new Map<string, string>();
+  for (const s of projectStudents) studentNameById.set(s.id, s.name);
+  const activeStudents = projectStudents.filter((s) => s.status === "active");
+
   const enrollmentCountByStudent = new Map<string, number>();
   for (const e of (projectEnrollmentsRes.data ?? []) as unknown as {
     student_id: string;
@@ -311,17 +322,21 @@ export default async function CohortFichaPage({
       currentEnrollments: enrollmentCountByStudent.get(s.id) ?? 0,
     }));
 
-  // Leads para las sales.
-  const leadIds = Array.from(
-    new Set(cohortSales.map((s) => s.lead_id).filter((v): v is string => v != null)),
-  );
-  const leadsRes =
-    leadIds.length === 0
-      ? { data: [] as LeadDbRow[] }
-      : await supabase.from("leads").select("id, name").in("id", leadIds);
+  // Split del embed leads: extraer el nombre y quedar con la fila de sale.
+  const cohortSales: SaleDbRow[] = cohortSalesWithLeads.map((s) => ({
+    id: s.id,
+    product_id: s.product_id,
+    lead_id: s.lead_id,
+    total_amount: s.total_amount,
+    currency: s.currency,
+    created_at: s.created_at,
+  }));
   const leadNameById = new Map<string, string>();
-  for (const l of (leadsRes.data ?? []) as unknown as LeadDbRow[]) {
-    if (l.name) leadNameById.set(l.id, l.name);
+  for (const s of cohortSalesWithLeads) {
+    const lead = Array.isArray(s.leads) ? s.leads[0] : s.leads;
+    if (lead && s.lead_id && lead.name) {
+      leadNameById.set(s.lead_id, lead.name);
+    }
   }
 
   // Sales ya vinculadas a algún enrollment de esta cohort — filtrar del
@@ -345,15 +360,10 @@ export default async function CohortFichaPage({
     .sort((a, b) => a.productName.localeCompare(b.productName));
 
   // Sistemas del curso actual — para el selector nullable en el edit drawer.
-  const systemsForCourseRes = cohort.course_id
-    ? await supabase
-        .from("academia_systems")
-        .select("id, course_id, name, active")
-        .eq("course_id", cohort.course_id)
-        .eq("active", true)
-    : { data: [] as SystemDbRow[] };
-  const systemsForCourse =
-    (systemsForCourseRes.data ?? []) as unknown as SystemDbRow[];
+  // activeSystems ya viene cacheado; filtrar en memoria por el curso actual.
+  const systemsForCourse = cohort.course_id
+    ? activeSystems.filter((s) => s.course_id === cohort.course_id)
+    : [];
   const systemOptions: SystemOptionForCohort[] = systemsForCourse
     .map((s) => ({ id: s.id, name: s.name, courseId: s.course_id }))
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -407,25 +417,10 @@ export default async function CohortFichaPage({
     notes: e.notes,
   }));
 
-  const classRows = (classesRes.data ?? []) as unknown as ClassDbRow[];
   const classesCount = classRows.length;
-  const examRows = (examsRes.data ?? []) as unknown as ExamDbRow[];
   const examsCount = examRows.length;
 
-  // Attendance batch: para todas las clases de esta cohort, para poder
-  // contar presentes por clase y precargar la matriz al abrir el drawer.
-  const classIds = classRows.map((c) => c.id);
-  const attendanceRes =
-    classIds.length === 0
-      ? { data: [] as AttendanceDbRow[] }
-      : await supabase
-          .from("attendance")
-          .select("class_id, student_id, present")
-          .in("class_id", classIds);
-  const attendanceRows =
-    (attendanceRes.data ?? []) as unknown as AttendanceDbRow[];
-
-  // Presentes por clase.
+  // Attendance ya se trajo en el round-trip 2. Contar presentes por clase.
   const presentCountByClass = new Map<string, number>();
   const attendanceByClass: Record<
     string,

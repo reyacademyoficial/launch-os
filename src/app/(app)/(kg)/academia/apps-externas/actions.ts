@@ -1,12 +1,18 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 
 import {
   createExternalApp,
   deleteExternalApp,
   updateExternalApp,
 } from "@/lib/academia/external-apps";
+import { currentOrgTagsAcademia } from "@/lib/academia/reference";
+
+async function bustExternalAppsCache(): Promise<void> {
+  const tags = await currentOrgTagsAcademia();
+  if (tags) updateTag(tags.externalApps);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Server actions para external_apps (Fase G · 0153 + simplificado en 0156).
@@ -72,6 +78,7 @@ export async function createExternalAppAction(
       name,
       base_url: baseUrl,
     });
+    await bustExternalAppsCache();
     revalidatePath("/academia/apps-externas");
     return { ok: true, appId: row.id };
   } catch (e) {
@@ -107,6 +114,7 @@ export async function updateExternalAppAction(
       base_url: baseUrl,
       active,
     });
+    await bustExternalAppsCache();
     revalidatePath("/academia/apps-externas");
     return { ok: true, appId };
   } catch (e) {
@@ -127,6 +135,7 @@ export async function deleteExternalAppAction(
   if (!appId) return { error: "Falta el id de la app." };
   try {
     await deleteExternalApp(appId);
+    await bustExternalAppsCache();
     revalidatePath("/academia/apps-externas");
     return { ok: true };
   } catch (e) {

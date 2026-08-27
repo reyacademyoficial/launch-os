@@ -1,8 +1,14 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 
+import { currentOrgTagsAcademia } from "@/lib/academia/reference";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
+
+async function bustCoursesCache(): Promise<void> {
+  const tags = await currentOrgTagsAcademia();
+  if (tags) updateTag(tags.courses);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CRUD de courses (bloque 4 · 0072).
@@ -153,6 +159,7 @@ export async function createCourse(
   const created = data as { id: string } | null;
   if (!created) return { error: "El insert no devolvió fila." };
 
+  await bustCoursesCache();
   revalidatePath("/academia/cursos");
   revalidatePath("/academia/estudiantes");
   revalidatePath("/academia");
@@ -202,6 +209,7 @@ export async function updateCourse(
     return { error: error.message };
   }
 
+  await bustCoursesCache();
   revalidatePath("/academia/cursos");
   revalidatePath("/academia/estudiantes");
   revalidatePath("/academia");
@@ -254,6 +262,7 @@ export async function linkExternalAppToCourse(
     return { error: error.message };
   }
 
+  await bustCoursesCache();
   revalidatePath("/academia/cursos");
   revalidatePath(`/academia/cursos/${courseId}`);
   return { ok: true };
@@ -281,6 +290,7 @@ export async function deleteCourse(
   const { error } = await supabase.from("courses").delete().eq("id", courseId);
   if (error) return { error: error.message };
 
+  await bustCoursesCache();
   revalidatePath("/academia/cursos");
   revalidatePath("/academia/estudiantes");
   revalidatePath("/academia");

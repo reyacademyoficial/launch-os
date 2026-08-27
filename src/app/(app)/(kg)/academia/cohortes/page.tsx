@@ -5,6 +5,12 @@ import { IconAca } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
+import {
+  getActiveCourses,
+  getActiveSystems,
+  getAllProducts,
+  getPropiaProjects,
+} from "@/lib/academia/reference";
 import { fCount } from "@/lib/finance/format";
 import { createClient } from "@/lib/supabase/server";
 
@@ -48,34 +54,8 @@ interface CohortDbRow {
   readonly notes: string | null;
 }
 
-interface ProjectDbRow {
-  readonly id: string;
-  readonly name: string;
-  readonly ownership: string;
-}
-
-interface CourseDbRow {
-  readonly id: string;
-  readonly product_id: string;
-  readonly project_id: string;
-  readonly active: boolean;
-  readonly has_systems: boolean;
-}
-
-interface ProductDbRow {
-  readonly id: string;
-  readonly name: string;
-}
-
 interface EnrollmentLink {
   readonly cohort_id: string;
-}
-
-interface SystemDbRow {
-  readonly id: string;
-  readonly course_id: string;
-  readonly name: string;
-  readonly active: boolean;
 }
 
 export default async function CohortesPage({
@@ -90,11 +70,11 @@ export default async function CohortesPage({
 
   const [
     cohortsRes,
-    projectsRes,
-    coursesRes,
-    productsRes,
+    propiaProjects,
+    activeCourses,
+    allProducts,
     enrollmentsRes,
-    systemsRes,
+    activeSystems,
   ] = await Promise.all([
     supabase
       .from("cohorts")
@@ -102,32 +82,16 @@ export default async function CohortesPage({
         "id, project_id, course_id, system_id, name, start_date, end_date, status, notes",
       )
       .order("start_date", { ascending: false }),
-    supabase
-      .from("projects")
-      .select("id, name, ownership")
-      .eq("ownership", "propia"),
-    supabase
-      .from("courses")
-      .select("id, product_id, project_id, active, has_systems")
-      .eq("active", true),
-    supabase.from("products").select("id, name"),
+    getPropiaProjects(),
+    getActiveCourses(),
+    getAllProducts(),
     supabase.from("enrollments").select("cohort_id"),
-    supabase
-      .from("academia_systems")
-      .select("id, course_id, name, active")
-      .eq("active", true),
+    getActiveSystems(),
   ]);
 
   const allCohorts = (cohortsRes.data ?? []) as unknown as CohortDbRow[];
-  const propiaProjects =
-    (projectsRes.data ?? []) as unknown as ProjectDbRow[];
-  const activeCourses =
-    (coursesRes.data ?? []) as unknown as CourseDbRow[];
-  const allProducts = (productsRes.data ?? []) as unknown as ProductDbRow[];
   const enrollments =
     (enrollmentsRes.data ?? []) as unknown as EnrollmentLink[];
-  const activeSystems =
-    (systemsRes.data ?? []) as unknown as SystemDbRow[];
 
   const projectNameById = new Map<string, string>();
   for (const p of propiaProjects) projectNameById.set(p.id, p.name);

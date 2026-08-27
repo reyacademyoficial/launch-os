@@ -17,6 +17,11 @@ import {
   completionRate,
   examPassRate,
 } from "@/lib/academia/kpis";
+import {
+  getAllCourses,
+  getAllProducts,
+  getPropiaProjects,
+} from "@/lib/academia/reference";
 import { fCount } from "@/lib/finance/format";
 import { createClient } from "@/lib/supabase/server";
 
@@ -80,11 +85,6 @@ interface CertDbRow {
   readonly student_id: string;
 }
 
-interface ProjectDbRow {
-  readonly id: string;
-  readonly name: string;
-}
-
 interface CourseGhlDbRow {
   readonly id: string;
   readonly progress_source: string;
@@ -123,8 +123,9 @@ export default async function AcademiaDashboardPage() {
     attendanceRes,
     examsRes,
     certsRes,
-    projectsRes,
-    ghlCoursesRes,
+    propiaProjectsRef,
+    allCoursesRef,
+    allProductsRef,
   ] = await Promise.all([
     supabase.from("students").select("id, project_id, status"),
     supabase.from("enrollments").select("id, cohort_id, student_id, status"),
@@ -137,11 +138,9 @@ export default async function AcademiaDashboardPage() {
     supabase.from("attendance").select("class_id, present"),
     supabase.from("exams").select("id, cohort_id, passed"),
     supabase.from("certificates").select("id, student_id"),
-    supabase
-      .from("projects")
-      .select("id, name")
-      .eq("ownership", "propia"),
-    supabase.from("courses").select("id, progress_source, product_id"),
+    getPropiaProjects(),
+    getAllCourses(),
+    getAllProducts(),
   ]);
 
   const students = (studentsRes.data ?? []) as unknown as StudentDbRow[];
@@ -153,10 +152,15 @@ export default async function AcademiaDashboardPage() {
     (attendanceRes.data ?? []) as unknown as AttendanceDbRow[];
   const exams = (examsRes.data ?? []) as unknown as ExamDbRow[];
   const certs = (certsRes.data ?? []) as unknown as CertDbRow[];
-  const propiaProjects =
-    (projectsRes.data ?? []) as unknown as ProjectDbRow[];
-  const allCourses =
-    (ghlCoursesRes.data ?? []) as unknown as CourseGhlDbRow[];
+  const propiaProjects = propiaProjectsRef.map((p) => ({
+    id: p.id,
+    name: p.name,
+  }));
+  const allCourses: CourseGhlDbRow[] = allCoursesRef.map((c) => ({
+    id: c.id,
+    progress_source: c.progress_source,
+    product_id: c.product_id,
+  }));
   const ghlCourses = allCourses.filter(
     (c) => c.progress_source === "ghl_tags",
   );
@@ -179,16 +183,8 @@ export default async function AcademiaDashboardPage() {
   let mdeTotalStudents = 0;
   const courseProgressRows: CourseProgressRow[] = [];
   if (allCourses.length > 0) {
-    const productIds = Array.from(
-      new Set(allCourses.map((c) => c.product_id)),
-    );
-    const productsForCoursesRes = await supabase
-      .from("products")
-      .select("id, name")
-      .in("id", productIds);
     const productNameById = new Map<string, string>();
-    for (const p of (productsForCoursesRes.data ??
-      []) as unknown as ProjectDbRow[]) {
+    for (const p of allProductsRef) {
       productNameById.set(p.id, p.name);
     }
 

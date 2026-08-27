@@ -3,6 +3,11 @@ import type { Metadata } from "next";
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconAca } from "@/components/kg/icons";
 import { Panel } from "@/components/kg/panel";
+import {
+  getAllCourses,
+  getAllProducts,
+  getPropiaProjects,
+} from "@/lib/academia/reference";
 import { fCount } from "@/lib/finance/format";
 import { createClient } from "@/lib/supabase/server";
 
@@ -42,21 +47,10 @@ interface CourseDbRow {
   readonly project_id: string;
 }
 
-interface ProductDbRow {
-  readonly id: string;
-  readonly name: string;
-}
-
-interface ProjectDbRow {
-  readonly id: string;
-  readonly name: string;
-  readonly ownership: string;
-}
-
 export default async function CertificadosPage() {
   const supabase = await createClient();
 
-  const [certsRes, studentsRes, coursesRes, productsRes, projectsRes] =
+  const [certsRes, studentsRes, courseRefRows, productRows, propiaProjects] =
     await Promise.all([
       supabase
         .from("certificates")
@@ -67,22 +61,18 @@ export default async function CertificadosPage() {
       supabase
         .from("students")
         .select("id, name, project_id"),
-      supabase
-        .from("courses")
-        .select("id, product_id, project_id"),
-      supabase.from("products").select("id, name"),
-      supabase
-        .from("projects")
-        .select("id, name, ownership")
-        .eq("ownership", "propia"),
+      getAllCourses(),
+      getAllProducts(),
+      getPropiaProjects(),
     ]);
 
   const certRows = (certsRes.data ?? []) as unknown as CertDbRow[];
   const studentRows = (studentsRes.data ?? []) as unknown as StudentDbRow[];
-  const courseRows = (coursesRes.data ?? []) as unknown as CourseDbRow[];
-  const productRows = (productsRes.data ?? []) as unknown as ProductDbRow[];
-  const propiaProjects =
-    (projectsRes.data ?? []) as unknown as ProjectDbRow[];
+  const courseRows: CourseDbRow[] = courseRefRows.map((c) => ({
+    id: c.id,
+    product_id: c.product_id,
+    project_id: c.project_id,
+  }));
 
   const productNameById = new Map<string, string>();
   for (const p of productRows) productNameById.set(p.id, p.name);
