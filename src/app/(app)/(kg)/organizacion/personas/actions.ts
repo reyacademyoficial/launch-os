@@ -1,10 +1,16 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 
+import { currentOrgTagsFinance } from "@/lib/finance/reference";
 import { resolveCurrentOrganizationId } from "@/lib/organization/current";
 import { requireRole } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
+
+async function bustOrgPeopleCache(): Promise<void> {
+  const tags = await currentOrgTagsFinance();
+  if (tags) updateTag(tags.orgPeople);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Contratos de retorno — patrón discriminated union del resto de la app
@@ -105,6 +111,7 @@ export async function createPerson(
   const created = data as { id: string } | null;
   if (!created) return { error: "El insert no devolvió fila." };
 
+  await bustOrgPeopleCache();
   revalidatePath("/organizacion/personas");
   return { ok: true, personId: created.id };
 }
@@ -169,6 +176,7 @@ export async function updatePerson(
     return { error: error.message };
   }
 
+  await bustOrgPeopleCache();
   revalidatePath("/organizacion/personas");
   return { ok: true };
 }
@@ -186,6 +194,7 @@ export async function deactivatePerson(personId: string): Promise<void> {
     .from("organization_people")
     .update(payload)
     .eq("id", personId);
+  await bustOrgPeopleCache();
   revalidatePath("/organizacion/personas");
 }
 
@@ -197,5 +206,6 @@ export async function reactivatePerson(personId: string): Promise<void> {
     .from("organization_people")
     .update(payload)
     .eq("id", personId);
+  await bustOrgPeopleCache();
   revalidatePath("/organizacion/personas");
 }

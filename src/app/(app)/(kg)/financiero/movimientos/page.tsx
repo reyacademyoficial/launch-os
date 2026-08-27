@@ -8,6 +8,7 @@ import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { listBanks } from "@/lib/banks/list";
 import { fCount, fMoney } from "@/lib/finance/format";
+import { getOrgPeople } from "@/lib/finance/reference";
 import { resolvePeriod, type Period } from "@/lib/finance/period";
 import { createClient } from "@/lib/supabase/server";
 
@@ -633,17 +634,14 @@ async function loadConciliations(
       personId: r.person_id,
     });
   }
-  const personIds = Array.from(
-    new Set(Array.from(payloadByMvPay.values()).map((p) => p.personId)),
+  const personIds = new Set(
+    Array.from(payloadByMvPay.values()).map((p) => p.personId),
   );
   const personNameById = new Map<string, string>();
-  if (personIds.length > 0) {
-    const { data } = await supabase
-      .from("organization_people")
-      .select("id, full_name")
-      .in("id", personIds);
-    for (const p of (data ?? []) as { id: string; full_name: string }[]) {
-      personNameById.set(p.id, p.full_name);
+  if (personIds.size > 0) {
+    const orgPeople = await getOrgPeople();
+    for (const p of orgPeople) {
+      if (personIds.has(p.id)) personNameById.set(p.id, p.full_name);
     }
   }
   for (const p of payloadByMvPay.values()) {

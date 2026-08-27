@@ -1,5 +1,6 @@
 import "server-only";
 
+import { getAllBanks } from "@/lib/finance/reference";
 import { createClient } from "@/lib/supabase/server";
 
 import type { BankMovementRow, BankRow } from "./types";
@@ -16,13 +17,7 @@ import type { BankMovementRow, BankRow } from "./types";
  * que products / payment_methods.
  */
 export async function listBanks(): Promise<BankRow[]> {
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("banks")
-    .select("*")
-    .order("active", { ascending: false })
-    .order("name", { ascending: true });
-  return (data ?? []) as unknown as BankRow[];
+  return getAllBanks();
 }
 
 /**

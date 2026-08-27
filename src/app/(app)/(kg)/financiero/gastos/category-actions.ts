@@ -1,14 +1,20 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 
 import {
   normalizeCategorySlug,
   type ExpenseBucket,
 } from "@/lib/finance/expense-categories";
+import { currentOrgTagsFinance } from "@/lib/finance/reference";
 import { resolveCurrentOrganizationId } from "@/lib/organization/current";
 import { requireRole } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
+
+async function bustExpenseCategoriesCache(): Promise<void> {
+  const tags = await currentOrgTagsFinance();
+  if (tags) updateTag(tags.expenseCategories);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ABM del catálogo `expense_categories` (0167).
@@ -123,6 +129,7 @@ export async function createExpenseCategory(
   const created = data as { id: string } | null;
   if (!created) return { error: "El insert no devolvió fila." };
 
+  await bustExpenseCategoriesCache();
   revalidatePath("/financiero/gastos");
   revalidatePath("/financiero");
   return { ok: true, id: created.id };
@@ -171,6 +178,7 @@ export async function updateExpenseCategory(
     return { error: error.message ?? "Error actualizando la categoría." };
   }
 
+  await bustExpenseCategoriesCache();
   revalidatePath("/financiero/gastos");
   revalidatePath("/financiero");
   return { ok: true };
@@ -196,6 +204,7 @@ export async function toggleExpenseCategoryActive(
     return { error: error.message ?? "Error cambiando el estado." };
   }
 
+  await bustExpenseCategoriesCache();
   revalidatePath("/financiero/gastos");
   revalidatePath("/financiero");
   return { ok: true };

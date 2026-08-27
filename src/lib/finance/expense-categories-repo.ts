@@ -4,6 +4,7 @@ import type { createClient } from "@/lib/supabase/server";
 
 import type { ExpenseBucket } from "./expense-categories";
 import { normalizeCategorySlug } from "./expense-categories";
+import { getExpenseCategoriesAll } from "./reference";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Helpers server-side para leer el catálogo `expense_categories` (0167).
@@ -25,37 +26,17 @@ export interface ExpenseCategoryRow {
 // el tipo evita otro `SupabaseClient<any, any, any>` disperso por el repo.
 type AnySupabase = Awaited<ReturnType<typeof createClient>>;
 
-interface CategoryDbRow {
-  readonly id: string;
-  readonly slug: string;
-  readonly label: string;
-  readonly bucket: ExpenseBucket;
-  readonly sort_order: number;
-  readonly is_active: boolean;
-}
-
 /**
- * Trae todas las categorías de la org actual (activas + inactivas). RLS filtra
- * por `can_edit_organization`. El caller decide qué mostrar (form → activas;
- * ABM y tabla histórica → todas).
+ * Trae todas las categorías de la org actual (activas + inactivas). El caller
+ * decide qué mostrar (form → activas; ABM y tabla histórica → todas).
+ *
+ * El parámetro `supabase` queda por compatibilidad — la resolución interna
+ * pasa por `getExpenseCategoriesAll()` (cache scoped por org).
  */
 export async function listExpenseCategories(
-  supabase: AnySupabase,
+  _supabase?: AnySupabase,
 ): Promise<ExpenseCategoryRow[]> {
-  const { data } = await supabase
-    .from("expense_categories")
-    .select("id, slug, label, bucket, sort_order, is_active")
-    .order("sort_order", { ascending: true })
-    .order("label", { ascending: true });
-  const rows = (data ?? []) as unknown as CategoryDbRow[];
-  return rows.map((r) => ({
-    id: r.id,
-    slug: r.slug,
-    label: r.label,
-    bucket: r.bucket,
-    sortOrder: r.sort_order,
-    isActive: r.is_active,
-  }));
+  return getExpenseCategoriesAll();
 }
 
 /**

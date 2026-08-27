@@ -7,6 +7,7 @@ import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
 import { computeBankBalances } from "@/lib/banks/balance";
 import { listBanks, listBankMovements } from "@/lib/banks/list";
+import { getOrgPeople } from "@/lib/finance/reference";
 import { listAccessibleProjects } from "@/lib/projects/list";
 import {
   computeBankFees,
@@ -312,13 +313,8 @@ export default async function BancosPage({
   for (const r of (ctFeesRes.data ?? []) as unknown as FeeBridgeTransfer[]) {
     if (r.client_transfers) projectIdsForFees.add(r.client_transfers.project_id);
   }
-  const [peopleRes, projectsRes] = await Promise.all([
-    personIdsForFees.size > 0
-      ? supabase
-          .from("organization_people")
-          .select("id, full_name")
-          .in("id", Array.from(personIdsForFees))
-      : Promise.resolve({ data: [] as Array<{ id: string; full_name: string }> }),
+  const [orgPeople, projectsRes] = await Promise.all([
+    getOrgPeople(),
     projectIdsForFees.size > 0
       ? supabase
           .from("projects")
@@ -327,11 +323,8 @@ export default async function BancosPage({
       : Promise.resolve({ data: [] as Array<{ id: string; name: string }> }),
   ]);
   const personNameById = new Map<string, string>();
-  for (const p of (peopleRes.data ?? []) as Array<{
-    id: string;
-    full_name: string;
-  }>) {
-    personNameById.set(p.id, p.full_name);
+  for (const p of orgPeople) {
+    if (personIdsForFees.has(p.id)) personNameById.set(p.id, p.full_name);
   }
   const projectNameByIdFees = new Map<string, string>();
   for (const p of (projectsRes.data ?? []) as Array<{

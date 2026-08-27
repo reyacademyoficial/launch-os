@@ -1,12 +1,18 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 
+import { currentOrgTagsFinance } from "@/lib/finance/reference";
 import { resolveCurrentOrganizationId } from "@/lib/organization/current";
 import { requireRole } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
 import { translateBankError } from "./translate-error";
+
+async function bustBanksCache(): Promise<void> {
+  const tags = await currentOrgTagsFinance();
+  if (tags) updateTag(tags.banks);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Server actions para banks — post 0101, org-scope.
@@ -129,6 +135,7 @@ export async function createBank(
   const created = data as { id: string } | null;
   if (!created) return { error: "El insert no devolvió fila." };
 
+  await bustBanksCache();
   revalidatePath("/financiero/bancos");
   revalidatePath("/financiero/movimientos");
   revalidatePath("/financiero");
@@ -165,6 +172,7 @@ export async function updateBank(
 
   if (error) return { error: translateBankError(error) };
 
+  await bustBanksCache();
   revalidatePath("/financiero/bancos");
   revalidatePath("/financiero/movimientos");
   revalidatePath("/financiero");
@@ -196,6 +204,7 @@ export async function setBankActive(
 
   if (error) return { error: translateBankError(error) };
 
+  await bustBanksCache();
   revalidatePath("/financiero/bancos");
   revalidatePath("/financiero/movimientos");
   revalidatePath("/financiero");
