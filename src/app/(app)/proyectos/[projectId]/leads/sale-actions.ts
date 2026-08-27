@@ -494,9 +494,11 @@ export async function updateSale(
       return { error: `No se pudieron regenerar las cuotas: ${genError.message}` };
     }
 
-    // Regenerar facturas junto con las cuotas. La RPC preserva las cobradas
-    // y anuladas; sólo regenera las emitidas sin paid_at. Fallo no revierte
-    // las cuotas — el operador puede reintentar desde /financiero/facturas.
+    // Regenerar facturas junto con las cuotas. La RPC (0168) purga TODAS las
+    // emitidas de la venta —incluidas las huérfanas que quedan tras el
+    // delete-cascade de installments— y crea una nueva por cuota. Cobradas y
+    // anuladas quedan intactas. Fallo no revierte las cuotas — el operador
+    // puede reintentar desde /financiero/facturas.
     await supabase.rpc(
       "generate_invoices_for_sale" as never,
       { p_sale_id: saleId } as never,
