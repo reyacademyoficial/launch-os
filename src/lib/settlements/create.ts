@@ -253,13 +253,20 @@ export async function createSettlement(
   } = await computeLaunchAggregates(supabase, input.launchId, projectId);
 
   if (collectedTotal === 0) {
-    return {
-      ok: false,
-      reason: "no-payments",
-      detail:
-        `launch ${input.launchId} sin pagos (Σ payments.amount = 0). ` +
-        `Nada que liquidar.`,
-    };
+    // Diferenciamos "sin ventas atadas al launch" vs "hay ventas pero sin
+    // cobros". Antes ambos casos daban el mismo mensaje ("sin pagos") y era
+    // confuso — el operador venía a cargar una venta con banco externo,
+    // olvidaba atarla al launch (columna nullable desde mig 0041), y recibía
+    // un error que apuntaba a los cobros. Mensaje distinto por causa.
+    const detail =
+      salesCount === 0
+        ? `El lanzamiento no tiene ventas atadas. Revisá que las ventas ` +
+          `tengan el launch asignado (la columna es opcional — puede haber ` +
+          `quedado sin setear si el lead no tenía launch al cargarla).`
+        : `El lanzamiento tiene ${salesCount} venta(s) por ${totalSold} ` +
+          `pero ningún cobro registrado. Cargá los pagos desde la ficha ` +
+          `del alumno antes de liquidar.`;
+    return { ok: false, reason: "no-payments", detail };
   }
 
   // ─── 5) Motor de split ────────────────────────────────────────────────
