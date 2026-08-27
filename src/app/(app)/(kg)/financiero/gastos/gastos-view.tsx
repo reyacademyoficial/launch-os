@@ -4,15 +4,12 @@ import type { ReactNode } from "react";
 import { useMemo, useState, useTransition } from "react";
 
 import { KgDataTable, type Column } from "@/components/kg/data-table";
-import {
-  EXPENSE_CATEGORY_LABELS,
-  isValidExpenseCategory,
-} from "@/lib/finance/expense-categories";
 import { fMoney } from "@/lib/finance/format";
 
 import { bulkDeleteExpenses, deleteExpense } from "./actions";
 import {
   ExpenseFormDrawer,
+  type ExpenseCategoryOption,
   type ProjectOptionForExpense,
 } from "./expense-form-drawer";
 import {
@@ -63,6 +60,8 @@ export function GastosView({
   totalCount,
   unconciledMovements,
   projects,
+  activeCategories,
+  categoryLabelBySlug,
   footerActions,
 }: {
   readonly rows: readonly ExpenseRowData[];
@@ -70,6 +69,10 @@ export function GastosView({
   readonly unconciledMovements: readonly UnconciledMovement[];
   /** Proyectos de la org para el picker del drawer de edición (0131). */
   readonly projects: readonly ProjectOptionForExpense[];
+  /** Categorías activas para el select del drawer de edición (0167). */
+  readonly activeCategories: readonly ExpenseCategoryOption[];
+  /** slug → label del catálogo (incluye inactivas) para el render de la tabla. */
+  readonly categoryLabelBySlug: ReadonlyMap<string, string>;
   /** Slot para el paginador — va en la misma fila que "X de Y registros". */
   readonly footerActions?: ReactNode;
 }) {
@@ -178,9 +181,7 @@ export function GastosView({
       label: "Categoría",
       render: (r) => {
         if (!r.category) return "—";
-        return isValidExpenseCategory(r.category)
-          ? EXPENSE_CATEGORY_LABELS[r.category]
-          : r.category;
+        return categoryLabelBySlug.get(r.category) ?? r.category;
       },
     },
     { key: "supplier", label: "Proveedor", render: (r) => r.supplier },
@@ -360,6 +361,7 @@ export function GastosView({
             projectId: editingRow.projectId,
           }}
           projects={projects}
+          categories={activeCategories}
         />
       )}
 

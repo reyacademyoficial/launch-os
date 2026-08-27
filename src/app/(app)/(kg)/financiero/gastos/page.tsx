@@ -6,6 +6,10 @@ import { KgPaginator } from "@/components/kg/paginator";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
+import {
+  labelMapFromCategories,
+  listExpenseCategories,
+} from "@/lib/finance/expense-categories-repo";
 import { fCount, fMoney } from "@/lib/finance/format";
 import { resolvePeriod, type Period } from "@/lib/finance/period";
 import type { FinanceExpenseRow } from "@/lib/finance/types";
@@ -16,6 +20,7 @@ import { RangePills, type PresetOption } from "../range-pills";
 import { GastosView, type ExpenseRowData } from "./gastos-view";
 import { ImportExpensesButton } from "./import-drawer";
 import type { UnconciledMovement } from "./link-payment-drawer";
+import { ManageCategoriesButton } from "./manage-categories-button";
 import { NewExpenseButton } from "./new-expense-button";
 
 export const metadata: Metadata = { title: "Gastos · Financiero" };
@@ -234,6 +239,12 @@ export default async function GastosPage({
     new Set([...bankProjectIds, ...expenseProjectIds]),
   );
 
+  const expenseCategoriesAll = await listExpenseCategories(supabase);
+  const activeCategoryOptions = expenseCategoriesAll
+    .filter((c) => c.isActive)
+    .map((c) => ({ slug: c.slug, label: c.label }));
+  const categoryLabelBySlug = labelMapFromCategories(expenseCategoriesAll);
+
   const [projectsByRefRes, projectsForPickerRes] = await Promise.all([
     referencedProjectIds.length > 0
       ? supabase.from("projects").select("id, name").in("id", referencedProjectIds)
@@ -435,7 +446,20 @@ export default async function GastosPage({
               </a>
             </span>
             <ImportExpensesButton />
-            <NewExpenseButton projects={projectsForPicker} />
+            <ManageCategoriesButton
+              categories={expenseCategoriesAll.map((c) => ({
+                id: c.id,
+                slug: c.slug,
+                label: c.label,
+                bucket: c.bucket,
+                sortOrder: c.sortOrder,
+                isActive: c.isActive,
+              }))}
+            />
+            <NewExpenseButton
+              projects={projectsForPicker}
+              categories={activeCategoryOptions}
+            />
           </div>
         }
       >
@@ -444,6 +468,8 @@ export default async function GastosPage({
           totalCount={totalCount}
           unconciledMovements={unconciledForDrawer}
           projects={projectsForPicker}
+          activeCategories={activeCategoryOptions}
+          categoryLabelBySlug={categoryLabelBySlug}
           footerActions={
             <KgPaginator
               page={page}

@@ -20,6 +20,10 @@ import type {
   TicketRow,
 } from "@/lib/clients/types";
 import { bucketOfCategory } from "@/lib/finance/expense-categories";
+import {
+  bucketMapFromCategories,
+  listExpenseCategories,
+} from "@/lib/finance/expense-categories-repo";
 import { fCount, fMoney } from "@/lib/finance/format";
 import type { Ownership } from "@/lib/finance/invoice-classification";
 import {
@@ -481,9 +485,11 @@ export default async function EjecutivoDashboardPage({
     ...p,
     total_amount: payrollToUsd(p.total_amount, p),
   }));
+  const expenseCategoriesCatalog = await listExpenseCategories(supabase);
+  const bucketBySlug = bucketMapFromCategories(expenseCategoriesCatalog);
   const expensesByBucket = { direct: 0, tax: 0, operating: 0 };
   for (const e of expensesInPeriodUsd) {
-    const bucket = bucketOfCategory(e.category);
+    const bucket = bucketOfCategory(e.category, bucketBySlug);
     expensesByBucket[bucket] += e.amount_gross - e.tax_amount;
   }
   const payoutsUsdTotal = payouts.reduce(

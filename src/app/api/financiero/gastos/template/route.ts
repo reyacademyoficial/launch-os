@@ -2,10 +2,8 @@ import { NextResponse } from "next/server";
 
 import ExcelJS from "exceljs";
 
-import {
-  EXPENSE_CATEGORIES,
-  EXPENSE_CATEGORY_LABELS,
-} from "@/lib/finance/expense-categories";
+import { listExpenseCategories } from "@/lib/finance/expense-categories-repo";
+import { createClient } from "@/lib/supabase/server";
 
 /**
  * Plantilla xlsx para importar expenses.
@@ -18,11 +16,19 @@ import {
  * lo sugiere primero cuando coincide.
  *
  * paid_at + bank_movement_id NO se importan — la conciliación se hace desde
- * la UI vinculando el gasto a un movimiento bancario (mismo criterio que la
- * política del bloque de gastos: no exponer borrado, no crear movimientos
- * duplicados al conciliar).
+ * la UI vinculando el gasto a un movimiento bancario.
+ *
+ * La hoja "Categorías" se genera desde `expense_categories` (0167) — refleja
+ * el ABM del usuario, no una lista hardcodeada. Si no hay categorías (org
+ * recién creada sin seed), la hoja queda vacía y el import acepta cualquier
+ * string en esa columna (la DB es texto libre).
  */
 export async function GET() {
+  const supabase = await createClient();
+  const categories = await listExpenseCategories(supabase);
+  const activeCategories = categories.filter((c) => c.isActive);
+  const seedExample = activeCategories[0];
+
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Kingrow";
   workbook.created = new Date();
@@ -43,7 +49,7 @@ export async function GET() {
 
   const example = sheet.addRow({
     description: "Ejemplo — Alquiler oficina julio",
-    category: "alquiler",
+    category: seedExample?.slug ?? "alquiler",
     gross: 250000,
     tax: 52500,
     currency: "ARS",
@@ -60,8 +66,8 @@ export async function GET() {
     { header: "Etiqueta", key: "label", width: 20 },
   ];
   refSheet.getRow(1).font = { bold: true };
-  for (const c of EXPENSE_CATEGORIES) {
-    refSheet.addRow({ value: c, label: EXPENSE_CATEGORY_LABELS[c] });
+  for (const c of activeCategories) {
+    refSheet.addRow({ value: c.slug, label: c.label });
   }
 
   const buf = await workbook.xlsx.writeBuffer();

@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import {
   ExpenseFormDrawer,
+  type ExpenseCategoryOption,
   type ProjectOptionForExpense,
 } from "./expense-form-drawer";
 
@@ -12,8 +13,10 @@ import {
 // dentro de GastosView — mismo criterio que NewInvoiceButton.
 export function NewExpenseButton({
   projects,
+  categories,
 }: {
   readonly projects: readonly ProjectOptionForExpense[];
+  readonly categories: readonly ExpenseCategoryOption[];
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -40,6 +43,7 @@ export function NewExpenseButton({
         open={open}
         onClose={() => setOpen(false)}
         projects={projects}
+        categories={categories}
       />
     </>
   );

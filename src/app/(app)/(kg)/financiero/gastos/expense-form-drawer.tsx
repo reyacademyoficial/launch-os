@@ -3,11 +3,6 @@
 import { useActionState, useEffect, useMemo, useState } from "react";
 
 import { Drawer } from "@/components/kg/drawer";
-import {
-  EXPENSE_CATEGORIES,
-  EXPENSE_CATEGORY_LABELS,
-  type ExpenseCategory,
-} from "@/lib/finance/expense-categories";
 import { fMoney } from "@/lib/finance/format";
 
 import {
@@ -52,6 +47,16 @@ export interface ProjectOptionForExpense {
   readonly name: string;
 }
 
+/**
+ * Categoría disponible en el select del form. La page fetchea el catálogo
+ * activo desde `expense_categories` (0167) y filtra `is_active=true` antes
+ * de pasar. Ver `expense-categories-repo.ts`.
+ */
+export interface ExpenseCategoryOption {
+  readonly slug: string;
+  readonly label: string;
+}
+
 export interface ExpenseFormDrawerProps {
   readonly mode: "create" | "edit";
   readonly initial?: ExpenseInitial;
@@ -59,6 +64,8 @@ export interface ExpenseFormDrawerProps {
   readonly onClose: () => void;
   /** Proyectos de la org disponibles para atribuir. Vacío → oculta el picker. */
   readonly projects: readonly ProjectOptionForExpense[];
+  /** Categorías activas del catálogo. Vacío → el select solo muestra "Sin categoría". */
+  readonly categories: readonly ExpenseCategoryOption[];
 }
 
 export function ExpenseFormDrawer({
@@ -67,6 +74,7 @@ export function ExpenseFormDrawer({
   open,
   onClose,
   projects,
+  categories,
 }: ExpenseFormDrawerProps) {
   const title = mode === "create" ? "Nuevo gasto" : "Editar gasto";
   const submitLabel = mode === "create" ? "Crear gasto" : "Guardar cambios";
@@ -80,6 +88,7 @@ export function ExpenseFormDrawer({
         onClose={onClose}
         submitLabel={submitLabel}
         projects={projects}
+        categories={categories}
       />
     </Drawer>
   );
@@ -91,12 +100,14 @@ function ExpenseFormBody({
   onClose,
   submitLabel,
   projects,
+  categories,
 }: {
   readonly mode: "create" | "edit";
   readonly initial?: ExpenseInitial;
   readonly onClose: () => void;
   readonly submitLabel: string;
   readonly projects: readonly ProjectOptionForExpense[];
+  readonly categories: readonly ExpenseCategoryOption[];
 }) {
   const isEdit = mode === "edit" && initial?.id;
 
@@ -170,14 +181,23 @@ function ExpenseFormBody({
         <select
           id="category"
           name="category"
-          defaultValue={
-            (initial?.category as ExpenseCategory | undefined) ?? "otros"
-          }
+          defaultValue={initialCategoryValue(initial?.category, categories)}
           style={inputStyle}
         >
-          {EXPENSE_CATEGORIES.map((c) => (
-            <option key={c} value={c}>
-              {EXPENSE_CATEGORY_LABELS[c]}
+          <option value="">Sin categoría</option>
+          {/*
+            Si la categoría persistida del gasto no matchea ninguna activa
+            (por ej. la dieron de baja después), la agregamos como opción
+            aparte para no perderla al editar. Se muestra con "(inactiva)".
+          */}
+          {shouldRenderLegacyOption(initial?.category, categories) && (
+            <option value={initial!.category!}>
+              {initial!.category} (inactiva)
+            </option>
+          )}
+          {categories.map((c) => (
+            <option key={c.slug} value={c.slug}>
+              {c.label}
             </option>
           ))}
         </select>
@@ -427,4 +447,29 @@ function todayYmd(): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+/**
+ * Elige el default del select de categoría:
+ *   - Si el gasto tiene una categoría persistida, la respetamos aunque esté
+ *     inactiva (para no cambiarle el valor al humano por mirarlo).
+ *   - Si no, y hay "otros" activa, cae a "otros" (comportamiento previo).
+ *   - Si no hay "otros", cae a "" (sin categoría) — la primera activa
+ *     también sería válido pero "" es más honesto: el humano ELIGE.
+ */
+function initialCategoryValue(
+  current: string | null | undefined,
+  categories: readonly ExpenseCategoryOption[],
+): string {
+  if (current && current.length > 0) return current;
+  if (categories.some((c) => c.slug === "otros")) return "otros";
+  return "";
+}
+
+function shouldRenderLegacyOption(
+  current: string | null | undefined,
+  categories: readonly ExpenseCategoryOption[],
+): boolean {
+  if (!current || current.length === 0) return false;
+  return !categories.some((c) => c.slug === current);
 }

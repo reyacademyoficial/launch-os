@@ -16,6 +16,11 @@ import {
   sumPayrollTotal,
 } from "@/lib/finance/kpis";
 import { bucketOfCategory } from "@/lib/finance/expense-categories";
+import {
+  bucketMapFromCategories,
+  labelMapFromCategories,
+  listExpenseCategories,
+} from "@/lib/finance/expense-categories-repo";
 import { fPct } from "@/lib/finance/format";
 import { loadLatestOrgFxRate, loadOrgFxRatesByMonth } from "@/lib/money";
 import type { Ownership } from "@/lib/finance/invoice-classification";
@@ -190,6 +195,14 @@ export default async function FinancieroPage({
     // usando la tasa del mes de devengo en vez de una tasa global.
     loadOrgFxRatesByMonth(supabase),
   ]);
+
+  // Catálogo dinámico de categorías (0167). Se usa para:
+  //   · `bucketOfCategory` → mapea slug del gasto al bucket P&L configurado.
+  //   · label del gráfico "Estructura de egresos" → prefiere el label editado
+  //     en el ABM sobre la capitalización cruda del slug.
+  const expenseCategoriesCatalog = await listExpenseCategories(supabase);
+  const bucketBySlug = bucketMapFromCategories(expenseCategoriesCatalog);
+  const categoryLabelBySlug = labelMapFromCategories(expenseCategoriesCatalog);
 
   // Cast en el borde — postgrest-js colapsa a `never` sobre el Database
   // generado (patrón documentado en memoria). Los shapes son los subsets
@@ -480,7 +493,7 @@ export default async function FinancieroPage({
   // launch. Nómina va en su propia línea del P&L.
   const expensesByBucket = { direct: 0, tax: 0, operating: 0 };
   for (const e of expensesInPeriodUsd) {
-    const bucket = bucketOfCategory(e.category);
+    const bucket = bucketOfCategory(e.category, bucketBySlug);
     expensesByBucket[bucket] += e.amount_gross - e.tax_amount;
   }
   // Payouts: filtro por período para el P&L; el filtro por burnWindow vive
@@ -659,7 +672,13 @@ export default async function FinancieroPage({
   }
   const expenseCategories: FinancieroDashboardData["expenseCategories"] = [
     ...Array.from(catMap.entries())
-      .map(([label, amount]) => ({ label: capitalize(label), amount }))
+      .map(([slug, amount]) => ({
+        // Preferimos el label editado en el ABM; si el slug no matchea
+        // ninguna categoría del catálogo (histórico o "Sin categoría"),
+        // capitalizamos el string crudo — mismo comportamiento previo.
+        label: categoryLabelBySlug.get(slug) ?? capitalize(slug),
+        amount,
+      }))
       .sort((a, b) => b.amount - a.amount),
     ...(payrollTotal > 0 ? [{ label: "Nómina", amount: payrollTotal }] : []),
     ...(payoutsUsdTotal > 0

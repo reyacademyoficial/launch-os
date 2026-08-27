@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
-import { isValidExpenseCategory } from "@/lib/finance/expense-categories";
+import { listExpenseCategories } from "@/lib/finance/expense-categories-repo";
 import {
   parseExpensesWorkbook,
   type ParseError,
@@ -59,10 +59,12 @@ function parseExpenseFormData(formData: FormData): ExpensePayload | string {
   if (description.length === 0) return "La descripción es obligatoria.";
 
   const categoryRaw = String(formData.get("category") ?? "").trim();
-  // Category es opcional a nivel DB, pero el form la fuerza. Si viene una
-  // no-listada (client tampering), la aceptamos como null en vez de mentirle
-  // al humano — la fila queda visible como "Sin categoría" en el gráfico.
-  const category = isValidExpenseCategory(categoryRaw) ? categoryRaw : null;
+  // Category es opcional a nivel DB. Post 0167 el vocabulario vive en
+  // `expense_categories` y el form envía un slug del catálogo, "" para
+  // "sin categoría", o el slug histórico de un gasto viejo si se está
+  // editando y la categoría fue dada de baja. Aceptamos cualquier no-vacío
+  // como-está — la DB es texto libre y el gráfico agrupa por slug.
+  const category = categoryRaw.length === 0 ? null : categoryRaw;
 
   const amountGross = Number(formData.get("amount_gross"));
   if (!Number.isFinite(amountGross) || amountGross < 0) {
@@ -550,7 +552,14 @@ export async function previewExpensesImport(
   if (!fileRes.ok) return { ok: false, error: fileRes.error };
 
   try {
-    const parsed = await parseExpensesWorkbook(fileRes.buffer);
+    // Preview: cargamos el catálogo activo para tolerar categorías del ABM;
+    // los slugs no listados quedan como null (mismo comportamiento previo).
+    const supabase = await createClient();
+    const categories = await listExpenseCategories(supabase);
+    const validSlugs = new Set(
+      categories.filter((c) => c.isActive).map((c) => c.slug),
+    );
+    const parsed = await parseExpensesWorkbook(fileRes.buffer, validSlugs);
     if (parsed.headerError) {
       return { ok: false, error: parsed.headerError };
     }
@@ -597,7 +606,11 @@ export async function confirmExpensesImport(
 
   try {
     const supabase = await createClient();
-    const parsed = await parseExpensesWorkbook(fileRes.buffer);
+    const categories = await listExpenseCategories(supabase);
+    const validSlugs = new Set(
+      categories.filter((c) => c.isActive).map((c) => c.slug),
+    );
+    const parsed = await parseExpensesWorkbook(fileRes.buffer, validSlugs);
     if (parsed.headerError) {
       return { ok: false, error: parsed.headerError };
     }

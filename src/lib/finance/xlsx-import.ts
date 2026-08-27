@@ -6,7 +6,7 @@ import ExcelJS from "exceljs";
 
 import {
   EXPENSE_CATEGORIES,
-  type ExpenseCategory,
+  normalizeCategorySlug,
 } from "./expense-categories";
 
 /**
@@ -303,7 +303,13 @@ export async function parseMovementsWorkbook(
 
 export interface ExpenseImportRow {
   readonly description: string;
-  readonly category: ExpenseCategory | null;
+  /**
+   * Slug de categoría persistido en `expenses.category`. Puede ser cualquier
+   * string no vacío (la columna es text libre). Null si el humano no completó
+   * la celda o si el valor no matchea ninguna categoría del catálogo cuando
+   * el caller pasó `validSlugs`.
+   */
+  readonly category: string | null;
   readonly amount_gross: number;
   readonly tax_amount: number;
   readonly currency: string;
@@ -315,7 +321,17 @@ export interface ExpenseImportRow {
 
 export async function parseExpensesWorkbook(
   buffer: Buffer,
+  /**
+   * Set de slugs válidos del catálogo `expense_categories` (0167). Si viene,
+   * un valor de categoría que no matchea (case-insensitive + sin tildes)
+   * cae a null. Si NO viene, aceptamos cualquier slug histórico
+   * (las 9 semillas hardcodeadas) — usado por los tests + como fallback.
+   */
+  validSlugs?: ReadonlySet<string>,
 ): Promise<ParseResult<ExpenseImportRow>> {
+  const slugSet = validSlugs
+    ? new Set(Array.from(validSlugs).map(normalizeCategorySlug))
+    : new Set<string>(EXPENSE_CATEGORIES);
   const rows: ExpenseImportRow[] = [];
   const errors: ParseError[] = [];
   let totalRows = 0;
@@ -408,13 +424,10 @@ export async function parseExpensesWorkbook(
         return;
       }
 
-      const categoryRaw = colCategoria
-        ? str(record[colCategoria]).toLowerCase()
-        : "";
-      const category = (EXPENSE_CATEGORIES as readonly string[]).includes(
-        categoryRaw,
-      )
-        ? (categoryRaw as ExpenseCategory)
+      const categoryRaw = colCategoria ? str(record[colCategoria]) : "";
+      const categoryNorm = normalizeCategorySlug(categoryRaw);
+      const category = categoryNorm.length > 0 && slugSet.has(categoryNorm)
+        ? categoryNorm
         : null;
 
       const currencyRaw = colMoneda
