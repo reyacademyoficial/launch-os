@@ -39,7 +39,11 @@ import {
   listSalesForProject,
 } from "@/lib/sales/list";
 import { createClient } from "@/lib/supabase/server";
-import { requireSessionProfile, userCanEditLaunchesIn } from "@/lib/supabase/auth";
+import {
+  denyCloserOutsideVentas,
+  requireSessionProfile,
+  userCanEditLaunchesIn,
+} from "@/lib/supabase/auth";
 import { listTeamMembersForProject } from "@/lib/team/list";
 
 import {
@@ -91,6 +95,7 @@ export default async function LeadsPage({
 
   const profile = await requireSessionProfile();
   if (profile.role === "cliente") redirect(`/proyectos/${projectId}`);
+  denyCloserOutsideVentas(profile, projectId);
 
   const tab: Tab = readString(sp.view) === "kanban" ? "kanban" : "tabla";
 

@@ -19,6 +19,7 @@ export type Role =
   | "admin"
   | "operador"
   | "coordinador"
+  | "closer"
   | "cliente";
 
 /**
@@ -55,6 +56,10 @@ export function isCliente(ctx: SessionContext): boolean {
   return ctx.role === "cliente";
 }
 
+export function isCloser(ctx: SessionContext): boolean {
+  return ctx.role === "closer";
+}
+
 // ─── Project scope (mirror of has_project_access / can_edit_project) ────────
 
 export function hasProjectAccess(ctx: SessionContext, projectId: string): boolean {
@@ -72,9 +77,9 @@ export function canEditProject(ctx: SessionContext, projectId: string): boolean 
 }
 
 /**
- * UPDATE en launches (la fila del launch + launch_daily). Admin y operador
- * miembros del proyecto pasan; coordinador y cliente nunca.
- * Mirror del SQL `can_edit_launches_in(project_id)`.
+ * UPDATE en launches (la fila del launch + launch_daily) y en sales/payments/
+ * leads. Admin, operador y closer miembros del proyecto pasan; coordinador y
+ * cliente nunca. Mirror del SQL `can_edit_launches_in(project_id)`.
  */
 export function canEditLaunchesIn(
   ctx: SessionContext,
@@ -82,7 +87,7 @@ export function canEditLaunchesIn(
 ): boolean {
   if (isSuperadmin(ctx)) return true;
   if (!ctx.memberOfProjectIds.has(projectId)) return false;
-  return isAdmin(ctx) || isOperador(ctx);
+  return isAdmin(ctx) || isOperador(ctx) || isCloser(ctx);
 }
 
 // ─── Feature gates ──────────────────────────────────────────────────────────

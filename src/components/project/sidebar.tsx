@@ -22,10 +22,14 @@ import { KgUserBlock } from "../kg/user-block";
  *   - cliente   → ve Overview + Lanzamientos + Analítica + Ventas/Cobros
  *     (readonly, canEdit=false vía RLS). Regla nueva: cliente puede ver
  *     ventas y cobros sin editar.
+ *   - closer    → ve SOLO el grupo Ventas (Ventas + Cobros). Nada más,
+ *     ni siquiera el link "Volver a Kingrow" — su único trabajo es cargar
+ *     ventas y cobros del proyecto asignado.
  *   - resto (admin / coordinador / superadmin / dev) → ve todo.
  */
 export function ProjectSidebar({ profile }: { readonly profile: SessionProfile }) {
   const isOperador = profile.role === "operador";
+  const isCloser = profile.role === "closer";
   return (
     <aside
       className="flex w-60 shrink-0 flex-col overflow-y-auto border-r border-border bg-bg-elevated"
@@ -43,25 +47,32 @@ export function ProjectSidebar({ profile }: { readonly profile: SessionProfile }
         "← Kingrow" en el tope del drawer. En desktop el botón vive también en
         la topbar; en mobile la topbar está apretada, así que este link es la
         vía principal para salir del proyecto de vuelta a la plataforma.
+        Closer no ve este link — no debería volver a Kingrow.
       */}
-      <div className="px-4 pt-3">
-        <Link
-          href="/"
-          className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-xs font-medium text-fg-muted transition-colors hover:border-accent hover:text-fg"
-        >
-          <IconArrowLeft size={14} />
-          <span>Volver a Kingrow</span>
-        </Link>
-      </div>
+      {!isCloser && (
+        <div className="px-4 pt-3">
+          <Link
+            href="/"
+            className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-xs font-medium text-fg-muted transition-colors hover:border-accent hover:text-fg"
+          >
+            <IconArrowLeft size={14} />
+            <span>Volver a Kingrow</span>
+          </Link>
+        </div>
+      )}
 
       <nav className="flex-1 space-y-1 px-4 pb-4 pt-4">
-        {!isOperador && (
+        {!isOperador && !isCloser && (
           <NavLink scopedSuffix="" exact>
             Overview
           </NavLink>
         )}
-        <NavLink scopedSuffix="/launches">Lanzamientos</NavLink>
-        <NavLink scopedSuffix="/analitica">Analítica</NavLink>
+        {!isCloser && (
+          <>
+            <NavLink scopedSuffix="/launches">Lanzamientos</NavLink>
+            <NavLink scopedSuffix="/analitica">Analítica</NavLink>
+          </>
+        )}
         {/*
           Post 6d-C2, LaunchOS queda como vista OPERATIVA del lanzamiento.
           Ventas y Cobros son la operación diaria. Todo lo que era
@@ -73,7 +84,7 @@ export function ProjectSidebar({ profile }: { readonly profile: SessionProfile }
           <NavLink scopedSuffix="/cobros">Cobros</NavLink>
         </NavGroup>
         {/* Calculadora — herramienta transversal, accede desde el contexto de proyecto */}
-        <NavLink href="/calculadora">Calculadora</NavLink>
+        {!isCloser && <NavLink href="/calculadora">Calculadora</NavLink>}
       </nav>
 
       <div className="border-t border-border px-3 py-3">

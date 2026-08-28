@@ -20,7 +20,10 @@ import { calculateLaunchKPIs } from "@/lib/kpis";
 import { listAggregatesForProject } from "@/lib/launch-daily/list";
 import { getKanbanSalesAggregatesForProject } from "@/lib/launch-sales/list";
 import { listLaunchesForProject } from "@/lib/launches/list";
-import { requireSessionProfile } from "@/lib/supabase/auth";
+import {
+  denyCloserOutsideVentas,
+  requireSessionProfile,
+} from "@/lib/supabase/auth";
 
 export const metadata: Metadata = { title: "Analítica" };
 
@@ -65,6 +68,7 @@ export default async function AnalyticsPage({
 
   const profile = await requireSessionProfile();
   if (profile.role === "cliente") redirect(`/portal/proyectos/${projectId}`);
+  denyCloserOutsideVentas(profile, projectId);
 
   const view = readView(sp.view);
   const filter = parseAnalyticsFilter(sp);

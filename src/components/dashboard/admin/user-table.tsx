@@ -17,6 +17,7 @@ const ROLE_VARIANT: Record<Role, "info" | "warning" | "success" | "neutral"> = {
   admin: "warning",
   operador: "success",
   coordinador: "info",
+  closer: "success",
   cliente: "neutral",
 };
 

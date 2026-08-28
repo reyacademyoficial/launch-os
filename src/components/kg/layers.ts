@@ -135,6 +135,10 @@ export function canSeeDev(ctx: { isDevPrivileged: boolean }): boolean {
  * IDs de módulos KG visibles según rol.
  *
  *   cliente     → solo lanzamientos (acceden a LaunchOS read-only, nada más de KG)
+ *   closer      → solo lanzamientos (que rebota al /ventas del proyecto —
+ *                 realmente nunca ven la sidebar KG, solo la sidebar del
+ *                 ProjectShell). El allowlist mínimo evita filtrar otros
+ *                 módulos si por accidente aterrizan en el shell KG.
  *   operador    → lanzamientos + operaciones (sus tareas + el ProjectShell)
  *   coordinador → clientes + academia + operaciones + lanzamientos
  *                 (regla 2026-08-08 — sin Ejecutivo, Financiero, Comercial)
@@ -142,6 +146,7 @@ export function canSeeDev(ctx: { isDevPrivileged: boolean }): boolean {
  */
 const ROLE_MODULE_ALLOWLIST: Partial<Record<Role, ReadonlySet<string>>> = {
   cliente: new Set(["lanzamientos"]),
+  closer: new Set(["lanzamientos"]),
   operador: new Set(["lanzamientos", "operaciones", "marketing"]),
   coordinador: new Set([
     "lanzamientos",

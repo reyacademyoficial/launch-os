@@ -3,6 +3,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { getKgProjects } from "@/lib/kg/reference";
+import { listAccessibleProjects } from "@/lib/projects/list";
+import { requireSessionProfile } from "@/lib/supabase/auth";
 
 export const metadata: Metadata = { title: "Lanzamientos" };
 
@@ -17,8 +19,32 @@ export const metadata: Metadata = { title: "Lanzamientos" };
  *   - 0 proyectos: empty state (típico: usuario recién invitado).
  *   - 1 proyecto: redirect directo — el flujo original de LaunchOS.
  *   - N proyectos: grid.
+ *
+ * Closer (2026-08-28): no ve el picker general; entra directo al módulo
+ * Ventas del primer proyecto donde es miembro (rara vez tiene más de uno).
+ * Usa listAccessibleProjects (RLS-scoped por project_members) en vez de
+ * getKgProjects (service-role, toda la org) para no leakear nombres de
+ * proyectos donde el closer no fue asignado.
  */
 export default async function LanzamientosPage() {
+  const profile = await requireSessionProfile();
+
+  if (profile.role === "closer") {
+    const memberProjects = await listAccessibleProjects();
+    if (memberProjects.length === 0) {
+      return (
+        <section className="max-w-md space-y-3">
+          <h1 className="kg-t2">Sin proyectos asignados</h1>
+          <p className="text-sm" style={{ color: "var(--kg-text-2)" }}>
+            Pedile a un admin que te asigne al proyecto donde vas a cargar
+            ventas.
+          </p>
+        </section>
+      );
+    }
+    redirect(`/proyectos/${memberProjects[0]!.id}/ventas`);
+  }
+
   const projects = await getKgProjects();
 
   if (projects.length === 0) {

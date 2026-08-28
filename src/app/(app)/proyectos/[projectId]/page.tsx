@@ -28,7 +28,11 @@ import { listBanks } from "@/lib/banks/list";
 import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { aggregateProjectKPIs } from "@/lib/projects/aggregates";
 import { createClient } from "@/lib/supabase/server";
-import { requireSessionProfile, userCanEditLaunchesIn } from "@/lib/supabase/auth";
+import {
+  denyCloserOutsideVentas,
+  requireSessionProfile,
+  userCanEditLaunchesIn,
+} from "@/lib/supabase/auth";
 
 import { createLaunch } from "./launches/actions";
 
@@ -45,10 +49,12 @@ export default async function OverviewPage({
 
   // Regla 2026-08-08: operador va directo al listado de launches — sin
   // overview con KPIs agregados de revenue/profit del proyecto.
+  // Regla 2026-08-28: closer no ve overview; va directo a Ventas.
   const profile = await requireSessionProfile();
   if (profile.role === "operador") {
     redirect(`/proyectos/${projectId}/launches`);
   }
+  denyCloserOutsideVentas(profile, projectId);
 
   const supabase = await createClient();
 

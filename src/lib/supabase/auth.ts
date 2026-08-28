@@ -10,6 +10,7 @@ export type Role =
   | "admin"
   | "operador"
   | "coordinador"
+  | "closer"
   | "cliente";
 
 export interface SessionProfile {
@@ -105,6 +106,7 @@ export async function requireSessionProfile(): Promise<SessionProfile> {
  * Defense-in-depth layer 2 with a role gate.
  * If the caller's role isn't in the allowed list, redirect based on role:
  *   cliente      → /lanzamientos (su única vista en KG)
+ *   closer       → /lanzamientos (rebota desde ahí al /ventas del proyecto)
  *   operador     → /operaciones  (su módulo principal)
  *   coordinador  → /operaciones  (no ve Ejecutivo/Financiero/Comercial)
  *   others       → /             (dashboard ejecutivo)
@@ -117,6 +119,7 @@ export async function requireRole(
   if (profile.role === "dev" || profile.isDevPrivileged) return profile;
   if (!allowed.includes(profile.role)) {
     if (profile.role === "cliente") redirect("/lanzamientos");
+    if (profile.role === "closer") redirect("/lanzamientos");
     if (profile.role === "operador") redirect("/operaciones");
     if (profile.role === "coordinador") redirect("/operaciones");
     redirect("/");
@@ -140,8 +143,9 @@ export async function userCanEditProject(projectId: string): Promise<boolean> {
 
 /**
  * Write check para launches/launch_daily a nivel proyecto. Mirror del SQL
- * `can_edit_launches_in`: superadmin O (miembro con rol admin|operador).
- * Coordinador y cliente: false.
+ * `can_edit_launches_in`: superadmin O (miembro con rol admin|operador|closer).
+ * Coordinador y cliente: false. Closer entra por el trabajo de cargar ventas
+ * y cobros — que también gatean por este helper.
  */
 export async function userCanEditLaunchesIn(projectId: string): Promise<boolean> {
   const supabase = await createClient();
@@ -178,4 +182,22 @@ export async function requireCanEditLaunchesIn(
     redirect(`/proyectos/${projectId}`);
   }
   return profile;
+}
+
+/**
+ * Rebota al closer fuera del módulo Ventas hacia `/proyectos/[id]/ventas`.
+ * El closer solo puede estar en `/ventas` y `/cobros` del proyecto — cualquier
+ * otra página del ProjectShell (overview, launches, analítica, leads, audit,
+ * KPIs) lo redirige.
+ *
+ * Se pasa el profile ya cargado — Next dedupe la query dentro del request,
+ * pero explicitarlo evita loops si el caller aún no lo tiene.
+ */
+export function denyCloserOutsideVentas(
+  profile: SessionProfile,
+  projectId: string,
+): void {
+  if (profile.role === "closer") {
+    redirect(`/proyectos/${projectId}/ventas`);
+  }
 }

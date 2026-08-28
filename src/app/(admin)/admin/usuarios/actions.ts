@@ -13,7 +13,13 @@ export type CreateUserState =
 // superadmin is intentionally NOT creatable from the UI — promotion to
 // superadmin still requires Studio + disabling guard_profile_role briefly
 // (see 0004_seed.sql for the bootstrap procedure).
-const CREATABLE_ROLES = ["admin", "operador", "coordinador", "cliente"] as const;
+const CREATABLE_ROLES = [
+  "admin",
+  "operador",
+  "coordinador",
+  "closer",
+  "cliente",
+] as const;
 type CreatableRole = (typeof CREATABLE_ROLES)[number];
 
 function isCreatableRole(value: string): value is CreatableRole {

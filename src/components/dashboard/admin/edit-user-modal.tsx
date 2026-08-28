@@ -157,6 +157,7 @@ export function EditUserModal({
                     defaultValue={user.role === "dev" ? "admin" : user.role}
                   >
                     <option value="cliente">cliente (solo lectura, scope por launch)</option>
+                    <option value="closer">closer (solo ventas + cobros del proyecto)</option>
                     <option value="operador">operador (edita launches asignados)</option>
                     <option value="coordinador">coordinador (clientes + academia + ops propias)</option>
                     <option value="admin">admin (lectura + escritura del proyecto)</option>

@@ -8,7 +8,12 @@ import { fmtDate, fmtLaunchWindow } from "@/lib/format";
 import { listEvergreensTargeting } from "@/lib/launches/evergreen";
 import { getLaunch } from "@/lib/launches/get";
 import { listLaunchesForProject } from "@/lib/launches/list";
-import { userCanEditLaunchesIn, userCanEditProject } from "@/lib/supabase/auth";
+import {
+  denyCloserOutsideVentas,
+  requireSessionProfile,
+  userCanEditLaunchesIn,
+  userCanEditProject,
+} from "@/lib/supabase/auth";
 
 import {
   closeLaunch,
@@ -35,6 +40,10 @@ export default async function LaunchLayout({
   readonly params: Promise<{ projectId: string; launchId: string }>;
 }) {
   const { projectId, launchId } = await params;
+
+  // Closer no entra al detalle del launch — solo puede estar en Ventas/Cobros.
+  const profile = await requireSessionProfile();
+  denyCloserOutsideVentas(profile, projectId);
 
   const [
     launch,

@@ -18,7 +18,11 @@ import {
 } from "@/lib/money";
 import { listBanks } from "@/lib/banks/list";
 import { listPaymentMethods } from "@/lib/payment-methods/list";
-import { requireSessionProfile, userCanEditLaunchesIn } from "@/lib/supabase/auth";
+import {
+  denyCloserOutsideVentas,
+  requireSessionProfile,
+  userCanEditLaunchesIn,
+} from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
 import { createLaunch } from "./actions";
@@ -31,9 +35,12 @@ export default async function LaunchesPage({
   readonly params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
+
+  const profile = await requireSessionProfile();
+  denyCloserOutsideVentas(profile, projectId);
+
   const supabase = await createClient();
   const [
-    profile,
     launches,
     canEdit,
     adsAggregates,
@@ -42,7 +49,6 @@ export default async function LaunchesPage({
     banks,
     fxMap,
   ] = await Promise.all([
-    requireSessionProfile(),
     listLaunchesForProject(projectId),
     userCanEditLaunchesIn(projectId),
     listAggregatesForProject(projectId),

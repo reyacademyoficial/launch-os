@@ -16,6 +16,9 @@ export default async function CalculatorPage() {
   // Cliente queda fuera del simulador en Fase 2 (vista ejecutiva reducida,
   // sin costos internos). Toggleable en src/lib/auth/permissions.ts.
   if (!canUseCalculator(profile)) redirect("/");
+  // Closer solo vive en Ventas/Cobros. Si aterrizan acá, los rebotamos al
+  // picker de lanzamientos, que a su vez los envía al /ventas del proyecto.
+  if (profile.role === "closer") redirect("/lanzamientos");
   // Save (= insert into `projections`) needs project-scope write, so coordinador
   // and operador can use the simulator but no save UI for them either. dev
   // pasa por is_dev_privileged igual que superadmin.
