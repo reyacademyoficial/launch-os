@@ -23,6 +23,7 @@ import {
   createSaleWithLead,
   deletePayment,
   deleteSale,
+  getFirstPaymentContext,
   recalculateSaleCommission,
   updatePaymentInstallment,
   updatePaymentMethod,
@@ -115,6 +116,20 @@ export default async function ProjectSalesPage({
   );
   const updatePaymentMethodAction = updatePaymentMethod.bind(null, projectId);
   const assignLeadOwnerAction = assignLeadOwner.bind(null, projectId);
+  const getFirstPaymentContextAction = getFirstPaymentContext.bind(
+    null,
+    projectId,
+  );
+
+  // Precompute lookup paymentMethodId → moneda efectiva. Cuando el método
+  // tiene banco la moneda sale del banco (fuente de verdad post 0101); si
+  // no, del propio método (efectivo, otros). Fallback ARS por seguridad.
+  const banksById = new Map(banks.map((b) => [b.id, b]));
+  const methodCurrencies: Record<string, "ARS" | "USD"> = {};
+  for (const m of paymentMethods) {
+    const bank = m.bank_id ? banksById.get(m.bank_id) : null;
+    methodCurrencies[m.id] = bank?.currency ?? m.currency ?? "ARS";
+  }
 
   return (
     <section className="space-y-6">
@@ -138,11 +153,13 @@ export default async function ProjectSalesPage({
         products={products}
         rules={rules}
         paymentMethods={paymentMethods}
+        methodCurrencies={methodCurrencies}
         teamMembers={teamForModal}
         canEdit={canEdit}
         createSaleAction={createSaleAction}
         createSaleWithLeadAction={createSaleWithLeadAction}
         addPaymentAction={addPaymentAction}
+        getFirstPaymentContextAction={getFirstPaymentContextAction}
         deletePaymentAction={deletePaymentAction}
         deleteSaleAction={deleteSaleAction}
         updateSaleProductAction={updateSaleProductAction}

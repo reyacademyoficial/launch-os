@@ -1,15 +1,22 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useState, useTransition } from "react";
 
-import type { SaleActionState } from "@/app/(app)/proyectos/[projectId]/leads/sale-actions";
+import type {
+  FirstPaymentContext,
+  PaymentActionState,
+  SaleActionState,
+} from "@/app/(app)/proyectos/[projectId]/leads/sale-actions";
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field-error";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import type { PaymentModalityRow } from "@/lib/commissions/types";
+import { fmtDate } from "@/lib/format";
 import { todayInAR } from "@/lib/installments/status";
+import { fmtNative } from "@/lib/money";
+import type { PaymentMethodRow } from "@/lib/payment-methods/types";
 import type { ProductRow } from "@/lib/products/types";
 import type { TeamMemberRow } from "@/lib/team/types";
 
@@ -20,18 +27,40 @@ type CreateSaleWithLeadAction = (
   formData: FormData,
 ) => Promise<SaleActionState>;
 
+type AddPaymentAction = (
+  saleId: string,
+  prev: PaymentActionState,
+  formData: FormData,
+) => Promise<PaymentActionState>;
+
+type GetFirstPaymentContextAction = (
+  saleId: string,
+) => Promise<FirstPaymentContext>;
+
 /**
  * Botón "+ Agregar venta" para la vista project-wide de Ventas. Abre un modal
- * que crea lead + venta en un solo submit. Soporta cargar N ventas seguidas:
- * el checkbox "Cargar otra al guardar" mantiene el modal abierto y resetea el
- * form tras cada éxito (vía bump de `formKey`).
+ * en dos pasos:
+ *
+ *   1. Cargar venta   → createSaleWithLead (lead + sale + cuotas + facturas).
+ *   2. Primer cobro   → addPayment sobre la cuota 1 (con auto-attach de la
+ *                       factura emitida, si existe).
+ *
+ * Los dos pasos ocupan el mismo shell — el contenido interior se reemplaza,
+ * el modal no crece hacia abajo. En el paso 2 se puede "Saltar" (deja la
+ * venta sin cobro cargado) o cargar el cobro y terminar. Si el checkbox
+ * "Cargar otra al guardar" quedó activo, terminar vuelve al paso 1 con el
+ * form limpio para la próxima venta.
  */
 export function AddSaleModal({
   launches,
   modalities,
   products,
   teamMembers,
+  paymentMethods,
+  methodCurrencies,
   createSaleWithLeadAction,
+  addPaymentAction,
+  getFirstPaymentContextAction,
 }: {
   readonly launches: ReadonlyArray<{ id: string; name: string }>;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
@@ -39,12 +68,78 @@ export function AddSaleModal({
   readonly teamMembers: ReadonlyArray<
     Pick<TeamMemberRow, "id" | "name" | "active">
   >;
+  readonly paymentMethods: ReadonlyArray<PaymentMethodRow>;
+  readonly methodCurrencies: Record<string, "ARS" | "USD">;
   readonly createSaleWithLeadAction: CreateSaleWithLeadAction;
+  readonly addPaymentAction: AddPaymentAction;
+  readonly getFirstPaymentContextAction: GetFirstPaymentContextAction;
 }) {
   const [open, setOpen] = useState(false);
   const [formKey, setFormKey] = useState(0);
   const [keepOpen, setKeepOpen] = useState(false);
   const [savedCount, setSavedCount] = useState(0);
+  const [step, setStep] = useState<
+    | { kind: "sale" }
+    | {
+        kind: "loading-context";
+        saleId: string;
+      }
+    | {
+        kind: "payment";
+        saleId: string;
+        saleCurrency: "ARS" | "USD";
+        firstInstallment: {
+          id: string;
+          number: number;
+          amount: number;
+          dueDate: string;
+        };
+        emittedInvoice: {
+          id: string;
+          invoiceNumber: string | null;
+        } | null;
+      }
+    | { kind: "context-error"; saleId: string; error: string }
+  >({ kind: "sale" });
+
+  function resetToStep1() {
+    setStep({ kind: "sale" });
+    setFormKey((k) => k + 1);
+  }
+
+  function finish() {
+    setSavedCount((n) => n + 1);
+    if (keepOpen) {
+      resetToStep1();
+    } else {
+      setOpen(false);
+    }
+  }
+
+  async function transitionToPayment(saleId: string) {
+    setStep({ kind: "loading-context", saleId });
+    const ctx = await getFirstPaymentContextAction(saleId);
+    if ("error" in ctx) {
+      setStep({ kind: "context-error", saleId, error: ctx.error });
+      return;
+    }
+    setStep({
+      kind: "payment",
+      saleId,
+      saleCurrency: ctx.saleCurrency,
+      firstInstallment: ctx.firstInstallment,
+      emittedInvoice: ctx.emittedInvoice,
+    });
+  }
+
+  const stepLabel =
+    step.kind === "sale"
+      ? "Paso 1 de 2 · Venta"
+      : step.kind === "payment"
+        ? "Paso 2 de 2 · Primer cobro"
+        : step.kind === "loading-context"
+          ? "Paso 2 de 2 · Cargando…"
+          : "Paso 2 de 2 · Error";
 
   return (
     <>
@@ -53,7 +148,7 @@ export function AddSaleModal({
         onClick={() => {
           setSavedCount(0);
           setKeepOpen(false);
-          setFormKey((k) => k + 1);
+          resetToStep1();
           setOpen(true);
         }}
         className="rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-white hover:opacity-90"
@@ -67,7 +162,11 @@ export function AddSaleModal({
           aria-modal="true"
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 sm:p-6"
           onClick={(e) => {
-            if (e.target === e.currentTarget) setOpen(false);
+            // Solo cerrar por click en el backdrop cuando NO estamos entre pasos
+            // (evita cerrar accidentalmente y perder el saleId sin cobro cargado).
+            if (e.target === e.currentTarget && step.kind === "sale") {
+              setOpen(false);
+            }
           }}
         >
           <div className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-md border border-border bg-bg-elevated shadow-card">
@@ -75,9 +174,14 @@ export function AddSaleModal({
               <div>
                 <h3 className="text-lg font-bold text-fg">Cargar venta</h3>
                 <p className="mt-0.5 text-xs text-fg-subtle">
-                  {savedCount === 0
-                    ? "Se crea el alumno y la venta en un solo paso."
-                    : `${savedCount} venta${savedCount === 1 ? "" : "s"} cargada${savedCount === 1 ? "" : "s"} en esta sesión.`}
+                  <span className="text-fg-muted">{stepLabel}</span>
+                  {savedCount > 0 && step.kind === "sale" && (
+                    <>
+                      {" · "}
+                      {savedCount} venta{savedCount === 1 ? "" : "s"} cargada
+                      {savedCount === 1 ? "" : "s"} en esta sesión.
+                    </>
+                  )}
                 </p>
               </div>
               <button
@@ -91,24 +195,56 @@ export function AddSaleModal({
             </header>
 
             <div className="flex-1 overflow-y-auto px-6 py-6">
-              <AddSaleForm
-                key={formKey}
-                launches={launches}
-                modalities={modalities}
-                products={products}
-                teamMembers={teamMembers}
-                createSaleWithLeadAction={createSaleWithLeadAction}
-                keepOpen={keepOpen}
-                setKeepOpen={setKeepOpen}
-                onSuccess={() => {
-                  setSavedCount((n) => n + 1);
-                  if (keepOpen) {
-                    setFormKey((k) => k + 1);
-                  } else {
-                    setOpen(false);
-                  }
-                }}
-              />
+              {step.kind === "sale" && (
+                <AddSaleForm
+                  key={formKey}
+                  launches={launches}
+                  modalities={modalities}
+                  products={products}
+                  teamMembers={teamMembers}
+                  createSaleWithLeadAction={createSaleWithLeadAction}
+                  keepOpen={keepOpen}
+                  setKeepOpen={setKeepOpen}
+                  onSuccess={(saleId) => {
+                    if (saleId) {
+                      void transitionToPayment(saleId);
+                    } else {
+                      // Fallback: sin saleId (no debería pasar). Terminá igual.
+                      finish();
+                    }
+                  }}
+                />
+              )}
+              {step.kind === "loading-context" && (
+                <div className="rounded-md border border-dashed border-border bg-surface/40 p-6 text-center text-sm text-fg-muted">
+                  Preparando el primer cobro…
+                </div>
+              )}
+              {step.kind === "context-error" && (
+                <div className="space-y-3">
+                  <div className="rounded-md border border-warning/40 bg-warning/5 p-4 text-sm text-warning">
+                    La venta se guardó pero no pude cargar la cuota:{" "}
+                    {step.error}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Button type="button" onClick={finish}>
+                      Terminar sin primer cobro
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {step.kind === "payment" && (
+                <FirstPaymentForm
+                  saleId={step.saleId}
+                  saleCurrency={step.saleCurrency}
+                  firstInstallment={step.firstInstallment}
+                  emittedInvoice={step.emittedInvoice}
+                  paymentMethods={paymentMethods}
+                  methodCurrencies={methodCurrencies}
+                  addPaymentAction={addPaymentAction}
+                  onDone={finish}
+                />
+              )}
             </div>
           </div>
         </div>
@@ -136,7 +272,7 @@ function AddSaleForm({
   readonly createSaleWithLeadAction: CreateSaleWithLeadAction;
   readonly keepOpen: boolean;
   readonly setKeepOpen: (v: boolean) => void;
-  readonly onSuccess: () => void;
+  readonly onSuccess: (saleId: string | undefined) => void;
 }) {
   const [state, formAction, pending] = useActionState<
     SaleActionState,
@@ -148,7 +284,7 @@ function AddSaleForm({
   const [closedAt, setClosedAt] = useState<string>(today);
 
   useEffect(() => {
-    if (state && "ok" in state && state.ok) onSuccess();
+    if (state && "ok" in state && state.ok) onSuccess(state.saleId);
   }, [state, onSuccess]);
 
   const activeModalities = modalities.filter((m) => m.active);
@@ -300,7 +436,7 @@ function AddSaleForm({
 
       <div className="flex flex-wrap items-center gap-4 pt-2">
         <Button type="submit" disabled={pending}>
-          {pending ? "Registrando…" : "Registrar venta"}
+          {pending ? "Registrando…" : "Guardar y cargar cobro →"}
         </Button>
         <label className="flex items-center gap-2 text-xs text-fg-muted">
           <input
@@ -308,9 +444,215 @@ function AddSaleForm({
             checked={keepOpen}
             onChange={(e) => setKeepOpen(e.target.checked)}
           />
-          Cargar otra venta al guardar
+          Cargar otra venta al terminar
         </label>
         {state && "error" in state && <FieldError>{state.error}</FieldError>}
+      </div>
+    </form>
+  );
+}
+
+/**
+ * Formulario simplificado para el primer cobro dentro del wizard. A
+ * diferencia del `PaymentForm` de SaleModal, acá la cuota está fijada
+ * (siempre la primera generada al crear la venta) y no hay un panel de
+ * estado de cuotas — es el paso siguiente del wizard, no una vista de
+ * gestión. La factura emitida se auto-attach vía input hidden.
+ */
+function FirstPaymentForm({
+  saleId,
+  saleCurrency,
+  firstInstallment,
+  emittedInvoice,
+  paymentMethods,
+  methodCurrencies,
+  addPaymentAction,
+  onDone,
+}: {
+  readonly saleId: string;
+  readonly saleCurrency: "ARS" | "USD";
+  readonly firstInstallment: {
+    id: string;
+    number: number;
+    amount: number;
+    dueDate: string;
+  };
+  readonly emittedInvoice: {
+    id: string;
+    invoiceNumber: string | null;
+  } | null;
+  readonly paymentMethods: ReadonlyArray<PaymentMethodRow>;
+  readonly methodCurrencies: Record<string, "ARS" | "USD">;
+  readonly addPaymentAction: AddPaymentAction;
+  readonly onDone: () => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+  const [amount, setAmount] = useState<string>(
+    String(firstInstallment.amount),
+  );
+  const [methodId, setMethodId] = useState<string>("");
+  const [selectedCurrency, setSelectedCurrency] = useState<"ARS" | "USD">(
+    saleCurrency,
+  );
+
+  const activeMethods = paymentMethods.filter((m) => m.active);
+
+  if (activeMethods.length === 0) {
+    return (
+      <div className="space-y-3">
+        <div className="rounded-md border border-warning/40 bg-warning/5 p-4 text-sm text-warning">
+          No hay métodos de pago activos. Pedile al admin que cargue al menos
+          uno en <b>Métodos de pago</b> antes de registrar cobros. La venta ya
+          quedó guardada.
+        </div>
+        <div>
+          <Button type="button" onClick={onDone}>
+            Terminar
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  function handleSubmit(formData: FormData) {
+    setError(null);
+    startTransition(async () => {
+      const result = await addPaymentAction(saleId, null, formData);
+      if (result && "error" in result) {
+        setError(result.error);
+        return;
+      }
+      onDone();
+    });
+  }
+
+  return (
+    <form action={handleSubmit} className="space-y-4">
+      <div className="rounded-md border border-border bg-surface/40 p-3 text-xs text-fg-muted">
+        Venta guardada. Cargá el primer cobro sobre la{" "}
+        <b className="text-fg">cuota {firstInstallment.number}</b>{" "}
+        (vence {fmtDate(firstInstallment.dueDate)}, saldo{" "}
+        {fmtNative(firstInstallment.amount, saleCurrency)}), o saltalo si el
+        alumno todavía no pagó.
+      </div>
+
+      <input type="hidden" name="installment_id" value={firstInstallment.id} />
+      <input
+        type="hidden"
+        name="invoice_id"
+        value={emittedInvoice?.id ?? ""}
+      />
+      <input
+        type="hidden"
+        name="original_currency"
+        value={selectedCurrency}
+      />
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <Label htmlFor="first-pay-method">Método de pago *</Label>
+          <Select
+            id="first-pay-method"
+            name="payment_method_id"
+            value={methodId}
+            required
+            onChange={(e) => {
+              const id = e.target.value;
+              setMethodId(id);
+              setSelectedCurrency(methodCurrencies[id] ?? saleCurrency);
+            }}
+          >
+            <option value="" disabled>
+              Elegí un método
+            </option>
+            {activeMethods.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <div>
+          <Label htmlFor="first-pay-date">Fecha</Label>
+          <Input
+            id="first-pay-date"
+            name="paid_at"
+            type="date"
+            defaultValue={todayInAR()}
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_2fr]">
+        <div>
+          <Label htmlFor="first-pay-amount">Monto *</Label>
+          <Input
+            id="first-pay-amount"
+            name="amount"
+            type="number"
+            step="0.01"
+            min="0.01"
+            required
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+        </div>
+        <div>
+          <Label>Moneda</Label>
+          <div className="mt-1 flex gap-1">
+            {(["ARS", "USD"] as const).map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setSelectedCurrency(c)}
+                className={`flex-1 rounded border px-2 py-1.5 text-xs font-medium transition-colors ${
+                  selectedCurrency === c
+                    ? "border-accent bg-accent text-white"
+                    : "border-border bg-surface text-fg-muted hover:text-fg"
+                }`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <Label htmlFor="first-pay-transaction">Nº de transacción</Label>
+          <Input
+            id="first-pay-transaction"
+            name="transaction_number"
+            placeholder="Opcional (comprobante del banco)"
+          />
+        </div>
+      </div>
+
+      <div>
+        <Label htmlFor="first-pay-notes">Notas</Label>
+        <Input id="first-pay-notes" name="notes" placeholder="Opcional" />
+      </div>
+
+      {emittedInvoice && (
+        <div className="text-xs text-fg-muted">
+          Se aplicará a la factura{" "}
+          <b className="text-fg">{emittedInvoice.invoiceNumber ?? "—"}</b>{" "}
+          (emitida por esta cuota).
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3 pt-2">
+        <Button type="submit" disabled={pending}>
+          {pending ? "Cargando…" : "Cargar cobro y terminar"}
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={onDone}
+          disabled={pending}
+        >
+          Saltar cobro
+        </Button>
+        {error && <FieldError>{error}</FieldError>}
       </div>
     </form>
   );

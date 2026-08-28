@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 
 import type {
+  FirstPaymentContext,
   PaymentActionState,
   SaleActionState,
 } from "@/app/(app)/proyectos/[projectId]/leads/sale-actions";
@@ -45,6 +46,9 @@ type AddPaymentAction = (
   prev: PaymentActionState,
   formData: FormData,
 ) => Promise<PaymentActionState>;
+type GetFirstPaymentContextAction = (
+  saleId: string,
+) => Promise<FirstPaymentContext>;
 type DeletePaymentAction = (paymentId: string) => Promise<void>;
 type DeleteSaleAction = (saleId: string) => Promise<void>;
 type UpdateSaleProductAction = (
@@ -194,11 +198,13 @@ export function ProjectSalesView({
   products,
   rules,
   paymentMethods,
+  methodCurrencies,
   teamMembers,
   canEdit,
   createSaleAction,
   createSaleWithLeadAction,
   addPaymentAction,
+  getFirstPaymentContextAction,
   deletePaymentAction,
   deleteSaleAction,
   updateSaleProductAction,
@@ -226,6 +232,12 @@ export function ProjectSalesView({
   readonly products: ReadonlyArray<ProductRow>;
   readonly rules: ReadonlyArray<CommissionRuleRow>;
   readonly paymentMethods: ReadonlyArray<PaymentMethodRow>;
+  /**
+   * Lookup pre-computed paymentMethodId → moneda efectiva (banco o método).
+   * Se pasa al AddSaleModal para el step 2 (primer cobro) — evita traer banks
+   * al modal y mantener la misma fuente de verdad que CobrosView.
+   */
+  readonly methodCurrencies: Record<string, "ARS" | "USD">;
   readonly teamMembers: ReadonlyArray<
     Pick<TeamMemberRow, "id" | "name" | "active" | "role">
   >;
@@ -239,6 +251,7 @@ export function ProjectSalesView({
   readonly createSaleAction: CreateSaleAction;
   readonly createSaleWithLeadAction: CreateSaleWithLeadAction;
   readonly addPaymentAction: AddPaymentAction;
+  readonly getFirstPaymentContextAction: GetFirstPaymentContextAction;
   readonly deletePaymentAction: DeletePaymentAction;
   readonly deleteSaleAction: DeleteSaleAction;
   readonly updateSaleProductAction: UpdateSaleProductAction;
@@ -502,7 +515,11 @@ export function ProjectSalesView({
             modalities={modalities}
             products={products}
             teamMembers={teamMembers}
+            paymentMethods={paymentMethods}
+            methodCurrencies={methodCurrencies}
             createSaleWithLeadAction={createSaleWithLeadAction}
+            addPaymentAction={addPaymentAction}
+            getFirstPaymentContextAction={getFirstPaymentContextAction}
           />
         </div>
       )}

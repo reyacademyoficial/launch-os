@@ -711,6 +711,91 @@ function revalidateSalesImpact(
 export type PaymentActionState = { ok: true } | { error: string } | null;
 
 /**
+ * Contexto para el paso "primer cobro" del wizard de AddSaleModal. Dado un
+ * `saleId` recién creado, devuelve la primera cuota generada y la factura
+ * emitida asociada (para el auto-link factura↔cobro del paso 5).
+ *
+ * Uso: el modal AddSale hace `createSaleWithLead` → toma el `saleId`, llama
+ * a este helper y renderiza el step de payment con los datos ya cargados.
+ */
+export type FirstPaymentContext =
+  | {
+      ok: true;
+      saleCurrency: "ARS" | "USD";
+      firstInstallment: {
+        id: string;
+        number: number;
+        amount: number;
+        dueDate: string;
+      };
+      emittedInvoice: {
+        id: string;
+        invoiceNumber: string | null;
+      } | null;
+    }
+  | { error: string };
+
+export async function getFirstPaymentContext(
+  projectId: string,
+  saleId: string,
+): Promise<FirstPaymentContext> {
+  await requireCanEditLaunchesIn(projectId);
+
+  const supabase = await createClient();
+
+  const { data: saleRow } = await supabase
+    .from("sales")
+    .select("id, currency, project_id")
+    .eq("id", saleId)
+    .maybeSingle();
+  const sale = saleRow as
+    | { id: string; currency: "ARS" | "USD" | null; project_id: string }
+    | null;
+  if (!sale || sale.project_id !== projectId) {
+    return { error: "Venta no encontrada." };
+  }
+
+  const { data: instRow } = await supabase
+    .from("installments")
+    .select("id, number, amount, due_date")
+    .eq("sale_id", saleId)
+    .order("number", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  const inst = instRow as
+    | { id: string; number: number; amount: number; due_date: string }
+    | null;
+  if (!inst) {
+    return { error: "La venta aún no tiene cuotas generadas." };
+  }
+
+  const { data: invRow } = await supabase
+    .from("invoices")
+    .select("id, invoice_number")
+    .eq("sale_id", saleId)
+    .eq("installment_id", inst.id)
+    .eq("status", "emitida")
+    .maybeSingle();
+  const inv = invRow as
+    | { id: string; invoice_number: string | null }
+    | null;
+
+  return {
+    ok: true,
+    saleCurrency: sale.currency ?? "ARS",
+    firstInstallment: {
+      id: inst.id,
+      number: inst.number,
+      amount: inst.amount,
+      dueDate: inst.due_date,
+    },
+    emittedInvoice: inv
+      ? { id: inv.id, invoiceNumber: inv.invoice_number }
+      : null,
+  };
+}
+
+/**
  * Revalida las rutas que dependen del par (sale, launch). Ver
  * `revalidateSalesImpact` — este wrapper hace el lookup del launch_id antes.
  */
