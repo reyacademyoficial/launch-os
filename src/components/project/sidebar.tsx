@@ -14,10 +14,11 @@ import { KgUserBlock } from "../kg/user-block";
  * al scope de proyecto: Calculadora y Admin viven en el KingrowShell (fuera
  * del proyecto), acá quedan solo las rutas que operan sobre `/proyectos/[id]`.
  *
- * Filtro por rol (2026-08-08):
- *   - operador  → oculto Overview y grupo Ventas. Va directo a Lanzamientos
- *     y solo ve ejecución (sin plata pactada/cobrada). Consistente con los
- *     redirects server-side en /page.tsx, /ventas y /cobros.
+ * Filtro por rol (2026-08-28):
+ *   - operador  → oculto SOLO Overview (sigue sin KPIs agregados del
+ *     proyecto). Ve Lanzamientos + Analítica + Ventas + Cobros editables —
+ *     es el operativo del proyecto. Consistente con el redirect server-side
+ *     en /page.tsx; /ventas y /cobros ya no redirigen.
  *   - cliente   → ve Overview + Lanzamientos + Analítica + Ventas/Cobros
  *     (readonly, canEdit=false vía RLS). Regla nueva: cliente puede ver
  *     ventas y cobros sin editar.
@@ -67,12 +68,10 @@ export function ProjectSidebar({ profile }: { readonly profile: SessionProfile }
           configuración/administración (Equipo, Ranking, Comisiones,
           Productos, Métodos de pago, Bancos) vive en Kingrow.
         */}
-        {!isOperador && (
-          <NavGroup label="Ventas" scopedSuffixes={["/ventas", "/cobros"]}>
-            <NavLink scopedSuffix="/ventas">Ventas</NavLink>
-            <NavLink scopedSuffix="/cobros">Cobros</NavLink>
-          </NavGroup>
-        )}
+        <NavGroup label="Ventas" scopedSuffixes={["/ventas", "/cobros"]}>
+          <NavLink scopedSuffix="/ventas">Ventas</NavLink>
+          <NavLink scopedSuffix="/cobros">Cobros</NavLink>
+        </NavGroup>
         {/* Calculadora — herramienta transversal, accede desde el contexto de proyecto */}
         <NavLink href="/calculadora">Calculadora</NavLink>
       </nav>

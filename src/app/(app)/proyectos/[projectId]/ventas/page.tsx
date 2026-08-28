@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
 
 import { ProjectSalesView } from "@/components/dashboard/sales/project-sales-view";
 import { listBanks } from "@/lib/banks/list";
@@ -14,10 +13,7 @@ import { buildFxLookup, buildSalesFxContext, loadProjectFxRates } from "@/lib/mo
 import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { listProductsForProject } from "@/lib/products/list";
 import { createClient } from "@/lib/supabase/server";
-import {
-  requireSessionProfile,
-  userCanEditLaunchesIn,
-} from "@/lib/supabase/auth";
+import { userCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { listTeamMembersForProject } from "@/lib/team/list";
 
 import { assignLeadOwner } from "../leads/actions";
@@ -54,11 +50,11 @@ export default async function ProjectSalesPage({
 }) {
   const { projectId } = await params;
 
-  const profile = await requireSessionProfile();
-  // Regla 2026-08-08: operador no ve el módulo ventas (redirigido al listado
-  // de launches). Cliente sí lee la tabla — readonly a través de canEdit=false
-  // que sale de userCanEditLaunchesIn.
-  if (profile.role === "operador") redirect(`/proyectos/${projectId}/launches`);
+  // Regla 2026-08-28: operador ve Ventas + Cobros editables (mismo permiso
+  // que coordinador para gestión operativa del proyecto). Overview sigue
+  // redirigido en `page.tsx` — la restricción original era sobre KPIs
+  // agregados de revenue, no sobre listados operativos. Cliente sigue leyendo
+  // readonly via canEdit=false que sale de userCanEditLaunchesIn.
 
   const supabase = await createClient();
   const [

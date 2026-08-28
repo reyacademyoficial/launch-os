@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
 
 import { RecalculateBulkModal } from "@/components/dashboard/commissions/recalculate-bulk-modal";
 import { CobrosView } from "@/components/dashboard/sales/cobros-view";
@@ -21,10 +20,7 @@ import {
 import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { listProductsForProject } from "@/lib/products/list";
 import { createClient } from "@/lib/supabase/server";
-import {
-  requireSessionProfile,
-  userCanEditLaunchesIn,
-} from "@/lib/supabase/auth";
+import { userCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { listTeamMembersForProject } from "@/lib/team/list";
 
 import { assignLeadOwner } from "../leads/actions";
@@ -59,10 +55,10 @@ export default async function ProjectCobrosPage({
 }) {
   const { projectId } = await params;
 
-  const profile = await requireSessionProfile();
-  // Regla 2026-08-08: operador no ve el módulo ventas/cobros. Cliente sí lee,
-  // readonly a través de canEdit=false (userCanEditLaunchesIn).
-  if (profile.role === "operador") redirect(`/proyectos/${projectId}/launches`);
+  // Regla 2026-08-28: operador ve Ventas + Cobros editables (mismo permiso
+  // que coordinador para gestión operativa). Overview del proyecto sigue
+  // redirigido — la restricción era sobre KPIs agregados, no cobros
+  // individuales. Cliente sigue readonly via canEdit=false.
 
   const supabase = await createClient();
   const [
