@@ -213,6 +213,7 @@ export function CobrosView({
   updatePaymentInstallmentAction,
   updatePaymentMethodAction,
   assignLeadOwnerAction,
+  hideCommission = false,
 }: {
   readonly sales: ReadonlyArray<SaleRow>;
   readonly payments: ReadonlyArray<PaymentRow>;
@@ -257,6 +258,11 @@ export function CobrosView({
   readonly updatePaymentInstallmentAction: UpdatePaymentInstallmentAction;
   readonly updatePaymentMethodAction: UpdatePaymentMethodAction;
   readonly assignLeadOwnerAction: AssignLeadOwnerAction;
+  /**
+   * Propaga a la ficha del alumno (SaleModal) para ocultar la comisión y el
+   * botón de recalcular. Usado para el rol `closer`.
+   */
+  readonly hideCommission?: boolean;
 }) {
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
 
@@ -556,6 +562,7 @@ export function CobrosView({
         updatePaymentInstallmentAction={updatePaymentInstallmentAction}
         updatePaymentMethodAction={updatePaymentMethodAction}
         assignLeadOwnerAction={assignLeadOwnerAction}
+        hideCommission={hideCommission}
       />
 
       <PaymentsTable
@@ -735,6 +742,7 @@ function SalesTable({
   updatePaymentInstallmentAction,
   updatePaymentMethodAction,
   assignLeadOwnerAction,
+  hideCommission = false,
 }: {
   readonly sales: ReadonlyArray<SaleRow>;
   readonly leadById: ReadonlyMap<string, LeadForCobros>;
@@ -775,6 +783,7 @@ function SalesTable({
   readonly updatePaymentInstallmentAction: UpdatePaymentInstallmentAction;
   readonly updatePaymentMethodAction: UpdatePaymentMethodAction;
   readonly assignLeadOwnerAction: AssignLeadOwnerAction;
+  readonly hideCommission?: boolean;
 }) {
   // Totales del footer: con fxCtx sumamos en USD (convierte cada sale/pay
   // según su moneda nativa). Sin fxCtx (vista legacy), suma simple.
@@ -1025,6 +1034,7 @@ function SalesTable({
                         }
                         fxLookup={fxLookup}
                         methodCurrencies={methodCurrencies}
+                        hideCommission={hideCommission}
                       />
                     </td>
                     <td className="px-3 py-3 text-right tabular-nums text-fg">
@@ -1115,6 +1125,7 @@ function SalesTable({
                             canEdit ? assignLeadOwnerAction : undefined
                           }
                           methodCurrencies={methodCurrencies}
+                          hideCommission={hideCommission}
                         />
                       </td>
                     )}

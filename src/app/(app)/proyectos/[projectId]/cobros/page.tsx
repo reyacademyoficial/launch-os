@@ -20,7 +20,10 @@ import {
 import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { listProductsForProject } from "@/lib/products/list";
 import { createClient } from "@/lib/supabase/server";
-import { userCanEditLaunchesIn } from "@/lib/supabase/auth";
+import {
+  requireSessionProfile,
+  userCanEditLaunchesIn,
+} from "@/lib/supabase/auth";
 import { listTeamMembersForProject } from "@/lib/team/list";
 
 import { assignLeadOwner } from "../leads/actions";
@@ -62,6 +65,7 @@ export default async function ProjectCobrosPage({
 
   const supabase = await createClient();
   const [
+    profile,
     salesData,
     modalities,
     products,
@@ -73,6 +77,7 @@ export default async function ProjectCobrosPage({
     fxMap,
     canEdit,
   ] = await Promise.all([
+    requireSessionProfile(),
     listProjectSalesData(projectId),
     listPaymentModalities(projectId),
     listProductsForProject(projectId),
@@ -84,6 +89,10 @@ export default async function ProjectCobrosPage({
     loadProjectFxRates(supabase, projectId),
     userCanEditLaunchesIn(projectId),
   ]);
+
+  // Closer accede a cobros para cargar, pero no ve nada de comisión (ni la
+  // columna en la ficha, ni el botón de recalcular masivo).
+  const hideCommission = profile.role === "closer";
 
   const leadById = new Map(salesData.leads.map((l) => [l.id, l]));
 
@@ -196,7 +205,7 @@ export default async function ProjectCobrosPage({
               filtro de lanzamiento para acotar.
             </p>
           </div>
-          {canEdit && (
+          {canEdit && !hideCommission && (
             <RecalculateBulkModal
               triggerLabel="Recalcular comisiones"
               triggerVariant="secondary"
@@ -264,6 +273,7 @@ export default async function ProjectCobrosPage({
         updatePaymentInstallmentAction={updatePaymentInstallmentAction}
         updatePaymentMethodAction={updatePaymentMethodAction}
         assignLeadOwnerAction={assignLeadOwnerAction}
+        hideCommission={hideCommission}
       />
     </section>
   );

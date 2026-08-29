@@ -13,7 +13,10 @@ import { buildFxLookup, buildSalesFxContext, loadProjectFxRates } from "@/lib/mo
 import { listPaymentMethods } from "@/lib/payment-methods/list";
 import { listProductsForProject } from "@/lib/products/list";
 import { createClient } from "@/lib/supabase/server";
-import { userCanEditLaunchesIn } from "@/lib/supabase/auth";
+import {
+  requireSessionProfile,
+  userCanEditLaunchesIn,
+} from "@/lib/supabase/auth";
 import { listTeamMembersForProject } from "@/lib/team/list";
 
 import { assignLeadOwner } from "../leads/actions";
@@ -59,6 +62,7 @@ export default async function ProjectSalesPage({
 
   const supabase = await createClient();
   const [
+    profile,
     salesData,
     modalities,
     products,
@@ -70,6 +74,7 @@ export default async function ProjectSalesPage({
     fxMap,
     canEdit,
   ] = await Promise.all([
+    requireSessionProfile(),
     listProjectSalesData(projectId),
     listPaymentModalities(projectId),
     listProductsForProject(projectId),
@@ -81,6 +86,9 @@ export default async function ProjectSalesPage({
     loadProjectFxRates(supabase, projectId),
     userCanEditLaunchesIn(projectId),
   ]);
+
+  // Closer ve la ficha del alumno para cargar cobros, pero sin comisión.
+  const hideCommission = profile.role === "closer";
 
   const fxCtx = buildSalesFxContext({
     banks,
@@ -169,6 +177,7 @@ export default async function ProjectSalesPage({
         updatePaymentMethodAction={updatePaymentMethodAction}
         assignLeadOwnerAction={assignLeadOwnerAction}
         fxLookup={fxLookup}
+        hideCommission={hideCommission}
       />
     </section>
   );

@@ -214,6 +214,7 @@ export function SaleModal({
   assignLeadOwnerAction,
   fxLookup,
   methodCurrencies,
+  hideCommission = false,
 }: {
   readonly triggerLabel: string;
   readonly triggerClassName?: string;
@@ -264,6 +265,12 @@ export function SaleModal({
    */
   readonly fxLookup?: FxLookup;
   readonly methodCurrencies?: Record<string, "ARS" | "USD">;
+  /**
+   * Oculta todo lo relacionado a comisión (card, snapshot bar con recalcular,
+   * checkbox de recálculo en el edit form). Usado para el rol `closer`, que
+   * ve la ficha del alumno pero no la comisión propia.
+   */
+  readonly hideCommission?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"list" | "new" | "edit">("list");
@@ -416,6 +423,7 @@ export function SaleModal({
                   }
                   onCancel={() => setMode("list")}
                   onSuccess={() => setMode("list")}
+                  hideCommission={hideCommission}
                 />
               ) : selectedSale ? (
                 <SalePanel
@@ -471,6 +479,7 @@ export function SaleModal({
                     }
                   }}
                   fxLookup={fxLookup}
+                  hideCommission={hideCommission}
                 />
               ) : (
                 <p className="text-sm text-fg-muted">
@@ -709,6 +718,7 @@ function SalePanel({
   onSaleDeleted,
   fxLookup,
   methodCurrencies,
+  hideCommission = false,
 }: {
   readonly sale: SaleRow;
   readonly saleRank: number;
@@ -739,6 +749,7 @@ function SalePanel({
   readonly onSaleDeleted: () => void;
   readonly fxLookup?: FxLookup;
   readonly methodCurrencies: Record<string, "ARS" | "USD">;
+  readonly hideCommission?: boolean;
 }) {
   const modality = modalities.find((m) => m.id === sale.payment_modality_id);
   const product = products.find((p) => p.id === sale.product_id);
@@ -831,7 +842,13 @@ function SalePanel({
           <FieldRow label="% cobrado" value={fmtPercent(collectedPct)} />
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div
+          className={
+            hideCommission
+              ? "grid grid-cols-1 gap-3 sm:grid-cols-2"
+              : "grid grid-cols-1 gap-3 sm:grid-cols-3"
+          }
+        >
           <Card label="Pactado" value={fmtSaleMoney(fxLookup, sale, Number(sale.total_amount))} />
           <Card
             label="Cobrado"
@@ -842,19 +859,23 @@ function SalePanel({
                 : `${payments.length} cobro${payments.length === 1 ? "" : "s"}`
             }
           />
-          <Card
-            label="Comisión actual"
-            value={fmtNative(breakdown.commission, breakdown.commissionCurrency)}
-            hint={breakdown.formula}
-            accent
-          />
+          {!hideCommission && (
+            <Card
+              label="Comisión actual"
+              value={fmtNative(breakdown.commission, breakdown.commissionCurrency)}
+              hint={breakdown.formula}
+              accent
+            />
+          )}
         </div>
       </section>
 
-      <CommissionSnapshotBar
-        hasSnapshot={sale.commission_rule_snapshot !== null}
-        recalculateAction={recalculateAction}
-      />
+      {!hideCommission && (
+        <CommissionSnapshotBar
+          hasSnapshot={sale.commission_rule_snapshot !== null}
+          recalculateAction={recalculateAction}
+        />
+      )}
 
       <ProductAssign
         currentProductId={sale.product_id}
@@ -1754,6 +1775,7 @@ function EditSaleForm({
   updateSaleAction,
   onCancel,
   onSuccess,
+  hideCommission = false,
 }: {
   readonly sale: SaleRow;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
@@ -1761,6 +1783,7 @@ function EditSaleForm({
   readonly updateSaleAction: SaleAction;
   readonly onCancel: () => void;
   readonly onSuccess: () => void;
+  readonly hideCommission?: boolean;
 }) {
   const [state, formAction, pending] = useActionState<SaleActionState, FormData>(
     updateSaleAction,
@@ -1870,19 +1893,21 @@ function EditSaleForm({
         re-asignar cuota por cuota desde la ficha.
       </div>
 
-      <label className="flex items-start gap-2 text-xs text-fg-muted">
-        <input
-          type="checkbox"
-          name="regenerate"
-          className="mt-0.5 accent-accent"
-        />
-        <span>
-          Recalcular comisión con la regla actual.
-          <span className="ml-1 text-fg-subtle">
-            Por default el snapshot queda como estaba al cierre (Fase 7).
+      {!hideCommission && (
+        <label className="flex items-start gap-2 text-xs text-fg-muted">
+          <input
+            type="checkbox"
+            name="regenerate"
+            className="mt-0.5 accent-accent"
+          />
+          <span>
+            Recalcular comisión con la regla actual.
+            <span className="ml-1 text-fg-subtle">
+              Por default el snapshot queda como estaba al cierre (Fase 7).
+            </span>
           </span>
-        </span>
-      </label>
+        </label>
+      )}
 
       <div className="flex items-center gap-4 pt-2">
         <Button type="submit" disabled={pending}>

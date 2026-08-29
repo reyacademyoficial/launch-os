@@ -214,6 +214,7 @@ export function ProjectSalesView({
   updatePaymentMethodAction,
   assignLeadOwnerAction,
   fxLookup,
+  hideCommission = false,
 }: {
   readonly sales: ReadonlyArray<SaleRow>;
   readonly payments: ReadonlyArray<PaymentRow>;
@@ -260,6 +261,11 @@ export function ProjectSalesView({
   readonly updatePaymentInstallmentAction: UpdatePaymentInstallmentAction;
   readonly updatePaymentMethodAction: UpdatePaymentMethodAction;
   readonly assignLeadOwnerAction: AssignLeadOwnerAction;
+  /**
+   * Oculta la columna "Comisión" (thead, tbody, tfoot) y también la propaga
+   * a la ficha del alumno. Usado para el rol `closer`.
+   */
+  readonly hideCommission?: boolean;
 }) {
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
 
@@ -557,7 +563,9 @@ export function ProjectSalesView({
                 <th className="px-3 py-3 text-right font-medium">
                   Monto cobrado
                 </th>
-                <th className="px-3 py-3 text-right font-medium">Comisión</th>
+                {!hideCommission && (
+                  <th className="px-3 py-3 text-right font-medium">Comisión</th>
+                )}
                 <th className="px-3 py-3 font-medium">Método</th>
                 <th className="px-3 py-3 font-medium">Vendedor</th>
                 <th className="px-3 py-3 font-medium">Lanzamiento</th>
@@ -660,6 +668,7 @@ export function ProjectSalesView({
                           canEdit ? assignLeadOwnerAction : undefined
                         }
                         fxLookup={fxLookup}
+                        hideCommission={hideCommission}
                       />
                     </td>
                     <td className="px-3 py-3 text-fg-muted">
@@ -685,9 +694,11 @@ export function ProjectSalesView({
                         )}
                       </div>
                     </td>
-                    <td className="px-3 py-3 text-right tabular-nums text-accent">
-                      {fmtNative(commission.amount, commission.currency)}
-                    </td>
+                    {!hideCommission && (
+                      <td className="px-3 py-3 text-right tabular-nums text-accent">
+                        {fmtNative(commission.amount, commission.currency)}
+                      </td>
+                    )}
                     <td
                       className="px-3 py-3 text-fg-muted"
                       title={methodDisplay.title}
@@ -749,6 +760,7 @@ export function ProjectSalesView({
                               canEdit ? assignLeadOwnerAction : undefined
                             }
                             fxLookup={fxLookup}
+                            hideCommission={hideCommission}
                           />
                           <DeleteSaleButton
                             saleId={s.id}
@@ -780,18 +792,20 @@ export function ProjectSalesView({
                 <td className="px-3 py-3 text-right font-semibold tabular-nums text-fg">
                   {fmtTotal(totalCobrado)}
                 </td>
-                <td className="px-3 py-3 text-right font-semibold tabular-nums text-accent">
-                  {totalComisionArs > 0 && totalComisionUsd > 0 ? (
-                    <div className="flex flex-col items-end leading-tight">
-                      <span>{fmtNative(totalComisionArs, "ARS")}</span>
-                      <span>{fmtNative(totalComisionUsd, "USD")}</span>
-                    </div>
-                  ) : totalComisionUsd > 0 ? (
-                    fmtNative(totalComisionUsd, "USD")
-                  ) : (
-                    fmtNative(totalComisionArs, "ARS")
-                  )}
-                </td>
+                {!hideCommission && (
+                  <td className="px-3 py-3 text-right font-semibold tabular-nums text-accent">
+                    {totalComisionArs > 0 && totalComisionUsd > 0 ? (
+                      <div className="flex flex-col items-end leading-tight">
+                        <span>{fmtNative(totalComisionArs, "ARS")}</span>
+                        <span>{fmtNative(totalComisionUsd, "USD")}</span>
+                      </div>
+                    ) : totalComisionUsd > 0 ? (
+                      fmtNative(totalComisionUsd, "USD")
+                    ) : (
+                      fmtNative(totalComisionArs, "ARS")
+                    )}
+                  </td>
+                )}
                 <td className="px-3 py-3" colSpan={3} />
                 {canEdit && <td className="px-3 py-3" />}
               </tr>
