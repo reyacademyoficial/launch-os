@@ -15,8 +15,8 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: {
-    default: "Launch OS",
-    template: "%s · Launch OS",
+    default: "KinGrow",
+    template: "%s · KinGrow",
   },
   description: "Sistema operativo de lanzamientos para campañas de marketing digital",
 };
