@@ -151,6 +151,7 @@ export default async function ProjectSalesPage({
       </header>
 
       <ProjectSalesView
+        projectId={projectId}
         sales={salesData.sales}
         payments={salesData.payments}
         installments={salesData.installments}

@@ -17,6 +17,7 @@ import type {
   SaleRow,
 } from "@/lib/commissions/types";
 import { fmtMoney } from "@/lib/format";
+import type { SaleExportRow } from "@/lib/launch-sales/export-types";
 import {
   fmtNative,
   fmtUsd,
@@ -30,6 +31,7 @@ import type { ProductRow } from "@/lib/products/types";
 import type { TeamMemberRow } from "@/lib/team/types";
 
 import { AddSaleModal } from "./add-sale-modal";
+import { ExportSalesButton } from "./export-sales-button";
 import { SaleModal } from "./sale-modal";
 
 type CreateSaleAction = (
@@ -79,7 +81,14 @@ type AssignLeadOwnerAction = (
 
 type LeadForSales = Pick<
   LeadRow,
-  "id" | "name" | "launch_id" | "team_member_id" | "status"
+  | "id"
+  | "name"
+  | "email"
+  | "phone_normalized"
+  | "contact"
+  | "launch_id"
+  | "team_member_id"
+  | "status"
 >;
 
 type CollectionStatus = "all" | "paid" | "partial" | "unpaid";
@@ -105,6 +114,13 @@ const EMPTY_FILTERS: FilterState = {
 const UNASSIGNED_LAUNCH = "__unassigned__";
 const UNASSIGNED_CLOSER = "__unassigned__";
 const NO_METHOD = "__none__";
+
+const COLLECTION_LABELS: Record<CollectionStatus, string> = {
+  all: "Cualquier estado",
+  paid: "Cobrada",
+  partial: "Parcial",
+  unpaid: "Sin cobrar",
+};
 
 /**
  * Cobrado por venta respetando moneda. Si todos los payments comparten la
@@ -188,6 +204,7 @@ function classifySaleStatus(
  *   - ≥2 métodos → "Mixto (N)" con tooltip listando los métodos
  */
 export function ProjectSalesView({
+  projectId,
   sales,
   payments,
   installments,
@@ -216,6 +233,8 @@ export function ProjectSalesView({
   fxLookup,
   hideCommission = false,
 }: {
+  /** Necesario para el endpoint de export (`/api/proyectos/[id]/ventas/export`). */
+  readonly projectId: string;
   readonly sales: ReadonlyArray<SaleRow>;
   readonly payments: ReadonlyArray<PaymentRow>;
   readonly installments: ReadonlyArray<InstallmentRow>;
@@ -512,10 +531,118 @@ export function ProjectSalesView({
     }
   }
 
+  /**
+   * Filas del xlsx. Se arma en el click del botón (no en un useMemo) porque
+   * solo se necesita al exportar y recorre todo el subset filtrado.
+   *
+   * Refleja exactamente lo que muestra la tabla: mismo subset filtrado, misma
+   * atribución de vendedor (dueño del lead), misma comisión y mismo cobrado
+   * FX-aware. Suma columnas que la tabla no tiene lugar para mostrar
+   * (pactado/cobrado en USD, cuotas, cierre) porque en Excel sí son útiles.
+   */
+  function buildExportRows(): SaleExportRow[] {
+    return filteredSales.map((s) => {
+      const lead = leadById.get(s.lead_id);
+      const closerId = lead?.team_member_id ?? null;
+      const salePayments = paymentsBySaleId.get(s.id) ?? [];
+      const saleCurrency: Currency =
+        fxLookup?.bySaleId[s.id]?.currency ?? "ARS";
+      const collected = collectedForSale(saleCurrency, salePayments, fxLookup);
+      const commission = commissionBySale.get(s.id) ?? {
+        amount: 0,
+        currency: "ARS" as const,
+      };
+
+      // Cobrado en USD: se convierte payment por payment (igual que el total
+      // del tfoot). Si NINGÚN cobro tiene tasa, va null en vez de 0 para no
+      // ensuciar el promedio del pivot.
+      let collectedUsd: number | null = null;
+      for (const p of salePayments) {
+        const usd = fxLookup?.byPaymentId[p.id]?.amountUsd ?? null;
+        if (usd !== null) collectedUsd = (collectedUsd ?? 0) + usd;
+      }
+      if (salePayments.length === 0) collectedUsd = 0;
+
+      return {
+        student: lead?.name ?? "—",
+        email: lead?.email ?? "",
+        phone: lead?.phone_normalized ?? "",
+        contact: lead?.contact ?? "",
+        product: productById.get(s.product_id)?.name ?? "—",
+        launch: (s.launch_id ? launchById.get(s.launch_id)?.name : null) ?? "—",
+        seller: closerId ? (teamById.get(closerId)?.name ?? "—") : "Sin asignar",
+        method: methodLabelPlain(methodIdsBySale.get(s.id), paymentMethodById),
+        currency: saleCurrency,
+        pledged: Number(s.total_amount) || 0,
+        collected: collected.amount,
+        collectedCurrency: collected.currency,
+        mixedCurrency: collected.mixed,
+        commission: commission.amount,
+        commissionCurrency: commission.currency,
+        status: classifySaleStatus(s, salePayments, fxLookup),
+        pledgedUsd: fxLookup ? (fxLookup.bySaleId[s.id]?.totalUsd ?? null) : null,
+        collectedUsd,
+        paymentCount: salePayments.length,
+        installmentCount: s.installment_count,
+        closedAt: s.closed_at,
+      };
+    });
+  }
+
+  /** Filtros activos en texto, para la hoja "Resumen" del xlsx. */
+  function buildFilterSummary(): string[] {
+    const out: string[] = [];
+    if (filters.query.trim()) out.push(`Búsqueda: "${filters.query.trim()}"`);
+    if (filters.launchId !== "all") {
+      out.push(
+        `Lanzamiento: ${
+          filters.launchId === UNASSIGNED_LAUNCH
+            ? "Sin launch"
+            : (launchById.get(filters.launchId)?.name ?? filters.launchId)
+        }`,
+      );
+    }
+    if (filters.closerId !== "all") {
+      out.push(
+        `Vendedor: ${
+          filters.closerId === UNASSIGNED_CLOSER
+            ? "Sin asignar"
+            : (teamById.get(filters.closerId)?.name ?? filters.closerId)
+        }`,
+      );
+    }
+    if (filters.productId !== "all") {
+      out.push(
+        `Producto: ${productById.get(filters.productId)?.name ?? filters.productId}`,
+      );
+    }
+    if (filters.paymentMethodId !== "all") {
+      out.push(
+        `Método: ${
+          filters.paymentMethodId === NO_METHOD
+            ? "Sin método asignado"
+            : (paymentMethodById.get(filters.paymentMethodId)?.name ??
+              filters.paymentMethodId)
+        }`,
+      );
+    }
+    if (filters.collection !== "all") {
+      out.push(`Estado de cobro: ${COLLECTION_LABELS[filters.collection]}`);
+    }
+    return out;
+  }
+
   return (
     <div className="space-y-6">
       {canEdit && (
-        <div className="flex justify-end">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <ExportSalesButton
+            projectId={projectId}
+            getRows={buildExportRows}
+            getFilterSummary={buildFilterSummary}
+            hideCommission={hideCommission}
+            disabled={filteredSales.length === 0}
+          />
           <AddSaleModal
             launches={launches}
             modalities={modalities}
@@ -864,6 +991,24 @@ function renderMethodCell(
     text: `Mixto (${hasNull ? names.length + 1 : names.length})`,
     title: detail,
   };
+}
+
+/**
+ * Versión texto plano de `renderMethodCell` para el xlsx. No colapsamos a
+ * "Mixto (N)" como en la tabla: en Excel hay ancho de sobra y el detalle es
+ * justo lo que se quiere filtrar/pivotear.
+ */
+function methodLabelPlain(
+  methodSet: ReadonlySet<string | null> | undefined,
+  paymentMethodById: ReadonlyMap<string, PaymentMethodRow>,
+): string {
+  if (!methodSet || methodSet.size === 0) return "—";
+  const names = Array.from(methodSet)
+    .filter((id): id is string => id !== null)
+    .map((id) => paymentMethodById.get(id)?.name ?? "—")
+    .sort((a, b) => a.localeCompare(b));
+  if (methodSet.has(null)) names.push("Sin método");
+  return names.join(", ");
 }
 
 function FilterBar({

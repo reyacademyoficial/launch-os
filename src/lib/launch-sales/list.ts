@@ -33,7 +33,14 @@ export interface LaunchSalesData {
   installments: InstallmentRow[];
   leads: Pick<
     LeadRow,
-    "id" | "status" | "launch_id" | "name" | "team_member_id"
+    | "id"
+    | "status"
+    | "launch_id"
+    | "name"
+    | "email"
+    | "phone_normalized"
+    | "contact"
+    | "team_member_id"
   >[];
 }
 
@@ -69,7 +76,9 @@ export async function listLaunchSalesData(
   const [leadsRes, paymentsRes, installmentsRes] = await Promise.all([
     supabase
       .from("leads")
-      .select("id, status, launch_id, name, team_member_id")
+      .select(
+        "id, status, launch_id, name, email, phone_normalized, contact, team_member_id",
+      )
       .in("id", leadIds),
     supabase
       .from("payments")
@@ -85,7 +94,17 @@ export async function listLaunchSalesData(
   ]);
 
   const leads = (leadsRes.data ?? []) as Array<
-    Pick<LeadRow, "id" | "status" | "launch_id" | "name" | "team_member_id">
+    Pick<
+      LeadRow,
+      | "id"
+      | "status"
+      | "launch_id"
+      | "name"
+      | "email"
+      | "phone_normalized"
+      | "contact"
+      | "team_member_id"
+    >
   >;
   const payments = (paymentsRes.data ?? []) as unknown as PaymentRow[];
   const installments = (installmentsRes.data ?? []) as unknown as InstallmentRow[];
@@ -125,7 +144,9 @@ export async function listProjectSalesData(
   const [leadsRes, paymentsRes, installmentsRes] = await Promise.all([
     supabase
       .from("leads")
-      .select("id, status, launch_id, name, team_member_id")
+      .select(
+        "id, status, launch_id, name, email, phone_normalized, contact, team_member_id",
+      )
       .in("id", leadIds),
     supabase
       .from("payments")
@@ -141,7 +162,17 @@ export async function listProjectSalesData(
   ]);
 
   const leads = (leadsRes.data ?? []) as Array<
-    Pick<LeadRow, "id" | "status" | "launch_id" | "name" | "team_member_id">
+    Pick<
+      LeadRow,
+      | "id"
+      | "status"
+      | "launch_id"
+      | "name"
+      | "email"
+      | "phone_normalized"
+      | "contact"
+      | "team_member_id"
+    >
   >;
   const payments = (paymentsRes.data ?? []) as unknown as PaymentRow[];
   const installments = (installmentsRes.data ?? []) as unknown as InstallmentRow[];

@@ -119,7 +119,8 @@
       "Bash(bash --version)",
       "Bash(awk -F= '{print $1 \" \\(len \" length\\($2\\) \"\\) = \" substr\\($2,1,20\\) \"...\"}')",
       "Bash(awk -F= '{print $1 \" \\(len \" length\\($2\\) \"\\) = \" substr\\($2,1,25\\) \"...\"}')",
-      "PowerShell($key = \\(Get-Content \"C:\\\\Users\\\\40306\\\\Desktop\\\\Rey academy\\\\Descargas\\\\launch-os\\\\.env.local\" | Select-String 'NEXT_PUBLIC_SUPABASE_ANON_KEY='\\).Line.Split\\('=',2\\)[1]; $r = Invoke-WebRequest -Uri 'https://sbxuzvnfxqfskrqbtikp.supabase.co/rest/v1/profiles?select=id,role&limit=1' -Headers @{apikey=$key} -SkipHttpErrorCheck; \"STATUS=$\\($r.StatusCode\\)\"; $r.Content.Substring\\(0,[Math]::Min\\(200,$r.Content.Length\\)\\))"
+      "PowerShell($key = \\(Get-Content \"C:\\\\Users\\\\40306\\\\Desktop\\\\Rey academy\\\\Descargas\\\\launch-os\\\\.env.local\" | Select-String 'NEXT_PUBLIC_SUPABASE_ANON_KEY='\\).Line.Split\\('=',2\\)[1]; $r = Invoke-WebRequest -Uri 'https://sbxuzvnfxqfskrqbtikp.supabase.co/rest/v1/profiles?select=id,role&limit=1' -Headers @{apikey=$key} -SkipHttpErrorCheck; \"STATUS=$\\($r.StatusCode\\)\"; $r.Content.Substring\\(0,[Math]::Min\\(200,$r.Content.Length\\)\\))",
+      "PowerShell(npx eslint src/lib/launch-sales src/components/dashboard/sales/export-sales-button.tsx src/components/dashboard/sales/project-sales-view.tsx \"src/app/api/proyectos/[projectId]/ventas\" \"src/app/\\(app\\)/proyectos/[projectId]/ventas\" 2>&1 | Select-Object -Last 25)"
     ]
   }
 }

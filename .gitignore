@@ -31,3 +31,6 @@ next-env.d.ts
 # supabase
 supabase/.branches
 supabase/.temp
+
+# claude code worktrees
+.claude/worktrees/
