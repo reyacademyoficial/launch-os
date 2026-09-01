@@ -3,10 +3,7 @@ import "server-only";
 import { Readable } from "node:stream";
 
 import ExcelJS from "exceljs";
-import {
-  parsePhoneNumberFromString,
-  type CountryCode,
-} from "libphonenumber-js";
+import { type CountryCode } from "libphonenumber-js";
 
 import {
   IMPORT_FIELDS,
@@ -14,9 +11,11 @@ import {
   type ImportMapping,
   type ImportPreview,
 } from "./import-config";
+import { normalizePhone } from "./phone";
 import type { LeadStatus } from "./types";
 
 export { IMPORT_FIELDS, type ImportField, type ImportMapping, type ImportPreview };
+export { normalizePhone } from "./phone";
 
 /**
  * Pipeline de import xlsx → filas listas para insertar.
@@ -173,24 +172,6 @@ export async function processWorkbookStream(
   }
 
   return { payloads, errors };
-}
-
-/**
- * Normaliza un teléfono a E.164. Devuelve `null` si no se puede parsear o si
- * el input está vacío. El default country aplica solo cuando el teléfono no
- * incluye prefijo internacional explícito (sin `+`).
- */
-export function normalizePhone(
-  raw: string | null | undefined,
-  defaultCountry: CountryCode,
-): string | null {
-  if (!raw) return null;
-  const trimmed = String(raw).trim();
-  if (trimmed === "") return null;
-
-  const parsed = parsePhoneNumberFromString(trimmed, defaultCountry);
-  if (!parsed || !parsed.isValid()) return null;
-  return parsed.format("E.164");
 }
 
 // ─── internals ──────────────────────────────────────────────────────────────

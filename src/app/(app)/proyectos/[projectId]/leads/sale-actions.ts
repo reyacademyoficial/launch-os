@@ -7,6 +7,7 @@ import { listCommissionRules } from "@/lib/commissions/list";
 import { ruleToSnapshot } from "@/lib/commissions/snapshot";
 import { resolveSnapshotForSale } from "@/lib/commissions/snapshot";
 import type { InstallmentFrequency } from "@/lib/commissions/types";
+import { normalizePhone } from "@/lib/leads/phone";
 import { requireCanEditLaunchesIn } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
@@ -60,6 +61,44 @@ function str(formData: FormData, key: string): string {
 
 function nullable(value: string): string | null {
   return value === "" ? null : value;
+}
+
+/** Chequeo laxo de email: algo, un @ en el medio y un punto en el dominio. */
+const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Parsea los dos campos de contacto del alta de venta. Reemplazan al viejo
+ * input único `lead_contact` → `leads.contact`, que mezclaba teléfono y mail
+ * en una sola columna de texto libre y no servía ni para dedupe ni para los
+ * sync de integraciones.
+ *
+ *   Teléfono → `leads.phone_normalized` (E.164; unique parcial por proyecto).
+ *   Email    → `leads.email` (lowercase).
+ *
+ * Los dos son opcionales, pero si vienen cargados tienen que ser válidos:
+ * preferimos frenar y pedir corrección antes que guardar el lead con el
+ * teléfono en null — que es lo que haría `normalizePhone` con un número
+ * imparseable.
+ */
+function parseLeadContact(
+  formData: FormData,
+): { email: string | null; phone: string | null } | { error: string } {
+  const emailRaw = nullable(str(formData, "lead_email"));
+  const phoneRaw = nullable(str(formData, "lead_phone"));
+
+  if (emailRaw !== null && !EMAIL_RX.test(emailRaw)) {
+    return { error: "El email no es válido." };
+  }
+
+  const phone = phoneRaw === null ? null : normalizePhone(phoneRaw);
+  if (phoneRaw !== null && phone === null) {
+    return {
+      error:
+        "El teléfono no es válido. Cargalo con código de área (ej: 11 5555-5555) o en formato internacional (+54 9 11 …).",
+    };
+  }
+
+  return { email: emailRaw === null ? null : emailRaw.toLowerCase(), phone };
 }
 
 /**
@@ -235,7 +274,9 @@ export async function createSaleWithLead(
   const lead_name = str(formData, "lead_name");
   if (!lead_name) return { error: "Cargá el nombre del alumno." };
 
-  const lead_contact = nullable(str(formData, "lead_contact"));
+  const contact = parseLeadContact(formData);
+  if ("error" in contact) return contact;
+
   const launch_id = nullable(str(formData, "launch_id"));
   const team_member_id = nullable(str(formData, "team_member_id"));
 
@@ -288,7 +329,8 @@ export async function createSaleWithLead(
   const leadInsert = {
     project_id: projectId,
     name: lead_name,
-    contact: lead_contact,
+    email: contact.email,
+    phone_normalized: contact.phone,
     launch_id,
     team_member_id,
     status: "cerrado",
@@ -298,7 +340,18 @@ export async function createSaleWithLead(
     .insert(leadInsert)
     .select("id")
     .maybeSingle();
-  if (leadErr) return { error: leadErr.message };
+  if (leadErr) {
+    // Unique parcial (project_id, phone_normalized) de 0016: ese teléfono ya
+    // está cargado en otro lead del proyecto. Mensaje accionable en vez del
+    // texto crudo de postgres.
+    if (leadErr.code === "23505") {
+      return {
+        error:
+          "Ya hay un lead con ese teléfono en el proyecto. Cargá la venta desde ese lead, o corregí el número.",
+      };
+    }
+    return { error: leadErr.message };
+  }
   const leadId = (leadRow as { id: string } | null)?.id;
   if (!leadId) return { error: "No se pudo crear el lead." };
 

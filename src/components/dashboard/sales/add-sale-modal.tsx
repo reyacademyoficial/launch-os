@@ -310,7 +310,7 @@ function AddSaleForm({
 
   return (
     <form action={formAction} className="space-y-4">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1.2fr_1fr_1.4fr]">
         <div>
           <Label htmlFor="add-sale-lead-name">Alumno *</Label>
           <Input
@@ -322,11 +322,25 @@ function AddSaleForm({
           />
         </div>
         <div>
-          <Label htmlFor="add-sale-lead-contact">Contacto</Label>
+          <Label htmlFor="add-sale-lead-phone">Teléfono</Label>
           <Input
-            id="add-sale-lead-contact"
-            name="lead_contact"
-            placeholder="Email o teléfono"
+            id="add-sale-lead-phone"
+            name="lead_phone"
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            placeholder="11 5555-5555"
+          />
+        </div>
+        <div>
+          <Label htmlFor="add-sale-lead-email">Email</Label>
+          <Input
+            id="add-sale-lead-email"
+            name="lead_email"
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            placeholder="alumno@mail.com"
           />
         </div>
       </div>
