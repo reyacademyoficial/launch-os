@@ -23,13 +23,15 @@
 import type { NotionPage } from "./client";
 import {
   applyValueMap,
+  parseAssignees,
+  parseCheckbox,
   parseDateStart,
-  parsePeople,
   parseRichText,
   parseSelect,
   parseTitle,
 } from "./property-parser";
 import {
+  assigneeProps,
   KG_PRIORITIES,
   KG_STATUSES,
   type KgPriority,
@@ -71,8 +73,64 @@ export interface MapContext {
    * la persona ya no está en la org). Precomputado del sync.
    */
   readonly assigneeToKgPerson: (notionUserId: string) => string | null;
+  /**
+   * Nombre/email suelto → KG organization_people.id. Se usa en los tableros
+   * cuya columna de responsable NO es type='people' (un multi_select con
+   * nombres, texto libre, una fórmula). Opcional: sin este resolver esos
+   * tableros simplemente quedan sin dueños, como antes.
+   */
+  readonly assigneeLabelToKgPerson?: (label: string) => string | null;
   /** Timestamp del sync — se guarda en `notion_synced_at`. */
   readonly nowIso: string;
+}
+
+/**
+ * Resuelve el KG status de una page combinando las DOS formas en que los
+ * tableros marcan "terminado":
+ *
+ *   a) Una columna select/status con un valor tipo "Listo" (`status_prop`).
+ *   b) Un checkbox / tilde (`done_prop`).
+ *
+ * Cuando hay checkbox configurado MANDA él, porque es la señal explícita de
+ * ese tablero:
+ *   - tildado    → `done_status` (default 'listo').
+ *   - destildado → el valor del select, salvo que el select también diga
+ *     'listo' (contradicción): ahí gana el tilde y cae a `undone_status`.
+ *
+ * Sin `done_prop` el comportamiento es el de siempre: select → map explícito
+ * → auto-normalización contra KG_STATUSES → 'sin_empezar'.
+ *
+ * Exportada para poder testearla sin armar una page completa.
+ */
+export function resolveStatus(
+  page: Pick<NotionPage, "properties">,
+  map: NotionPropertyMap,
+): KgStatus {
+  const doneStatus: KgStatus = map.done_status ?? "listo";
+  const undoneStatus: KgStatus = map.undone_status ?? "sin_empezar";
+
+  const fromSelect: KgStatus | null = map.status_prop
+    ? applyValueMap<KgStatus>(
+        parseSelect(page.properties, map.status_prop),
+        map.status_map ?? {},
+        undoneStatus,
+        KG_STATUSES,
+      )
+    : null;
+
+  if (map.done_prop) {
+    const checked = parseCheckbox(page.properties, map.done_prop);
+    if (checked === true) return doneStatus;
+    if (checked === false) {
+      return fromSelect != null && fromSelect !== doneStatus
+        ? fromSelect
+        : undoneStatus;
+    }
+    // checked === null: la columna no existe en esta page (schema cambiado,
+    // page vieja). Caemos al select y no inventamos "terminado".
+  }
+
+  return fromSelect ?? undoneStatus;
 }
 
 export function mapNotionPageToInternalProject(
@@ -85,17 +143,7 @@ export function mapNotionPageToInternalProject(
     return { ok: false, reason: "missing-title" };
   }
 
-  // Status: aplicamos map explícito con fallback a auto-normalización
-  // contra KG_STATUSES (ver property-parser.applyValueMap). Si nada
-  // resuelve, cae a 'sin_empezar'.
-  const status: KgStatus = map.status_prop
-    ? applyValueMap<KgStatus>(
-        parseSelect(page.properties, map.status_prop),
-        map.status_map ?? {},
-        "sin_empezar",
-        KG_STATUSES,
-      )
-    : "sin_empezar";
+  const status = resolveStatus(page, map);
 
   const priority: KgPriority = map.priority_prop
     ? applyValueMap<KgPriority>(
@@ -106,16 +154,26 @@ export function mapNotionPageToInternalProject(
       )
     : "media";
 
-  // Assignees: junta TODOS los notion users mapeados a personas KG. Dedup
-  // preservando orden — el orden importa poco (junction table sin rank).
+  // Assignees: recorre TODAS las columnas de responsable configuradas y junta
+  // las personas KG resueltas — primero por notion user id, después por
+  // nombre/email para los tableros que no usan una columna `people`. Dedup
+  // preservando orden (la junction no tiene rank, pero el orden ayuda en UI).
   const ownerIds: string[] = [];
-  if (map.assignee_prop) {
-    const people = parsePeople(page.properties, map.assignee_prop);
-    const seen = new Set<string>();
-    for (const nu of people) {
+  const seenOwners = new Set<string>();
+  for (const propName of assigneeProps(map)) {
+    const { userIds, labels } = parseAssignees(page.properties, propName);
+    for (const nu of userIds) {
       const kg = ctx.assigneeToKgPerson(nu);
-      if (kg && !seen.has(kg)) {
-        seen.add(kg);
+      if (kg && !seenOwners.has(kg)) {
+        seenOwners.add(kg);
+        ownerIds.push(kg);
+      }
+    }
+    if (!ctx.assigneeLabelToKgPerson) continue;
+    for (const label of labels) {
+      const kg = ctx.assigneeLabelToKgPerson(label);
+      if (kg && !seenOwners.has(kg)) {
+        seenOwners.add(kg);
         ownerIds.push(kg);
       }
     }

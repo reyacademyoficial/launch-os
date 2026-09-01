@@ -24,11 +24,14 @@ export function Field({
   label,
   htmlFor,
   required,
+  hint,
   children,
 }: {
   readonly label: string;
   readonly htmlFor: string;
   readonly required?: boolean;
+  /** Explicación corta bajo el input. Se linkea al control con aria-describedby. */
+  readonly hint?: string;
   readonly children: ReactNode;
 }) {
   return (
@@ -46,6 +49,15 @@ export function Field({
         )}
       </label>
       {children}
+      {hint && (
+        <div
+          id={`${htmlFor}_hint`}
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)", marginTop: 5 }}
+        >
+          {hint}
+        </div>
+      )}
     </div>
   );
 }

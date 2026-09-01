@@ -5,13 +5,16 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   listPageComments as apiListPageComments,
   queryDatabase as apiQueryDatabase,
-  NotionApiError,
 } from "@/lib/notion/client";
 import {
   mapNotionPageToInternalProject,
   type InternalProjectUpsertPayload,
 } from "@/lib/notion/map-page-to-project";
 import { parsePropertyMap } from "@/lib/notion/property-map";
+import {
+  describeNotionError,
+  pushProjectToNotion,
+} from "@/lib/notion/push-project";
 
 /**
  * Núcleo del sync Notion → `internal_projects`. Independiente de auth y de
@@ -22,6 +25,15 @@ import { parsePropertyMap } from "@/lib/notion/property-map";
  *    (usuario en la UI) — usa RLS session client y hace full sync.
  *  - Cron `/api/cron/notion-sync` — usa service client y pide incremental
  *    (`sinceIso` = MAX(started_at) del último log ok/partial de esa DB).
+ *
+ * WRITE-BACK (0176) — el sync ya no es estrictamente one-way
+ *   Antes de leer una page, el runner chequea si el proyecto local tiene
+ *   `notion_push_pending`: una edición hecha en KG (típicamente marcar
+ *   "listo") que todavía no llegó a Notion. En ese caso empuja el cambio y
+ *   NO sobreescribe ese proyecto en esta corrida — la page que trajimos
+ *   todavía tiene el valor viejo y escribirlo revertiría el trabajo del
+ *   operador. Si el push vuelve a fallar, el proyecto queda protegido y se
+ *   reintenta en la corrida siguiente. Ver `push-project.ts`.
  *
  * INCREMENTAL — limitación conocida
  *   El filter de Notion por `last_edited_time on_or_after` NO detecta pages
@@ -35,6 +47,7 @@ import { parsePropertyMap } from "@/lib/notion/property-map";
 // así que aceptamos un supabase client "any" — mismo patrón que
 // `src/lib/settlements/*.ts`. Las lecturas y escrituras hacen sus propios
 // casts a shapes concretos.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- el tipo generado `Database` no incluye las tablas notion_*.
 type AnySupabase = SupabaseClient<any, any, any>;
 
 export type SyncDatabaseRunResult =
@@ -45,6 +58,10 @@ export type SyncDatabaseRunResult =
       skippedNoTitle: number;
       commentsUpserted: number;
       commentsFailed: number;
+      /** Proyectos con edición local que se escribieron en Notion en este run. */
+      pushRetried: number;
+      /** Proyectos cuya edición local sigue sin poder escribirse en Notion. */
+      pushFailed: number;
     }
   | { ok: false; error: string };
 
@@ -53,6 +70,10 @@ export type SyncAllRunResult = {
   databasesRun: number;
   totalUpserted: number;
   totalCommentsUpserted: number;
+  /** Ediciones locales que se escribieron en Notion durante estas corridas. */
+  totalPushRetried: number;
+  /** Ediciones locales que siguen pendientes de escribirse en Notion. */
+  totalPushFailed: number;
   errors: ReadonlyArray<{ databaseId: string; error: string }>;
 };
 
@@ -162,8 +183,9 @@ export async function runNotionDatabaseSync(
       filter: notionFilter,
     });
   } catch (e) {
-    await finalizeLog("error", 0, notionErrorMessage(e));
-    return { ok: false, error: notionErrorMessage(e) };
+    const msg = describeNotionError(e);
+    await finalizeLog("error", 0, msg);
+    return { ok: false, error: msg };
   }
 
   // 4) Precomputar assignee resolver (notion_user_id → kg_person_id)
@@ -181,6 +203,60 @@ export async function runNotionDatabaseSync(
   const resolveAssignee = (nu: string): string | null =>
     assigneeMap.get(nu) ?? null;
 
+  // 4b) Resolver de responsables por nombre/email — para los tableros cuya
+  //     columna de responsable no es type='people'.
+  const resolveAssigneeLabel = await buildAssigneeLabelIndex(
+    supabase,
+    db.workspace_id,
+    ws.organization_id,
+  );
+
+  // 4c) Reconciliar ediciones locales pendientes ANTES de leer.
+  //
+  //     Si el operador marcó un proyecto como 'listo' en KG y ese cambio
+  //     todavía no llegó a Notion, la page que acabamos de traer tiene el
+  //     valor VIEJO. Escribirlo revertiría el trabajo del operador — que es
+  //     exactamente el bug que reportaba "las tareas vuelven solas al estado
+  //     original". Así que primero empujamos, y en cualquier caso NO pisamos
+  //     esos proyectos en esta corrida.
+  const pageIdsInRun = pages.map((p) => p.id);
+  const projectIdByPage = new Map<string, string>();
+  const skipPageIds = new Set<string>();
+  let pushRetried = 0;
+  let pushFailed = 0;
+
+  if (pageIdsInRun.length > 0) {
+    const existingRes = await supabase
+      .from("internal_projects")
+      .select("id, notion_page_id")
+      .in("notion_page_id", pageIdsInRun);
+    for (const row of (existingRes.data ?? []) as Array<{
+      id: string;
+      notion_page_id: string;
+    }>) {
+      projectIdByPage.set(row.notion_page_id, row.id);
+    }
+  }
+
+  // Los pendientes se buscan por DATABASE, no entre las pages de este run:
+  // un push que falló no modificó la page, así que su `last_edited_time` no
+  // se movió y el filtro incremental no la traería nunca de vuelta. Sin
+  // esto, un fallo transitorio dejaría el proyecto congelado para siempre.
+  const pendingRes = await supabase
+    .from("internal_projects")
+    .select("id, notion_page_id")
+    .eq("notion_database_id", db.id)
+    .eq("notion_push_pending", true);
+  for (const row of (pendingRes.data ?? []) as Array<{
+    id: string;
+    notion_page_id: string | null;
+  }>) {
+    if (row.notion_page_id) skipPageIds.add(row.notion_page_id);
+    const res = await pushProjectToNotion(row.id, supabase);
+    if (res.ok) pushRetried += 1;
+    else pushFailed += 1;
+  }
+
   // 5) Mapear y upsertar page por page
   const nowIso = new Date().toISOString();
   let upserted = 0;
@@ -191,11 +267,14 @@ export async function runNotionDatabaseSync(
   const ownersByPageId = new Map<string, readonly string[]>();
 
   for (const page of pages) {
+    if (skipPageIds.has(page.id)) continue;
+
     const mapped = mapNotionPageToInternalProject(page, map, {
       organizationId: ws.organization_id,
       workspaceId: db.workspace_id,
       databaseId: db.id,
       assigneeToKgPerson: resolveAssignee,
+      assigneeLabelToKgPerson: resolveAssigneeLabel,
       nowIso,
     });
     if (!mapped.ok) {
@@ -225,7 +304,6 @@ export async function runNotionDatabaseSync(
   //     Estrategia: DELETE bulk de todos los owners de los projects
   //     tocados en este run, luego INSERT bulk de los nuevos. Dos queries
   //     total en vez de 2×N.
-  let projectIdByPage = new Map<string, string>();
   if (payloads.length > 0) {
     const pageIds = payloads.map((p) => p.notion_page_id);
     const projectsRes = await supabase
@@ -239,7 +317,11 @@ export async function runNotionDatabaseSync(
       projectIdByPage.set(r.notion_page_id, r.id);
     }
 
-    const projectIds = Array.from(projectIdByPage.values());
+    // Solo los proyectos que efectivamente sincronizamos en este run: los
+    // protegidos por un push pendiente conservan sus owners locales.
+    const projectIds = pageIds
+      .map((pid) => projectIdByPage.get(pid))
+      .filter((id): id is string => !!id);
     if (projectIds.length > 0) {
       await supabase
         .from("internal_project_owners")
@@ -281,8 +363,10 @@ export async function runNotionDatabaseSync(
   //    (ver limitación al tope del archivo).
   let commentsUpserted = 0;
   let commentsFailed = 0;
-  if (payloads.length > 0) {
-    // projectIdByPage ya está poblado por el paso 6b.
+  if (projectIdByPage.size > 0) {
+    // projectIdByPage viene del paso 4c (proyectos ya existentes) más el 6b
+    // (los recién upserteados). Incluye los protegidos por push pendiente:
+    // sus comentarios sí se traen, lo único que no pisamos son sus campos.
 
     for (const page of pages) {
       const projectId = projectIdByPage.get(page.id);
@@ -322,14 +406,21 @@ export async function runNotionDatabaseSync(
     }
   }
 
-  const finalStatus: "ok" | "partial" =
-    commentsFailed > 0 ? "partial" : "ok";
+  const warnings: string[] = [];
+  if (commentsFailed > 0) {
+    warnings.push(`Fallaron comentarios en ${commentsFailed} page(s).`);
+  }
+  if (pushFailed > 0) {
+    warnings.push(
+      `${pushFailed} proyecto(s) con cambios locales no se pudieron escribir en Notion; ` +
+        "quedaron protegidos y se reintentan en el próximo sync.",
+    );
+  }
+  const finalStatus: "ok" | "partial" = warnings.length > 0 ? "partial" : "ok";
   await finalizeLog(
     finalStatus,
     upserted + commentsUpserted,
-    commentsFailed > 0
-      ? `Fallaron comentarios en ${commentsFailed} page(s).`
-      : undefined,
+    warnings.length > 0 ? warnings.join(" ") : undefined,
   );
 
   return {
@@ -339,6 +430,8 @@ export async function runNotionDatabaseSync(
     skippedNoTitle,
     commentsUpserted,
     commentsFailed,
+    pushRetried,
+    pushFailed,
   };
 }
 
@@ -367,6 +460,8 @@ export async function runAllEnabledNotionDatabases(
   const errors: Array<{ databaseId: string; error: string }> = [];
   let totalUpserted = 0;
   let totalCommentsUpserted = 0;
+  let totalPushRetried = 0;
+  let totalPushFailed = 0;
 
   for (const row of activeRows) {
     const sinceIso = opts.incremental
@@ -377,6 +472,8 @@ export async function runAllEnabledNotionDatabases(
     if (res.ok) {
       totalUpserted += res.upserted;
       totalCommentsUpserted += res.commentsUpserted;
+      totalPushRetried += res.pushRetried;
+      totalPushFailed += res.pushFailed;
     } else {
       errors.push({ databaseId: row.id, error: res.error });
     }
@@ -387,6 +484,8 @@ export async function runAllEnabledNotionDatabases(
     databasesRun: activeRows.length,
     totalUpserted,
     totalCommentsUpserted,
+    totalPushRetried,
+    totalPushFailed,
     errors,
   };
 }
@@ -420,19 +519,78 @@ export async function computeIncrementalAnchor(
 // Helpers
 // ═══════════════════════════════════════════════════════════════════════════
 
-function notionErrorMessage(e: unknown): string {
-  if (e instanceof NotionApiError) {
-    if (e.status === 401) {
-      return "Token inválido o revocado. Revisá que copiaste el 'Internal Integration Secret' correctamente.";
+/**
+ * Índice "nombre o email → kg_person_id" para resolver responsables en los
+ * tableros cuya columna NO es type='people' (multi_select con nombres, texto
+ * libre, fórmulas).
+ *
+ * Se alimenta de dos fuentes, en este orden de precedencia:
+ *   1) `notion_users` mapeados — el nombre/email del usuario de Notion.
+ *   2) `organization_people` — nombre completo y email de la persona KG.
+ *
+ * Las claves se normalizan (minúsculas, sin acentos) para que "Ana Gómez",
+ * "ANA GOMEZ" y "ana gómez" resuelvan igual. Un nombre ambiguo (dos personas
+ * con el mismo nombre normalizado) se descarta: preferimos dejar el proyecto
+ * sin dueño antes que asignárselo a la persona equivocada.
+ */
+async function buildAssigneeLabelIndex(
+  supabase: AnySupabase,
+  workspaceId: string,
+  organizationId: string,
+): Promise<(label: string) => string | null> {
+  const index = new Map<string, string | null>();
+
+  const add = (raw: string | null | undefined, personId: string | null) => {
+    if (!raw || !personId) return;
+    const key = normalizeLabelKey(raw);
+    if (key.length === 0) return;
+    if (index.has(key)) {
+      // Colisión con OTRA persona → ambiguo, lo anulamos.
+      if (index.get(key) !== personId) index.set(key, null);
+      return;
     }
-    if (e.status === 403) {
-      return "El token es válido pero no tiene permisos suficientes. Revisá las 'Capabilities' de la integration en Notion.";
-    }
-    if (e.status === 429) {
-      return "Notion está limitando las peticiones. Esperá unos segundos e intentá de nuevo.";
-    }
-    return `Notion respondió ${e.status}: ${e.message}`;
+    index.set(key, personId);
+  };
+
+  const [usersRes, peopleRes] = await Promise.all([
+    supabase
+      .from("notion_users")
+      .select("name, email, kg_person_id")
+      .eq("workspace_id", workspaceId)
+      .not("kg_person_id", "is", null),
+    supabase
+      .from("organization_people")
+      .select("id, full_name, email")
+      .eq("organization_id", organizationId),
+  ]);
+
+  for (const r of (usersRes.data ?? []) as Array<{
+    name: string | null;
+    email: string | null;
+    kg_person_id: string | null;
+  }>) {
+    add(r.name, r.kg_person_id);
+    add(r.email, r.kg_person_id);
   }
-  if (e instanceof Error) return e.message;
-  return "Error desconocido al hablar con Notion.";
+  for (const r of (peopleRes.data ?? []) as Array<{
+    id: string;
+    full_name: string | null;
+    email: string | null;
+  }>) {
+    add(r.full_name, r.id);
+    add(r.email, r.id);
+  }
+
+  return (label: string): string | null =>
+    index.get(normalizeLabelKey(label)) ?? null;
+}
+
+function normalizeLabelKey(raw: string): string {
+  return raw
+    .normalize("NFD")
+    // Strip combining diacritical marks (tildes, acentos): U+0300–U+036F.
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
 }

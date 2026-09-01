@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { NotionPage } from "./client";
-import { mapNotionPageToInternalProject, type MapContext } from "./map-page-to-project";
+import {
+  mapNotionPageToInternalProject,
+  resolveStatus,
+  type MapContext,
+} from "./map-page-to-project";
 import type { NotionPropertyMap } from "./property-map";
 
 const NOW = "2026-08-18T15:00:00.000Z";
@@ -11,12 +15,16 @@ const DB = "db-1";
 
 function makeCtx(
   assigneeMap: Record<string, string | null> = {},
+  labelMap?: Record<string, string | null>,
 ): MapContext {
   return {
     organizationId: ORG,
     workspaceId: WS,
     databaseId: DB,
     assigneeToKgPerson: (nu) => assigneeMap[nu] ?? null,
+    assigneeLabelToKgPerson: labelMap
+      ? (label) => labelMap[label.toLowerCase()] ?? null
+      : undefined,
     nowIso: NOW,
   };
 }
@@ -269,5 +277,185 @@ describe("mapNotionPageToInternalProject", () => {
     expect(res.result.payload.notion_database_id).toBe(DB);
     expect(res.result.payload.notion_workspace_id).toBe(WS);
     expect(res.result.payload.notion_synced_at).toBe(NOW);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Tableros con checkbox en vez de estado "Listo" (0176)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("resolveStatus — tableros con tilde de 'listo'", () => {
+  it("checkbox tildado → listo, aunque no haya columna de status", () => {
+    const map: NotionPropertyMap = { title_prop: "Name", done_prop: "Hecho" };
+    const page = makePage({
+      Name: { type: "title", title: [{ plain_text: "X" }] },
+      Hecho: { type: "checkbox", checkbox: true },
+    });
+    expect(resolveStatus(page, map)).toBe("listo");
+  });
+
+  it("checkbox destildado → sin_empezar por default", () => {
+    const map: NotionPropertyMap = { title_prop: "Name", done_prop: "Hecho" };
+    const page = makePage({
+      Name: { type: "title", title: [{ plain_text: "X" }] },
+      Hecho: { type: "checkbox", checkbox: false },
+    });
+    expect(resolveStatus(page, map)).toBe("sin_empezar");
+  });
+
+  it("checkbox destildado respeta el estado del select cuando no es 'listo'", () => {
+    const map: NotionPropertyMap = {
+      title_prop: "Name",
+      status_prop: "Estado",
+      status_map: { "En curso": "en_proceso" },
+      done_prop: "Hecho",
+    };
+    const page = makePage({
+      Name: { type: "title", title: [{ plain_text: "X" }] },
+      Estado: { type: "select", select: { name: "En curso" } },
+      Hecho: { type: "checkbox", checkbox: false },
+    });
+    expect(resolveStatus(page, map)).toBe("en_proceso");
+  });
+
+  it("checkbox destildado gana sobre un select que dice 'listo' (contradicción)", () => {
+    const map: NotionPropertyMap = {
+      title_prop: "Name",
+      status_prop: "Estado",
+      status_map: { Terminado: "listo" },
+      done_prop: "Hecho",
+      undone_status: "en_proceso",
+    };
+    const page = makePage({
+      Name: { type: "title", title: [{ plain_text: "X" }] },
+      Estado: { type: "select", select: { name: "Terminado" } },
+      Hecho: { type: "checkbox", checkbox: false },
+    });
+    expect(resolveStatus(page, map)).toBe("en_proceso");
+  });
+
+  it("done_prop configurado pero ausente en la page → cae al select, no inventa 'listo'", () => {
+    const map: NotionPropertyMap = {
+      title_prop: "Name",
+      status_prop: "Estado",
+      status_map: { Bloqueado: "bloqueado" },
+      done_prop: "Hecho",
+    };
+    const page = makePage({
+      Name: { type: "title", title: [{ plain_text: "X" }] },
+      Estado: { type: "select", select: { name: "Bloqueado" } },
+    });
+    expect(resolveStatus(page, map)).toBe("bloqueado");
+  });
+
+  it("formula de tipo checkbox también sirve como tilde", () => {
+    const map: NotionPropertyMap = { title_prop: "Name", done_prop: "Completa" };
+    const page = makePage({
+      Name: { type: "title", title: [{ plain_text: "X" }] },
+      Completa: { type: "formula", formula: { type: "boolean", boolean: true } },
+    });
+    expect(resolveStatus(page, map)).toBe("listo");
+  });
+
+  it("estado en multi_select se resuelve por auto-normalización", () => {
+    const map: NotionPropertyMap = { title_prop: "Name", status_prop: "Tags" };
+    const page = makePage({
+      Name: { type: "title", title: [{ plain_text: "X" }] },
+      Tags: { type: "multi_select", multi_select: [{ name: "En proceso" }] },
+    });
+    expect(resolveStatus(page, map)).toBe("en_proceso");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Responsables en columnas que no son type='people' (0176)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("mapNotionPageToInternalProject — responsables multi-tipo", () => {
+  it("multi_select con nombres resuelve vía el índice de etiquetas", () => {
+    const map: NotionPropertyMap = {
+      title_prop: "Name",
+      assignee_prop: "Equipo",
+    };
+    const page = makePage({
+      Name: { type: "title", title: [{ plain_text: "X" }] },
+      Equipo: {
+        type: "multi_select",
+        multi_select: [{ name: "Ana Gómez" }, { name: "Luis" }],
+      },
+    });
+    const res = mapNotionPageToInternalProject(
+      page,
+      map,
+      makeCtx({}, { "ana gómez": "kg-ana", luis: "kg-luis" }),
+    );
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.result.ownerIds).toEqual(["kg-ana", "kg-luis"]);
+  });
+
+  it("texto libre con separadores y @menciones", () => {
+    const map: NotionPropertyMap = {
+      title_prop: "Name",
+      assignee_prop: "Responsable",
+    };
+    const page = makePage({
+      Name: { type: "title", title: [{ plain_text: "X" }] },
+      Responsable: {
+        type: "rich_text",
+        rich_text: [
+          {
+            type: "mention",
+            plain_text: "@Ana",
+            mention: { type: "user", user: { id: "nu-ana" } },
+          },
+          { type: "text", plain_text: ", Luis / Pedro" },
+        ],
+      },
+    });
+    const res = mapNotionPageToInternalProject(
+      page,
+      map,
+      makeCtx({ "nu-ana": "kg-ana" }, { luis: "kg-luis", pedro: "kg-pedro" }),
+    );
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.result.ownerIds).toEqual(["kg-ana", "kg-luis", "kg-pedro"]);
+  });
+
+  it("junta varias columnas de responsables y dedupea", () => {
+    const map: NotionPropertyMap = {
+      title_prop: "Name",
+      assignee_prop: "Owner",
+      assignee_props: ["Apoyo"],
+    };
+    const page = makePage({
+      Name: { type: "title", title: [{ plain_text: "X" }] },
+      Owner: { type: "people", people: [{ id: "nu-ana" }] },
+      Apoyo: { type: "multi_select", multi_select: [{ name: "Ana" }, { name: "Luis" }] },
+    });
+    const res = mapNotionPageToInternalProject(
+      page,
+      map,
+      makeCtx({ "nu-ana": "kg-ana" }, { ana: "kg-ana", luis: "kg-luis" }),
+    );
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.result.ownerIds).toEqual(["kg-ana", "kg-luis"]);
+  });
+
+  it("sin resolver de etiquetas, una columna de texto no aporta dueños", () => {
+    const map: NotionPropertyMap = {
+      title_prop: "Name",
+      assignee_prop: "Responsable",
+    };
+    const page = makePage({
+      Name: { type: "title", title: [{ plain_text: "X" }] },
+      Responsable: { type: "select", select: { name: "Ana" } },
+    });
+    const res = mapNotionPageToInternalProject(page, map, makeCtx());
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.result.ownerIds).toEqual([]);
   });
 });

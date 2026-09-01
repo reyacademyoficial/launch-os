@@ -8,6 +8,7 @@ import {
   type MarketingPlatform,
   type UploadStatus,
 } from "@/lib/marketing/types";
+import { resolveCurrentPersonId } from "@/lib/ops/current-person";
 import { resolveCurrentOrganizationId } from "@/lib/organization/current";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
@@ -28,6 +29,16 @@ import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 // markUploaded es un helper de la UI para el flujo típico: setea status,
 // uploaded_at (opcional, trigger lo pobla si null) y opcional public_url en
 // un solo request.
+//
+// SPLIT LÍDER ⇄ CM (0175). El procedimiento tiene dos manos distintas:
+//   - El líder del equipo deja la subida seteada (asset + plataforma +
+//     fecha) → `planned_by_person_id` se completa en createUpload.
+//   - El community manager confirma que la subió → `uploaded_by_person_id`
+//     se completa al pasar a 'subida'.
+// No hay rol nuevo en la DB: cualquiera con acceso a Marketing puede hacer
+// las dos mitades, pero queda registrado quién hizo cada una. Si la persona
+// logueada no tiene fila en `organization_people`, el campo queda null y la
+// acción sigue adelante — no bloqueamos la operación por trazabilidad.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export type CreateUploadState =
@@ -106,6 +117,10 @@ export async function createUpload(
     return { error: "No pudimos resolver tu organización. Revisá tus permisos." };
   }
 
+  // Trazabilidad: quién dejó seteada la subida y, si ya nace 'subida',
+  // quién la confirmó. `null` si el usuario no está vinculado a una persona.
+  const personId = await resolveCurrentPersonId();
+
   const supabase = await createSupabaseClient();
   const payload = {
     organization_id: organizationId,
@@ -115,6 +130,8 @@ export async function createUpload(
     status: parsed.status,
     public_url: parsed.publicUrl,
     notes: parsed.notes,
+    planned_by_person_id: personId,
+    uploaded_by_person_id: parsed.status === "subida" ? personId : null,
     // uploaded_at lo pobla el trigger si status='subida'.
   } as never;
 
@@ -143,6 +160,8 @@ export async function createUpload(
   revalidatePath("/marketing/subidas");
   revalidatePath("/marketing/planificacion");
   revalidatePath("/marketing/edicion");
+  // Planificar una subida reserva el asset y baja el stock (0175).
+  revalidatePath("/marketing/stock");
   return { ok: true, uploadId: created.id };
 }
 
@@ -161,6 +180,19 @@ export async function updateUpload(
   if (typeof parsed === "string") return { error: parsed };
 
   const supabase = await createSupabaseClient();
+
+  // Sólo registramos al CM cuando ESTE update es el que confirma la subida.
+  // Sin el chequeo previo, cualquier edición posterior (corregir una nota,
+  // pegar el permalink) le robaría la autoría a quien realmente subió.
+  const { data: currentRaw } = await supabase
+    .from("content_uploads")
+    .select("status")
+    .eq("id", uploadId)
+    .maybeSingle();
+  const wasUploaded =
+    (currentRaw as { status: string } | null)?.status === "subida";
+  const confirmsUpload = parsed.status === "subida" && !wasUploaded;
+
   const payload = {
     content_asset_id: parsed.contentAssetId,
     platform: parsed.platform,
@@ -168,6 +200,10 @@ export async function updateUpload(
     status: parsed.status,
     public_url: parsed.publicUrl,
     notes: parsed.notes,
+    // Al salir de 'subida' lo limpia el trigger `content_uploads_clear_uploader`.
+    ...(confirmsUpload
+      ? { uploaded_by_person_id: await resolveCurrentPersonId() }
+      : {}),
   } as never;
 
   const { error } = await supabase
@@ -188,6 +224,8 @@ export async function updateUpload(
   revalidatePath("/marketing/subidas");
   revalidatePath("/marketing/planificacion");
   revalidatePath("/marketing/edicion");
+  // Planificar una subida reserva el asset y baja el stock (0175).
+  revalidatePath("/marketing/stock");
   return { ok: true };
 }
 
@@ -206,16 +244,26 @@ export async function setUploadStatus(
   if (!isUploadStatus(nextStatus)) return { error: "Estado inválido." };
 
   const supabase = await createSupabaseClient();
-  const payload = { status: nextStatus } as never;
+  // Al confirmar la subida registramos al CM. Al revertirla, el trigger
+  // `content_uploads_clear_uploader` (0175) limpia el campo solo.
+  const payload =
+    nextStatus === "subida"
+      ? {
+          status: nextStatus,
+          uploaded_by_person_id: await resolveCurrentPersonId(),
+        }
+      : { status: nextStatus };
   const { error } = await supabase
     .from("content_uploads")
-    .update(payload)
+    .update(payload as never)
     .eq("id", uploadId);
   if (error) return { error: error.message };
 
   revalidatePath("/marketing/subidas");
   revalidatePath("/marketing/planificacion");
   revalidatePath("/marketing/edicion");
+  // Planificar una subida reserva el asset y baja el stock (0175).
+  revalidatePath("/marketing/stock");
   return { ok: true };
 }
 
@@ -237,6 +285,8 @@ export async function markUploaded(
   const payload = {
     status: "subida" as const,
     public_url: trimmed && trimmed.length > 0 ? trimmed : null,
+    // Quien aprieta este botón es el CM confirmando la publicación.
+    uploaded_by_person_id: await resolveCurrentPersonId(),
   } as never;
 
   const { error } = await supabase
@@ -248,6 +298,8 @@ export async function markUploaded(
   revalidatePath("/marketing/subidas");
   revalidatePath("/marketing/planificacion");
   revalidatePath("/marketing/edicion");
+  // Planificar una subida reserva el asset y baja el stock (0175).
+  revalidatePath("/marketing/stock");
   return { ok: true };
 }
 
@@ -273,5 +325,6 @@ export async function deleteUpload(
   if (error) return { error: error.message };
 
   revalidatePath("/marketing/subidas");
+  revalidatePath("/marketing/stock");
   return { ok: true };
 }

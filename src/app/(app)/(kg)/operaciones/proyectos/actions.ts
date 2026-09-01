@@ -2,8 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 
+import {
+  markPushPending,
+  pushProjectToNotion,
+} from "@/lib/notion/push-project";
 import { resolveCurrentOrganizationId } from "@/lib/organization/current";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CRUD de internal_projects (bloque 5 · 0090 + 0137 status alineado a Notion).
@@ -41,7 +46,15 @@ export type CreateProjectState =
   | { error: string }
   | null;
 
-export type UpdateProjectState = { ok: true } | { error: string } | null;
+export type UpdateProjectState =
+  /**
+   * `warning` aparece cuando el proyecto viene de Notion y el write-back
+   * falló: el guardado local SÍ se hizo, y el cambio queda marcado como
+   * pendiente para que el sync lo reintente sin pisarlo. Ver 0176.
+   */
+  | { ok: true; warning?: string }
+  | { error: string }
+  | null;
 
 export type DeleteProjectResult = { ok: true } | { error: string };
 
@@ -212,15 +225,20 @@ export async function updateProject(
 
   const { data: existing } = await supabase
     .from("internal_projects")
-    .select("closed_at, organization_id")
+    .select("closed_at, organization_id, notion_page_id")
     .eq("id", projectId)
     .maybeSingle();
   const existingRow = existing as
-    | { closed_at: string | null; organization_id: string }
+    | {
+        closed_at: string | null;
+        organization_id: string;
+        notion_page_id: string | null;
+      }
     | null;
   if (!existingRow) return { error: "Proyecto no encontrado." };
   const prevClosedAt = existingRow.closed_at;
   const organizationId = existingRow.organization_id;
+  const isNotionSourced = !!existingRow.notion_page_id;
 
   const nextIsClosed = CLOSED_STATUSES.has(parsed.status);
   const closedAt = nextIsClosed
@@ -267,10 +285,33 @@ export async function updateProject(
     if (insErr) return { error: `Owners nuevos fallaron: ${insErr.message}` };
   }
 
+  // ─── Write-back a Notion (0176) ──────────────────────────────────────
+  //
+  // Sin esto el guardado dura hasta el próximo sync: Notion sigue con el
+  // valor viejo y lo vuelve a imponer. Marcamos el cambio como pendiente
+  // ANTES de intentar el push, así una caída entre medio deja el proyecto
+  // protegido (el sync no lo pisa y reintenta) en vez de perder el cambio.
+  //
+  // Service client: el RLS de `notion_workspaces` (0132) restringe el token
+  // a superadmin, y cualquier operador con permiso de editar proyectos tiene
+  // que poder marcar "listo". El push no expone nada del workspace al
+  // browser — solo devuelve ok/error.
+  let warning: string | undefined;
+  if (isNotionSourced) {
+    const service = createServiceClient();
+    await markPushPending(service, projectId);
+    const pushed = await pushProjectToNotion(projectId, service);
+    if (!pushed.ok) {
+      warning =
+        `Se guardó en KG, pero no pudimos escribir el cambio en Notion: ${pushed.error} ` +
+        "El proyecto queda protegido (el sync no lo va a revertir) y se reintenta solo.";
+    }
+  }
+
   revalidatePath("/operaciones/proyectos");
   revalidatePath(`/operaciones/proyectos/${projectId}`);
   revalidatePath("/operaciones");
-  return { ok: true };
+  return warning ? { ok: true, warning } : { ok: true };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

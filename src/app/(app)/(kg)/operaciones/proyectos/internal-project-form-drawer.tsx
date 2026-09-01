@@ -126,8 +126,17 @@ function ProjectFormBody({
   const formAction = isEdit ? updateFormAction : createFormAction;
   const pending = isEdit ? updatePending : createPending;
 
+  // Un `warning` significa "se guardó en KG pero Notion rebotó": dejamos el
+  // drawer abierto para que el operador lo lea en vez de cerrarlo en su cara.
+  const saveWarning =
+    state && "ok" in state && state.ok && "warning" in state
+      ? state.warning
+      : undefined;
+
   useEffect(() => {
-    if (state && "ok" in state && state.ok) onClose();
+    if (state && "ok" in state && state.ok && !("warning" in state && state.warning)) {
+      onClose();
+    }
   }, [state, onClose]);
 
   const [deletePending, startDeleteTransition] = useTransition();
@@ -163,6 +172,25 @@ function ProjectFormBody({
           style={{
             padding: "10px 14px",
             borderRadius: "var(--kg-r-8)",
+            background: "rgba(0,208,132,0.10)",
+            border: "1px solid #00D084",
+            color: "#00D084",
+            fontSize: 12,
+            lineHeight: 1.5,
+          }}
+        >
+          <strong>Este proyecto está sincronizado con Notion.</strong> Lo que
+          guardes acá se escribe también en la page de Notion (estado, tilde de
+          &quot;listo&quot;, prioridad, fechas y responsables mapeados), así que
+          no se revierte en el próximo sync.
+        </div>
+      )}
+
+      {saveWarning && (
+        <div
+          style={{
+            padding: "10px 14px",
+            borderRadius: "var(--kg-r-8)",
             background: "rgba(255,184,0,0.10)",
             border: "1px solid #FFB800",
             color: "#FFB800",
@@ -170,9 +198,7 @@ function ProjectFormBody({
             lineHeight: 1.5,
           }}
         >
-          <strong>Este proyecto se sincroniza desde Notion.</strong> Los
-          cambios que hagas acá van a ser sobreescritos en el próximo sync.
-          Editá el page en Notion para que persistan.
+          {saveWarning}
         </div>
       )}
 

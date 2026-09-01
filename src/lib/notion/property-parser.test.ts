@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   applyValueMap,
   normalizeEnumLabel,
+  parseAssignees,
+  parseCheckbox,
   parseDateStart,
   parsePeople,
   parseRichText,
@@ -289,5 +291,143 @@ describe("normalizeEnumLabel", () => {
 
   it("colapsa múltiples espacios y trimea bordes", () => {
     expect(normalizeEnumLabel("   sin  empezar  ")).toBe("sin_empezar");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// parseCheckbox / parseAssignees / parseSelect ampliado (0176)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("parseCheckbox", () => {
+  const props = {
+    Hecho: { type: "checkbox", checkbox: true },
+    Pendiente: { type: "checkbox", checkbox: false },
+    Calculada: { type: "formula", formula: { type: "boolean", boolean: true } },
+    Rollup: {
+      type: "rollup",
+      rollup: { type: "array", array: [{ type: "checkbox", checkbox: false }] },
+    },
+    NoBool: { type: "select", select: { name: "X" } },
+  };
+
+  it("lee un checkbox tildado y uno destildado", () => {
+    expect(parseCheckbox(props, "Hecho")).toBe(true);
+    expect(parseCheckbox(props, "Pendiente")).toBe(false);
+  });
+
+  it("lee formulas booleanas y rollups de checkbox", () => {
+    expect(parseCheckbox(props, "Calculada")).toBe(true);
+    expect(parseCheckbox(props, "Rollup")).toBe(false);
+  });
+
+  it("distingue 'no existe' (null) de 'destildado' (false)", () => {
+    expect(parseCheckbox(props, "NoExiste")).toBeNull();
+    expect(parseCheckbox(props, "NoBool")).toBeNull();
+  });
+});
+
+describe("parseSelect — tipos adicionales", () => {
+  const props = {
+    Tags: { type: "multi_select", multi_select: [{ name: "En proceso" }, { name: "Otro" }] },
+    Calculado: { type: "formula", formula: { type: "string", string: "Listo" } },
+    Heredado: {
+      type: "rollup",
+      rollup: { type: "array", array: [{ type: "select", select: { name: "Bloqueado" } }] },
+    },
+    Vacio: { type: "multi_select", multi_select: [] },
+  };
+
+  it("multi_select usa la primera opción", () => {
+    expect(parseSelect(props, "Tags")).toBe("En proceso");
+  });
+
+  it("formula string y rollup array resuelven a la etiqueta", () => {
+    expect(parseSelect(props, "Calculado")).toBe("Listo");
+    expect(parseSelect(props, "Heredado")).toBe("Bloqueado");
+  });
+
+  it("multi_select vacío → null", () => {
+    expect(parseSelect(props, "Vacio")).toBeNull();
+  });
+});
+
+describe("parseAssignees", () => {
+  it("people devuelve ids y también los nombres como fallback", () => {
+    const props = {
+      Owner: {
+        type: "people",
+        people: [
+          { id: "nu-1", name: "Ana Gómez" },
+          { id: "nu-2" },
+        ],
+      },
+    };
+    expect(parseAssignees(props, "Owner")).toEqual({
+      userIds: ["nu-1", "nu-2"],
+      labels: ["Ana Gómez"],
+    });
+  });
+
+  it("multi_select devuelve las opciones como etiquetas", () => {
+    const props = {
+      Equipo: {
+        type: "multi_select",
+        multi_select: [{ name: "Ana" }, { name: "Luis" }],
+      },
+    };
+    expect(parseAssignees(props, "Equipo").labels).toEqual(["Ana", "Luis"]);
+  });
+
+  it("texto libre: separa por coma, barra y ampersand, y limpia el arroba", () => {
+    const props = {
+      Resp: {
+        type: "rich_text",
+        rich_text: [{ type: "text", plain_text: "Ana, Luis / Pedro & @Marta" }],
+      },
+    };
+    expect(parseAssignees(props, "Resp").labels).toEqual([
+      "Ana",
+      "Luis",
+      "Pedro",
+      "Marta",
+    ]);
+  });
+
+  it("menciones de usuario dentro de rich_text salen como ids", () => {
+    const props = {
+      Resp: {
+        type: "rich_text",
+        rich_text: [
+          {
+            type: "mention",
+            plain_text: "@Ana",
+            mention: { type: "user", user: { id: "nu-ana" } },
+          },
+        ],
+      },
+    };
+    expect(parseAssignees(props, "Resp")).toEqual({
+      userIds: ["nu-ana"],
+      labels: [],
+    });
+  });
+
+  it("created_by sirve de proxy del responsable", () => {
+    const props = {
+      Creador: { type: "created_by", created_by: { id: "nu-x", name: "Ana" } },
+    };
+    expect(parseAssignees(props, "Creador")).toEqual({
+      userIds: ["nu-x"],
+      labels: ["Ana"],
+    });
+  });
+
+  it("relation no es resoluble → listas vacías, sin throw", () => {
+    const props = { Rel: { type: "relation", relation: [{ id: "page-x" }] } };
+    expect(parseAssignees(props, "Rel")).toEqual({ userIds: [], labels: [] });
+  });
+
+  it("propiedad inexistente → listas vacías", () => {
+    expect(parseAssignees({}, "Nada")).toEqual({ userIds: [], labels: [] });
   });
 });

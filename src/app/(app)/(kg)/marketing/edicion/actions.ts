@@ -10,19 +10,23 @@ import {
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CRUD de content_assets (0162).
+// CRUD de content_assets (0162 + edit_due_date en 0175).
 //
-// Un asset representa una pieza EDITADA. Setear `edited_at` dispara el
-// trigger `content_piece_stage_from_asset` (0162) que avanza el piece
-// origen a `listo_para_subir` — no hay que empujarlo desde el server.
+// Un asset es un corte que salió de una grabación. Nace EN COLA
+// (`edited_at = null`) con un editor asignado y una fecha objetivo
+// (`edit_due_date`); cuando el editor lo termina, `markAssetEdited` setea
+// `edited_at` y recién ahí el asset entra al stock disponible para subir.
+//
+// Setear `edited_at` dispara el trigger `content_piece_stage_from_asset`
+// (0162) que avanza el piece origen a `listo_para_subir` — no hay que
+// empujarlo desde el server.
 //
 // El drawer soporta "marcar como editado ahora" desde el checkbox. Si el
 // asset se creó sin `edited_at` y después se marca, el UPDATE también
 // dispara el trigger.
 //
-// Delete es hard delete (aún no existen uploads que dependan). Cuando entre
-// 0163, el ON DELETE RESTRICT sobre content_asset_id va a bloquear borrar
-// un asset con uploads.
+// Delete es hard delete, bloqueado por el ON DELETE RESTRICT de 0163 sobre
+// content_asset_id: un asset con uploads no se puede borrar.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export type CreateAssetState =
@@ -49,6 +53,7 @@ interface AssetPayload {
   readonly driveAssetUrl: string | null;
   readonly durationSeconds: number | null;
   readonly editorPersonId: string | null;
+  readonly editDueDate: string | null;
   readonly editedAt: string | null;
   readonly notes: string | null;
 }
@@ -86,6 +91,13 @@ function parseAssetFormData(formData: FormData): AssetPayload | string {
 
   const editorPersonId = nullIfEmpty(formData.get("editor_person_id"));
 
+  // Fecha objetivo de edición (input type="date" → yyyy-mm-dd). Es el bucket
+  // del planning semanal; sin ella el asset queda en la columna "Sin fecha".
+  const editDueDate = nullIfEmpty(formData.get("edit_due_date"));
+  if (editDueDate != null && !/^\d{4}-\d{2}-\d{2}$/.test(editDueDate)) {
+    return "La fecha objetivo de edición es inválida.";
+  }
+
   // Checkbox "mark_edited" (marca `edited_at = now()`). Si se desmarca,
   // limpiamos el valor — así se puede "desmarcar por error" en modo edit.
   const markEdited = String(formData.get("mark_edited") ?? "") === "on";
@@ -111,6 +123,7 @@ function parseAssetFormData(formData: FormData): AssetPayload | string {
     driveAssetUrl,
     durationSeconds,
     editorPersonId,
+    editDueDate,
     editedAt,
     notes,
   };
@@ -151,6 +164,7 @@ export async function createAsset(
     drive_asset_url: parsed.driveAssetUrl,
     duration_seconds: parsed.durationSeconds,
     editor_person_id: parsed.editorPersonId,
+    edit_due_date: parsed.editDueDate,
     edited_at: parsed.editedAt,
     notes: parsed.notes,
   } as never;
@@ -179,6 +193,8 @@ export async function createAsset(
 
   revalidatePath("/marketing/edicion");
   revalidatePath("/marketing/planificacion");
+  revalidatePath("/marketing/stock");
+  revalidatePath("/marketing/subidas");
   return { ok: true, assetId: created.id };
 }
 
@@ -197,6 +213,28 @@ export async function updateAsset(
   if (typeof parsed === "string") return { error: parsed };
 
   const supabase = await createSupabaseClient();
+
+  // Destildar "Asset editado" lo devuelve a la cola y lo saca del stock. No
+  // se puede hacer si ya hay subidas comprometidas: dejaría una subida
+  // apuntando a un corte que oficialmente no existe todavía. Mismo guard
+  // que `unmarkAssetEdited`, acá porque el drawer es otra puerta al mismo
+  // cambio.
+  if (parsed.editedAt == null) {
+    const { data: committed, error: committedErr } = await supabase
+      .from("content_uploads")
+      .select("id")
+      .eq("content_asset_id", assetId)
+      .in("status", ["planificada", "subida"])
+      .limit(1);
+    if (committedErr) return { error: committedErr.message };
+    if ((committed ?? []).length > 0) {
+      return {
+        error:
+          "Este asset ya tiene subidas planificadas o publicadas: no se puede desmarcar como editado. Cancelá esas subidas primero.",
+      };
+    }
+  }
+
   const payload = {
     content_owner_id: parsed.contentOwnerId,
     source_recording_session_id: parsed.sourceRecordingSessionId,
@@ -207,6 +245,7 @@ export async function updateAsset(
     drive_asset_url: parsed.driveAssetUrl,
     duration_seconds: parsed.durationSeconds,
     editor_person_id: parsed.editorPersonId,
+    edit_due_date: parsed.editDueDate,
     edited_at: parsed.editedAt,
     notes: parsed.notes,
   } as never;
@@ -228,26 +267,33 @@ export async function updateAsset(
 
   revalidatePath("/marketing/edicion");
   revalidatePath("/marketing/planificacion");
+  revalidatePath("/marketing/stock");
+  revalidatePath("/marketing/subidas");
   return { ok: true };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // createProductionBatch — bulk insert de N assets desde una misma sesión.
 //
-// Uso típico: el editor termina el corte de una grabación y registra en un
-// solo submit los "3 reels + 2 nuggets + 1 short" que salieron. Todos
-// comparten owner + session + drive_folder_url, y por default se marcan como
-// editados (edited_at = ahora). Cada fila lleva su nombre exacto (el del
-// archivo en Drive), formato, editor opcional, duración opcional y
-// drive_asset_url opcional (link al archivo puntual).
+// Uso típico: terminada la grabación, se registran en un solo submit los
+// "3 reels + 2 nuggets + 1 short" que salieron en crudo. Todos comparten
+// owner + session + drive_folder_url + fecha objetivo de edición. Cada fila
+// lleva su nombre exacto (el del archivo en Drive), formato, editor
+// opcional, duración opcional y drive_asset_url opcional.
+//
+// Los assets entran EN COLA: `edited_at = null`. No son stock todavía —
+// alguien los tiene que editar y marcar terminados desde /marketing/edicion.
+// Ésa es la diferencia con el comportamiento previo, que los daba por
+// editados en el mismo acto de registrarlos y hacía que la etapa Edición
+// no existiera de hecho.
 //
 // La sesión de origen (`source_recording_session_id`) es obligatoria — este
 // action es específico del flujo post-grabación. Para importar assets
 // huérfanos (video de stock, etc.) usar `createAsset` singular.
 //
-// Trigger 0165: al insert con edited_at seteado, cada asset dispara la
-// transición de su piece origen (si tiene) a `listo_para_subir`. Los assets
-// que no tienen piece (Opción 3A confirmada) simplemente entran al stock.
+// Trigger 0162: la transición del piece origen a `listo_para_subir` la
+// dispara `edited_at`, así que con el batch en cola no se dispara acá —
+// ocurre después, cuando el editor llama a `markAssetEdited`.
 //
 // Se hace un solo INSERT con array de payloads para minimizar RTT. Si un row
 // rebota (guard org, formato inválido), postgrest devuelve error y NINGÚN row
@@ -266,8 +312,12 @@ export interface ProductionBatchInput {
   readonly sourceRecordingSessionId: string;
   readonly contentOwnerId: string;
   readonly driveFolderUrl: string | null;
-  /** Si se omite, cada asset queda con edited_at = ahora. */
-  readonly editedAt: string | null;
+  /**
+   * Fecha objetivo de edición (yyyy-mm-dd) compartida por todo el batch —
+   * "esto tiene que estar editado para el viernes". Nullable: los assets sin
+   * fecha caen en la columna "Sin fecha" del planning semanal.
+   */
+  readonly editDueDate: string | null;
   readonly rows: readonly ProductionBatchRow[];
 }
 
@@ -321,8 +371,14 @@ export async function createProductionBatch(
     return { error: "No pudimos resolver tu organización. Revisá tus permisos." };
   }
 
+  if (
+    input.editDueDate != null &&
+    !/^\d{4}-\d{2}-\d{2}$/.test(input.editDueDate)
+  ) {
+    return { error: "La fecha objetivo de edición es inválida." };
+  }
+
   const supabase = await createSupabaseClient();
-  const editedAt = input.editedAt ?? new Date().toISOString();
 
   const payload = input.rows.map((r) => ({
     organization_id: organizationId,
@@ -336,7 +392,9 @@ export async function createProductionBatch(
     drive_asset_url: r.driveAssetUrl,
     duration_seconds: r.durationSeconds,
     editor_person_id: r.editorPersonId,
-    edited_at: editedAt,
+    edit_due_date: input.editDueDate,
+    // En cola: el corte existe pero todavía no está editado.
+    edited_at: null,
     notes: null,
   })) as never;
 
@@ -364,6 +422,75 @@ export async function createProductionBatch(
   revalidatePath("/marketing/grabacion");
   revalidatePath("/marketing/planificacion");
   return { ok: true, assetIds: rows.map((r) => r.id) };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// markAssetEdited / unmarkAssetEdited — cierre (y reapertura) de la etapa
+// de edición desde la fila de la tabla, sin abrir el drawer completo.
+//
+// Marcar dispara el trigger 0162 `content_piece_stage_from_asset`: si el
+// asset tiene piece origen en `en_edicion`, pasa a `listo_para_subir`. Y a
+// partir de acá el asset cuenta como stock disponible en /marketing/stock y
+// aparece en el picker de /marketing/subidas.
+//
+// Desmarcar existe para el error de dedo. Postgres no revierte el stage del
+// piece (el trigger sólo avanza), así que es una salida de emergencia, no
+// parte del flujo normal — por eso no la ofrecemos sobre assets que ya
+// tienen subidas planificadas o hechas.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type MarkAssetEditedResult = { ok: true } | { error: string };
+
+async function setAssetEditedAt(
+  assetId: string,
+  editedAt: string | null,
+): Promise<MarkAssetEditedResult> {
+  if (!assetId) return { error: "Falta el id del asset." };
+
+  const supabase = await createSupabaseClient();
+  const payload = { edited_at: editedAt } as never;
+  const { error } = await supabase
+    .from("content_assets")
+    .update(payload)
+    .eq("id", assetId);
+  if (error) return { error: error.message };
+
+  revalidatePath("/marketing/edicion");
+  revalidatePath("/marketing/stock");
+  revalidatePath("/marketing/subidas");
+  revalidatePath("/marketing/planificacion");
+  return { ok: true };
+}
+
+export async function markAssetEdited(
+  assetId: string,
+): Promise<MarkAssetEditedResult> {
+  return setAssetEditedAt(assetId, new Date().toISOString());
+}
+
+export async function unmarkAssetEdited(
+  assetId: string,
+): Promise<MarkAssetEditedResult> {
+  if (!assetId) return { error: "Falta el id del asset." };
+
+  // Guard: un asset con subidas ya comprometidas no vuelve a la cola —
+  // sería mentir sobre algo que el CM quizás ya publicó.
+  const supabase = await createSupabaseClient();
+  const { data, error } = await supabase
+    .from("content_uploads")
+    .select("id")
+    .eq("content_asset_id", assetId)
+    .in("status", ["planificada", "subida"])
+    .limit(1);
+  if (error) return { error: error.message };
+  if ((data ?? []).length > 0) {
+    return {
+      error:
+        "Este asset ya tiene subidas planificadas o publicadas. Cancelá esas subidas antes de devolverlo a la cola de edición.",
+    };
+  }
+
+  return setAssetEditedAt(assetId, null);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -395,5 +522,7 @@ export async function deleteAsset(
 
   revalidatePath("/marketing/edicion");
   revalidatePath("/marketing/planificacion");
+  revalidatePath("/marketing/stock");
+  revalidatePath("/marketing/subidas");
   return { ok: true };
 }

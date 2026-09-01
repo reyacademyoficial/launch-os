@@ -210,7 +210,9 @@ export interface ContentPieceRow {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Content assets (0162) — piezas editadas listas para subir.
+// Content assets (0162 + edit_due_date en 0175) — cortes que salen de una
+// grabación. Nacen EN COLA (`editedAt = null`) y entran al stock cuando el
+// editor los marca editados.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export interface ContentAssetRow {
@@ -224,9 +226,31 @@ export interface ContentAssetRow {
   readonly driveAssetUrl: string | null;
   readonly durationSeconds: number | null;
   readonly editorPersonId: string | null;
+  /** Fecha objetivo de edición (futuro) — bucket del planning semanal. */
+  readonly editDueDate: string | null; // yyyy-mm-dd
+  /** Cuándo se terminó de editar (pasado). Setearlo lo manda al stock. */
   readonly editedAt: string | null;
   readonly notes: string | null;
 }
+
+/**
+ * Estado de un asset frente al stock. El cálculo vive en
+ * `@/lib/marketing/stock` (`computeAssetStockStates`) — acá sólo la
+ * presentación, para que Stock, Edición y Subidas pinten lo mismo.
+ */
+export const ASSET_STOCK_STATE_LABEL = {
+  en_cola: "En cola",
+  disponible: "Disponible",
+  reservado: "Reservado",
+  utilizado: "Utilizado",
+} as const;
+
+export const ASSET_STOCK_STATE_TONE = {
+  en_cola: "var(--kg-neutral-500)",
+  disponible: "var(--kg-positive-500)",
+  reservado: "var(--kg-warning-500)",
+  utilizado: "var(--kg-neutral-500)",
+} as const;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Editor availability (0164) — bloques de disponibilidad por persona.
@@ -281,4 +305,8 @@ export interface ContentUploadRow {
   readonly status: UploadStatus;
   readonly publicUrl: string | null;
   readonly notes: string | null;
+  /** Quién dejó la subida seteada (líder del equipo). 0175. */
+  readonly plannedByPersonId: string | null;
+  /** Quién confirmó que la subió (community manager). 0175. */
+  readonly uploadedByPersonId: string | null;
 }

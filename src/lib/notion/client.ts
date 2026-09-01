@@ -483,13 +483,39 @@ export async function postPageComment(
   };
 }
 
+/**
+ * PATCH /v1/pages/:id — escribe propiedades de vuelta en Notion (write-back).
+ *
+ * `properties` va tal cual al body: es el shape nativo de Notion, con la
+ * misma forma que devuelve el GET pero solo con las props a modificar. Ej:
+ *
+ *   { "Estado": { "status":   { "name": "Listo" } },
+ *     "Hecho":  { "checkbox": true } }
+ *
+ * Notion ignora las props que no se mandan — es un patch parcial real, no un
+ * replace. Si una prop no existe en la database, responde 400 con
+ * `validation_error`; el caller lo captura y lo guarda en
+ * `internal_projects.notion_push_error`.
+ *
+ * REQUISITO DE PERMISOS
+ *   El internal integration necesita la capability "Update content" sobre la
+ *   page. Sin eso Notion responde 403 aunque el token sirva para leer.
+ */
+export async function updatePageProperties(
+  token: string,
+  pageId: string,
+  properties: Record<string, unknown>,
+): Promise<void> {
+  await notionFetch(token, "PATCH", `/pages/${pageId}`, { properties });
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Interno — fetch con cabeceras + parsing de errores
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function notionFetch(
   token: string,
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PATCH",
   path: string,
   body?: unknown,
 ): Promise<unknown> {

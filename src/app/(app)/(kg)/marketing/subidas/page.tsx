@@ -8,6 +8,8 @@ import { Panel } from "@/components/kg/panel";
 import { KgViewToggle } from "@/components/kg/view-toggle";
 import { fCount } from "@/lib/finance/format";
 import { resolvePeriod, type Period } from "@/lib/finance/period";
+import { getOrgPeople } from "@/lib/finance/reference";
+import { committedPlatformsByAsset } from "@/lib/marketing/stock";
 import {
   isMarketingFormat,
   isMarketingPlatform,
@@ -82,6 +84,8 @@ interface UploadDbRow {
   readonly status: string;
   readonly public_url: string | null;
   readonly notes: string | null;
+  readonly planned_by_person_id: string | null;
+  readonly uploaded_by_person_id: string | null;
 }
 
 interface CadenceDbRow {
@@ -121,7 +125,7 @@ export default async function SubidasPage({
   let uploadsQuery = supabase
     .from("content_uploads")
     .select(
-      "id, content_asset_id, platform, scheduled_for, uploaded_at, status, public_url, notes",
+      "id, content_asset_id, platform, scheduled_for, uploaded_at, status, public_url, notes, planned_by_person_id, uploaded_by_person_id",
     )
     .order("scheduled_for", { ascending: false });
   if (period) {
@@ -131,48 +135,74 @@ export default async function SubidasPage({
       .lte("scheduled_for", period.toYmd);
   }
 
-  const [ownersRes, assetsRes, uploadsRes, cadencesRes] = await Promise.all([
-    supabase
-      .from("content_owners")
-      .select("id, name, active")
-      .order("name", { ascending: true }),
-    supabase
-      .from("content_assets")
-      .select("id, content_owner_id, name, format, edited_at")
-      .order("created_at", { ascending: false }),
-    uploadsQuery,
-    supabase
-      .from("publishing_cadences")
-      .select("content_owner_id, platform, format, allow_repeat_asset"),
-  ]);
+  // Los uploads que alimentan el picker NO pueden venir filtrados por rango:
+  // el asset se reserva por cualquier subida abierta, esté o no en el rango
+  // que el usuario está mirando. Por eso el segundo fetch sin filtro.
+  const [ownersRes, personsRef, assetsRes, uploadsRes, allUploadsRes, cadencesRes] =
+    await Promise.all([
+      supabase
+        .from("content_owners")
+        .select("id, name, active")
+        .order("name", { ascending: true }),
+      getOrgPeople(),
+      supabase
+        .from("content_assets")
+        .select("id, content_owner_id, name, format, edited_at")
+        .order("created_at", { ascending: false }),
+      uploadsQuery,
+      supabase
+        .from("content_uploads")
+        .select("content_asset_id, platform, status"),
+      supabase
+        .from("publishing_cadences")
+        .select("content_owner_id, platform, format, allow_repeat_asset"),
+    ]);
 
   const owners = (ownersRes.data ?? []) as unknown as OwnerLite[];
+  const persons = personsRef as unknown as ReadonlyArray<{
+    readonly id: string;
+    readonly full_name: string;
+  }>;
   const assets = (assetsRes.data ?? []) as unknown as AssetLite[];
   const uploads = (uploadsRes.data ?? []) as unknown as UploadDbRow[];
+  const allUploads = (allUploadsRes.data ?? []) as unknown as ReadonlyArray<{
+    readonly content_asset_id: string;
+    readonly platform: string;
+    readonly status: string;
+  }>;
   const cadencesRaw = (cadencesRes.data ?? []) as unknown as CadenceDbRow[];
+
+  const personNameById = new Map<string, string>();
+  for (const p of persons) personNameById.set(p.id, p.full_name);
 
   const ownersById = new Map<string, OwnerLite>();
   for (const o of owners) ownersById.set(o.id, o);
   const assetsById = new Map<string, AssetLite>();
   for (const a of assets) assetsById.set(a.id, a);
 
-  // usedPlatforms por asset: platforms donde YA hay un upload en 'subida'.
-  const usedByAsset = new Map<string, Set<MarketingPlatform>>();
-  for (const u of uploads) {
-    if (u.status !== "subida") continue;
-    if (!isMarketingPlatform(u.platform)) continue;
-    const set = usedByAsset.get(u.content_asset_id) ?? new Set<MarketingPlatform>();
-    set.add(u.platform);
-    usedByAsset.set(u.content_asset_id, set);
-  }
+  // Plataformas donde cada asset ya está comprometido: reservado
+  // ('planificada') o consumido ('subida'). Mismo criterio que usa el stock,
+  // así el picker no ofrece un corte que ya está agendado en otro lado.
+  const usedByAsset = committedPlatformsByAsset(
+    allUploads
+      .filter((u) => isMarketingPlatform(u.platform))
+      .map((u) => ({
+        contentAssetId: u.content_asset_id,
+        platform: u.platform as MarketingPlatform,
+        status: u.status,
+      })),
+  );
 
   const ownerOptions = owners
     .filter((o) => o.active)
     .map((o) => ({ id: o.id, name: o.name }));
 
+  // Sólo entran al picker los cortes YA EDITADOS: son los únicos que están
+  // efectivamente disponibles para subir. Los que siguen en la cola de
+  // edición viven en /marketing/edicion hasta que alguien los termine.
   const assetOptions = assets
     .filter((a): a is AssetLite & { readonly format: MarketingFormat } =>
-      isMarketingFormat(a.format),
+      isMarketingFormat(a.format) && a.edited_at != null,
     )
     .map((a) => ({
       id: a.id,
@@ -221,6 +251,12 @@ export default async function SubidasPage({
         status: u.status,
         publicUrl: u.public_url,
         notes: u.notes,
+        plannedByName: u.planned_by_person_id
+          ? personNameById.get(u.planned_by_person_id) ?? "(persona dada de baja)"
+          : null,
+        uploadedByName: u.uploaded_by_person_id
+          ? personNameById.get(u.uploaded_by_person_id) ?? "(persona dada de baja)"
+          : null,
       };
     });
 

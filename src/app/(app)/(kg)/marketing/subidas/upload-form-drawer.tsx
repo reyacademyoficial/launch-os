@@ -33,12 +33,12 @@ import {
 //
 // Regla del picker "asset disponible" para una (owner, platform):
 //   - si la cadencia (owner × platform × format) tiene allow_repeat_asset=false
-//     y el asset ya tiene un upload EXITOSO ('subida') en esa platform → NO
-//     aparece.
+//     y el asset ya está COMPROMETIDO en esa platform — reservado por una
+//     subida .planificada. o consumido por una .subida. — NO aparece.
 //   - si allow_repeat_asset=true (o no hay cadencia configurada), aparece
 //     igual.
-//   - assets sin edited_at aparecen etiquetados como "En cola" pero se
-//     pueden elegir (permite planificar antes de que el asset esté listo).
+//   - los assets EN COLA (sin edited_at) no llegan hasta acá: la page ya los
+//     excluye del picker. Sólo se puede agendar lo que está editado.
 //
 // En modo EDIT: el asset original siempre aparece aunque no cumpla el filtro
 // (para poder guardar sin perder la selección).
@@ -319,13 +319,12 @@ function UploadFormBody({
           {availableAssets.map((a) => (
             <option key={a.id} value={a.id}>
               {a.name} · {FORMAT_LABEL[a.format]}
-              {a.editedAt ? "" : " (en cola)"}
             </option>
           ))}
         </select>
         <div className="kg-t7" style={{ color: "var(--kg-text-3)", marginTop: 4 }}>
           {platform && ownerId
-            ? "Los assets ya subidos a esta plataforma se ocultan si la cadencia no permite repetir."
+            ? "Sólo aparecen cortes ya editados y sin reservar. Los subidos o ya agendados en esta plataforma se ocultan si la cadencia no permite repetir."
             : "Elegí dueño y plataforma para filtrar el listado."}
         </div>
       </Field>

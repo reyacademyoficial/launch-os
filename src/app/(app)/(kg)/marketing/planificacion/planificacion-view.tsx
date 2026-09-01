@@ -96,7 +96,8 @@ export function PlanificacionView({
           isDailyRecurring: editing.isDailyRecurring,
           notes: editing.notes,
           canHardDelete:
-            editing.stage === "planificado" &&
+            (editing.stage === "planificado" ||
+              editing.stage === "en_grabacion") &&
             editing.recordingSessionId == null,
         }
       : undefined;
@@ -198,7 +199,8 @@ export function PlanificacionView({
         // disponible en la org. El drawer arranca con owner+piece+fecha
         // pre-cargados; el usuario completa personas/ubicación/materiales.
         const canSchedule =
-          r.stage === "planificado" && r.recordingSessionId == null;
+          (r.stage === "planificado" || r.stage === "en_grabacion") &&
+          r.recordingSessionId == null;
         return (
           <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
             {canSchedule && (

@@ -25,6 +25,73 @@
 - Cero filas — el módulo arranca por **CRUD, no por dashboard** (regla vigente del
   Gate 0 para tablas nuevas en cero).
 
+## Estado al 2026-09-01 (sesión Claude — 0175 · procedimiento operativo real)
+
+Sesión de alineación del módulo con el procedimiento que el equipo ejecuta de
+verdad. Tres decisiones tomadas con el usuario y aplicadas end-to-end:
+
+**1 · La fecha de grabación mueve el stage (no la sesión).**
+Hasta 0160, un piece pasaba a `en_grabacion` sólo al vincularlo a una
+`recording_session`. El disparador real es cargar la fecha. Trigger nuevo
+`content_piece_stage_from_recording_date` (BEFORE INSERT OR UPDATE) que mueve
+`planificado → en_grabacion` al setear `scheduled_recording_at`, y de vuelta
+si se borra la fecha *y* no hay sesión. Backfill incluido en la migración.
+Ajustes de consecuencia: el panel "Pieces con fecha sin sesión" de Grabación
+ahora acepta `en_grabacion`, y `deletePiece` / "Programar grabación" dejan de
+mirar el stage y miran `recording_session_id` (lo que marca que ya avanzó es
+la sesión, no la fecha).
+
+**2 · Edición es una etapa real con cola de trabajo.**
+Antes, `createProductionBatch` seteaba `edited_at = now()` en el mismo acto de
+registrar la producción: los cortes nacían editados y la etapa Edición no
+existía de hecho. Ahora nacen **en cola** (`edited_at = null`) con editor y
+fecha objetivo, y alguien los tiene que cerrar.
+- `content_assets.edit_due_date` (0175) — la fecha objetivo. Es *el* dato que
+  faltaba: `edited_at` es pasado, `edit_due_date` es futuro.
+- `markAssetEdited` / `unmarkAssetEdited` — cierre y reapertura desde la fila.
+  Devolver a cola está bloqueado si el asset ya tiene subidas comprometidas
+  (mismo guard replicado en `updateAsset`, que es la otra puerta al cambio).
+- **Planning semanal arreglado.** Bucketeaba por `edited_at ?? created_at`, o
+  sea por el pasado: con el batch marcando todo como editado en el momento,
+  todo caía en la semana en curso y la grilla no decía nada. Ahora bucketea
+  por `edit_due_date`, cada celda muestra `pendientes/asignados · días
+  disponibles`, `overloaded` mira sólo lo pendiente (5 assets ya editados en
+  una semana de licencia no es sobrecarga, es historia), las filas son la
+  unión de editores-con-assets y personas-con-disponibilidad, y los assets sin
+  fecha objetivo van a una columna **Sin fecha** en vez de desaparecer.
+
+**3 · Reservado ≠ utilizado, y quién hizo cada mitad.**
+- `stock.ts`: planificar una subida ahora **reserva** el asset y lo saca del
+  stock (antes sólo lo sacaba `status='subida'`, así que dos personas podían
+  agendar el mismo corte). `fallida` y `cancelada` lo devuelven al stock.
+  Nuevos selectores `computeAssetStockStates` (en_cola / disponible /
+  reservado / utilizado, con precedencia utilizado > reservado > disponible) y
+  `committedPlatformsByAsset`, compartido con el picker de Subidas.
+- `content_uploads.planned_by_person_id` / `uploaded_by_person_id` (0175).
+  Sin rol nuevo en la DB: el líder deja la subida seteada, el CM la confirma,
+  y queda registrado quién hizo cada mitad (columna "Responsables" en la
+  tabla). `uploaded_by` se limpia por trigger si la subida se revierte, igual
+  que `uploaded_at`. `updateUpload` sólo escribe el uploader cuando *ese*
+  update es el que confirma — sin eso, editar una nota después le robaba la
+  autoría al CM.
+- El picker de Subidas ahora ofrece **sólo cortes editados y sin reservar**;
+  los que siguen en cola viven en Edición hasta que alguien los termine.
+- `/marketing/stock` suma el panel **Contenido producido**: un corte por fila
+  con su estado. El pivot de arriba sólo muestra combinaciones *con cadencia
+  configurada*, así que un corte de un dueño sin cadencia era invisible.
+
+**Verificación:** `tsc --noEmit` = 0 en todo el módulo. `eslint` sobre
+`src/lib/marketing`, `src/app/(app)/(kg)/marketing` y `src/components/marketing`
+= 0 nuevos (queda 1 error y 1 warning pre-existentes en
+`production-batch-drawer.tsx` y `grabacion/actions.ts`). Suite **773/774**;
+14 tests nuevos (6 stock + 8 editor-load), total del módulo 58. El único rojo
+sigue siendo el pre-existente de `sync-ghl`.
+
+**Pendiente operacional:** aplicar `0175` en Studio y regenerar
+`src/lib/types/database.ts` para reemplazar los `as never`.
+
+---
+
 ## Estado al 2026-08-24 (sesión Claude — Bloques 6+7 · Stock/Alertas + Dashboard · **MÓDULO COMPLETO**)
 
 **Cerrado por Claude en esta sesión (Bloques 6 y 7):**
@@ -286,7 +353,7 @@ estado agregado del piece; cada etapa tiene su vista de trabajo (tabla o calenda
 
 ---
 
-## Migraciones (0157 → 0165, aditivas, todo en cero)
+## Migraciones (0157 → 0165 + 0175, aditivas)
 
 ### 0157_marketing_content_owners.sql
 
@@ -439,6 +506,30 @@ automáticamente sin acoplar el frontend a lógica de negocio:
     Mismo patrón que "tareas recurrentes" de 0139 pero para content_pieces.
 
 Todos los triggers son `AFTER UPDATE/INSERT` con guardas de idempotencia.
+
+### 0175_marketing_edit_queue_and_upload_ownership.sql
+
+Alineación con el procedimiento operativo real (sesión 2026-09-01). Aditiva:
+columnas nullable, sin cambios de RLS (las policies de 0159/0162/0163 cubren
+las columnas nuevas).
+
+- Trigger `content_piece_stage_from_recording_date` (BEFORE INSERT OR UPDATE en
+  `content_pieces`): setear `scheduled_recording_at` mueve el piece de
+  `planificado` a `en_grabacion`; borrarla lo devuelve, pero sólo si tampoco
+  hay `recording_session_id`. Antes ese movimiento dependía de vincular una
+  sesión (0160), que no es lo que dispara el cambio en la práctica.
+  El nombre ordena antes que `content_piece_stage_from_session_link_tg`
+  ('r' < 's'), así que si llegan fecha y sesión en el mismo UPDATE, éste gana
+  y el otro queda no-op. Incluye backfill de los pieces ya cargados.
+- `content_assets.edit_due_date date` — fecha objetivo de edición (futuro),
+  distinta de `edited_at` (pasado). Es el bucket del planning semanal de
+  `/marketing/edicion`. Índice parcial `content_assets_edit_queue_idx` sobre
+  `(organization_id, edit_due_date) where edited_at is null` para la cola.
+- `content_uploads.planned_by_person_id` / `uploaded_by_person_id` — FK a
+  `organization_people` con `on delete set null`. Split líder ⇄ CM sin rol
+  nuevo: se registra quién dejó la subida seteada y quién la confirmó.
+- Trigger `content_uploads_clear_uploader`: revertir `status` desde `'subida'`
+  limpia `uploaded_by_person_id`, espejo de lo que 0163 hace con `uploaded_at`.
 
 ---
 

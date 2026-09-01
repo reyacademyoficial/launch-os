@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   addDaysYmd,
   computeEditorLoadByWeek,
+  countUndatedByPerson,
   countAvailableDaysInRange,
   enumerateWeekStarts,
   isoWeekLabel,
@@ -183,5 +184,96 @@ describe("computeEditorLoadByWeek", () => {
       ["p1"],
     );
     expect(cells[0]?.assignedAssets).toBe(1);
+  });
+});
+
+describe("computeEditorLoadByWeek · pendientes vs editados", () => {
+  const availability = [
+    {
+      personId: "p1",
+      dateFrom: "2026-08-24",
+      dateTo: "2026-08-30",
+      available: true,
+    },
+  ];
+
+  it("separa pendingAssets de assignedAssets", () => {
+    const cells = computeEditorLoadByWeek(
+      [
+        { editorPersonId: "p1", bucketDate: "2026-08-25", edited: true },
+        { editorPersonId: "p1", bucketDate: "2026-08-26" },
+        { editorPersonId: "p1", bucketDate: "2026-08-27", edited: false },
+      ],
+      availability,
+      "2026-08-24",
+      "2026-08-30",
+      ["p1"],
+    );
+    expect(cells[0]?.assignedAssets).toBe(3);
+    expect(cells[0]?.pendingAssets).toBe(2);
+  });
+
+  it("assets ya editados no marcan sobrecarga en una semana sin disponibilidad", () => {
+    const cells = computeEditorLoadByWeek(
+      [{ editorPersonId: "p1", bucketDate: "2026-08-25", edited: true }],
+      [],
+      "2026-08-24",
+      "2026-08-30",
+      ["p1"],
+    );
+    expect(cells[0]?.availableDays).toBe(0);
+    expect(cells[0]?.overloaded).toBe(false);
+  });
+
+  it("trabajo pendiente sin días disponibles sí marca sobrecarga", () => {
+    const cells = computeEditorLoadByWeek(
+      [{ editorPersonId: "p1", bucketDate: "2026-08-25" }],
+      [],
+      "2026-08-24",
+      "2026-08-30",
+      ["p1"],
+    );
+    expect(cells[0]?.overloaded).toBe(true);
+  });
+
+  it("bucketDate null queda fuera de la grilla", () => {
+    const cells = computeEditorLoadByWeek(
+      [{ editorPersonId: "p1", bucketDate: null }],
+      availability,
+      "2026-08-24",
+      "2026-08-30",
+      ["p1"],
+    );
+    expect(cells[0]?.assignedAssets).toBe(0);
+  });
+});
+
+describe("countUndatedByPerson", () => {
+  it("cuenta los assets sin fecha objetivo, separando pendientes", () => {
+    const map = countUndatedByPerson(
+      [
+        { editorPersonId: "p1", bucketDate: null },
+        { editorPersonId: "p1", bucketDate: null, edited: true },
+        { editorPersonId: "p1", bucketDate: "2026-08-25" },
+        { editorPersonId: "p2", bucketDate: null },
+      ],
+      ["p1", "p2"],
+    );
+    expect(map.get("p1")).toEqual({ assignedAssets: 2, pendingAssets: 1 });
+    expect(map.get("p2")).toEqual({ assignedAssets: 1, pendingAssets: 1 });
+  });
+
+  it("personas sin assets sin fecha devuelven ceros, no undefined", () => {
+    const map = countUndatedByPerson([], ["p1"]);
+    expect(map.get("p1")).toEqual({ assignedAssets: 0, pendingAssets: 0 });
+  });
+
+  it("ignora editores que no están en la lista de personIds", () => {
+    const map = countUndatedByPerson(
+      [{ editorPersonId: "fantasma", bucketDate: null }],
+      ["p1"],
+    );
+    expect(map.size).toBe(1);
+    expect(map.get("p1")?.assignedAssets).toBe(0);
   });
 });

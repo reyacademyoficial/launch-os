@@ -3,6 +3,9 @@
 import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
 
 import { Drawer } from "@/components/kg/drawer";
+// `Field` es el primitivo compartido (soporta `hint`). El resto de los
+// estilos locales de este drawer quedan como estaban.
+import { Field } from "@/components/kg/form-primitives";
 import {
   FORMAT_LABEL,
   MARKETING_FORMATS,
@@ -64,6 +67,7 @@ export interface AssetInitial {
   readonly driveAssetUrl: string | null;
   readonly durationSeconds: number | null;
   readonly editorPersonId: string | null;
+  readonly editDueDate: string | null; // yyyy-mm-dd
   readonly editedAt: string | null;
   readonly notes: string | null;
 }
@@ -350,6 +354,20 @@ function AssetFormBody({
         </select>
       </Field>
 
+      <Field
+        label="Editado para (fecha objetivo)"
+        htmlFor="edit_due_date"
+        hint="Para cuándo tiene que estar terminado. Ubica el asset en el planning semanal del editor; sin fecha cae en la columna «Sin fecha»."
+      >
+        <input
+          id="edit_due_date"
+          name="edit_due_date"
+          type="date"
+          defaultValue={initial?.editDueDate ?? ""}
+          style={inputStyle}
+        />
+      </Field>
+
       <Field label="Link a carpeta (Drive, Dropbox, Frame.io)" htmlFor="drive_folder_url">
         <input
           id="drive_folder_url"
@@ -538,36 +556,6 @@ function defaultNowLocal(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function Field({
-  label,
-  htmlFor,
-  required,
-  children,
-}: {
-  readonly label: string;
-  readonly htmlFor: string;
-  readonly required?: boolean;
-  readonly children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label
-        htmlFor={htmlFor}
-        className="kg-t7"
-        style={{ display: "block", color: "var(--kg-text-3)", marginBottom: 6 }}
-      >
-        {label}
-        {required && (
-          <span aria-hidden="true" style={{ color: "#EF4444", marginLeft: 4 }}>
-            *
-          </span>
-        )}
-      </label>
-      {children}
-    </div>
-  );
 }
 
 const inputStyle: React.CSSProperties = {

@@ -18,6 +18,7 @@ import {
   type AlertSeverity,
 } from "@/lib/marketing/alerts";
 import {
+  computeAssetStockStates,
   computeDaysOfCoverage,
   computeStockByOwnerPlatformFormat,
   minDaysOfCoverage,
@@ -25,8 +26,11 @@ import {
   type StockAssetInput,
   type StockCadenceInput,
   type StockUploadInput,
+  type AssetStockState,
 } from "@/lib/marketing/stock";
 import {
+  ASSET_STOCK_STATE_LABEL,
+  ASSET_STOCK_STATE_TONE,
   FORMAT_LABEL,
   isMarketingFormat,
   isMarketingPlatform,
@@ -56,8 +60,21 @@ interface OwnerLite {
 interface AssetLite {
   readonly id: string;
   readonly content_owner_id: string;
+  readonly name: string;
   readonly format: string;
   readonly edited_at: string | null;
+  readonly created_at: string;
+}
+
+/** Fila del inventario individual (panel "Contenido producido"). */
+interface AssetInventoryRow {
+  readonly id: string;
+  readonly name: string;
+  readonly ownerName: string;
+  readonly contentOwnerId: string;
+  readonly format: MarketingFormat;
+  readonly state: AssetStockState;
+  readonly createdAt: string;
 }
 
 interface UploadLite {
@@ -102,7 +119,7 @@ export default async function StockPage({
       .order("name", { ascending: true }),
     supabase
       .from("content_assets")
-      .select("id, content_owner_id, format, edited_at"),
+      .select("id, content_owner_id, name, format, edited_at, created_at"),
     supabase
       .from("content_uploads")
       .select("content_asset_id, platform, status"),
@@ -207,6 +224,53 @@ export default async function StockPage({
       if (!Number.isFinite(b.daysOfCoverage)) return -1;
       return a.daysOfCoverage - b.daysOfCoverage;
     });
+
+  // ─── Inventario individual. El pivot de arriba responde "¿cuántos días
+  // aguanto?"; esto responde "¿qué video concreto tengo y en qué está?".
+  // Existe porque el pivot sólo muestra combinaciones CON cadencia — un
+  // corte de un dueño sin cadencia configurada sería invisible ahí.
+  const assetStates = computeAssetStockStates(assets, uploads);
+
+  const inventoryAll: AssetInventoryRow[] = assetsRaw
+    .filter((a): a is AssetLite & { readonly format: MarketingFormat } =>
+      isMarketingFormat(a.format),
+    )
+    .map((a) => ({
+      id: a.id,
+      name: a.name,
+      contentOwnerId: a.content_owner_id,
+      ownerName:
+        ownersById.get(a.content_owner_id)?.name ?? "(dueño desconocido)",
+      format: a.format,
+      state: assetStates.get(a.id) ?? "en_cola",
+      createdAt: a.created_at,
+    }));
+
+  const inventory = inventoryAll
+    .filter((r) => {
+      if (ownerFilter && r.contentOwnerId !== ownerFilter) return false;
+      if (onlyActive && !ownersById.get(r.contentOwnerId)?.active) return false;
+      return true;
+    })
+    // Lo accionable primero: disponible → reservado → en cola → utilizado.
+    .sort((a, b) => {
+      const rank: Record<AssetStockState, number> = {
+        disponible: 0,
+        reservado: 1,
+        en_cola: 2,
+        utilizado: 3,
+      };
+      const d = rank[a.state] - rank[b.state];
+      if (d !== 0) return d;
+      return b.createdAt.localeCompare(a.createdAt);
+    });
+
+  const availableCount = inventory.filter(
+    (r) => r.state === "disponible",
+  ).length;
+  const reservedCount = inventory.filter((r) => r.state === "reservado").length;
+  const queuedCount = inventory.filter((r) => r.state === "en_cola").length;
+  const usedCount = inventory.filter((r) => r.state === "utilizado").length;
 
   const ownerIdsWithCadences = new Set(cadences.map((c) => c.contentOwnerId));
   const ownerFilterOptions = owners.filter(
@@ -320,7 +384,80 @@ export default async function StockPage({
           <StockTable rows={rows} />
         )}
       </Panel>
+
+      <Panel
+        title={`Contenido producido (${inventory.length})`}
+        actions={
+          <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+            {availableCount} disponible{availableCount === 1 ? "" : "s"} ·{" "}
+            {reservedCount} reservado{reservedCount === 1 ? "" : "s"} ·{" "}
+            {queuedCount} en cola · {usedCount} utilizado
+            {usedCount === 1 ? "" : "s"}
+          </span>
+        }
+        pad={false}
+      >
+        <InventoryTable rows={inventory} />
+      </Panel>
     </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// InventoryTable — un corte por fila con su estado frente al stock.
+//
+// Es la lectura que pide el procedimiento: todo lo que salió de producción,
+// qué está libre para agendar, qué ya quedó reservado por una subida
+// planificada y qué se consumió. Color sólo en el StatusPill, nunca en el
+// texto (regla del proyecto).
+// ═══════════════════════════════════════════════════════════════════════════
+
+function InventoryTable({
+  rows,
+}: {
+  readonly rows: readonly AssetInventoryRow[];
+}) {
+  const columns: Column<AssetInventoryRow>[] = [
+    {
+      key: "name",
+      label: "Corte",
+      render: (r) => (
+        <span style={{ color: "var(--kg-text-1)", fontWeight: 600 }}>
+          {r.name}
+        </span>
+      ),
+    },
+    {
+      key: "owner",
+      label: "Dueño",
+      render: (r) => r.ownerName,
+    },
+    {
+      key: "format",
+      label: "Formato",
+      render: (r) => FORMAT_LABEL[r.format],
+    },
+    {
+      key: "state",
+      label: "Estado",
+      render: (r) => (
+        <StatusPill
+          text={ASSET_STOCK_STATE_LABEL[r.state]}
+          tone={ASSET_STOCK_STATE_TONE[r.state]}
+        />
+      ),
+    },
+  ];
+
+  return (
+    <KgDataTable
+      columns={columns}
+      rows={rows}
+      rowKey={(r) => r.id}
+      totalCount={rows.length}
+      emptyTitle="Sin contenido producido"
+      emptyHint="Los cortes aparecen acá después de registrar la producción de una grabación realizada, en /marketing/edicion."
+    />
   );
 }
 

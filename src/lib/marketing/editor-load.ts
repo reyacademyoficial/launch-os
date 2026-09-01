@@ -6,20 +6,28 @@
  *   - `editor_availability` → días disponibles por persona en el rango
  *
  * La UI de `/marketing/edicion` renderea un pivot person × iso_week con
- * dos números: assets asignados en esa semana + días disponibles. Si hay
- * assets asignados pero 0 días disponibles → warning visual.
+ * dos números: assets en esa semana (pendientes / total) + días disponibles.
+ * Si hay trabajo pendiente y 0 días disponibles → warning visual.
  *
  * Semana ISO empieza en lunes (regla del proyecto — coincide con la vista
- * de calendario). El "date bucket" del asset es su `edited_at` si existe,
- * si no `created_at` — quedan agrupadas por cuándo se planificaron.
+ * de calendario).
+ *
+ * El "date bucket" del asset es su **fecha objetivo de edición**
+ * (`edit_due_date`, 0175): para cuándo tiene que estar listo. Ése es el
+ * único dato que hace del pivot una planificación y no un histórico. Los
+ * assets sin fecha objetivo devuelven `bucketDate = null` y quedan fuera de
+ * la grilla — se cuentan aparte con `countUndatedByPerson` para que la UI
+ * los muestre como "sin fecha" en vez de esconderlos.
  *
  * Puro, sin efectos, sin fetch — tests colocados junto al archivo.
  */
 
 export interface EditorAssetInput {
   readonly editorPersonId: string;
-  /** yyyy-mm-dd o iso ts — se usa la parte de fecha */
-  readonly bucketDate: string;
+  /** yyyy-mm-dd o iso ts — se usa la parte de fecha. `null` = sin fecha objetivo. */
+  readonly bucketDate: string | null;
+  /** `true` cuando el asset ya se marcó editado. Default: pendiente. */
+  readonly edited?: boolean;
 }
 
 export interface EditorAvailabilityInput {
@@ -35,8 +43,10 @@ export interface EditorWeekCell {
   readonly weekStart: string; // yyyy-mm-dd (lunes)
   readonly weekEnd: string; // yyyy-mm-dd (domingo)
   readonly assignedAssets: number;
+  /** Subconjunto de `assignedAssets` que todavía no se marcó editado. */
+  readonly pendingAssets: number;
   readonly availableDays: number;
-  readonly overloaded: boolean; // assignedAssets > 0 && availableDays === 0
+  readonly overloaded: boolean; // pendingAssets > 0 && availableDays === 0
 }
 
 /**
@@ -55,7 +65,10 @@ export function computeEditorLoadByWeek(
   const weekStarts = enumerateWeekStarts(since, until);
   const result: EditorWeekCell[] = [];
 
-  const assetsByPersonWeek = new Map<string, number>();
+  if (weekStarts.length === 0) return result;
+
+  const assignedByPersonWeek = new Map<string, number>();
+  const pendingByPersonWeek = new Map<string, number>();
   for (const a of assets) {
     const dayKey = takeDatePart(a.bucketDate);
     if (!dayKey) continue;
@@ -63,7 +76,10 @@ export function computeEditorLoadByWeek(
     if (!ws) continue;
     if (ws < weekStarts[0]! || ws > weekStarts.at(-1)!) continue;
     const key = `${a.editorPersonId}::${ws}`;
-    assetsByPersonWeek.set(key, (assetsByPersonWeek.get(key) ?? 0) + 1);
+    assignedByPersonWeek.set(key, (assignedByPersonWeek.get(key) ?? 0) + 1);
+    if (a.edited !== true) {
+      pendingByPersonWeek.set(key, (pendingByPersonWeek.get(key) ?? 0) + 1);
+    }
   }
 
   for (const personId of personIds) {
@@ -75,20 +91,51 @@ export function computeEditorLoadByWeek(
         weekEnd,
       );
       const assignedAssets =
-        assetsByPersonWeek.get(`${personId}::${ws}`) ?? 0;
+        assignedByPersonWeek.get(`${personId}::${ws}`) ?? 0;
+      const pendingAssets = pendingByPersonWeek.get(`${personId}::${ws}`) ?? 0;
       result.push({
         personId,
         isoWeek: isoWeekLabel(ws),
         weekStart: ws,
         weekEnd,
         assignedAssets,
+        pendingAssets,
         availableDays,
-        overloaded: assignedAssets > 0 && availableDays === 0,
+        // Sólo el trabajo pendiente satura: 5 assets ya editados en una
+        // semana de licencia no es una sobrecarga, es historia.
+        overloaded: pendingAssets > 0 && availableDays === 0,
       });
     }
   }
 
   return result;
+}
+
+/**
+ * Assets con editor asignado pero SIN fecha objetivo de edición, por persona.
+ * No entran en ninguna columna del pivot, así que la UI los muestra en una
+ * columna "Sin fecha" — si quedaran ocultos, el planning mentiría sobre la
+ * carga real del editor.
+ */
+export function countUndatedByPerson(
+  assets: readonly EditorAssetInput[],
+  personIds: readonly string[],
+): Map<string, { assignedAssets: number; pendingAssets: number }> {
+  const known = new Set(personIds);
+  const out = new Map<string, { assignedAssets: number; pendingAssets: number }>();
+  for (const personId of personIds) {
+    out.set(personId, { assignedAssets: 0, pendingAssets: 0 });
+  }
+  for (const a of assets) {
+    if (takeDatePart(a.bucketDate) != null) continue;
+    if (!known.has(a.editorPersonId)) continue;
+    const entry = out.get(a.editorPersonId)!;
+    out.set(a.editorPersonId, {
+      assignedAssets: entry.assignedAssets + 1,
+      pendingAssets: entry.pendingAssets + (a.edited === true ? 0 : 1),
+    });
+  }
+  return out;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  committedPlatformsByAsset,
+  computeAssetStockStates,
   computeDaysOfCoverage,
   computeStockByOwnerPlatformFormat,
   minDaysOfCoverage,
@@ -70,12 +72,26 @@ describe("computeStockByOwnerPlatformFormat", () => {
     expect(buckets[0]?.stockCount).toBe(1);
   });
 
-  it("uploads en status distinto de 'subida' no consumen stock", () => {
+  it("una subida 'planificada' reserva el asset y lo saca del stock", () => {
+    const assets: StockAssetInput[] = [
+      { id: "a1", contentOwnerId: "o1", format: "reel", editedAt: "2026-08-01" },
+      { id: "a2", contentOwnerId: "o1", format: "reel", editedAt: "2026-08-01" },
+    ];
+    const uploads: StockUploadInput[] = [
+      { contentAssetId: "a1", platform: "instagram", status: "planificada" },
+    ];
+    const cadences: StockCadenceInput[] = [
+      { contentOwnerId: "o1", platform: "instagram", format: "reel", postsPerDay: 1, allowRepeatAsset: false },
+    ];
+    const buckets = computeStockByOwnerPlatformFormat(assets, uploads, cadences);
+    expect(buckets[0]?.stockCount).toBe(1); // sólo a2 queda disponible
+  });
+
+  it("uploads 'fallida' y 'cancelada' devuelven el asset al stock", () => {
     const assets: StockAssetInput[] = [
       { id: "a1", contentOwnerId: "o1", format: "reel", editedAt: "2026-08-01" },
     ];
     const uploads: StockUploadInput[] = [
-      { contentAssetId: "a1", platform: "instagram", status: "planificada" },
       { contentAssetId: "a1", platform: "instagram", status: "fallida" },
       { contentAssetId: "a1", platform: "instagram", status: "cancelada" },
     ];
@@ -180,5 +196,69 @@ describe("minDaysOfCoverage", () => {
   });
   it("devuelve null si no hay pares", () => {
     expect(minDaysOfCoverage([])).toBe(null);
+  });
+});
+
+describe("computeAssetStockStates", () => {
+  const assets: StockAssetInput[] = [
+    { id: "cola", contentOwnerId: "o1", format: "reel", editedAt: null },
+    { id: "libre", contentOwnerId: "o1", format: "reel", editedAt: "2026-08-01" },
+    { id: "reservado", contentOwnerId: "o1", format: "reel", editedAt: "2026-08-01" },
+    { id: "usado", contentOwnerId: "o1", format: "reel", editedAt: "2026-08-01" },
+  ];
+
+  it("clasifica en_cola / disponible / reservado / utilizado", () => {
+    const states = computeAssetStockStates(assets, [
+      { contentAssetId: "reservado", platform: "instagram", status: "planificada" },
+      { contentAssetId: "usado", platform: "instagram", status: "subida" },
+    ]);
+    expect(states.get("cola")).toBe("en_cola");
+    expect(states.get("libre")).toBe("disponible");
+    expect(states.get("reservado")).toBe("reservado");
+    expect(states.get("usado")).toBe("utilizado");
+  });
+
+  it("'utilizado' gana sobre 'reservado' cuando hay subidas mixtas", () => {
+    const states = computeAssetStockStates(assets, [
+      { contentAssetId: "usado", platform: "instagram", status: "subida" },
+      { contentAssetId: "usado", platform: "tiktok", status: "planificada" },
+    ]);
+    expect(states.get("usado")).toBe("utilizado");
+  });
+
+  it("un asset subido cuenta como utilizado aunque le falte edited_at", () => {
+    // Caso de borde: se marcó la subida antes de registrar la edición.
+    // Prevalece el hecho consumado — ya se publicó.
+    const states = computeAssetStockStates(assets, [
+      { contentAssetId: "cola", platform: "instagram", status: "subida" },
+    ]);
+    expect(states.get("cola")).toBe("utilizado");
+  });
+
+  it("subidas fallidas o canceladas dejan el asset disponible", () => {
+    const states = computeAssetStockStates(assets, [
+      { contentAssetId: "libre", platform: "instagram", status: "fallida" },
+      { contentAssetId: "libre", platform: "tiktok", status: "cancelada" },
+    ]);
+    expect(states.get("libre")).toBe("disponible");
+  });
+});
+
+describe("committedPlatformsByAsset", () => {
+  it("junta plataformas reservadas y subidas, ignora el resto", () => {
+    const map = committedPlatformsByAsset([
+      { contentAssetId: "a1", platform: "instagram", status: "subida" },
+      { contentAssetId: "a1", platform: "tiktok", status: "planificada" },
+      { contentAssetId: "a1", platform: "youtube", status: "cancelada" },
+      { contentAssetId: "a1", platform: "facebook", status: "fallida" },
+    ]);
+    expect(Array.from(map.get("a1") ?? []).sort()).toEqual([
+      "instagram",
+      "tiktok",
+    ]);
+  });
+
+  it("assets sin uploads no aparecen en el mapa", () => {
+    expect(committedPlatformsByAsset([]).size).toBe(0);
   });
 });

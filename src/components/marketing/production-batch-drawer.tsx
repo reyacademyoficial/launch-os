@@ -81,7 +81,7 @@ export function ProductionBatchDrawer({
       open={open}
       onClose={onClose}
       title="Registrar producción"
-      subtitle="Cargá los cortes que salieron de esta grabación. Van al stock listos para subir."
+      subtitle="Cargá los cortes que salieron de esta grabación. Entran a la cola de edición; pasan al stock cuando el editor los marca terminados."
       width={720}
     >
       <BatchBody
@@ -128,7 +128,7 @@ function BatchBody({
 }) {
   const [sessionId, setSessionId] = useState<string>(presetSessionId ?? "");
   const [driveFolderUrl, setDriveFolderUrl] = useState<string>("");
-  const [editedAtLocal, setEditedAtLocal] = useState<string>(nowDatetimeLocal());
+  const [editDueDate, setEditDueDate] = useState<string>(defaultDueDate());
   const [rows, setRows] = useState<DraftRow[]>(() => [newRow(0)]);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -196,18 +196,13 @@ function BatchBody({
         r.driveAssetUrl.trim().length === 0 ? null : r.driveAssetUrl.trim(),
     }));
 
-    const editedAt =
-      editedAtLocal.trim().length === 0
-        ? null
-        : new Date(editedAtLocal).toISOString();
-
     startTransition(async () => {
       const result = await createProductionBatch({
         sourceRecordingSessionId: selectedSession.id,
         contentOwnerId: selectedSession.contentOwnerId,
         driveFolderUrl:
           driveFolderUrl.trim().length === 0 ? null : driveFolderUrl.trim(),
-        editedAt,
+        editDueDate: editDueDate.trim().length === 0 ? null : editDueDate.trim(),
         rows: payloadRows,
       });
       if ("error" in result) {
@@ -252,12 +247,16 @@ function BatchBody({
         />
       </Field>
 
-      <Field label="Fecha de edición" htmlFor="batch_edited_at">
+      <Field
+        label="Editado para (fecha objetivo)"
+        htmlFor="batch_edit_due_date"
+        hint="Los cortes entran a la cola de edición con esta fecha. Es lo que ordena el planning semanal de cada editor."
+      >
         <input
-          id="batch_edited_at"
-          type="datetime-local"
-          value={editedAtLocal}
-          onChange={(e) => setEditedAtLocal(e.target.value)}
+          id="batch_edit_due_date"
+          type="date"
+          value={editDueDate}
+          onChange={(e) => setEditDueDate(e.target.value)}
           style={inputStyle}
         />
       </Field>
@@ -446,8 +445,16 @@ function formatSessionLabel(s: SessionOptionForBatch): string {
   return `${date} · ${s.ownerName}`;
 }
 
-function nowDatetimeLocal(): string {
+/**
+ * Default de la fecha objetivo de edición: el viernes de esta semana (o el
+ * de la semana que viene si hoy ya es sábado o domingo). La producción de
+ * la semana se edita antes del fin de semana — es el default que menos
+ * corrige el usuario. Siempre editable en el input.
+ */
+function defaultDueDate(): string {
   const d = new Date();
+  const daysToFriday = (5 - d.getDay() + 7) % 7; // getDay: 0=domingo … 6=sábado
+  d.setDate(d.getDate() + daysToFriday);
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }

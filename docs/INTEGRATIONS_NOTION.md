@@ -482,3 +482,88 @@ token. Repetir para cada uno.
 - **Tokens rotados**: si el usuario regenera el token de Notion, el
   guardado en KG queda inválido. La UI muestra "Última sincronización
   falló - revisar token" cuando la API rebota con 401.
+
+---
+
+## 4g — Write-back + tableros heterogéneos (2026-09-01)
+
+Migración `0176_notion_writeback.sql`. Tres bugs reportados por el
+operador, con una causa raíz común: el sync asumía que **todos** los
+tableros de Notion se ven igual, y que el dato solo viaja Notion → KG.
+
+### 1. "Marco un proyecto como listo y el sync lo revierte"
+
+El sync era one-way. `updateProject` escribía la fila local y nada más;
+la próxima corrida leía Notion (que seguía en el estado viejo) y lo
+pisaba. Ahora:
+
+- `client.updatePageProperties` → `PATCH /v1/pages/:id`.
+- `push-project.ts` traduce el proyecto KG al shape de Notion y lo
+  escribe: título, descripción, status (select/status), tilde de
+  "listo", prioridad, fechas y responsables. Solo columnas **mapeadas,
+  existentes y escribibles** — `formula`/`rollup` son read-only en la
+  API y un PATCH sobre ellas devuelve 400.
+- El valor KG se traduce a la etiqueta de Notion invirtiendo el
+  `status_map`, y si no alcanza, buscando entre las opciones reales de
+  la columna por normalización (`alerta_maxima` → "Alerta Máxima").
+  Si no hay equivalente, se omite ESA propiedad en vez de romper el
+  PATCH entero.
+- El push corre con el **service client**: el RLS de `notion_workspaces`
+  restringe el token a superadmin, y cualquier operador con permiso de
+  editar proyectos tiene que poder marcar "listo".
+
+**Cuando el push falla** (token, permisos, red) no perdemos el cambio:
+`internal_projects.notion_push_pending = true` + `notion_push_error`.
+El sync ve esa marca, **no** pisa el proyecto, reintenta el push y solo
+vuelve a leer Notion cuando el push salió bien. El drawer de edición
+muestra el aviso en vez de cerrarse en silencio.
+
+Se puede apagar por database con `write_back: false` en el
+`property_map` (checkbox en el form de mapping). Default: encendido.
+
+> **Requisito en Notion**: la integration necesita la capability
+> "Update content" sobre la database. Sin eso el push devuelve 403 —
+> el mensaje de error lo dice explícito.
+
+### 2. "En algunos tableros no toma los responsables"
+
+`parsePeople` solo entendía `type='people'`. Los tableros que anotan al
+responsable de otra forma llegaban sin dueños. `parseAssignees` ahora
+lee, además: `multi_select`/`select` (por nombre), `rich_text` con
+@menciones y/o texto libre, `created_by`/`last_edited_by`, `email`,
+`formula` string y `rollup`. Los nombres sueltos se parten por `, ; / | &`
+y se resuelven contra un índice de nombres/emails de `notion_users`
+mapeados + `organization_people`, normalizado sin acentos ni case. Un
+nombre ambiguo (dos personas con el mismo nombre normalizado) se
+descarta: mejor sin dueño que con el dueño equivocado.
+
+También se pueden mapear **varias** columnas de responsables
+(`assignee_props`) para los tableros que parten el dato en
+"Responsable" + "Apoyo".
+
+**Límite conocido**: las columnas `relation` no se resuelven — haría
+falta una llamada extra por page. La UI de mapping lo dice.
+
+### 3. "En los tableros con check no marca lo listo"
+
+Nuevo `done_prop`: la columna `checkbox` (o formula booleana) que ese
+tablero usa para marcar terminado. Cuando está configurada **manda**
+sobre `status_prop`:
+
+| tilde | status_prop | resultado |
+|---|---|---|
+| tildado | cualquiera | `done_status` (default `listo`) |
+| destildado | resuelve a algo ≠ done_status | ese valor |
+| destildado | resuelve a done_status (contradicción) | `undone_status` (default `sin_empezar`) |
+| ausente en la page | cualquiera | el valor del select — no inventamos "terminado" |
+
+`status_prop` además dejó de exigir `select`/`status`: acepta
+`multi_select` (primera opción), `formula` string y `rollup`, para los
+tableros que derivan el estado.
+
+### Qué mirar si algo falla
+
+- `notion_sync_log.error` ahora reporta también cuántos proyectos
+  quedaron con el push pendiente.
+- `select id, name, notion_push_error from internal_projects where
+  notion_push_pending` lista lo que no se pudo escribir.

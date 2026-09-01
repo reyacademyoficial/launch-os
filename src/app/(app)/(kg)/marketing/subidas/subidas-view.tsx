@@ -46,6 +46,10 @@ export interface UploadRowData {
   readonly status: UploadStatus;
   readonly publicUrl: string | null;
   readonly notes: string | null;
+  /** Líder que dejó la subida seteada. Null en filas previas a 0175. */
+  readonly plannedByName: string | null;
+  /** CM que confirmó la publicación. Null mientras no esté subida. */
+  readonly uploadedByName: string | null;
 }
 
 export function SubidasView({
@@ -193,6 +197,22 @@ export function SubidasView({
           text={UPLOAD_STATUS_LABEL[r.status]}
           tone={UPLOAD_STATUS_TONE[r.status]}
         />
+      ),
+    },
+    {
+      // Las dos manos del procedimiento en una sola columna: quién la dejó
+      // seteada (líder) y quién confirmó que la subió (CM).
+      key: "people",
+      label: "Responsables",
+      render: (r) => (
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <span className="kg-t7" style={{ color: "var(--kg-text-2)" }}>
+            Seteó: {r.plannedByName ?? "—"}
+          </span>
+          <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+            Subió: {r.uploadedByName ?? "—"}
+          </span>
+        </div>
       ),
     },
     {

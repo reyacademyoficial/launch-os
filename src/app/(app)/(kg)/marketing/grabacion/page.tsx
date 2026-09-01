@@ -246,7 +246,10 @@ export default async function GrabacionPage({
       (p): p is PieceDbRow & { readonly scheduled_recording_at: string } =>
         p.scheduled_recording_at != null &&
         p.recording_session_id == null &&
-        p.stage === "planificado",
+        // Desde 0175 cargar la fecha ya mueve el piece a `en_grabacion`, así
+        // que el backlog vive en ese stage. Aceptamos `planificado` también
+        // para filas viejas que no pasaron por el trigger.
+        (p.stage === "en_grabacion" || p.stage === "planificado"),
     )
     .map((p) => ({
       id: p.id,

@@ -79,6 +79,7 @@ interface AssetDbRow {
   readonly drive_asset_url: string | null;
   readonly duration_seconds: number | null;
   readonly editor_person_id: string | null;
+  readonly edit_due_date: string | null;
   readonly edited_at: string | null;
   readonly notes: string | null;
   readonly created_at: string;
@@ -124,7 +125,7 @@ export default async function EdicionPage({
       supabase
         .from("content_assets")
         .select(
-          "id, content_owner_id, source_recording_session_id, source_content_piece_id, name, format, drive_folder_url, drive_asset_url, duration_seconds, editor_person_id, edited_at, notes, created_at",
+          "id, content_owner_id, source_recording_session_id, source_content_piece_id, name, format, drive_folder_url, drive_asset_url, duration_seconds, editor_person_id, edit_due_date, edited_at, notes, created_at",
         )
         .order("created_at", { ascending: false }),
       supabase
@@ -211,6 +212,7 @@ export default async function EdicionPage({
         durationSeconds: a.duration_seconds,
         editorPersonId: a.editor_person_id,
         editorName: editor?.full_name ?? null,
+        editDueDate: a.edit_due_date,
         editedAt: a.edited_at,
         notes: a.notes,
         createdAt: a.created_at,

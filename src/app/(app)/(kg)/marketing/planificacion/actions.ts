@@ -319,10 +319,15 @@ export async function deletePiece(
     | null;
   if (!current) return { error: "Piece no encontrado." };
 
-  if (current.stage !== "planificado" || current.recording_session_id != null) {
+  // Desde 0175, cargar la fecha de grabación mueve el piece a `en_grabacion`
+  // por trigger. Ese piece sigue siendo un borrador cancelable mientras no
+  // tenga sesión: lo que marca "ya avanzó" es la sesión, no la fecha.
+  const isDraft =
+    current.stage === "planificado" || current.stage === "en_grabacion";
+  if (!isDraft || current.recording_session_id != null) {
     return {
       error:
-        "Solo se pueden eliminar pieces en estado 'planificado' que aún no fueron asignadas a una sesión de grabación. Marcá como 'descartado' en su lugar.",
+        "Solo se pueden eliminar pieces que aún no fueron asignadas a una sesión de grabación. Marcá como 'descartado' en su lugar.",
     };
   }
 
