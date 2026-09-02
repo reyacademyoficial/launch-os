@@ -1,14 +1,18 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import type { CSSProperties, ReactNode } from "react";
 
 import { LaunchHeaderActions } from "@/components/dashboard/launches/launch-header-actions";
-import { StatusBadge } from "@/components/dashboard/launches/status-badge";
 import { KgModuleNav } from "@/components/kg/module-nav";
+import { StateDot } from "@/components/kg/state-dot";
+import { StatusPill } from "@/components/kg/status-pill";
 import type { TabItem } from "@/components/kg/tabs-bar";
+import type { KgTone } from "@/components/kg/tone";
 import { fmtDate, fmtLaunchWindow } from "@/lib/format";
 import { listEvergreensTargeting } from "@/lib/launches/evergreen";
 import { getLaunch } from "@/lib/launches/get";
 import { listLaunchesForProject } from "@/lib/launches/list";
+import { launchStatusTone } from "@/lib/launches/status-tone";
 import {
   denyCloserOutsideVentas,
   requireSessionProfile,
@@ -120,6 +124,12 @@ export default async function LaunchLayout({
         El `<header>` es `flex-col` en mobile y `md:flex-row` para que las
         acciones queden abajo del bloque de título en pantallas chicas — antes
         el `flex-wrap` las empujaba al final pero pegadas al borde derecho.
+
+        Los chips pasaron de utilidades del token viejo (`bg-surface`,
+        `bg-accent/10 text-accent`, `bg-warning/15 text-warning`) a `Chip`, que
+        pinta con vars `--kg-*` y deja el color semántico en un StateDot: un
+        chip tintado de rojo/ámbar al lado de otro tintado de carmesí lee como
+        semáforo y compite con el título.
       */}
       <header className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div className="min-w-0 flex-1 space-y-2">
@@ -129,46 +139,37 @@ export default async function LaunchLayout({
           >
             {launch.name}
           </h1>
-          <div
-            className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"
-            style={{ color: "var(--kg-text-2)" }}
-          >
-            <span>{fmtLaunchWindow(launch.date_start, launch.date_end)}</span>
-            {launch.type && (
-              <>
-                <span style={{ color: "var(--kg-text-3)" }}>·</span>
-                <span>{launch.type}</span>
-              </>
-            )}
-            <span style={{ color: "var(--kg-text-3)" }}>·</span>
-            <StatusBadge status={launch.status} />
-            {isClosed && (
-              <span className="rounded bg-fg-subtle/15 px-2 py-0.5 text-xs font-medium text-fg-muted">
-                Cerrado {fmtDate(launch.closed_at)}
-              </span>
-            )}
+          <div className="flex flex-wrap items-center gap-2">
+            <Chip>{fmtLaunchWindow(launch.date_start, launch.date_end)}</Chip>
+            {launch.type && <Chip>{launch.type}</Chip>}
+            <Chip>
+              <StatusPill
+                text={launch.status}
+                tone={launchStatusTone(launch.status)}
+              />
+            </Chip>
+            {isClosed && <Chip>Cerrado {fmtDate(launch.closed_at)}</Chip>}
             {isEvergreen &&
               (targetLaunch ? (
-                <span className="rounded bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
-                  Evergreen → {targetLaunch.name}
-                </span>
+                <Chip tone="accent">Evergreen → {targetLaunch.name}</Chip>
               ) : (
-                <span
+                <Chip
+                  tone="warning"
                   title="Configurá el lanzamiento destino para que el reciclado funcione al cerrar."
-                  className="rounded bg-warning/15 px-2 py-0.5 text-xs font-medium text-warning"
                 >
                   Evergreen sin destino
-                </span>
+                </Chip>
               ))}
           </div>
           {evergreenSources.length > 0 && (
-            <p className="pt-1 text-xs text-fg-muted">
+            <p className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
               ↩ Recibe reciclado de{" "}
               {evergreenSources.map((src, i) => (
                 <span key={src.id}>
                   <Link
                     href={`/proyectos/${projectId}/launches/${src.id}`}
-                    className="text-accent hover:underline"
+                    className="kg-focus hover:underline"
+                    style={{ color: "var(--kg-accent-text)" }}
                   >
                     {src.name}
                   </Link>
@@ -180,12 +181,7 @@ export default async function LaunchLayout({
           {launch.platforms.length > 0 && (
             <div className="flex flex-wrap gap-2 pt-1">
               {launch.platforms.map((p) => (
-                <span
-                  key={p}
-                  className="rounded bg-surface px-2 py-0.5 text-xs text-fg-muted"
-                >
-                  {p}
-                </span>
+                <Chip key={p}>{p}</Chip>
               ))}
             </div>
           )}
@@ -214,5 +210,44 @@ export default async function LaunchLayout({
 
       <div>{children}</div>
     </section>
+  );
+}
+
+/**
+ * Chip de metadata del header. Superficie neutra siempre; cuando el dato
+ * tiene estado (evergreen sin destino, evergreen apuntado) el color va en un
+ * StateDot adelante y NUNCA en el fondo ni en el texto — misma regla que
+ * `StatusPill`, para que una fila de chips no termine siendo un semáforo.
+ *
+ * Vive acá y no en `components/kg` porque hoy lo usa un solo header; si otro
+ * módulo lo necesita, se promueve a primitiva.
+ */
+function Chip({
+  children,
+  tone,
+  title,
+}: {
+  readonly children: ReactNode;
+  readonly tone?: KgTone;
+  readonly title?: string;
+}) {
+  const style: CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "3px 10px",
+    borderRadius: "var(--kg-r-full)",
+    background: "var(--kg-surface-2-solid)",
+    border: "1px solid var(--kg-border-subtle)",
+    color: "var(--kg-text-2)",
+    fontSize: 12,
+    fontWeight: 500,
+    whiteSpace: "nowrap",
+  };
+  return (
+    <span style={style} title={title}>
+      <StateDot tone={tone ?? null} size={4} />
+      {children}
+    </span>
   );
 }

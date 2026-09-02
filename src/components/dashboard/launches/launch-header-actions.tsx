@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 
 import type { LaunchActionState } from "@/app/(app)/(kg)/proyectos/[projectId]/launches/actions";
 import { KgBottomSheet } from "@/components/kg/bottom-sheet";
+import { secondaryBtn } from "@/components/kg/form-primitives";
 import type { LaunchRow } from "@/lib/launches/types";
 
 import { DeleteButton } from "./delete-button";
@@ -24,9 +25,24 @@ type FormAction = (
  *   - Mobile: solo "Editar" como primary + botón kebab "Más" que abre un
  *     `KgBottomSheet` con PDFs, Duplicar, Cerrar/Reabrir y Borrar.
  *
- * El sheet renderea `DeleteButton` como fila — al confirmar borra abre su
- * propio dialog encima. `DeleteButton` fue subido a `z-[2100]` para no
- * quedar por debajo del sheet (`z-2000`).
+ * MIGRACIÓN KG
+ * Los tres clusters de clases inline (`secondaryBtnCls`, `sheetItemCls` y el
+ * cuadrado del kebab) estaban escritos con tokens VIEJOS — `border-border`,
+ * `bg-surface`, `text-fg`, `hover:bg-bg-elevated`. Ahora salen de
+ * `secondaryBtn` de `form-primitives`: un solo objeto de estilo con vars
+ * `--kg-*`, del que las dos variantes locales son derivaciones explícitas
+ * (`sheetItemStyle` y `kebabStyle`) en vez de tres strings que había que
+ * mantener sincronizados a ojo.
+ *
+ * No se usa `primaryBtn`: en este header NINGUNA acción es la primaria de la
+ * página — "Editar" ya llega como `triggerVariant="secondary"` desde
+ * `LaunchFormModal`, y darle peso de primario a "Duplicar" o "Cerrar" haría
+ * competir cinco botones por la misma jerarquía. El único acento es
+ * `dangerBtn`, y vive dentro de `DeleteButton`.
+ *
+ * El sheet renderea `DeleteButton` como fila (`fullWidth`) — al confirmar
+ * abre `KgConfirmDialog`, que se apila en `KG_Z_CONFIRM` (2100) por encima
+ * del sheet (2000). Esa escalera está documentada en `kg/confirm-dialog.tsx`.
  *
  * Los `<form action={...}>` de Duplicar/Cerrar/Reabrir viven dentro del sheet
  * también; el submit dispara el Server Action y navega, que cierra el sheet
@@ -63,24 +79,17 @@ export function LaunchHeaderActions({
 }) {
   const [sheetOpen, setSheetOpen] = useState(false);
 
-  const secondaryBtnCls =
-    "inline-flex items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-bg-elevated";
-
-  // Fila mobile: siempre visible como fila full width dentro de un sheet item.
-  const sheetItemCls =
-    "flex w-full items-center gap-2 rounded-md border border-border bg-surface px-3 py-3 text-sm font-medium text-fg hover:bg-bg-elevated";
-
   return (
     <>
       {/* Desktop — botones inline (comportamiento original) */}
       <div className="hidden flex-wrap items-center gap-2 md:flex">
         {canEditLaunch && (
-          <a href={pdfExecutiveUrl} className={secondaryBtnCls}>
+          <a href={pdfExecutiveUrl} className="kg-focus" style={linkBtnStyle}>
             ⬇ PDF ejecutivo
           </a>
         )}
         {canEditProject && (
-          <a href={pdfCommissionsUrl} className={secondaryBtnCls}>
+          <a href={pdfCommissionsUrl} className="kg-focus" style={linkBtnStyle}>
             ⬇ PDF comisiones
           </a>
         )}
@@ -97,7 +106,7 @@ export function LaunchHeaderActions({
         )}
         {canEditLaunch && (
           <form action={duplicateAction}>
-            <button type="submit" className={secondaryBtnCls}>
+            <button type="submit" className="kg-focus" style={secondaryBtn}>
               Duplicar
             </button>
           </form>
@@ -105,13 +114,13 @@ export function LaunchHeaderActions({
         {canEditLaunch &&
           (isClosed ? (
             <form action={reopenAction}>
-              <button type="submit" className={secondaryBtnCls}>
+              <button type="submit" className="kg-focus" style={secondaryBtn}>
                 Reabrir
               </button>
             </form>
           ) : (
             <form action={closeAction}>
-              <button type="submit" className={secondaryBtnCls}>
+              <button type="submit" className="kg-focus" style={secondaryBtn}>
                 Cerrar lanzamiento
               </button>
             </form>
@@ -138,7 +147,8 @@ export function LaunchHeaderActions({
           type="button"
           onClick={() => setSheetOpen(true)}
           aria-label="Más acciones"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border bg-surface text-fg hover:bg-bg-elevated"
+          className="kg-focus kg-hov"
+          style={kebabStyle}
         >
           <svg
             width="16"
@@ -166,7 +176,8 @@ export function LaunchHeaderActions({
           {canEditLaunch && (
             <a
               href={pdfExecutiveUrl}
-              className={sheetItemCls}
+              className="kg-focus"
+              style={sheetItemStyle}
               onClick={() => setSheetOpen(false)}
             >
               ⬇ PDF ejecutivo
@@ -175,7 +186,8 @@ export function LaunchHeaderActions({
           {canEditProject && (
             <a
               href={pdfCommissionsUrl}
-              className={sheetItemCls}
+              className="kg-focus"
+              style={sheetItemStyle}
               onClick={() => setSheetOpen(false)}
             >
               ⬇ PDF comisiones
@@ -183,7 +195,7 @@ export function LaunchHeaderActions({
           )}
           {canEditLaunch && (
             <form action={duplicateAction}>
-              <button type="submit" className={sheetItemCls}>
+              <button type="submit" className="kg-focus" style={sheetItemStyle}>
                 Duplicar
               </button>
             </form>
@@ -191,22 +203,76 @@ export function LaunchHeaderActions({
           {canEditLaunch &&
             (isClosed ? (
               <form action={reopenAction}>
-                <button type="submit" className={sheetItemCls}>
+                <button
+                  type="submit"
+                  className="kg-focus"
+                  style={sheetItemStyle}
+                >
                   Reabrir
                 </button>
               </form>
             ) : (
               <form action={closeAction}>
-                <button type="submit" className={sheetItemCls}>
+                <button
+                  type="submit"
+                  className="kg-focus"
+                  style={sheetItemStyle}
+                >
                   Cerrar lanzamiento
                 </button>
               </form>
             ))}
           {canEditLaunch && (
-            <DeleteButton launchName={launchName} onConfirm={deleteAction} />
+            <DeleteButton
+              launchName={launchName}
+              onConfirm={deleteAction}
+              fullWidth
+            />
           )}
         </div>
       </KgBottomSheet>
     </>
   );
 }
+
+/**
+ * Los PDFs son `<a>`, no `<button>`: `secondaryBtn` no trae `display` ni
+ * `textDecoration`, así que un anchor heredaría el subrayado del layout y
+ * quedaría con la altura del texto en vez de la del botón de al lado.
+ */
+const linkBtnStyle: CSSProperties = {
+  ...secondaryBtn,
+  display: "inline-flex",
+  alignItems: "center",
+  textDecoration: "none",
+  whiteSpace: "nowrap",
+};
+
+/**
+ * Fila del bottom-sheet: mismo botón, pero full width y alineado a la
+ * izquierda. El padding sube a 11px porque en 390px el target táctil de
+ * `secondaryBtn` (8px) queda por debajo de los 44px cómodos.
+ */
+const sheetItemStyle: CSSProperties = {
+  ...secondaryBtn,
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  width: "100%",
+  padding: "11px 14px",
+  fontSize: 13,
+  textAlign: "left",
+  textDecoration: "none",
+};
+
+/** Kebab: cuadrado 36px, mismo borde/fondo que el resto del cluster. */
+const kebabStyle: CSSProperties = {
+  ...secondaryBtn,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 36,
+  height: 36,
+  padding: 0,
+  borderRadius: "var(--kg-r-8)",
+};

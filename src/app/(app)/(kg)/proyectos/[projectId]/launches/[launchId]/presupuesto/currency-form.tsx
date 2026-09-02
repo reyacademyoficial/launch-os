@@ -2,11 +2,13 @@
 
 import { useActionState, useState } from "react";
 
-import { Button } from "@/components/ui/button";
-import { FieldError } from "@/components/ui/field-error";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select } from "@/components/ui/select";
+import {
+  ErrorBanner,
+  Field,
+  inputStyle,
+  panelActionPrimaryBtn,
+} from "@/components/kg/form-primitives";
+import { Panel } from "@/components/kg/panel";
 import { COMMON_CURRENCIES } from "@/lib/budget/types";
 
 import { setBudgetCurrency, type BudgetActionState } from "./actions";
@@ -16,6 +18,10 @@ import { setBudgetCurrency, type BudgetActionState } from "./actions";
  * "Otra…" que revela un input de 3 letras. Se puede cambiar en cualquier
  * momento pero no convierte montos ya cargados — se muestra warning si ya
  * había una moneda distinta.
+ *
+ * Los dos `<select>`/`<input>` son nativos con `inputStyle`: `KgFilterSelect`
+ * navega por `href` y acá el valor tiene que llegar como `FormData` a la
+ * server action.
  */
 export function CurrencyForm({
   projectId,
@@ -40,55 +46,82 @@ export function CurrencyForm({
   );
 
   return (
-    <form
-      action={formAction}
-      className="flex flex-wrap items-end gap-3 rounded-md border border-border bg-surface p-4"
-    >
-      <div className="min-w-[180px]">
-        <Label htmlFor="currency-select">Moneda del lanzamiento</Label>
-        <Select
-          id="currency-select"
-          value={choice}
-          onChange={(e) => setChoice(e.target.value)}
-          name={choice === "__other__" ? undefined : "currency"}
-        >
-          {COMMON_CURRENCIES.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-          <option value="__other__">Otra…</option>
-        </Select>
-      </div>
-
-      {choice === "__other__" && (
-        <div className="min-w-[140px]">
-          <Label htmlFor="currency-other">Código (3 letras)</Label>
-          <Input
-            id="currency-other"
-            name="currency"
-            type="text"
-            maxLength={3}
-            minLength={3}
-            placeholder="ej. GBP"
-            required
-            className="uppercase"
-          />
+    <Panel title="Moneda del lanzamiento">
+      <form
+        action={formAction}
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "flex-end",
+          gap: 12,
+        }}
+      >
+        <div style={{ minWidth: 180, flex: "0 1 220px" }}>
+          <Field label="Moneda" htmlFor="currency-select">
+            <select
+              id="currency-select"
+              value={choice}
+              onChange={(e) => setChoice(e.target.value)}
+              name={choice === "__other__" ? undefined : "currency"}
+              className="kg-focus"
+              style={{ ...inputStyle, fontWeight: 600, cursor: "pointer" }}
+            >
+              {COMMON_CURRENCIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+              <option value="__other__">Otra…</option>
+            </select>
+          </Field>
         </div>
-      )}
 
-      <Button type="submit" disabled={pending}>
-        {pending ? "Guardando…" : currentCurrency ? "Cambiar" : "Guardar"}
-      </Button>
+        {choice === "__other__" && (
+          <div style={{ minWidth: 140, flex: "0 1 160px" }}>
+            <Field label="Código (3 letras)" htmlFor="currency-other" required>
+              <input
+                id="currency-other"
+                name="currency"
+                type="text"
+                maxLength={3}
+                minLength={3}
+                placeholder="ej. GBP"
+                required
+                className="kg-focus"
+                style={{ ...inputStyle, textTransform: "uppercase" }}
+              />
+            </Field>
+          </div>
+        )}
 
-      {currentCurrency && (
-        <p className="w-full text-xs text-fg-subtle">
-          Actual: <strong className="text-fg">{currentCurrency}</strong>. Cambiar
-          la moneda no convierte los montos ya cargados.
-        </p>
-      )}
+        <button
+          type="submit"
+          disabled={pending}
+          className="kg-focus"
+          style={{ ...panelActionPrimaryBtn, opacity: pending ? 0.5 : 1 }}
+        >
+          {pending ? "Guardando…" : currentCurrency ? "Cambiar" : "Guardar"}
+        </button>
 
-      {state && "error" in state && <FieldError>{state.error}</FieldError>}
-    </form>
+        {currentCurrency && (
+          <p
+            className="kg-t6"
+            style={{ margin: 0, flexBasis: "100%", color: "var(--kg-text-3)" }}
+          >
+            Actual:{" "}
+            <strong style={{ color: "var(--kg-text-1)", fontWeight: 700 }}>
+              {currentCurrency}
+            </strong>
+            . Cambiar la moneda no convierte los montos ya cargados.
+          </p>
+        )}
+
+        {state && "error" in state && (
+          <div style={{ flexBasis: "100%" }}>
+            <ErrorBanner message={state.error} />
+          </div>
+        )}
+      </form>
+    </Panel>
   );
 }

@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { ContextBar } from "@/components/kg/context-bar";
+import { EmptyState } from "@/components/kg/empty-state";
 import { IconLaunch } from "@/components/kg/icons";
+import { Panel } from "@/components/kg/panel";
 import {
   listBudgetCountriesForProject,
   listBudgetEntriesForLaunch,
@@ -94,67 +96,85 @@ export default async function LaunchPresupuestoPage({
         ]}
       />
 
-      <div className="space-y-6">
-        <section className="space-y-2">
-          <header>
-            <h2 className="text-base font-semibold text-fg">
-              Presupuesto de lanzamiento
-            </h2>
-            <p className="text-xs text-fg-subtle">
+      {/*
+        La moneda es el gate de la tab. Con permiso de edición se muestra el
+        form; sin permiso, sólo el dato — antes era un <p> con borde propio
+        (tokens viejos), ahora es un Panel como cualquier otro bloque.
+      */}
+      {canEdit ? (
+        <CurrencyForm
+          projectId={projectId}
+          launchId={launchId}
+          currentCurrency={currency}
+        />
+      ) : (
+        currency && (
+          <Panel title="Moneda del lanzamiento">
+            <div className="kg-t6" style={{ color: "var(--kg-text-3)" }}>
+              Los montos de este lanzamiento se cargan en{" "}
+              <strong style={{ color: "var(--kg-text-1)", fontWeight: 700 }}>
+                {currency}
+              </strong>
+              .
+            </div>
+          </Panel>
+        )
+      )}
+
+      {!currency ? (
+        // Vacío como onboarding, no como error: sin moneda no hay nada que
+        // cargar todavía, y el hint dice quién destraba el paso.
+        <Panel title="Presupuesto de lanzamiento" pad={false}>
+          <EmptyState
+            icon={<IconLaunch size={18} />}
+            title="Falta definir la moneda"
+            hint={
+              canEdit
+                ? "Configurá la moneda del lanzamiento acá arriba para empezar a cargar presupuestos por país y etapa."
+                : "Todavía no se configuró la moneda del presupuesto. Pedile al admin u operador del proyecto que la asigne."
+            }
+          />
+        </Panel>
+      ) : (
+        <>
+          {canEdit && (
+            <CountryManager
+              projectId={projectId}
+              launchId={launchId}
+              countries={countries}
+            />
+          )}
+
+          {/*
+            La explicación de las cinco tablas vive como lead-in de la lista y
+            no como Panel propio: un Panel que sólo contiene prosa pesa igual
+            que uno con datos y desordena la jerarquía.
+          */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <p
+              className="kg-t6"
+              style={{ margin: 0, color: "var(--kg-text-3)", maxWidth: 720 }}
+            >
               Cargá manualmente cuánto vas a presupuestar por país en cada
               etapa. El total por etapa es la suma de todos los países; el % es
               la participación de cada uno.
             </p>
-          </header>
-        </section>
 
-        {canEdit ? (
-          <CurrencyForm
-            projectId={projectId}
-            launchId={launchId}
-            currentCurrency={currency}
-          />
-        ) : (
-          currency && (
-            <p className="rounded-md border border-border bg-surface p-4 text-sm text-fg-muted">
-              Moneda: <strong className="text-fg">{currency}</strong>
-            </p>
-          )
-        )}
-
-        {!currency ? (
-          <p className="rounded-md border border-border bg-surface p-4 text-sm text-fg-muted">
-            {canEdit
-              ? "Configurá la moneda antes de empezar a cargar presupuestos."
-              : "Todavía no se configuró la moneda del presupuesto. Pedile al admin/operador que la asigne."}
-          </p>
-        ) : (
-          <>
-            {canEdit && (
-              <CountryManager
+            {BUDGET_STAGES.map((stage) => (
+              <StageTable
+                key={stage}
                 projectId={projectId}
                 launchId={launchId}
+                stage={stage}
+                entries={entriesByStage.get(stage) ?? []}
                 countries={countries}
+                currency={currency}
+                canEdit={canEdit}
               />
-            )}
-
-            <div className="space-y-4">
-              {BUDGET_STAGES.map((stage) => (
-                <StageTable
-                  key={stage}
-                  projectId={projectId}
-                  launchId={launchId}
-                  stage={stage}
-                  entries={entriesByStage.get(stage) ?? []}
-                  countries={countries}
-                  currency={currency}
-                  canEdit={canEdit}
-                />
-              ))}
-            </div>
-          </>
-        )}
-      </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -581,7 +581,6 @@ export interface MessagesByDayArgs extends FetchArgs {
 const MESSAGES_PER_PAGE = 100;
 const MAX_MSG_PAGES_PER_CONV = 20; // hasta 2000 mensajes por conv — sobra
 const PER_CONV_SLEEP_MS = 120; // pacing entre conversaciones (GHL rate-limita)
-const PER_CONV_429_BACKOFF_MS = 2000; // retry una vez después de 429
 
 /**
  * Default de tipos a buscar server-side. Verificado contra location real
@@ -774,19 +773,15 @@ async function accumulateConversationMessages(
       args.conversationId,
     )}/messages?${params.toString()}`;
 
-    let result = await ghlFetch(url, args.token);
-
-    // Retry inline si fue 429 (rate limit).
-    if (!result.ok && result.kind === "rate_limited") {
-      await sleep(PER_CONV_429_BACKOFF_MS);
-      result = await ghlFetch(url, args.token);
-      if (!result.ok && result.kind === "rate_limited") {
-        args.meta.per_conv_rate_limited++;
-        return { kind: "done" }; // seguimos con la próxima conv
-      }
-    }
+    const result = await ghlFetch(url, args.token);
 
     if (!result.ok) {
+      // El backoff por 429 ya lo hace ghlFetch. Si igual llegó acá, la
+      // location está saturada: contamos la conv y seguimos con la próxima.
+      if (result.kind === "rate_limited") {
+        args.meta.per_conv_rate_limited++;
+        return { kind: "done" };
+      }
       // token_invalid → abort todo. Otros errores → contamos y seguimos.
       if (result.kind === "token_invalid") {
         return { kind: "abort", failure: result };
@@ -1203,7 +1198,155 @@ interface RawFetchSuccess {
 }
 type RawFetchResult = RawFetchSuccess | GhlFetchFailure;
 
+// ─── Rate limiting (GHL v2: ~100 req / 10s por location) ───────────────────
+
+/**
+ * GHL v2 aplica un burst limit por location (~100 requests cada 10s) además
+ * del cap diario. El sync dispara tres fetchers en paralelo contra la MISMA
+ * location — daily counts (1 request por día del launch), contacts paginado y
+ * conversations paginado — y cada uno pagina en loop cerrado sin pausa. Eso
+ * supera el burst en segundos, GHL empieza a devolver 429 en cadena y como
+ * `rate_limited` se propaga hacia arriba, el sync entero aborta.
+ *
+ * Cada PIT corresponde a una location, así que la cuota se administra por
+ * token: como mucho MAX_CONCURRENT_REQUESTS en vuelo y RATE_MAX_IN_WINDOW por
+ * ventana de 10s. El techo queda debajo del límite real a propósito — los
+ * webhooks y otras instancias del deploy comparten la misma cuota.
+ */
+const RATE_WINDOW_MS = 10_000;
+const RATE_MAX_IN_WINDOW = 70;
+const MAX_CONCURRENT_REQUESTS = 5;
+const MAX_429_RETRIES = 4;
+const RETRY_BASE_DELAY_MS = 1_000;
+const RETRY_MAX_DELAY_MS = 30_000;
+
+class GhlRateLimiter {
+  private recent: number[] = [];
+  private active = 0;
+  private waiters: Array<() => void> = [];
+  private pausedUntil = 0;
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    await this.acquire();
+    try {
+      return await fn();
+    } finally {
+      this.release();
+    }
+  }
+
+  /**
+   * Frena TODAS las requests de esta location, no sólo la que comió el 429.
+   * Sin esto los otros fetchers en vuelo siguen martillando mientras el que
+   * falló espera su backoff, y el 429 se vuelve permanente.
+   */
+  penalize(delayMs: number): void {
+    this.pausedUntil = Math.max(this.pausedUntil, Date.now() + delayMs);
+  }
+
+  private async acquire(): Promise<void> {
+    for (;;) {
+      const now = Date.now();
+
+      if (now < this.pausedUntil) {
+        await sleep(this.pausedUntil - now);
+        continue;
+      }
+
+      this.recent = this.recent.filter((t) => now - t < RATE_WINDOW_MS);
+
+      if (
+        this.active < MAX_CONCURRENT_REQUESTS &&
+        this.recent.length < RATE_MAX_IN_WINDOW
+      ) {
+        this.active++;
+        this.recent.push(now);
+        return;
+      }
+
+      if (this.recent.length >= RATE_MAX_IN_WINDOW) {
+        // Ventana llena: esperamos a que expire la request más vieja.
+        await sleep(RATE_WINDOW_MS - (now - this.recent[0]!) + 25);
+        continue;
+      }
+
+      // Sólo falta cupo de concurrencia: nos despierta el próximo release().
+      await new Promise<void>((resolve) => this.waiters.push(resolve));
+    }
+  }
+
+  private release(): void {
+    this.active--;
+    this.waiters.shift()?.();
+  }
+}
+
+const limiters = new Map<string, GhlRateLimiter>();
+
+function limiterFor(token: string): GhlRateLimiter {
+  let limiter = limiters.get(token);
+  if (!limiter) {
+    limiter = new GhlRateLimiter();
+    limiters.set(token, limiter);
+  }
+  return limiter;
+}
+
+/**
+ * Cuánto esperar antes del próximo intento. Si GHL mandó `Retry-After` lo
+ * respetamos (capado); si no, backoff exponencial con jitter para que los
+ * fetchers concurrentes no reintenten todos en el mismo milisegundo.
+ */
+function backoffDelayMs(
+  attempt: number,
+  retryAfterSeconds: number | null,
+): number {
+  if (retryAfterSeconds !== null && retryAfterSeconds > 0) {
+    return Math.min(retryAfterSeconds * 1000, RETRY_MAX_DELAY_MS);
+  }
+  const exponential = Math.min(
+    RETRY_BASE_DELAY_MS * 2 ** attempt,
+    RETRY_MAX_DELAY_MS,
+  );
+  return exponential + Math.floor(Math.random() * 250);
+}
+
+/**
+ * Entry point de todas las llamadas a GHL: pasa por el limiter de la location
+ * y reintenta los 429 con backoff. Sólo devuelve `rate_limited` al caller
+ * cuando se agotaron los reintentos — recién ahí el sync debe abortar.
+ */
 async function ghlFetch(
+  url: string,
+  token: string,
+  opts: FetchOptions = {},
+): Promise<RawFetchResult> {
+  const limiter = limiterFor(token);
+  let lastFailure: GhlFetchFailure | null = null;
+
+  for (let attempt = 0; attempt <= MAX_429_RETRIES; attempt++) {
+    const result = await limiter.run(() => ghlFetchOnce(url, token, opts));
+    if (result.ok || result.kind !== "rate_limited") return result;
+
+    lastFailure = result;
+    if (attempt === MAX_429_RETRIES) break;
+
+    const delayMs = backoffDelayMs(attempt, result.retryAfterSeconds ?? null);
+    limiter.penalize(delayMs);
+    await sleep(delayMs);
+  }
+
+  return {
+    ...lastFailure!,
+    detail: {
+      ...lastFailure!.detail,
+      attempts: MAX_429_RETRIES + 1,
+      retries_exhausted: true,
+    },
+  };
+}
+
+async function ghlFetchOnce(
   url: string,
   token: string,
   opts: FetchOptions = {},

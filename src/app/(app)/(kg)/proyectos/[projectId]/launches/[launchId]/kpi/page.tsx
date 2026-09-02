@@ -11,7 +11,13 @@ import { DailyTable } from "@/components/dashboard/launches/daily/daily-table";
 import { RealtimeProbe } from "@/components/dashboard/launches/integrations/realtime-probe";
 import { KpiGrid } from "@/components/dashboard/launches/kpi-grid";
 import { ContextBar, type ContextBarStat } from "@/components/kg/context-bar";
-import { IconLaunch } from "@/components/kg/icons";
+import { EmptyState } from "@/components/kg/empty-state";
+import {
+  ErrorBanner,
+  panelActionSecondaryBtn,
+} from "@/components/kg/form-primitives";
+import { IconLaunch, IconTable } from "@/components/kg/icons";
+import { Panel } from "@/components/kg/panel";
 import { fmtMoney, fmtMultiplier, fmtNumber } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import { aggregateCommunityMetrics } from "@/lib/launch-community/aggregate";
@@ -262,86 +268,139 @@ export default async function LaunchKpiPage({
         stats={contextStats}
       />
 
-      <div className="space-y-10">
-        <KpiGrid
-          kpi={kpi}
-          launchArsPerUsd={arsPerUsd}
-          kpisInUsd={revenueRate !== null}
-          hideRevenueKpis={hideRevenueKpis}
-          ghlNewLeads={ghlNewLeadsTotal}
-        />
+      <KpiGrid
+        kpi={kpi}
+        launchArsPerUsd={arsPerUsd}
+        kpisInUsd={revenueRate !== null}
+        hideRevenueKpis={hideRevenueKpis}
+        ghlNewLeads={ghlNewLeadsTotal}
+      />
 
-        {missingFxNote && (
-          <div className="rounded-md border border-warning/40 bg-warning/10 px-4 py-2 text-sm text-warning">
-            {missingFxNote}
-          </div>
-        )}
+      {/*
+        El aviso FX no es un error: los KPIs se muestran igual, solo que
+        incompletos. `tone="warning"` es exactamente esa distinción — y
+        además baja el `role` a "status" para que el lector de pantalla no
+        interrumpa por algo que ya estaba en la página al cargar. Antes era
+        un div a mano con los tokens viejos `border-warning/40 bg-warning/10`.
+      */}
+      {missingFxNote && <ErrorBanner message={missingFxNote} tone="warning" />}
 
-        <CommunityKpiBlock kpi={kpi} />
+      <CommunityKpiBlock kpi={kpi} />
 
-        <section className="space-y-4">
-          <header className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className="text-base font-semibold text-fg">Datos diarios</h2>
-              <p className="text-xs text-fg-subtle">
-                Leads por canal por día. Alimenta el gráfico de abajo.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {canEditLaunchValue && mergedDaily.length > 0 && (
+      {/*
+        "Datos diarios" era un <section> con <header> propio (h2 `text-fg` +
+        p `text-fg-subtle`) y los botones sueltos al lado. Ahora es el molde
+        canónico del DS: `Panel` con `actions` en la cabecera. La tabla va
+        `pad={false}` porque trae su propio padding de celdas.
+      */}
+      <Panel
+        pad={false}
+        title={
+          <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <span>Datos diarios</span>
+            {/* kg-t6 (12px/500) y no kg-t7: t7 va en VERSALITAS y sirve para
+                etiquetas cortas, no para una frase. */}
+            <span className="kg-t6" style={{ color: "var(--kg-text-3)" }}>
+              Leads por canal por día. Alimenta el gráfico de abajo.
+            </span>
+          </span>
+        }
+        actions={
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              flexShrink: 0,
+            }}
+          >
+            {canEditLaunchValue && mergedDaily.length > 0 && (
+              // `hidden md:contents`: mismo recorte que el "Exportar Excel"
+              // de `financiero/gastos`. En 390px la cabecera del Panel no
+              // hace wrap, y dos botones + el título de dos líneas la
+              // desbordan; descargar un CSV es acción de escritorio.
+              <span className="hidden md:contents">
+                {/*
+                  `panelActionSecondaryBtn` y no `secondaryBtn`: es la
+                  variante de padding chico (6/14) que form-primitives
+                  documenta para la cabecera de un Panel — el mismo botón
+                  que usa gastos. `secondaryBtn` (8/16) haría el header más
+                  alto que el del resto de los paneles.
+                */}
                 <a
                   href={`/api/proyectos/${projectId}/launches/${launchId}/daily/export?format=csv`}
-                  className="inline-flex items-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-semibold text-fg hover:bg-bg-elevated"
+                  className="kg-focus"
+                  title="Descargar los datos diarios en CSV"
+                  style={{
+                    ...panelActionSecondaryBtn,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    textDecoration: "none",
+                    whiteSpace: "nowrap",
+                  }}
                 >
                   ⬇ Exportar CSV
                 </a>
-              )}
-              {canEditLaunchValue && !isClosed && (
-                <DailyFormModal
-                  triggerLabel="+ Agregar día"
-                  title="Agregar día"
-                  submitLabel="Guardar"
-                  action={addDailyAction}
-                />
-              )}
-              {canEditLaunchValue && isClosed && (
-                <p className="text-xs text-fg-subtle">
-                  Lanzamiento cerrado — no se pueden cargar más datos.
-                </p>
-              )}
-            </div>
-          </header>
-
-          {daily.length === 0 && mergedDaily.length === 0 ? (
-            <div className="rounded-md border border-dashed border-border bg-surface/40 p-8 text-center text-sm text-fg-muted">
-              Sin datos diarios cargados.
-              {canEditLaunchValue
-                ? " Agregá uno a mano o configurá la integración para que la API los traiga sola."
-                : " El admin u operador del proyecto los va a cargar."}
-            </div>
-          ) : (
-            <>
-              <DailyTable
-                rows={daily}
-                canEdit={canEditLaunchValue && !isClosed}
-                projectId={projectId}
-                launchId={launchId}
+              </span>
+            )}
+            {canEditLaunchValue && !isClosed && (
+              <DailyFormModal
+                triggerLabel="+ Agregar día"
+                title="Agregar día"
+                submitLabel="Guardar"
+                action={addDailyAction}
               />
-              <div className="rounded-md border border-border bg-surface/40 p-4">
-                <DailyChart
-                  rows={chartRows}
-                  overlayPartialNote={overlayPartialNote}
-                />
-              </div>
-            </>
-          )}
-        </section>
+            )}
+            {canEditLaunchValue && isClosed && (
+              <span className="kg-t6" style={{ color: "var(--kg-text-3)" }}>
+                Cerrado — no se cargan más datos
+              </span>
+            )}
+          </div>
+        }
+      >
+        {daily.length === 0 && mergedDaily.length === 0 ? (
+          // El vacío se trata como onboarding, no como "sin datos": el
+          // `EmptyState` dice qué hacer para llenarlo, y el texto cambia
+          // según si esta persona puede cargarlos. Antes era un div con
+          // `border-dashed border-border` y todo el texto en una sola línea.
+          <EmptyState
+            icon={<IconTable size={18} />}
+            title="Sin datos diarios cargados"
+            hint={
+              canEditLaunchValue
+                ? "Agregá uno a mano o configurá la integración para que la API los traiga sola."
+                : "El admin u operador del proyecto los va a cargar."
+            }
+          />
+        ) : (
+          <DailyTable
+            rows={daily}
+            canEdit={canEditLaunchValue && !isClosed}
+            projectId={projectId}
+            launchId={launchId}
+          />
+        )}
+      </Panel>
 
-        {/* Probe de realtime para que el chart/tabla refresh cuando el sync
-            escribe nuevas filas de ads. Vivía en el page monolítico; lo dejamos
-            en este tab que es donde el efecto es visible. */}
-        <RealtimeProbe launchId={launchId} />
-      </div>
+      {/*
+        El chart salió del <section> de "Datos diarios" y pasó a Panel propio:
+        son dos lecturas distintas (el detalle fila por fila vs. la forma de
+        la curva) y compartir caja las hacía competir. El div contenedor era
+        `rounded-md border border-border bg-surface/40 p-4` — tokens viejos.
+        Sin `fillHeight`: el chart tiene alto propio y la page NO es un flex
+        container de altura completa (ver el wrapper raíz).
+      */}
+      {(daily.length > 0 || mergedDaily.length > 0) && (
+        <Panel title="Leads por día">
+          <DailyChart rows={chartRows} overlayPartialNote={overlayPartialNote} />
+        </Panel>
+      )}
+
+      {/* Probe de realtime para que el chart/tabla refresh cuando el sync
+          escribe nuevas filas de ads. Vivía en el page monolítico; lo dejamos
+          en este tab que es donde el efecto es visible. */}
+      <RealtimeProbe launchId={launchId} />
     </div>
   );
 }

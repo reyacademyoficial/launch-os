@@ -1,7 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import ReactMarkdown from "react-markdown";
+
+import { Drawer } from "@/components/kg/drawer";
+import { smallBtn } from "@/components/kg/form-primitives";
+import { KgMarkdown } from "@/components/kg/markdown";
 
 /**
  * Modal de ayuda paso-a-paso para conectar un provider. Genérico — recibe
@@ -9,7 +12,16 @@ import ReactMarkdown from "react-markdown";
  * página/servidor que lo invoca le pasa el .md leído por
  * `getInstructions(providerId)`.
  *
- * Reusable en Fase 3b para los demás providers sin cambios.
+ * MIGRACIÓN KG
+ * El overlay propio (`fixed inset-0` + header + body scrolleable, todo con
+ * tokens viejos) pasó a `Drawer`: mismo comportamiento de Esc/click-outside
+ * pero centralizado, y en mobile ocupa el ancho completo sin que este archivo
+ * tenga que saberlo.
+ *
+ * El mapeo nodo-por-nodo de `react-markdown` (18 overrides contra `text-fg`,
+ * `text-fg-muted`, `border-accent`…) se borró entero: `KgMarkdown` es
+ * exactamente ese mapeo contra las CSS vars `--kg-*`. Mantener dos
+ * tipografías de markdown en el repo no tenía justificación.
  */
 export function InstructionsModal({
   triggerLabel = "¿Cómo conecto?",
@@ -27,98 +39,29 @@ export function InstructionsModal({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline"
+        className="kg-focus"
+        style={{
+          ...smallBtn,
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+        }}
       >
         <InfoIcon />
         <span>{triggerLabel}</span>
       </button>
 
-      {open && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="instructions-title"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 sm:p-6"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setOpen(false);
-          }}
-        >
-          <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-md border border-border bg-bg-elevated shadow-card">
-            <header className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
-              <h3 id="instructions-title" className="text-lg font-bold text-fg">
-                {title}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                aria-label="Cerrar"
-                className="text-fg-subtle hover:text-fg"
-              >
-                ×
-              </button>
-            </header>
-            <div className="prose-instructions flex-1 overflow-y-auto px-6 py-6 text-sm text-fg">
-              <ReactMarkdown
-                components={{
-                  h1: ({ children }) => (
-                    <h1 className="mb-4 text-xl font-bold text-fg">{children}</h1>
-                  ),
-                  h2: ({ children }) => (
-                    <h2 className="mb-2 mt-6 text-base font-semibold text-fg">
-                      {children}
-                    </h2>
-                  ),
-                  h3: ({ children }) => (
-                    <h3 className="mb-2 mt-4 text-sm font-semibold text-fg">
-                      {children}
-                    </h3>
-                  ),
-                  p: ({ children }) => (
-                    <p className="mb-3 leading-relaxed text-fg-muted">{children}</p>
-                  ),
-                  ol: ({ children }) => (
-                    <ol className="mb-3 ml-5 list-decimal space-y-1 text-fg-muted">
-                      {children}
-                    </ol>
-                  ),
-                  ul: ({ children }) => (
-                    <ul className="mb-3 ml-5 list-disc space-y-1 text-fg-muted">
-                      {children}
-                    </ul>
-                  ),
-                  li: ({ children }) => <li className="text-fg-muted">{children}</li>,
-                  code: ({ children }) => (
-                    <code className="rounded bg-surface px-1.5 py-0.5 text-xs text-fg">
-                      {children}
-                    </code>
-                  ),
-                  blockquote: ({ children }) => (
-                    <blockquote className="my-3 border-l-2 border-accent bg-surface/40 px-4 py-2 text-fg-muted">
-                      {children}
-                    </blockquote>
-                  ),
-                  a: ({ href, children }) => (
-                    <a
-                      href={href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-accent underline hover:opacity-80"
-                    >
-                      {children}
-                    </a>
-                  ),
-                  strong: ({ children }) => (
-                    <strong className="font-semibold text-fg">{children}</strong>
-                  ),
-                  hr: () => <hr className="my-6 border-border" />,
-                }}
-              >
-                {markdown}
-              </ReactMarkdown>
-            </div>
-          </div>
-        </div>
-      )}
+      <Drawer
+        open={open}
+        onClose={() => setOpen(false)}
+        title={title}
+        subtitle="Guía paso a paso para conectar el proveedor."
+        // Más ancho que un form-drawer: son instrucciones con bloques de
+        // código y URLs largas que no conviene envolver a 560px.
+        width={720}
+      >
+        <KgMarkdown text={markdown} />
+      </Drawer>
     </>
   );
 }

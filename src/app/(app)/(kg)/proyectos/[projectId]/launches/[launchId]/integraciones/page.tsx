@@ -3,7 +3,9 @@ import { notFound } from "next/navigation";
 
 import { LaunchIntegrationsSection } from "@/components/dashboard/launches/integrations/launch-integrations-section";
 import { ContextBar } from "@/components/kg/context-bar";
+import { EmptyState } from "@/components/kg/empty-state";
 import { IconLaunch } from "@/components/kg/icons";
+import { Panel } from "@/components/kg/panel";
 import { fmtLaunchWindow, fmtNumber } from "@/lib/format";
 import { getLaunch } from "@/lib/launches/get";
 import { userCanEditLaunchesIn } from "@/lib/supabase/auth";
@@ -36,9 +38,18 @@ export default async function LaunchIntegrationsPage({
   // Cliente y coordinador no editan integraciones — la sección no tiene sentido
   // de mostrar. Le damos un mensaje minimal en vez de un layout vacío.
   if (!canEditLaunchValue) {
+    // El gate va envuelto en Panel para que el vacío tenga el mismo chasis que
+    // el resto de la pestaña — un EmptyState suelto flota sin superficie y se
+    // lee como "la página no cargó" en vez de "no tenés permisos".
     return (
-      <div className="rounded-md border border-dashed border-border bg-surface/40 p-8 text-center text-sm text-fg-muted">
-        Sin permisos para ver o editar las integraciones de este lanzamiento.
+      <div className="flex flex-col gap-5">
+        <Panel pad={false}>
+          <EmptyState
+            icon={<IconLaunch size={18} />}
+            title="Sin permisos"
+            hint="No podés ver ni editar las integraciones de este lanzamiento. Pedile acceso a un admin u operador del proyecto."
+          />
+        </Panel>
       </div>
     );
   }

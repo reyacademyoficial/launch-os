@@ -1,12 +1,16 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
+import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { IconLaunch } from "@/components/kg/icons";
-import { Badge } from "@/components/ui/badge";
+import { Panel } from "@/components/kg/panel";
+import { StatusPill } from "@/components/kg/status-pill";
+import { TONE_VAR } from "@/components/kg/tone";
 import { listAlertRulesForLaunch } from "@/lib/alerts/list";
 import {
   ALERT_METRIC_LABELS,
   type AlertMetric,
+  type AlertRuleRow,
 } from "@/lib/alerts/types";
 import { fmtNumber } from "@/lib/format";
 import { userCanEditLaunchesIn } from "@/lib/supabase/auth";
@@ -29,6 +33,16 @@ export const metadata: Metadata = { title: "Alertas · Lanzamiento" };
  * Las reglas evalúan post-sync OK y post-daily manual. La evaluación es
  * idempotente por (launch, rule, día UTC) — disparar el mismo día no
  * duplica la notif.
+ *
+ * MIGRACIÓN KG
+ * La `<table>` a mano pasó a `KgDataTable` dentro de un `Panel`, el `Badge`
+ * legacy a `StatusPill` y el "sin reglas configuradas" al EmptyState que la
+ * propia tabla renderiza (`emptyTitle` / `emptyHint`). El `ContextBar` ya
+ * estaba y se conserva tal cual.
+ *
+ * El wrapper raíz sigue siendo `flex flex-col gap-5` (NO `h-full min-h-0`):
+ * esta page apila dos Panels y ninguno usa `fillHeight`, así que clavarle la
+ * altura al viewport dejaría el segundo bloque fuera del scroll de `main`.
  */
 export default async function LaunchAlertasPage({
   params,
@@ -48,6 +62,61 @@ export default async function LaunchAlertasPage({
   // dice cuánta superficie del launch está realmente monitoreada.
   const metricsCovered = new Set(rules.map((r) => r.metric)).size;
 
+  const columns: ReadonlyArray<Column<AlertRuleRow>> = [
+    {
+      key: "metric",
+      label: "Métrica",
+      render: (r) => (
+        <strong style={{ fontWeight: 600, color: "var(--kg-text-1)" }}>
+          {ALERT_METRIC_LABELS[r.metric as AlertMetric]}
+        </strong>
+      ),
+    },
+    {
+      key: "condition",
+      label: "Condición",
+      width: "200px",
+      // `numeric` para que el umbral salga con tabular-nums: alineado entre
+      // filas aunque el operador cambie de ancho.
+      numeric: true,
+      render: (r) =>
+        r.metric === "sin_leads"
+          ? `≥ ${r.threshold} días`
+          : `${r.operator} ${r.threshold}`,
+    },
+    {
+      key: "active",
+      label: "Estado",
+      width: "140px",
+      render: (r) => (
+        <StatusPill
+          text={r.active ? "Activa" : "Inactiva"}
+          tone={r.active ? TONE_VAR.positive : "var(--kg-neutral-500)"}
+        />
+      ),
+    },
+    // La columna de acciones sólo existe si el usuario puede editar — mismo
+    // gate que antes, ahora expresado como columna condicional.
+    ...(canEdit
+      ? [
+          {
+            key: "actions",
+            label: "Acciones",
+            align: "right" as const,
+            width: "200px",
+            render: (r: AlertRuleRow) => (
+              <AlertRuleRowActions
+                projectId={projectId}
+                launchId={launchId}
+                ruleId={r.id}
+                active={r.active}
+              />
+            ),
+          },
+        ]
+      : []),
+  ];
+
   return (
     <div className="flex flex-col gap-5">
       <ContextBar
@@ -66,83 +135,40 @@ export default async function LaunchAlertasPage({
         ]}
       />
 
-      <div className="space-y-8">
-        <section className="space-y-2">
-          <header>
-            <h2 className="text-base font-semibold text-fg">Reglas de alerta</h2>
-            <p className="text-xs text-fg-subtle">
+      {canEdit && (
+        <Panel title="Nueva regla">
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <p className="kg-t6" style={{ color: "var(--kg-text-3)", margin: 0 }}>
               Configurá umbrales por lanzamiento. Cuando se cruzan, el equipo
               recibe una notificación deduplicada por día.
             </p>
-          </header>
-        </section>
+            <AlertRuleForm projectId={projectId} launchId={launchId} />
+          </div>
+        </Panel>
+      )}
 
-        {canEdit && <AlertRuleForm projectId={projectId} launchId={launchId} />}
-
-        <section className="space-y-3">
-          {rules.length === 0 ? (
-            <p className="text-sm text-fg-muted">
-              Sin reglas configuradas todavía
-              {canEdit ? "." : ". Pedile al admin/operador que cree alguna."}
-            </p>
-          ) : (
-            <div className="overflow-x-auto rounded-md border border-border">
-              <table className="w-full min-w-[480px] text-sm">
-                <thead className="bg-surface text-left text-xs uppercase tracking-wide text-fg-subtle">
-                  <tr>
-                    <th scope="col" className="px-4 py-3 font-medium">
-                      Métrica
-                    </th>
-                    <th scope="col" className="px-4 py-3 font-medium">
-                      Condición
-                    </th>
-                    <th scope="col" className="px-4 py-3 font-medium">
-                      Estado
-                    </th>
-                    {canEdit && (
-                      <th scope="col" className="px-4 py-3 text-right font-medium">
-                        Acciones
-                      </th>
-                    )}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rules.map((r) => (
-                    <tr
-                      key={r.id}
-                      className="border-t border-border transition-colors hover:bg-bg-elevated"
-                    >
-                      <td className="px-4 py-3 font-medium text-fg">
-                        {ALERT_METRIC_LABELS[r.metric as AlertMetric]}
-                      </td>
-                      <td className="px-4 py-3 text-fg-muted">
-                        {r.metric === "sin_leads"
-                          ? `≥ ${r.threshold} días`
-                          : `${r.operator} ${r.threshold}`}
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge variant={r.active ? "success" : "neutral"}>
-                          {r.active ? "Activa" : "Inactiva"}
-                        </Badge>
-                      </td>
-                      {canEdit && (
-                        <td className="px-4 py-3 text-right">
-                          <AlertRuleRowActions
-                            projectId={projectId}
-                            launchId={launchId}
-                            ruleId={r.id}
-                            active={r.active}
-                          />
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      </div>
+      <Panel
+        title="Reglas de alerta"
+        pad={false}
+        actions={
+          <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+            {canEdit ? "Podés editarlas" : "Solo lectura"}
+          </span>
+        }
+      >
+        <KgDataTable
+          columns={columns}
+          rows={rules}
+          rowKey={(r) => r.id}
+          totalCount={rules.length}
+          emptyTitle="Sin reglas configuradas"
+          emptyHint={
+            canEdit
+              ? "Creá la primera arriba: elegí métrica, operador y umbral."
+              : "Pedile al admin u operador del proyecto que cree alguna."
+          }
+        />
+      </Panel>
     </div>
   );
 }

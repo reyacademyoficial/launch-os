@@ -2,10 +2,12 @@
 
 import { useActionState, useRef, useEffect } from "react";
 
-import { Button } from "@/components/ui/button";
-import { FieldError } from "@/components/ui/field-error";
-import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
+import {
+  ErrorBanner,
+  Field,
+  inputStyle,
+  panelActionPrimaryBtn,
+} from "@/components/kg/form-primitives";
 import type { BudgetCountryRow, BudgetStage } from "@/lib/budget/types";
 
 import { upsertBudgetEntry, type BudgetActionState } from "./actions";
@@ -17,6 +19,10 @@ import { upsertBudgetEntry, type BudgetActionState } from "./actions";
  *
  * Si no hay países disponibles (todos ya cargados o el catálogo está vacío)
  * el form no se renderiza — el mensaje lo maneja el padre.
+ *
+ * El `<select>` va nativo con `inputStyle` y NO con `KgFilterSelect`: esa
+ * primitiva navega a un `href` por opción (filtro por URL), mientras que acá
+ * el valor tiene que viajar en el `FormData` de la server action.
  */
 export function EntryForm({
   projectId,
@@ -40,39 +46,72 @@ export function EntryForm({
     if (state && "ok" in state) formRef.current?.reset();
   }, [state]);
 
+  const countryId = `budget-country-${stage}`;
+  const amountId = `budget-amount-${stage}`;
+
   return (
     <form
       ref={formRef}
       action={formAction}
-      className="flex flex-wrap items-end gap-2 border-t border-border bg-bg-elevated px-4 py-3"
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "flex-end",
+        gap: 10,
+        padding: "14px 20px",
+        borderTop: "1px solid var(--kg-border-subtle)",
+      }}
     >
       <input type="hidden" name="stage" value={stage} />
-      <div className="min-w-[180px]">
-        <Select name="country_id" required defaultValue="">
-          <option value="" disabled>
-            Elegir país…
-          </option>
-          {availableCountries.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
+      <div style={{ minWidth: 180, flex: "1 1 180px" }}>
+        <Field label="País" htmlFor={countryId} required>
+          <select
+            id={countryId}
+            name="country_id"
+            required
+            defaultValue=""
+            className="kg-focus"
+            style={{ ...inputStyle, fontWeight: 600, cursor: "pointer" }}
+          >
+            <option value="" disabled>
+              Elegir país…
             </option>
-          ))}
-        </Select>
+            {availableCountries.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </Field>
       </div>
-      <div className="min-w-[140px]">
-        <Input
-          name="amount"
-          type="number"
-          min={0}
-          step="0.01"
-          placeholder="Monto"
-          required
-        />
+      <div style={{ minWidth: 140, flex: "0 1 160px" }}>
+        <Field label="Monto" htmlFor={amountId} required>
+          <input
+            id={amountId}
+            name="amount"
+            type="number"
+            min={0}
+            step="0.01"
+            placeholder="0.00"
+            required
+            className="kg-focus kg-num"
+            style={{ ...inputStyle, textAlign: "right" }}
+          />
+        </Field>
       </div>
-      <Button type="submit" disabled={pending}>
+      <button
+        type="submit"
+        disabled={pending}
+        className="kg-focus"
+        style={{ ...panelActionPrimaryBtn, opacity: pending ? 0.5 : 1 }}
+      >
         {pending ? "Guardando…" : "Agregar"}
-      </Button>
-      {state && "error" in state && <FieldError>{state.error}</FieldError>}
+      </button>
+      {state && "error" in state && (
+        <div style={{ flexBasis: "100%" }}>
+          <ErrorBanner message={state.error} />
+        </div>
+      )}
     </form>
   );
 }

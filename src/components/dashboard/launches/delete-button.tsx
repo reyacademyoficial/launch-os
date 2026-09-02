@@ -2,101 +2,96 @@
 
 import { useState, useTransition } from "react";
 
-import { Button } from "@/components/ui/button";
+import { KgConfirmDialog } from "@/components/kg/confirm-dialog";
+import { dangerBtn } from "@/components/kg/form-primitives";
 
+/**
+ * Palabra del type-to-confirm. Se sigue declarando acá porque es parte del
+ * contrato de ESTA acción (borrar un lanzamiento entero es irreversible), no
+ * del diálogo: `KgConfirmDialog` la recibe por `confirmWord` y sólo habilita
+ * el botón destructivo cuando el input coincide exacto.
+ */
 const CONFIRM_WORD = "DELETE";
 
 /**
- * Type-to-confirm delete dialog, matching the prototype's UX.
+ * Borrar lanzamiento, con confirmación type-to-confirm.
  *
- * Takes a bound Server Action as `onConfirm`. The Server Action does its own
- * `requireCanEditProject` check; this component is for UX only.
+ * QUÉ CAMBIÓ EN LA MIGRACIÓN KG
+ * Este archivo montaba su propio overlay `fixed inset-0 z-[2100]` con caja,
+ * input y dos botones — ~60 LOC de chrome duplicado sobre tokens viejos
+ * (`bg-bg-elevated`, `border-border`, `text-fg`, `focus:ring-accent`). Todo
+ * eso es ahora `KgConfirmDialog`, que documenta en su cabecera por qué es un
+ * overlay propio y no un `Drawer`: el 2100 salió justamente de acá, así que
+ * el apilado sobre el `KgBottomSheet` (2000) del kebab mobile se conserva —
+ * ahora con nombre (`KG_Z_CONFIRM`) en vez de un literal suelto.
+ *
+ * El diálogo también agrega lo que este modal no tenía: trampa de foco,
+ * restitución del foco al cerrar, `stopPropagation` del Esc (para no cerrar
+ * el sheet de abajo de un saque) y bloqueo del cierre mientras la acción
+ * corre.
+ *
+ * POR QUÉ SE MANTIENE `useTransition`
+ * `KgConfirmDialog` sabe entrar solo en pending si `onConfirm` devuelve una
+ * Promise, pero acá el Server Action navega/revalida: envolverlo en una
+ * transition es lo que mantiene la UI responsiva durante el re-render del
+ * árbol. Se le pasa el `pending` externo (el diálogo lo OR-ea con el suyo).
+ *
+ * El Server Action hace su propio `requireCanEditProject`; este componente es
+ * sólo UX.
  */
 export function DeleteButton({
   launchName,
   onConfirm,
+  fullWidth = false,
 }: {
   readonly launchName: string;
   readonly onConfirm: () => Promise<void>;
+  /**
+   * En el bottom-sheet mobile las acciones son filas full width. Sin esto el
+   * disparador quedaba como una pastilla suelta a la izquierda, desalineada
+   * con "Duplicar" / "Cerrar lanzamiento".
+   */
+  readonly fullWidth?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [input, setInput] = useState("");
   const [isPending, startTransition] = useTransition();
-
-  const canConfirm = input === CONFIRM_WORD;
-
-  function close() {
-    setOpen(false);
-    setInput("");
-  }
 
   return (
     <>
-      <Button
+      <button
         type="button"
-        variant="secondary"
-        className="!border-error/40 !text-error hover:!bg-error/10"
         onClick={() => setOpen(true)}
+        className="kg-focus"
+        style={
+          fullWidth
+            ? { ...dangerBtn, width: "100%", padding: "11px 14px", fontSize: 13 }
+            : dangerBtn
+        }
       >
         Borrar
-      </Button>
+      </button>
 
-      {open && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="delete-launch-title"
-          className="fixed inset-0 z-[2100] flex items-center justify-center bg-black/70 p-6"
-          onClick={(e) => {
-            if (e.target === e.currentTarget && !isPending) close();
-          }}
-        >
-          <div className="w-full max-w-md rounded-md border border-border bg-bg-elevated p-6 shadow-card">
-            <h3 id="delete-launch-title" className="text-lg font-bold text-fg">
-              Borrar lanzamiento
-            </h3>
-            <p className="mt-2 text-sm text-fg-muted">
-              Vas a borrar <strong className="text-fg">{launchName}</strong>. Esta
-              acción no se puede deshacer.
-            </p>
-            <p className="mt-3 text-sm text-fg-muted">
-              Escribí <code className="rounded bg-surface px-1.5 py-0.5 text-fg">{CONFIRM_WORD}</code>{" "}
-              para confirmar:
-            </p>
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              autoFocus
-              autoComplete="off"
-              className="mt-2 w-full rounded-md border border-border bg-input px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
-            />
-
-            <div className="mt-6 flex justify-end gap-3">
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={close}
-                disabled={isPending}
-              >
-                Cancelar
-              </Button>
-              <Button
-                type="button"
-                disabled={!canConfirm || isPending}
-                className="!bg-error hover:!opacity-90"
-                onClick={() => {
-                  startTransition(async () => {
-                    await onConfirm();
-                  });
-                }}
-              >
-                {isPending ? "Borrando…" : "Borrar definitivamente"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <KgConfirmDialog
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Borrar lanzamiento"
+        description={
+          <>
+            Vas a borrar{" "}
+            <b style={{ color: "var(--kg-text-1)" }}>{launchName}</b>. Esta
+            acción no se puede deshacer.
+          </>
+        }
+        confirmWord={CONFIRM_WORD}
+        confirmLabel="Borrar definitivamente"
+        pendingLabel="Borrando…"
+        pending={isPending}
+        onConfirm={() => {
+          startTransition(async () => {
+            await onConfirm();
+          });
+        }}
+      />
     </>
   );
 }

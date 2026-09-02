@@ -2,10 +2,15 @@
 
 import { useActionState, useTransition } from "react";
 
-import { Button } from "@/components/ui/button";
-import { FieldError } from "@/components/ui/field-error";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { EmptyState } from "@/components/kg/empty-state";
+import {
+  ErrorBanner,
+  Field,
+  inputStyle,
+  panelActionPrimaryBtn,
+} from "@/components/kg/form-primitives";
+import { IconLaunch } from "@/components/kg/icons";
+import { Panel } from "@/components/kg/panel";
 import type { BudgetCountryRow } from "@/lib/budget/types";
 
 import {
@@ -35,52 +40,81 @@ export function CountryManager({
   );
 
   return (
-    <div className="space-y-3 rounded-md border border-border bg-surface p-4">
-      <div>
-        <h3 className="text-sm font-semibold text-fg">Países del proyecto</h3>
-        <p className="text-xs text-fg-subtle">
-          Los países se agregan una vez y se reusan en todos los lanzamientos del
-          proyecto. Borrar un país elimina también todas sus entradas de
+    <Panel title="Países del proyecto">
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <p className="kg-t6" style={{ margin: 0, color: "var(--kg-text-3)" }}>
+          Los países se agregan una vez y se reusan en todos los lanzamientos
+          del proyecto. Borrar un país elimina también todas sus entradas de
           presupuesto.
         </p>
-      </div>
 
-      <form action={formAction} className="flex flex-wrap items-end gap-3">
-        <div className="min-w-[220px] flex-1">
-          <Label htmlFor="country-name">Nuevo país</Label>
-          <Input
-            id="country-name"
-            name="name"
-            type="text"
-            maxLength={80}
-            placeholder="ej. Argentina"
-            required
+        <form
+          action={formAction}
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "flex-end",
+            gap: 12,
+          }}
+        >
+          <div style={{ minWidth: 220, flex: "1 1 220px" }}>
+            <Field label="Nuevo país" htmlFor="country-name" required>
+              <input
+                id="country-name"
+                name="name"
+                type="text"
+                maxLength={80}
+                placeholder="ej. Argentina"
+                required
+                className="kg-focus"
+                style={inputStyle}
+              />
+            </Field>
+          </div>
+          <button
+            type="submit"
+            disabled={pending}
+            className="kg-focus"
+            style={{ ...panelActionPrimaryBtn, opacity: pending ? 0.5 : 1 }}
+          >
+            {pending ? "Agregando…" : "Agregar"}
+          </button>
+          {state && "error" in state && (
+            <div style={{ flexBasis: "100%" }}>
+              <ErrorBanner message={state.error} />
+            </div>
+          )}
+        </form>
+
+        {countries.length === 0 ? (
+          <EmptyState
+            icon={<IconLaunch size={18} />}
+            title="Todavía no hay países cargados"
+            hint="Agregá el primero acá arriba para empezar a asignar presupuesto por etapa."
           />
-        </div>
-        <Button type="submit" disabled={pending}>
-          {pending ? "Agregando…" : "Agregar"}
-        </Button>
-        {state && "error" in state && <FieldError>{state.error}</FieldError>}
-      </form>
-
-      {countries.length === 0 ? (
-        <p className="text-sm text-fg-muted">
-          Todavía no hay países cargados. Agregá el primero para empezar a
-          asignar presupuesto.
-        </p>
-      ) : (
-        <ul className="flex flex-wrap gap-2 pt-2">
-          {countries.map((c) => (
-            <CountryChip
-              key={c.id}
-              projectId={projectId}
-              launchId={launchId}
-              country={c}
-            />
-          ))}
-        </ul>
-      )}
-    </div>
+        ) : (
+          <ul
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 8,
+              listStyle: "none",
+              margin: 0,
+              padding: 0,
+            }}
+          >
+            {countries.map((c) => (
+              <CountryChip
+                key={c.id}
+                projectId={projectId}
+                launchId={launchId}
+                country={c}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
+    </Panel>
   );
 }
 
@@ -106,14 +140,39 @@ function CountryChip({
   }
 
   return (
-    <li className="inline-flex items-center gap-2 rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-fg">
+    <li
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "5px 10px",
+        borderRadius: 999,
+        background: "var(--kg-surface-2-solid)",
+        border: "1px solid var(--kg-border-subtle)",
+        color: "var(--kg-text-1)",
+        fontSize: 12,
+        fontWeight: 600,
+        opacity: pending ? 0.5 : 1,
+      }}
+    >
       <span>{country.name}</span>
       <button
         type="button"
         onClick={handleDelete}
         disabled={pending}
         aria-label={`Borrar ${country.name}`}
-        className="text-error hover:text-error/80 disabled:opacity-50"
+        className="kg-focus"
+        style={{
+          background: "none",
+          border: "none",
+          padding: 0,
+          lineHeight: 1,
+          // El chip es neutro; el rojo vive SÓLO en la acción destructiva.
+          color: "var(--kg-negative-500)",
+          cursor: pending ? "wait" : "pointer",
+          fontSize: 14,
+          fontWeight: 700,
+        }}
       >
         ×
       </button>
