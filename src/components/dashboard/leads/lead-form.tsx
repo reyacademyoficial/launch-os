@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect } from "react";
 
-import type { LeadActionState } from "@/app/(app)/proyectos/[projectId]/leads/actions";
+import type { LeadActionState } from "@/app/(app)/(kg)/proyectos/[projectId]/leads/actions";
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field-error";
 import { Input } from "@/components/ui/input";

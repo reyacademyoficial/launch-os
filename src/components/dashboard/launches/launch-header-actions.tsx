@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import type { LaunchActionState } from "@/app/(app)/proyectos/[projectId]/launches/actions";
+import type { LaunchActionState } from "@/app/(app)/(kg)/proyectos/[projectId]/launches/actions";
 import { KgBottomSheet } from "@/components/kg/bottom-sheet";
 import type { LaunchRow } from "@/lib/launches/types";
 

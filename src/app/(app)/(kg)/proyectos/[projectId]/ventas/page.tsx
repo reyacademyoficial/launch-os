@@ -1,12 +1,15 @@
 import type { Metadata } from "next";
 
 import { ProjectSalesView } from "@/components/dashboard/sales/project-sales-view";
+import { ContextBar } from "@/components/kg/context-bar";
+import { IconLaunch } from "@/components/kg/icons";
 import { listBanks } from "@/lib/banks/list";
 import { listInvoicesForSales } from "@/lib/invoices/list-by-sale";
 import {
   listCommissionRules,
   listPaymentModalities,
 } from "@/lib/commissions/list";
+import { fmtNumber } from "@/lib/format";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { listProjectSalesData } from "@/lib/launch-sales/list";
 import { buildFxLookup, buildSalesFxContext, loadProjectFxRates } from "@/lib/money";
@@ -140,15 +143,29 @@ export default async function ProjectSalesPage({
   }
 
   return (
-    <section className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-bold">Ventas</h1>
-        <p className="mt-1 text-sm text-fg-muted">
-          Todas las ventas del proyecto. Tocá el nombre del alumno para abrir su
-          ficha y editar la venta o cargar cobros. Para vencimientos y foco por
-          lanzamiento, usá <b>Cobros</b>.
-        </p>
-      </header>
+    <div className="flex h-full min-h-0 flex-col gap-5">
+      {/*
+        Conteos y no importes: las ventas del proyecto conviven en ARS y USD y
+        acá el contexto FX sólo se usa fila por fila (fxLookup), no para un
+        total agregado. Sumar `amount` suelto mezclaría monedas y daría un
+        número falso — el agregado en USD vive en Cobros.
+      */}
+      <ContextBar
+        icon={<IconLaunch size={16} />}
+        title="Ventas"
+        stats={[
+          { l: "Ventas", v: fmtNumber(salesData.sales.length) },
+          { l: "Alumnos con venta", v: fmtNumber(salesData.leads.length) },
+          { l: "Cobros cargados", v: fmtNumber(salesData.payments.length) },
+          { l: "Lanzamientos", v: fmtNumber(launches.length) },
+        ]}
+      />
+
+      <p className="text-sm text-fg-muted">
+        Todas las ventas del proyecto. Tocá el nombre del alumno para abrir su
+        ficha y editar la venta o cargar cobros. Para vencimientos y foco por
+        lanzamiento, usá <b>Cobros</b>.
+      </p>
 
       <ProjectSalesView
         projectId={projectId}
@@ -180,6 +197,6 @@ export default async function ProjectSalesPage({
         fxLookup={fxLookup}
         hideCommission={hideCommission}
       />
-    </section>
+    </div>
   );
 }

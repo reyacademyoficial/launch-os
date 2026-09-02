@@ -11,7 +11,7 @@ import {
   type ImportRowError,
   type PreviewResult,
   type ValidateResult,
-} from "@/app/(app)/proyectos/[projectId]/leads/import-actions";
+} from "@/app/(app)/(kg)/proyectos/[projectId]/leads/import-actions";
 import { IMPORT_FIELDS, type ImportMapping } from "@/lib/leads/import-config";
 
 /**

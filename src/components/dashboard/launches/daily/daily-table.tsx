@@ -1,7 +1,7 @@
 import {
   deleteDailyEntry,
   updateDailyEntry,
-} from "@/app/(app)/proyectos/[projectId]/launches/[launchId]/daily-actions";
+} from "@/app/(app)/(kg)/proyectos/[projectId]/launches/[launchId]/daily-actions";
 import { fmtDate, fmtNumber } from "@/lib/format";
 import {
   CHANNEL_LABELS,

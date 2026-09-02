@@ -10,6 +10,9 @@ import { DailyFormModal } from "@/components/dashboard/launches/daily/daily-form
 import { DailyTable } from "@/components/dashboard/launches/daily/daily-table";
 import { RealtimeProbe } from "@/components/dashboard/launches/integrations/realtime-probe";
 import { KpiGrid } from "@/components/dashboard/launches/kpi-grid";
+import { ContextBar, type ContextBarStat } from "@/components/kg/context-bar";
+import { IconLaunch } from "@/components/kg/icons";
+import { fmtMoney, fmtMultiplier, fmtNumber } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import { aggregateCommunityMetrics } from "@/lib/launch-community/aggregate";
 import { listSendflowDailyForLaunch } from "@/lib/launch-community/daily";
@@ -228,86 +231,117 @@ export default async function LaunchKpiPage({
   });
   const overlayPartialNote = buildOverlayPartialNote(recentRuns);
 
+  // Resumen para la barra flotante. El operador no ve dinero facturado (misma
+  // regla que `KpiGrid`), así que en ese rol el cuarto stat cae en los leads
+  // de GHL — ejecución pura, que sí puede mirar.
+  const contextStats: ContextBarStat[] = [
+    { l: "Leads totales", v: fmtNumber(kpi.totalLeads) },
+    { l: "Inversión", v: fmtMoney(kpi.totalInvestment) },
+    { l: "Ventas", v: fmtNumber(kpi.ventas) },
+    hideRevenueKpis
+      ? { l: "Leads GHL", v: fmtNumber(ghlNewLeadsTotal) }
+      : {
+          l: "ROAS real",
+          v: fmtMultiplier(kpi.roasReal),
+          // 1x es el break-even: por debajo, lo cobrado no cubre la inversión.
+          // Sin inversión cargada el ratio da 0 y pintarlo sería ruido.
+          c:
+            kpi.totalInvestment > 0
+              ? kpi.roasReal >= 1
+                ? "#00D084"
+                : "#DC143C"
+              : undefined,
+        },
+  ];
+
   return (
-    <div className="space-y-10">
-      <KpiGrid
-        kpi={kpi}
-        launchArsPerUsd={arsPerUsd}
-        kpisInUsd={revenueRate !== null}
-        hideRevenueKpis={hideRevenueKpis}
-        ghlNewLeads={ghlNewLeadsTotal}
+    <div className="flex flex-col gap-5">
+      <ContextBar
+        icon={<IconLaunch size={16} />}
+        title="KPI"
+        stats={contextStats}
       />
 
-      {missingFxNote && (
-        <div className="rounded-md border border-warning/40 bg-warning/10 px-4 py-2 text-sm text-warning">
-          {missingFxNote}
-        </div>
-      )}
+      <div className="space-y-10">
+        <KpiGrid
+          kpi={kpi}
+          launchArsPerUsd={arsPerUsd}
+          kpisInUsd={revenueRate !== null}
+          hideRevenueKpis={hideRevenueKpis}
+          ghlNewLeads={ghlNewLeadsTotal}
+        />
 
-      <CommunityKpiBlock kpi={kpi} />
-
-      <section className="space-y-4">
-        <header className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold text-fg">Datos diarios</h2>
-            <p className="text-xs text-fg-subtle">
-              Leads por canal por día. Alimenta el gráfico de abajo.
-            </p>
+        {missingFxNote && (
+          <div className="rounded-md border border-warning/40 bg-warning/10 px-4 py-2 text-sm text-warning">
+            {missingFxNote}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {canEditLaunchValue && mergedDaily.length > 0 && (
-              <a
-                href={`/api/proyectos/${projectId}/launches/${launchId}/daily/export?format=csv`}
-                className="inline-flex items-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-semibold text-fg hover:bg-bg-elevated"
-              >
-                ⬇ Exportar CSV
-              </a>
-            )}
-            {canEditLaunchValue && !isClosed && (
-              <DailyFormModal
-                triggerLabel="+ Agregar día"
-                title="Agregar día"
-                submitLabel="Guardar"
-                action={addDailyAction}
-              />
-            )}
-            {canEditLaunchValue && isClosed && (
-              <p className="text-xs text-fg-subtle">
-                Lanzamiento cerrado — no se pueden cargar más datos.
-              </p>
-            )}
-          </div>
-        </header>
-
-        {daily.length === 0 && mergedDaily.length === 0 ? (
-          <div className="rounded-md border border-dashed border-border bg-surface/40 p-8 text-center text-sm text-fg-muted">
-            Sin datos diarios cargados.
-            {canEditLaunchValue
-              ? " Agregá uno a mano o configurá la integración para que la API los traiga sola."
-              : " El admin u operador del proyecto los va a cargar."}
-          </div>
-        ) : (
-          <>
-            <DailyTable
-              rows={daily}
-              canEdit={canEditLaunchValue && !isClosed}
-              projectId={projectId}
-              launchId={launchId}
-            />
-            <div className="rounded-md border border-border bg-surface/40 p-4">
-              <DailyChart
-                rows={chartRows}
-                overlayPartialNote={overlayPartialNote}
-              />
-            </div>
-          </>
         )}
-      </section>
 
-      {/* Probe de realtime para que el chart/tabla refresh cuando el sync
-          escribe nuevas filas de ads. Vivía en el page monolítico; lo dejamos
-          en este tab que es donde el efecto es visible. */}
-      <RealtimeProbe launchId={launchId} />
+        <CommunityKpiBlock kpi={kpi} />
+
+        <section className="space-y-4">
+          <header className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold text-fg">Datos diarios</h2>
+              <p className="text-xs text-fg-subtle">
+                Leads por canal por día. Alimenta el gráfico de abajo.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {canEditLaunchValue && mergedDaily.length > 0 && (
+                <a
+                  href={`/api/proyectos/${projectId}/launches/${launchId}/daily/export?format=csv`}
+                  className="inline-flex items-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-semibold text-fg hover:bg-bg-elevated"
+                >
+                  ⬇ Exportar CSV
+                </a>
+              )}
+              {canEditLaunchValue && !isClosed && (
+                <DailyFormModal
+                  triggerLabel="+ Agregar día"
+                  title="Agregar día"
+                  submitLabel="Guardar"
+                  action={addDailyAction}
+                />
+              )}
+              {canEditLaunchValue && isClosed && (
+                <p className="text-xs text-fg-subtle">
+                  Lanzamiento cerrado — no se pueden cargar más datos.
+                </p>
+              )}
+            </div>
+          </header>
+
+          {daily.length === 0 && mergedDaily.length === 0 ? (
+            <div className="rounded-md border border-dashed border-border bg-surface/40 p-8 text-center text-sm text-fg-muted">
+              Sin datos diarios cargados.
+              {canEditLaunchValue
+                ? " Agregá uno a mano o configurá la integración para que la API los traiga sola."
+                : " El admin u operador del proyecto los va a cargar."}
+            </div>
+          ) : (
+            <>
+              <DailyTable
+                rows={daily}
+                canEdit={canEditLaunchValue && !isClosed}
+                projectId={projectId}
+                launchId={launchId}
+              />
+              <div className="rounded-md border border-border bg-surface/40 p-4">
+                <DailyChart
+                  rows={chartRows}
+                  overlayPartialNote={overlayPartialNote}
+                />
+              </div>
+            </>
+          )}
+        </section>
+
+        {/* Probe de realtime para que el chart/tabla refresh cuando el sync
+            escribe nuevas filas de ads. Vivía en el page monolítico; lo dejamos
+            en este tab que es donde el efecto es visible. */}
+        <RealtimeProbe launchId={launchId} />
+      </div>
     </div>
   );
 }

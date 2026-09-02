@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useState } from "react";
 
-import type { DailyActionState } from "@/app/(app)/proyectos/[projectId]/launches/[launchId]/daily-actions";
+import type { DailyActionState } from "@/app/(app)/(kg)/proyectos/[projectId]/launches/[launchId]/daily-actions";
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field-error";
 import { Input } from "@/components/ui/input";

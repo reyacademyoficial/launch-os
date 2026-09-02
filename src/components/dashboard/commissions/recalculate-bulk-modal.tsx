@@ -6,7 +6,7 @@ import type {
   RecalculateBulkFilters,
   RecalculateBulkPreview,
   RecalculateBulkResult,
-} from "@/app/(app)/proyectos/[projectId]/leads/sale-actions";
+} from "@/app/(app)/(kg)/proyectos/[projectId]/leads/sale-actions";
 import { Button } from "@/components/ui/button";
 
 type PreviewAction = (

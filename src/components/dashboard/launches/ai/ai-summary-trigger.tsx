@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 
-import { generateLaunchSummary } from "@/app/(app)/proyectos/[projectId]/launches/[launchId]/ai-actions";
+import { generateLaunchSummary } from "@/app/(app)/(kg)/proyectos/[projectId]/launches/[launchId]/ai-actions";
 import { Button } from "@/components/ui/button";
 
 import { SummaryMarkdown } from "./summary-markdown";

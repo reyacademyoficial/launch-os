@@ -2,7 +2,7 @@
 
 import { useActionState, useMemo, useState } from "react";
 
-import type { ConsumptionActionState } from "@/app/(app)/proyectos/[projectId]/launches/[launchId]/consumption-actions";
+import type { ConsumptionActionState } from "@/app/(app)/(kg)/proyectos/[projectId]/launches/[launchId]/consumption-actions";
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field-error";
 import { Input } from "@/components/ui/input";

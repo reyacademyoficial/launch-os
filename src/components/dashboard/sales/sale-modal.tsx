@@ -5,7 +5,7 @@ import { useActionState, useEffect, useMemo, useRef, useState, useTransition } f
 import type {
   PaymentActionState,
   SaleActionState,
-} from "@/app/(app)/proyectos/[projectId]/leads/sale-actions";
+} from "@/app/(app)/(kg)/proyectos/[projectId]/leads/sale-actions";
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field-error";
 import { Input } from "@/components/ui/input";

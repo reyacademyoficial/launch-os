@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 
 import { RecalculateBulkModal } from "@/components/dashboard/commissions/recalculate-bulk-modal";
 import { CobrosView } from "@/components/dashboard/sales/cobros-view";
+import { ContextBar } from "@/components/kg/context-bar";
+import { IconLaunch } from "@/components/kg/icons";
 import { listBanks } from "@/lib/banks/list";
 import { listInvoicesForSales } from "@/lib/invoices/list-by-sale";
 import {
@@ -194,12 +196,31 @@ export default async function ProjectCobrosPage({
   const executeBulkAction = recalculateCommissionsBulk.bind(null, projectId);
 
   return (
-    <section className="space-y-10">
+    <div className="flex h-full min-h-0 flex-col gap-5">
+      {/*
+        "Pendiente" = pactado − cobrado, el mismo valor del StatCard de abajo.
+        Va sin color: financiar en cuotas es lo normal acá, un saldo abierto no
+        es una alarma. El aviso que sí importa (cobros sin tasa FX) sigue en el
+        banner de abajo porque necesita explicar cómo resolverlo.
+      */}
+      <ContextBar
+        icon={<IconLaunch size={16} />}
+        title="Cobros"
+        stats={[
+          { l: "Pactado", v: fmtUsd(pledgedRevenue) },
+          { l: "Cobrado", v: fmtUsd(collectedRevenue) },
+          {
+            l: "Pendiente",
+            v: fmtUsd(Math.max(pledgedRevenue - collectedRevenue, 0)),
+          },
+          { l: "Ventas cerradas", v: fmtNumber(salesCount) },
+        ]}
+      />
+
       <section className="space-y-3">
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold">Cobros</h1>
-            <p className="mt-1 text-sm text-fg-muted">
+            <p className="text-sm text-fg-muted">
               Todos los cobros del proyecto. Cuadra con el KPI revenue del
               kanban: cuenta ventas cuyo lead está en <b>cerrado</b>. Usá el
               filtro de lanzamiento para acotar.
@@ -275,7 +296,7 @@ export default async function ProjectCobrosPage({
         assignLeadOwnerAction={assignLeadOwnerAction}
         hideCommission={hideCommission}
       />
-    </section>
+    </div>
   );
 }
 

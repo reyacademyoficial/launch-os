@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import type {
   PaymentActionState,
   SaleActionState,
-} from "@/app/(app)/proyectos/[projectId]/leads/sale-actions";
+} from "@/app/(app)/(kg)/proyectos/[projectId]/leads/sale-actions";
 import { buildSaleRanks } from "@/lib/commissions/ranking";
 import type {
   CommissionRuleRow,

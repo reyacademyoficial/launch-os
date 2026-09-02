@@ -2,11 +2,11 @@
 
 import { useOptimistic, useState, useTransition, type DragEvent } from "react";
 
-import type { LeadActionState } from "@/app/(app)/proyectos/[projectId]/leads/actions";
+import type { LeadActionState } from "@/app/(app)/(kg)/proyectos/[projectId]/leads/actions";
 import type {
   PaymentActionState,
   SaleActionState,
-} from "@/app/(app)/proyectos/[projectId]/leads/sale-actions";
+} from "@/app/(app)/(kg)/proyectos/[projectId]/leads/sale-actions";
 import { SaleModal } from "@/components/dashboard/sales/sale-modal";
 import { computeCommission, findApplicableRule } from "@/lib/commissions/calc";
 import { buildSaleRanks } from "@/lib/commissions/ranking";

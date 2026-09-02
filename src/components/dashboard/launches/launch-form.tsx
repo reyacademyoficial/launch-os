@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useState } from "react";
 
-import type { LaunchActionState } from "@/app/(app)/proyectos/[projectId]/launches/actions";
+import type { LaunchActionState } from "@/app/(app)/(kg)/proyectos/[projectId]/launches/actions";
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field-error";
 import { Input } from "@/components/ui/input";

@@ -4,6 +4,8 @@ import { redirect } from "next/navigation";
 
 import { LaunchFormModal } from "@/components/dashboard/launches/launch-form-modal";
 import { StatusBadge } from "@/components/dashboard/launches/status-badge";
+import { ContextBar } from "@/components/kg/context-bar";
+import { IconLaunch } from "@/components/kg/icons";
 import {
   fmtLaunchWindow,
   fmtMoney,
@@ -176,22 +178,34 @@ export default async function OverviewPage({
   const recent = launches.slice(0, RECENT_LIMIT);
 
   return (
-    <section className="space-y-8">
+    <div className="flex h-full min-h-0 flex-col gap-5">
+      {/*
+        La barra lleva la FORMA del proyecto (cuántos lanzamientos, en qué
+        estado, cuántas ventas), no su economía. La economía ya vive en las
+        AggCards de abajo y repetirla acá sería leer dos veces el mismo
+        número — el ContextBar del dashboard de Financiero sigue el mismo
+        criterio: complementa a los HeroKpi, no los duplica.
+
+        Estos contadores además reemplazan la línea "N lanzamientos · N
+        activos · N finalizados" que antes colgaba del header y scrolleaba.
+      */}
+      <ContextBar
+        icon={<IconLaunch size={16} />}
+        title="Overview"
+        stats={[
+          { l: "Lanzamientos", v: fmtNumber(agg.launchCount) },
+          { l: "Activos", v: fmtNumber(agg.activeCount) },
+          { l: "Finalizados", v: fmtNumber(agg.finalizedCount) },
+          { l: "Ventas totales", v: fmtNumber(agg.totalVentas) },
+        ]}
+      />
+
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">{name}</h1>
           {project?.business_name && (
             <p className="mt-1 text-sm text-fg-subtle">{project.business_name}</p>
           )}
-          <p className="mt-2 text-xs text-fg-muted">
-            <span className="text-fg">{fmtNumber(agg.launchCount)}</span> lanzamientos
-            <span className="mx-2 text-fg-subtle">·</span>
-            <span className="text-success">{fmtNumber(agg.activeCount)}</span> activos
-            <span className="mx-2 text-fg-subtle">·</span>
-            <span className="text-fg-subtle">
-              {fmtNumber(agg.finalizedCount)} finalizados
-            </span>
-          </p>
         </div>
         <Link
           href={`/proyectos/${projectId}/launches`}
@@ -301,7 +315,7 @@ export default async function OverviewPage({
           })}
         </ul>
       </section>
-    </section>
+    </div>
   );
 }
 

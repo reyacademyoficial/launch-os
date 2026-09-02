@@ -3,7 +3,14 @@ import Link from "next/link";
 
 import { LaunchFormModal } from "@/components/dashboard/launches/launch-form-modal";
 import { StatusBadge } from "@/components/dashboard/launches/status-badge";
-import { fmtLaunchWindow, fmtMoney, fmtMultiplier } from "@/lib/format";
+import { ContextBar } from "@/components/kg/context-bar";
+import { IconLaunch } from "@/components/kg/icons";
+import {
+  fmtLaunchWindow,
+  fmtMoney,
+  fmtMultiplier,
+  fmtNumber,
+} from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import { listAggregatesForProject } from "@/lib/launch-daily/list";
 import {
@@ -110,14 +117,29 @@ export default async function LaunchesPage({
     );
   }
 
+  // Recuentos por status para la barra de contexto. Se derivan del mismo
+  // `launches` que ya alimenta la tabla — sin ida extra a la base.
+  // Los montos (revenue / profit) quedan fuera a propósito: cada launch se
+  // muestra en su propia moneda según la tasa que resuelva, así que un total
+  // sumado acá sería un número mezclado. El agregado en moneda única vive en
+  // el Overview, que sí pasa por `aggregateProjectKPIs`.
+  const activos = launches.filter((l) => l.status === "Activo").length;
+  const finalizados = launches.filter((l) => l.status === "Finalizado").length;
+
   return (
-    <section className="space-y-6">
-      <header className="flex items-baseline justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold">Lanzamientos</h1>
-          <p className="mt-1 text-xs text-fg-subtle">{launches.length} total</p>
-        </div>
-        {canEdit && (
+    <div className="flex h-full min-h-0 flex-col gap-5">
+      <ContextBar
+        icon={<IconLaunch size={16} />}
+        title="Lanzamientos"
+        stats={[
+          { l: "Total", v: fmtNumber(launches.length) },
+          { l: "Activos", v: fmtNumber(activos) },
+          { l: "Finalizados", v: fmtNumber(finalizados) },
+        ]}
+      />
+
+      {canEdit && (
+        <div className="flex justify-end">
           <LaunchFormModal
             triggerLabel="+ Nuevo lanzamiento"
             title="Nuevo lanzamiento"
@@ -126,8 +148,8 @@ export default async function LaunchesPage({
             copyableLaunches={copyableLaunches}
             recycleTargetOptions={copyableLaunches}
           />
-        )}
-      </header>
+        </div>
+      )}
 
       <div className="overflow-x-auto rounded-md border border-border">
         <table className="w-full min-w-[820px] text-sm">
@@ -242,6 +264,6 @@ export default async function LaunchesPage({
           </tbody>
         </table>
       </div>
-    </section>
+    </div>
   );
 }

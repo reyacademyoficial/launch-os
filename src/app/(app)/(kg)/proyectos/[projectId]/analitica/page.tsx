@@ -10,12 +10,15 @@ import {
   TrendsChart,
   type TrendsPoint,
 } from "@/components/dashboard/analytics/trends-chart";
+import { ContextBar } from "@/components/kg/context-bar";
+import { IconLaunch } from "@/components/kg/icons";
 import {
   applyAnalyticsFilter,
   parseAnalyticsFilter,
 } from "@/lib/analytics/filter";
 import { getChannelsData } from "@/lib/analytics/channels";
 import { getFunnelData } from "@/lib/analytics/funnel";
+import { fCount } from "@/lib/finance/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
 import { listAggregatesForProject } from "@/lib/launch-daily/list";
 import { getKanbanSalesAggregatesForProject } from "@/lib/launch-sales/list";
@@ -140,15 +143,27 @@ export default async function AnalyticsPage({
   const launchesForFilter = launches.map((l) => ({ id: l.id, name: l.name }));
 
   return (
-    <section className="space-y-6">
-      <header className="flex flex-wrap items-baseline justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold">Analítica</h1>
-          <p className="mt-1 text-xs text-fg-subtle">
-            {filtered.length} de {launches.length} lanzamientos en el filtro
-          </p>
-        </div>
-      </header>
+    <div className="flex h-full min-h-0 flex-col gap-5">
+      {/*
+        Los filtros y las tabs scrollean fuera de vista en tablas largas, así
+        que la barra repite el estado que cambia lo que se está leyendo: cuánto
+        del proyecto entra en el filtro y qué vista está activa.
+      */}
+      <ContextBar
+        icon={<IconLaunch size={16} />}
+        title="Analítica"
+        stats={[
+          { l: "Lanzamientos", v: fCount(launches.length) },
+          {
+            // Warning cuando el filtro recorta: evita leer un subconjunto
+            // creyendo que son los números del proyecto entero.
+            l: "En el filtro",
+            v: fCount(filtered.length),
+            c: filtered.length < launches.length ? "#FFB800" : undefined,
+          },
+          { l: "Vista", v: VIEW_LABELS[view] },
+        ]}
+      />
 
       <AnalyticsFilters
         launches={launchesForFilter}
@@ -175,7 +190,7 @@ export default async function AnalyticsPage({
         {view === "tendencias" && trends && <TrendsChart points={trends} />}
         {view === "canales" && channels && <ChannelsTables data={channels} />}
       </div>
-    </section>
+    </div>
   );
 }
 

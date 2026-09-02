@@ -6,7 +6,7 @@ import type {
   FirstPaymentContext,
   PaymentActionState,
   SaleActionState,
-} from "@/app/(app)/proyectos/[projectId]/leads/sale-actions";
+} from "@/app/(app)/(kg)/proyectos/[projectId]/leads/sale-actions";
 import { computeCommission, findApplicableRule } from "@/lib/commissions/calc";
 import { buildSaleRanks } from "@/lib/commissions/ranking";
 import type {

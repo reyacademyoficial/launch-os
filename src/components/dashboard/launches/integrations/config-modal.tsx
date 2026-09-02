@@ -8,7 +8,7 @@ import {
   saveLaunchSecret,
   type GhlPipelineItem,
   type SyncActionState,
-} from "@/app/(app)/proyectos/[projectId]/launches/[launchId]/sync-actions";
+} from "@/app/(app)/(kg)/proyectos/[projectId]/launches/[launchId]/sync-actions";
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field-error";
 import { Input } from "@/components/ui/input";

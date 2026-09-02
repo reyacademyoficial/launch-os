@@ -3,13 +3,18 @@ import { requireSessionProfile } from "@/lib/supabase/auth";
 import { readThemeCookie } from "@/lib/theme-cookie";
 
 /**
- * Shell Kingrow — chasis de plataforma para roles no-cliente. Se monta sobre
- * el árbol de módulos de empresa y utilidades (todo lo que NO es `/proyectos/*`).
+ * Shell Kingrow — chasis único de la plataforma. Se monta sobre TODO el árbol
+ * de módulos de empresa y utilidades, `/proyectos/*` incluido: al unificar
+ * Lanzamientos al KG System el `ProjectShell` (sidebar + topbar propias,
+ * herencia de cuando LaunchOS era un programa aparte) se borró, y la carpeta
+ * `proyectos/` se movió dentro de este route group. Los route groups no
+ * aparecen en la URL, así que las rutas siguen siendo `/proyectos/[id]/…`.
  *
- * El gate cliente vive en `(app)/layout.tsx` — acá ya sabemos que llegó un
- * usuario no-cliente. Sigue habiendo un `requireSessionProfile` para tener
- * el profile disponible localmente (Next dedupe la query dentro del mismo
- * request).
+ * NO hay gate de rol acá — este layout solo hace `requireSessionProfile` para
+ * tener el profile disponible localmente (Next dedupe la query dentro del
+ * mismo request). `cliente`, `closer` y `operador` SÍ montan este shell; lo
+ * que ven se recorta en `KgSidebar` vía `ROLE_MODULE_ALLOWLIST` (layers.ts) y
+ * cada módulo aplica su propio `requireRole` / gate de capacidad.
  */
 export default async function KingrowLayout({
   children,

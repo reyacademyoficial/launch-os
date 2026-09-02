@@ -2,8 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { LaunchHeaderActions } from "@/components/dashboard/launches/launch-header-actions";
-import { LaunchTabs } from "@/components/dashboard/launches/launch-tabs";
 import { StatusBadge } from "@/components/dashboard/launches/status-badge";
+import { KgModuleNav } from "@/components/kg/module-nav";
+import type { TabItem } from "@/components/kg/tabs-bar";
 import { fmtDate, fmtLaunchWindow } from "@/lib/format";
 import { listEvergreensTargeting } from "@/lib/launches/evergreen";
 import { getLaunch } from "@/lib/launches/get";
@@ -80,7 +81,19 @@ export default async function LaunchLayout({
     .filter((l) => l.id !== launchId)
     .map((l) => ({ id: l.id, name: l.name }));
 
+  // Tabs del lanzamiento. Reemplazan a las del proyecto mientras estás
+  // adentro de un launch (`KgProjectNav` se auto-oculta acá) — una sola fila
+  // de pestañas, con el breadcrumb "← Lanzamientos" arriba como vía de salida.
   const tabsBase = `/proyectos/${projectId}/launches/${launchId}`;
+  const launchTabs: readonly TabItem[] = [
+    { href: `${tabsBase}/kpi`, label: "KPI" },
+    { href: `${tabsBase}/presupuesto`, label: "Presupuesto" },
+    { href: `${tabsBase}/consumo`, label: "Consumo" },
+    { href: `${tabsBase}/calendario`, label: "Calendario" },
+    { href: `${tabsBase}/integraciones`, label: "Integraciones" },
+    { href: `${tabsBase}/alertas`, label: "Alertas" },
+    { href: `${tabsBase}/ia`, label: "IA" },
+  ];
 
   return (
     <section className="min-w-0 space-y-6">
@@ -197,7 +210,7 @@ export default async function LaunchLayout({
         )}
       </header>
 
-      <LaunchTabs base={tabsBase} />
+      <KgModuleNav items={launchTabs} />
 
       <div>{children}</div>
     </section>

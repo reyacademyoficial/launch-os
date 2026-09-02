@@ -2,8 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { ContextBar } from "@/components/kg/context-bar";
+import { IconLaunch } from "@/components/kg/icons";
 import { canViewAuditLog } from "@/lib/auth/permissions";
 import { listAuditLog } from "@/lib/audit/list";
+import { fCount } from "@/lib/finance/format";
 import { requireSessionProfile } from "@/lib/supabase/auth";
 
 export const metadata: Metadata = { title: "Audit log" };
@@ -32,13 +35,25 @@ export default async function AuditLogPage({
   const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1);
 
   return (
-    <section className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-bold">Audit log</h1>
-        <p className="mt-1 text-xs text-fg-subtle">
-          {total} {total === 1 ? "registro" : "registros"} · solo lectura
-        </p>
-      </header>
+    <div className="flex h-full min-h-0 flex-col gap-5">
+      <ContextBar
+        icon={<IconLaunch size={16} />}
+        title="Audit log"
+        stats={[
+          { l: "Registros", v: fCount(total) },
+          { l: "En esta página", v: fCount(rows.length) },
+          // La paginación vive al pie de la tabla; repetirla arriba evita
+          // scrollear hasta el fondo para saber dónde estás parado.
+          { l: "Página", v: `${page + 1} / ${lastPage + 1}` },
+        ]}
+      />
+
+      {/*
+        El "solo lectura" sobrevive al header borrado: es la única parte que el
+        ContextBar no cubre, y es lo que explica por qué la tabla no tiene
+        acciones.
+      */}
+      <p className="text-xs text-fg-subtle">Solo lectura</p>
 
       {rows.length === 0 ? (
         <p className="rounded-md border border-dashed border-border bg-surface/40 p-8 text-center text-sm text-fg-muted">
@@ -113,7 +128,7 @@ export default async function AuditLogPage({
           )}
         </>
       )}
-    </section>
+    </div>
   );
 }
 

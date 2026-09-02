@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 
-import { triggerSync } from "@/app/(app)/proyectos/[projectId]/launches/[launchId]/sync-actions";
+import { triggerSync } from "@/app/(app)/(kg)/proyectos/[projectId]/launches/[launchId]/sync-actions";
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field-error";
 import type { SyncProviderId } from "@/lib/integrations/sync";

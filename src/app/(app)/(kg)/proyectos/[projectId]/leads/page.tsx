@@ -8,12 +8,15 @@ import { ImportLeadsModal } from "@/components/dashboard/leads/import-modal";
 import { KanbanBoard } from "@/components/dashboard/leads/kanban-board";
 import { LeadFormModal } from "@/components/dashboard/leads/lead-form-modal";
 import { LeadsTable } from "@/components/dashboard/leads/leads-table";
+import { ContextBar } from "@/components/kg/context-bar";
+import { IconLaunch } from "@/components/kg/icons";
 import {
   listCommissionRules,
   listPaymentModalities,
 } from "@/lib/commissions/list";
 import type { InstallmentRow, PaymentRow, SaleRow } from "@/lib/commissions/types";
 import { listBanks } from "@/lib/banks/list";
+import { fmtNumber } from "@/lib/format";
 import { listLaunchesForProject } from "@/lib/launches/list";
 import { buildFxLookup, buildSalesFxContext, loadProjectFxRates } from "@/lib/money";
 import { listPaymentMethods } from "@/lib/payment-methods/list";
@@ -213,11 +216,28 @@ export default async function LeadsPage({
   const activeMembers = teamMembers.filter((m) => m.active).length;
 
   return (
-    <section className="space-y-6">
+    <div className="flex h-full min-h-0 flex-col gap-5">
+      {/*
+        El total de leads NO entra acá: cada vista lo trae por su cuenta (la
+        tabla paginada dentro de `TablaTab`, el kanban filtrado a promovidos),
+        así que en el scope de la página no hay un número que valga para las
+        dos. Los stats son los agregados de venta del proyecto, que sí son los
+        mismos mires la vista que mires.
+      */}
+      <ContextBar
+        icon={<IconLaunch size={16} />}
+        title="Leads"
+        stats={[
+          { l: "Leads con venta", v: fmtNumber(salesByLeadId.size) },
+          { l: "Ventas", v: fmtNumber(sales.length) },
+          { l: "Cobros cargados", v: fmtNumber(payments.length) },
+          { l: "Lanzamientos", v: fmtNumber(launches.length) },
+        ]}
+      />
+
       <header className="flex flex-wrap items-baseline justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Leads</h1>
-          <p className="mt-1 text-xs text-fg-subtle">
+          <p className="text-xs text-fg-subtle">
             <Link
               href={`/proyectos/${projectId}/equipo`}
               className="underline-offset-2 hover:underline"
@@ -308,7 +328,7 @@ export default async function LeadsPage({
           evergreenLaunches={evergreenLaunchesForFilter}
         />
       )}
-    </section>
+    </div>
   );
 }
 

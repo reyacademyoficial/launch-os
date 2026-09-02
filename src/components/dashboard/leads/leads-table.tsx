@@ -9,7 +9,7 @@ import {
   bulkUpdateLeadStatus,
   promoteLeadsToKanban,
   unpromoteLeadsFromKanban,
-} from "@/app/(app)/proyectos/[projectId]/leads/bulk-actions";
+} from "@/app/(app)/(kg)/proyectos/[projectId]/leads/bulk-actions";
 import {
   LEAD_STATUSES,
   LEAD_STATUS_LABELS,

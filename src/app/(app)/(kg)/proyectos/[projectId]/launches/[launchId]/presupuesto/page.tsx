@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
+import { ContextBar } from "@/components/kg/context-bar";
+import { IconLaunch } from "@/components/kg/icons";
 import {
   listBudgetCountriesForProject,
   listBudgetEntriesForLaunch,
 } from "@/lib/budget/list";
 import { BUDGET_STAGES, type BudgetStage } from "@/lib/budget/types";
+import { fmtNumber } from "@/lib/format";
 import { getLaunch } from "@/lib/launches/get";
 import { userCanEditLaunchesIn } from "@/lib/supabase/auth";
 
@@ -57,67 +60,101 @@ export default async function LaunchPresupuestoPage({
     if (bucket) bucket.push(e);
   }
 
+  // Totales para la barra: las tablas ya muestran el total POR etapa, así que
+  // acá interesa el global y cuántas etapas tienen algo cargado (el resto
+  // sigue en cero y es lo que falta planificar).
+  const totalBudget = entries.reduce((sum, e) => sum + e.amount, 0);
+  const stagesWithBudget = BUDGET_STAGES.filter(
+    (s) => (entriesByStage.get(s) ?? []).length > 0,
+  ).length;
+
   return (
-    <div className="space-y-6">
-      <section className="space-y-2">
-        <header>
-          <h2 className="text-base font-semibold text-fg">
-            Presupuesto de lanzamiento
-          </h2>
-          <p className="text-xs text-fg-subtle">
-            Cargá manualmente cuánto vas a presupuestar por país en cada etapa.
-            El total por etapa es la suma de todos los países; el % es la
-            participación de cada uno.
-          </p>
-        </header>
-      </section>
+    <div className="flex flex-col gap-5">
+      <ContextBar
+        icon={<IconLaunch size={16} />}
+        title="Presupuesto"
+        stats={[
+          {
+            l: "Total presupuestado",
+            // El monto no es USD necesariamente: prefijamos el código de
+            // moneda del launch como hacen las tablas de cada etapa.
+            v: currency ? `${currency} ${fmtNumber(totalBudget)}` : "—",
+          },
+          {
+            l: "Etapas cargadas",
+            v: `${fmtNumber(stagesWithBudget)} de ${BUDGET_STAGES.length}`,
+          },
+          { l: "Países", v: fmtNumber(countries.length) },
+          {
+            l: "Moneda",
+            v: currency ?? "Sin definir",
+            // Sin moneda la carga está bloqueada — es el gate de toda la tab.
+            c: currency ? undefined : "#FFB800",
+          },
+        ]}
+      />
 
-      {canEdit ? (
-        <CurrencyForm
-          projectId={projectId}
-          launchId={launchId}
-          currentCurrency={currency}
-        />
-      ) : (
-        currency && (
+      <div className="space-y-6">
+        <section className="space-y-2">
+          <header>
+            <h2 className="text-base font-semibold text-fg">
+              Presupuesto de lanzamiento
+            </h2>
+            <p className="text-xs text-fg-subtle">
+              Cargá manualmente cuánto vas a presupuestar por país en cada
+              etapa. El total por etapa es la suma de todos los países; el % es
+              la participación de cada uno.
+            </p>
+          </header>
+        </section>
+
+        {canEdit ? (
+          <CurrencyForm
+            projectId={projectId}
+            launchId={launchId}
+            currentCurrency={currency}
+          />
+        ) : (
+          currency && (
+            <p className="rounded-md border border-border bg-surface p-4 text-sm text-fg-muted">
+              Moneda: <strong className="text-fg">{currency}</strong>
+            </p>
+          )
+        )}
+
+        {!currency ? (
           <p className="rounded-md border border-border bg-surface p-4 text-sm text-fg-muted">
-            Moneda: <strong className="text-fg">{currency}</strong>
+            {canEdit
+              ? "Configurá la moneda antes de empezar a cargar presupuestos."
+              : "Todavía no se configuró la moneda del presupuesto. Pedile al admin/operador que la asigne."}
           </p>
-        )
-      )}
-
-      {!currency ? (
-        <p className="rounded-md border border-border bg-surface p-4 text-sm text-fg-muted">
-          {canEdit
-            ? "Configurá la moneda antes de empezar a cargar presupuestos."
-            : "Todavía no se configuró la moneda del presupuesto. Pedile al admin/operador que la asigne."}
-        </p>
-      ) : (
-        <>
-          {canEdit && (
-            <CountryManager
-              projectId={projectId}
-              launchId={launchId}
-              countries={countries}
-            />
-          )}
-
-          <div className="space-y-4">
-            {BUDGET_STAGES.map((stage) => (
-              <StageTable
-                key={stage}
+        ) : (
+          <>
+            {canEdit && (
+              <CountryManager
                 projectId={projectId}
                 launchId={launchId}
-                stage={stage}
-                entries={entriesByStage.get(stage) ?? []}
                 countries={countries}
-                currency={currency}
-                canEdit={canEdit}
               />
-            ))}
-          </div>
-        </>
-      )}
+            )}
+
+            <div className="space-y-4">
+              {BUDGET_STAGES.map((stage) => (
+                <StageTable
+                  key={stage}
+                  projectId={projectId}
+                  launchId={launchId}
+                  stage={stage}
+                  entries={entriesByStage.get(stage) ?? []}
+                  countries={countries}
+                  currency={currency}
+                  canEdit={canEdit}
+                />
+              ))}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

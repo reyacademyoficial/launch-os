@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { LaunchIntegrationsSection } from "@/components/dashboard/launches/integrations/launch-integrations-section";
+import { ContextBar } from "@/components/kg/context-bar";
+import { IconLaunch } from "@/components/kg/icons";
+import { fmtLaunchWindow, fmtNumber } from "@/lib/format";
 import { getLaunch } from "@/lib/launches/get";
 import { userCanEditLaunchesIn } from "@/lib/supabase/auth";
 
@@ -41,10 +44,35 @@ export default async function LaunchIntegrationsPage({
   }
 
   return (
-    <LaunchIntegrationsSection
-      projectId={projectId}
-      launchId={launchId}
-      isClosed={isClosed}
-    />
+    <div className="flex flex-col gap-5">
+      {/*
+        El estado por provider lo resuelve la sección (lee config + secrets con
+        service-role). Acá mostramos lo que condiciona a TODOS los syncs: qué
+        plataformas declaró el launch, qué ventana se pide a las APIs y si el
+        launch está cerrado (con el launch cerrado el sync queda bloqueado).
+      */}
+      <ContextBar
+        icon={<IconLaunch size={16} />}
+        title="Integraciones"
+        stats={[
+          { l: "Plataformas", v: fmtNumber(launch.platforms.length) },
+          {
+            l: "Ventana de sync",
+            v: fmtLaunchWindow(launch.date_start, launch.date_end),
+          },
+          {
+            l: "Sync",
+            v: isClosed ? "Bloqueado" : "Habilitado",
+            c: isClosed ? "#FFB800" : undefined,
+          },
+        ]}
+      />
+
+      <LaunchIntegrationsSection
+        projectId={projectId}
+        launchId={launchId}
+        isClosed={isClosed}
+      />
+    </div>
   );
 }

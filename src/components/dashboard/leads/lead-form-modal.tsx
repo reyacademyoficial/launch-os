@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import type { LeadActionState } from "@/app/(app)/proyectos/[projectId]/leads/actions";
+import type { LeadActionState } from "@/app/(app)/(kg)/proyectos/[projectId]/leads/actions";
 import { Button } from "@/components/ui/button";
 import type { LeadRow } from "@/lib/leads/types";
 import type { TeamMemberRow } from "@/lib/team/types";
