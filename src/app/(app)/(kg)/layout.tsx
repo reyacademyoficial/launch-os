@@ -1,4 +1,5 @@
 import { KingrowShell } from "@/components/kg/shell";
+import { readSidebarCollapsedCookie } from "@/lib/sidebar-cookie";
 import { requireSessionProfile } from "@/lib/supabase/auth";
 import { readThemeCookie } from "@/lib/theme-cookie";
 
@@ -21,12 +22,13 @@ export default async function KingrowLayout({
 }: {
   readonly children: React.ReactNode;
 }) {
-  const [profile, theme] = await Promise.all([
+  const [profile, theme, sidebarCollapsed] = await Promise.all([
     requireSessionProfile(),
     readThemeCookie(),
+    readSidebarCollapsedCookie(),
   ]);
   return (
-    <KingrowShell profile={profile} theme={theme}>
+    <KingrowShell profile={profile} theme={theme} sidebarCollapsed={sidebarCollapsed}>
       {children}
     </KingrowShell>
   );

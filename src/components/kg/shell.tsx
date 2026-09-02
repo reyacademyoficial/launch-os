@@ -24,14 +24,16 @@ import { KgTopbar } from "./topbar";
 export function KingrowShell({
   profile,
   theme,
+  sidebarCollapsed,
   children,
 }: {
   readonly profile: SessionProfile;
   readonly theme: Theme;
+  readonly sidebarCollapsed: boolean;
   readonly children: React.ReactNode;
 }) {
   return (
-    <ShellProvider>
+    <ShellProvider initialCollapsed={sidebarCollapsed}>
       <PageMenuProvider>
         <div
           className="flex h-dvh overflow-hidden"

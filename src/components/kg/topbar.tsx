@@ -7,11 +7,13 @@ import type { Theme } from "@/lib/theme";
 
 import { SidebarToggle } from "../dashboard/sidebar-toggle";
 import { resolveActive } from "./layers";
+import { SidebarCollapseToggle } from "./sidebar-collapse-toggle";
 import { KgThemeToggle } from "./theme-toggle";
 
 /**
  * KG · Topbar. A la izquierda: hamburger mobile + "Capa X" en micro-uppercase
- * arriba del título del módulo. A la derecha: theme toggle + bell. Sin
+ * arriba del título del módulo, más el toggle de colapso de sidebar (sólo
+ * desktop, ver `SidebarCollapseToggle`). A la derecha: theme toggle + bell. Sin
  * contadores de alerta ni "críticas" en 6a — se suman en 6b+ cuando cada
  * módulo tenga datos.
  *
@@ -39,6 +41,7 @@ export function KgTopbar({ theme }: { readonly theme: Theme }) {
       style={{ borderColor: "var(--kg-border-subtle)" }}
     >
       <SidebarToggle />
+      <SidebarCollapseToggle />
       <div className="min-w-0">
         <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
           Capa {layerLabel}
