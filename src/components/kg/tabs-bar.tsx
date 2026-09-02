@@ -1,13 +1,18 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { KgTabsBarView, type TabItem } from "./tabs-bar-view";
+
 /**
- * KG · TabsBar. Barra de pestañas ligera para navegación intra-módulo.
+ * KG · TabsBar. Barra de pestañas ligera para navegación intra-módulo, donde
+ * cada pestaña es una RUTA.
  *
- * Cliente porque necesita `usePathname` para marcar la activa. Sin fetch,
- * sin estado de datos — es puramente presentacional + un `matcher`.
+ * Cliente porque necesita `usePathname` para marcar la activa. Sin fetch, sin
+ * estado de datos — el markup vive en `tabs-bar-view.tsx` y acá queda sólo el
+ * resolvedor. Si tus pestañas NO son rutas sino valores de un query param
+ * (`?view=`), usá `KgTabsBarView` directo y pasale el `activeHref`: te ahorrás
+ * además el JS de cliente.
  *
  * Colocación: debajo del ContextBar de la página. NO es sticky por default
  * (el ContextBar sí lo es). Si en algún caso hace falta que quede pegada
@@ -15,73 +20,27 @@ import { usePathname } from "next/navigation";
  * Hoy con 8 pestañas no aporta.
  */
 
-export interface TabItem {
-  readonly href: string;
-  readonly label: string;
-}
+export type { TabItem };
 
 export function KgTabsBar({ items }: { readonly items: readonly TabItem[] }) {
   const pathname = usePathname();
   return (
-    <nav
-      aria-label="Pestañas del módulo"
-      style={{
-        display: "flex",
-        gap: 4,
-        flexWrap: "wrap",
-        padding: 6,
-        borderRadius: "var(--kg-r-full)",
-        background: "var(--kg-surface-2-solid)",
-        border: "1px solid var(--kg-border-subtle)",
-        alignSelf: "flex-start",
-      }}
-      role="tablist"
-    >
-      {items.map((t) => {
-        const active = isActive(pathname, t.href, items);
-        return (
-          <Link
-            key={t.href}
-            href={t.href}
-            className="kg-focus"
-            role="tab"
-            aria-selected={active}
-            style={{
-              padding: "6px 14px",
-              borderRadius: 999,
-              background: active ? "var(--kg-accent-500)" : "transparent",
-              color: active ? "#fff" : "var(--kg-text-2)",
-              fontSize: 12,
-              fontWeight: 700,
-              textDecoration: "none",
-              transition: "all var(--kg-dur) var(--kg-ease)",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {t.label}
-          </Link>
-        );
-      })}
-    </nav>
+    <KgTabsBarView items={items} activeHref={resolveActiveHref(pathname, items)} />
   );
 }
 
 /**
  * Matching por prefijo con desempate por longitud — así "/financiero/facturas"
  * no matchea también "/financiero" (que es el índice del módulo). El item más
- * específico gana.
+ * específico gana. Devuelve `null` si ninguno matchea.
  */
-function isActive(
+function resolveActiveHref(
   pathname: string,
-  href: string,
   items: readonly TabItem[],
-): boolean {
+): string | null {
   const matches = items.filter(
     (t) => pathname === t.href || pathname.startsWith(`${t.href}/`),
   );
-  if (matches.length === 0) return false;
-  const winner = matches.reduce((a, b) =>
-    b.href.length > a.href.length ? b : a,
-  );
-  return winner.href === href;
+  if (matches.length === 0) return null;
+  return matches.reduce((a, b) => (b.href.length > a.href.length ? b : a)).href;
 }

@@ -10,6 +10,11 @@ import type { ReactNode } from "react";
  * Regla de "activo": prefijo, excepto para la home ("/") que exige match
  * exacto — sino Ejecutivo quedaría activo dentro de cualquier subruta.
  *
+ * `matchPrefixes` suma rutas que pertenecen al módulo pero no cuelgan de su
+ * `href` — hoy solo Lanzamientos, cuyo trabajo real vive en `/proyectos/…`
+ * (ver `MODULE_ALIASES` en layers.ts). Sin esto el ítem queda apagado
+ * mientras el usuario está dentro de un proyecto.
+ *
  * `icon` viene YA renderizado (ReactNode), no como componente. Es un boundary
  * server→client: pasar componentes-como-función cruza esa frontera y Next
  * los rechaza porque no son serializables. Renderizar en el padre server y
@@ -19,18 +24,21 @@ export function KgNavItem({
   href,
   label,
   icon,
+  matchPrefixes,
   onNavigate,
 }: {
   readonly href: string;
   readonly label: string;
   readonly icon: ReactNode;
+  readonly matchPrefixes?: readonly string[];
   readonly onNavigate?: () => void;
 }) {
   const pathname = usePathname();
+  const matches = (prefix: string) =>
+    pathname === prefix || pathname.startsWith(`${prefix}/`);
   const isActive =
-    href === "/"
-      ? pathname === "/"
-      : pathname === href || pathname.startsWith(`${href}/`);
+    (href === "/" ? pathname === "/" : matches(href)) ||
+    (matchPrefixes ?? []).some(matches);
 
   return (
     <Link

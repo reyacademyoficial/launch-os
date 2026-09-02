@@ -1,4 +1,5 @@
 import { KingrowShell } from "@/components/kg/shell";
+import { readSidebarCollapsedCookie } from "@/lib/sidebar-cookie";
 import { requireRole } from "@/lib/supabase/auth";
 import { readThemeCookie } from "@/lib/theme-cookie";
 
@@ -16,8 +17,9 @@ export default async function AdminLayout({
 }) {
   const profile = await requireRole("superadmin");
   const theme = await readThemeCookie();
+  const sidebarCollapsed = await readSidebarCollapsedCookie();
   return (
-    <KingrowShell profile={profile} theme={theme}>
+    <KingrowShell profile={profile} theme={theme} sidebarCollapsed={sidebarCollapsed}>
       {children}
     </KingrowShell>
   );

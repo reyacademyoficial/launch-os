@@ -1,12 +1,18 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useId, useState } from "react";
 
-import type { DailyActionState } from "@/app/(app)/proyectos/[projectId]/launches/[launchId]/daily-actions";
-import { Button } from "@/components/ui/button";
-import { FieldError } from "@/components/ui/field-error";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import type { DailyActionState } from "@/app/(app)/(kg)/proyectos/[projectId]/launches/[launchId]/daily-actions";
+import { Drawer } from "@/components/kg/drawer";
+import {
+  ErrorBanner,
+  Field,
+  inputStyle,
+  panelActionPrimaryBtn,
+  panelActionSecondaryBtn,
+  primaryBtn,
+  secondaryBtn,
+} from "@/components/kg/form-primitives";
 import { CHANNEL_LABELS, DAILY_CHANNELS } from "@/lib/launch-daily/types";
 import type { LaunchDailyRow } from "@/lib/launch-daily/types";
 
@@ -16,9 +22,17 @@ type FormAction = (
 ) => Promise<DailyActionState>;
 
 /**
- * Reusable add/edit modal for daily entries. Closes itself on success — the
- * parent page revalidates, so the table and chart refresh without a router
- * round-trip from this component.
+ * Alta/edición de una fila diaria. Cierra solo al éxito — la page padre
+ * revalida, así que tabla y chart se refrescan sin round-trip del router.
+ *
+ * El modal centrado hecho a mano (overlay `bg-black/70` + caja
+ * `bg-bg-elevated`, sin Esc, sin foco gestionado) pasó a `Drawer`: panel
+ * lateral glass con Esc-to-close y click-outside. El nombre del componente y
+ * sus props NO cambian — lo consume el tab KPI, que es de otro agente.
+ *
+ * Los botones viven en el `footer` del Drawer y se atan al `<form>` del
+ * cuerpo por `form={formId}`: así el submit queda fijo abajo aunque el
+ * formulario scrollee, sin duplicar el form ni mover el estado.
  */
 export function DailyFormModal({
   triggerLabel,
@@ -42,6 +56,9 @@ export function DailyFormModal({
     action,
     null,
   );
+  // `useId()` trae delimitadores (`:r0:` / `«r0»`) que ensucian un id de DOM;
+  // se limpian porque este id se referencia desde `form=` del botón submit.
+  const formId = `daily-form-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
 
   useEffect(() => {
     // Close modal when the action returns ok. Reacting to action state is the
@@ -57,89 +74,92 @@ export function DailyFormModal({
 
   return (
     <>
-      <Button
+      <button
         type="button"
-        variant={triggerVariant}
         onClick={() => setOpen(true)}
-        className={triggerClassName}
+        className={`kg-focus${triggerClassName ? ` ${triggerClassName}` : ""}`}
+        style={
+          triggerVariant === "primary"
+            ? panelActionPrimaryBtn
+            : panelActionSecondaryBtn
+        }
       >
         {triggerLabel}
-      </Button>
+      </button>
 
-      {open && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="daily-form-title"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) close();
-          }}
-        >
-          <div className="w-full max-w-lg rounded-md border border-border bg-bg-elevated p-6 shadow-card">
-            <header className="mb-4 flex items-center justify-between">
-              <h3 id="daily-form-title" className="text-lg font-bold text-fg">
-                {title}
-              </h3>
-              <button
-                type="button"
-                onClick={close}
-                disabled={pending}
-                aria-label="Cerrar"
-                className="text-fg-subtle hover:text-fg"
-              >
-                ×
-              </button>
-            </header>
-
-            <form action={formAction} className="space-y-4">
-              <div>
-                <Label htmlFor="daily-date">Fecha *</Label>
-                <Input
-                  id="daily-date"
-                  name="date"
-                  type="date"
-                  required
-                  defaultValue={initial?.date ?? ""}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                {DAILY_CHANNELS.map((ch) => (
-                  <div key={ch}>
-                    <Label htmlFor={`daily-${ch}`}>{CHANNEL_LABELS[ch]}</Label>
-                    <Input
-                      id={`daily-${ch}`}
-                      name={ch}
-                      type="number"
-                      min="0"
-                      step="1"
-                      placeholder="0"
-                      defaultValue={initial ? String(initial[ch]) : ""}
-                    />
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={close}
-                  disabled={pending}
-                >
-                  Cancelar
-                </Button>
-                <Button type="submit" disabled={pending}>
-                  {pending ? "Guardando…" : submitLabel}
-                </Button>
-              </div>
-
-              {state && "error" in state && <FieldError>{state.error}</FieldError>}
-            </form>
+      <Drawer
+        open={open}
+        onClose={close}
+        title={title}
+        subtitle="Leads cargados a mano por canal. Vacío se guarda como 0."
+        footer={
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: 10,
+            }}
+          >
+            <button
+              type="button"
+              onClick={close}
+              disabled={pending}
+              className="kg-focus"
+              style={{ ...secondaryBtn, opacity: pending ? 0.5 : 1 }}
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form={formId}
+              disabled={pending}
+              className="kg-focus"
+              style={{ ...primaryBtn, opacity: pending ? 0.5 : 1 }}
+            >
+              {pending ? "Guardando…" : submitLabel}
+            </button>
           </div>
-        </div>
-      )}
+        }
+      >
+        <form
+          id={formId}
+          action={formAction}
+          style={{ display: "flex", flexDirection: "column", gap: 16 }}
+        >
+          <Field label="Fecha" htmlFor="daily-date" required>
+            <input
+              id="daily-date"
+              name="date"
+              type="date"
+              required
+              defaultValue={initial?.date ?? ""}
+              className="kg-focus"
+              style={inputStyle}
+            />
+          </Field>
+
+          <div className="grid grid-cols-2 gap-3">
+            {DAILY_CHANNELS.map((ch) => (
+              <Field key={ch} label={CHANNEL_LABELS[ch]} htmlFor={`daily-${ch}`}>
+                <input
+                  id={`daily-${ch}`}
+                  name={ch}
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputMode="numeric"
+                  placeholder="0"
+                  defaultValue={initial ? String(initial[ch]) : ""}
+                  className="kg-focus kg-num"
+                  style={{ ...inputStyle, textAlign: "right" }}
+                />
+              </Field>
+            ))}
+          </div>
+
+          {state && "error" in state && <ErrorBanner message={state.error} />}
+        </form>
+      </Drawer>
     </>
   );
 }

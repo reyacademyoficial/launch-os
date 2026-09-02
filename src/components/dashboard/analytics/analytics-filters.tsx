@@ -1,19 +1,50 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { useTransition } from "react";
+
+import { KgFilterMultiSelect } from "@/components/kg/filter-select";
+import { Field, inputStyle } from "@/components/kg/form-primitives";
+import { KgPageFilters } from "@/components/kg/page-menu";
 
 /**
- * Panel de filtros compartido por las 4 vistas de analítica. Patrón
- * idéntico a `leads-table.tsx`: URL state, server-paginated/filtered.
+ * Filtros compartidos por las 4 vistas de analítica.
  *
- *   - Rango de fecha sobre `date_start` (no `created_at`) — la vista
- *     pregunta "lanzamientos en este período".
- *   - Multi-select de launches via checkboxes en dropdown. Vacío =
- *     todos. El estado se serializa como CSV de uuids en `?launches`.
+ * ── Qué cambió al migrar al KG System ─────────────────────────────────────
+ * Antes esto era una grilla `sm:grid-cols-4` INLINE entre el ContextBar y las
+ * tabs: dos inputs de fecha y un dropdown `absolute z-20` con checkboxes,
+ * todo con tokens viejos (`border-border`, `bg-bg-elevated`, `text-fg-*`).
+ * Ocupaba una franja fija de alto en una página cuyo contenido principal son
+ * tablas y charts anchos.
  *
- * Los cambios actualizan la URL via `router.replace` para que el server
- * re-fetchee. `view` (tab activo) se preserva.
+ * Ahora el bloque NO se renderiza inline: `KgPageFilters` lo registra en el
+ * contexto de `page-menu.tsx` y aparece recién al tocar "Filtros" en el
+ * ContextBar (drawer lateral de 400px en desktop, bottom-sheet en mobile).
+ * El componente devuelve `null` en el flujo de la página — por eso la page
+ * puede seguir montándolo donde estaba sin que ocupe espacio.
+ *
+ * El multi-select de lanzamientos pasa a `KgFilterMultiSelect`, que se
+ * construyó copiando EXACTAMENTE el contrato de serialización que vivía acá
+ * (CSV en `?launches`, set vacío = `delete` del param, `router.replace` sin
+ * scroll dentro de `startTransition`, resto de los params preservados). O
+ * sea: la URL que produce este archivo hoy es byte por byte la misma que
+ * producía antes, y `parseAnalyticsFilter` no se toca.
+ *
+ * ── Por qué NO se usó `RangePills` para las fechas ────────────────────────
+ * El `RangePills` de financiero es un selector de PERÍODO: presets relativos
+ * al día de hoy ("mes actual", "90 días"), escribe `?range=<preset>` y su
+ * modo custom exige from Y to juntos. Acá el rango no es un período contable
+ * sino un recorte sobre `date_start` de los lanzamientos, `parseAnalyticsFilter`
+ * no entiende `range`, y los dos extremos son independientes (filtrar solo
+ * "desde" es un caso real: "todo lo que lanzamos de 2026 en adelante").
+ * Forzar ese componente acá implicaría cambiar el parser — que es lógica, no
+ * diseño. Quedan dos inputs de fecha con `inputStyle` + `Field` del DS, que
+ * es la otra opción que el brief contempla.
+ *
+ * ── activeCount ──────────────────────────────────────────────────────────
+ * Cada extremo de fecha y el multi-select cuentan de a uno; el badge del
+ * botón "Filtros" muestra la suma. Es la señal de "estás leyendo un
+ * subconjunto" ahora que los controles no están a la vista.
  */
 export function AnalyticsFilters({
   launches,
@@ -26,127 +57,113 @@ export function AnalyticsFilters({
   readonly initialDateTo: string;
   readonly initialLaunchIds: ReadonlyArray<string>;
 }) {
+  const activeCount =
+    (initialDateFrom ? 1 : 0) +
+    (initialDateTo ? 1 : 0) +
+    (initialLaunchIds.length > 0 ? 1 : 0);
+
+  return (
+    <KgPageFilters activeCount={activeCount}>
+      <DateBoundFilter
+        param="from"
+        id="analytics-from"
+        label="Desde (fecha de lanzamiento)"
+        initialValue={initialDateFrom}
+        // `max`/`min` cruzados: el picker nativo ya no deja armar un rango
+        // invertido. Antes se podía y el server devolvía cero filas sin
+        // explicar por qué.
+        max={initialDateTo || undefined}
+      />
+      <DateBoundFilter
+        param="to"
+        id="analytics-to"
+        label="Hasta (fecha de lanzamiento)"
+        initialValue={initialDateTo}
+        min={initialDateFrom || undefined}
+      />
+
+      <KgFilterMultiSelect
+        label="Lanzamientos"
+        param="launches"
+        options={launches.map((l) => ({ label: l.name, value: l.id }))}
+        // Ya viene parseado del param por el Server Component. Se llama
+        // `initial*` a propósito: dentro del componente es estado optimista y
+        // no se re-sincroniza (ver su cabecera).
+        initialSelected={initialLaunchIds}
+        allLabel="Todos los lanzamientos"
+        summaryNoun="lanzamientos"
+        emptyLabel="No hay lanzamientos en el proyecto."
+      />
+    </KgPageFilters>
+  );
+}
+
+/**
+ * Un extremo del rango de fechas. Cada uno commitea su propio param para que
+ * "desde" y "hasta" sigan siendo independientes.
+ *
+ * `onChange` y no `onBlur` (como era antes): dentro de un drawer/sheet el
+ * blur puede no llegar nunca — el usuario elige la fecha en el picker nativo
+ * y cierra el overlay tocando el backdrop, sin pasar el foco a otro control.
+ * Un `<input type="date">` solo emite change con una fecha COMPLETA o con
+ * string vacío, así que no hay commits intermedios que disparen navegaciones
+ * de más.
+ *
+ * El input queda no controlado (`defaultValue`): `router.replace` no lo
+ * remonta, así que el valor tipeado sobrevive al re-render del server.
+ */
+function DateBoundFilter({
+  param,
+  id,
+  label,
+  initialValue,
+  min,
+  max,
+}: {
+  readonly param: "from" | "to";
+  readonly id: string;
+  readonly label: string;
+  readonly initialValue: string;
+  readonly min?: string;
+  readonly max?: string;
+}) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [, startTransition] = useTransition();
+  const [pending, startTransition] = useTransition();
 
-  const [open, setOpen] = useState(false);
-  const [selected, setSelected] = useState<ReadonlySet<string>>(
-    () => new Set(initialLaunchIds),
-  );
-
-  const selectedSummary = useMemo(() => {
-    if (selected.size === 0) return "Todos los lanzamientos";
-    if (selected.size === 1) {
-      const id = Array.from(selected)[0];
-      return launches.find((l) => l.id === id)?.name ?? "1 lanzamiento";
-    }
-    return `${selected.size} lanzamientos`;
-  }, [selected, launches]);
-
-  function commitLaunches(next: ReadonlySet<string>) {
-    const sp = new URLSearchParams(searchParams.toString());
-    if (next.size === 0) {
-      sp.delete("launches");
-    } else {
-      sp.set("launches", Array.from(next).join(","));
-    }
-    startTransition(() => router.replace(`?${sp.toString()}`, { scroll: false }));
-  }
-
-  function commitDate(key: "from" | "to", value: string) {
-    const sp = new URLSearchParams(searchParams.toString());
-    if (value) sp.set(key, value);
-    else sp.delete(key);
-    startTransition(() => router.replace(`?${sp.toString()}`, { scroll: false }));
-  }
-
-  function toggleLaunch(id: string, checked: boolean) {
-    // Importante: calcular `next` ANTES de setSelected. El updater de
-    // useState debe ser puro — meter `commitLaunches` adentro (que dispara
-    // `startTransition`) lanza "Cannot call startTransition while rendering"
-    // porque React puede re-ejecutar el updater durante el render.
-    const next = new Set(selected);
-    if (checked) next.add(id);
-    else next.delete(id);
-    setSelected(next);
-    commitLaunches(next);
-  }
-
-  function clearLaunches() {
-    const empty = new Set<string>();
-    setSelected(empty);
-    commitLaunches(empty);
+  function commit(value: string) {
+    // Mismo contrato que `commitDate()` tenía acá y que replica
+    // `KgFilterMultiSelect`: se copia el querystring entero para no perder
+    // `view` (la tab activa), el otro extremo del rango ni `launches`.
+    const sp = new URLSearchParams(searchParams?.toString() ?? "");
+    if (value) sp.set(param, value);
+    else sp.delete(param);
+    const qs = sp.toString();
+    startTransition(() =>
+      router.replace(qs ? `?${qs}` : "?", { scroll: false }),
+    );
   }
 
   return (
-    <div className="grid gap-3 rounded-md border border-border bg-surface/40 p-3 sm:grid-cols-4">
-      <label className="block text-xs font-medium text-fg-subtle">
-        Desde (fecha de lanzamiento)
-        <input
-          type="date"
-          defaultValue={initialDateFrom}
-          onBlur={(e) => commitDate("from", e.target.value)}
-          className="mt-1 w-full rounded-md border border-border bg-bg-elevated px-2 py-1.5 text-sm text-fg"
-        />
-      </label>
-      <label className="block text-xs font-medium text-fg-subtle">
-        Hasta (fecha de lanzamiento)
-        <input
-          type="date"
-          defaultValue={initialDateTo}
-          onBlur={(e) => commitDate("to", e.target.value)}
-          className="mt-1 w-full rounded-md border border-border bg-bg-elevated px-2 py-1.5 text-sm text-fg"
-        />
-      </label>
-      <div className="relative sm:col-span-2">
-        <span className="block text-xs font-medium text-fg-subtle">
-          Lanzamientos
-        </span>
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="mt-1 flex w-full items-center justify-between rounded-md border border-border bg-bg-elevated px-2 py-1.5 text-sm text-fg"
-        >
-          <span>{selectedSummary}</span>
-          <span className="text-fg-subtle">{open ? "▴" : "▾"}</span>
-        </button>
-        {open && (
-          <div className="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-md border border-border bg-bg-elevated shadow-card">
-            <div className="flex items-center justify-between border-b border-border px-3 py-2">
-              <span className="text-xs text-fg-subtle">
-                {selected.size} de {launches.length} seleccionados
-              </span>
-              <button
-                type="button"
-                onClick={clearLaunches}
-                className="text-xs text-accent hover:underline"
-              >
-                Limpiar
-              </button>
-            </div>
-            {launches.length === 0 ? (
-              <p className="px-3 py-3 text-xs text-fg-muted">
-                No hay lanzamientos en el proyecto.
-              </p>
-            ) : (
-              launches.map((l) => (
-                <label
-                  key={l.id}
-                  className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-fg hover:bg-surface"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selected.has(l.id)}
-                    onChange={(e) => toggleLaunch(l.id, e.target.checked)}
-                  />
-                  {l.name}
-                </label>
-              ))
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+    <Field label={label} htmlFor={id}>
+      <input
+        id={id}
+        type="date"
+        defaultValue={initialValue}
+        min={min}
+        max={max}
+        onChange={(e) => commit(e.target.value)}
+        // Se atenúa mientras navega, pero NO se deshabilita: en mobile el
+        // picker nativo se cierra si el input pierde el enabled a mitad de la
+        // interacción.
+        className="kg-focus kg-num"
+        style={{
+          ...inputStyle,
+          fontVariantNumeric: "tabular-nums",
+          opacity: pending ? 0.6 : 1,
+          transition: "opacity var(--kg-dur) var(--kg-ease)",
+        }}
+      />
+    </Field>
   );
 }

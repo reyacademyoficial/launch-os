@@ -6,8 +6,9 @@ import { createServiceClient } from "@/lib/supabase/service";
  * Reader per-day para la serie de mensajes WhatsApp/SMS entrantes del chart
  * diario (Fase B).
  *
- * Lee `launch_messages_daily` (escrita por el sync `ghl_messages`). 1 fila
- * por (launch, date). Ordenado asc por fecha en la salida.
+ * Lee `launch_messages_daily`: 1 fila por (launch, date), ordenado asc por
+ * fecha en la salida. La tabla ya no se sincroniza (el sync de mensajes se
+ * removió en 2026-09-02) — el chart muestra lo histórico ya guardado.
  *
  * loose() workaround: la tabla `launch_messages_daily` se agregó en migration
  * 0035 — el Database type generado puede no conocerla hasta el próximo regen

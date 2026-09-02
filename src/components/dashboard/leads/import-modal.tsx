@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useState, useTransition, type CSSProperties, type ReactNode } from "react";
 
-import { Button } from "@/components/ui/button";
 import {
   confirmImport,
   previewImport,
@@ -11,24 +10,64 @@ import {
   type ImportRowError,
   type PreviewResult,
   type ValidateResult,
-} from "@/app/(app)/proyectos/[projectId]/leads/import-actions";
+} from "@/app/(app)/(kg)/proyectos/[projectId]/leads/import-actions";
+import { KgDataTable } from "@/components/kg/data-table";
+import { Drawer } from "@/components/kg/drawer";
+import {
+  ErrorBanner,
+  Field,
+  inputStyle,
+  primaryBtn,
+  secondaryBtn,
+} from "@/components/kg/form-primitives";
+import { StateDot } from "@/components/kg/state-dot";
+import type { KgTone } from "@/components/kg/tone";
 import { IMPORT_FIELDS, type ImportMapping } from "@/lib/leads/import-config";
 
 /**
- * Modal de import xlsx (reemplaza la página dedicada).
+ * Drawer de import xlsx (reemplaza la página dedicada).
  *
- * 3 pasos:
- *   1. Upload: arrastrar el .xlsx o usar el botón. Antes hay un link de
- *      descarga a la plantilla vacía con headers + ejemplo. (El export de
- *      leads actuales vive afuera del modal, en el header de /leads — usa
- *      `<ExportLeadsButton>` y respeta los filtros activos.)
+ * 4 pasos:
+ *   1. Upload: elegir el .xlsx. Antes hay un link de descarga a la plantilla
+ *      vacía con headers + ejemplo. (El export de leads actuales vive afuera
+ *      de este drawer, en el header de /leads — usa `<ExportLeadsButton>` y
+ *      respeta los filtros activos.)
  *   2. Mapear columnas + país + lanzamiento. Click "Validar archivo" llama
  *      a `validateImport` que parsea todo sin insertar y devuelve cuántas
  *      filas son válidas / con error / duplicadas internas.
- *   3. Confirmar: el usuario ve el reporte previo y click "Importar X leads"
- *      llama a `confirmImport` que hace el insert batched. El resultado final
- *      muestra cuántos entraron, cuántos se skippearon por duplicar (en DB) y
- *      cuántos no entraron por error.
+ *   3. Revisar: el usuario ve el reporte previo y click "Importar X leads"
+ *      llama a `confirmImport` que hace el insert batched.
+ *   4. Resultado: cuántos entraron, cuántos se skippearon por duplicar (en DB)
+ *      y cuántos no entraron por error.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * POR QUÉ ESTE WIZARD NO USA `ImportXlsxDrawer` DE KG
+ * ───────────────────────────────────────────────────────────────────────────
+ * `src/components/kg/import-xlsx-drawer.tsx` es un wizard de 3 pasos
+ * (upload → review → done) para plantillas de HEADERS FIJOS: su propio
+ * comentario lo dice, "sin mapping de columnas". Su contrato es
+ * `onPreview(FormData) => { validCount, errorCount, totalRows, errors }` y
+ * `onConfirm(FormData) => { imported, errors }`.
+ *
+ * Este import no entra en ese contrato por cuatro razones, ninguna cosmética:
+ *   1. Tiene un paso extra (mapping) que NO existe allá: el archivo del
+ *      usuario trae headers arbitrarios y `previewImport` devuelve
+ *      `headers + sampleRows + suggestedMapping` para que el usuario los
+ *      asocie a nombre / teléfono / email / contacto.
+ *   2. Ese paso también junta CONTEXTO que viaja en el FormData de los pasos
+ *      siguientes (`map_*`, `default_country`, `launch_id`). El drawer
+ *      genérico arma su FormData sólo con `file`.
+ *   3. Los reportes tienen métricas propias: `duplicatesInFile` en validate y
+ *      `skippedDuplicates` en confirm. El genérico no tiene dónde ponerlas.
+ *   4. Las tres server actions llevan `projectId` como primer argumento y un
+ *      `_prev` — firma distinta a la que el genérico invoca.
+ *
+ * Hacerlo encajar exigiría cambiar `ImportXlsxDrawer` (paso de mapping
+ * opcional, preview con headers, slots de métricas extra), y ese componente lo
+ * consumen otros módulos. Así que el wizard se migró EN EL LUGAR: chasis
+ * `Drawer`, campos con `form-primitives`, tablas con `KgDataTable`. La lógica
+ * —las tres server actions, el mapeo, las validaciones y el reporte de
+ * duplicados— no se tocó.
  */
 
 const COUNTRIES: ReadonlyArray<{ code: string; label: string }> = [
@@ -50,6 +89,16 @@ const FIELD_LABELS: Record<(typeof IMPORT_FIELDS)[number], string> = {
 
 type Step = "upload" | "mapping" | "review" | "result";
 
+const STEP_INDEX: Record<Step, number> = {
+  upload: 1,
+  mapping: 2,
+  review: 3,
+  result: 4,
+};
+
+/** Mismo ajuste que en los demás forms KG: alto mínimo de toque en 36px. */
+const controlStyle: CSSProperties = { ...inputStyle, minHeight: 36 };
+
 export function ImportLeadsModal({
   projectId,
   launches,
@@ -65,64 +114,41 @@ export function ImportLeadsModal({
 
   return (
     <>
+      {/*
+        Trigger secundario (antes era un `bg-surface` con borde y tokens
+        viejos). Sigue siendo un `<button>` real para que un call site pueda
+        apretarlo con utilidades `!` de Tailwind, que emiten `!important` y
+        ganan contra el `style` inline.
+      */}
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className={
-          triggerClassName ??
-          "inline-flex items-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-semibold text-fg hover:bg-bg-elevated"
-        }
+        className={`kg-focus${triggerClassName ? ` ${triggerClassName}` : ""}`}
+        style={{
+          ...secondaryBtn,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: 36,
+          whiteSpace: "nowrap",
+        }}
       >
         {triggerLabel}
       </button>
 
+      {/*
+        El montaje condicional se mantiene: cada apertura arranca un `Wizard`
+        nuevo, o sea el paso vuelve a "upload" y el archivo anterior se
+        descarta. Antes lo garantizaba el `{open && <Dialog>}`.
+      */}
       {open && (
-        <Dialog onClose={() => setOpen(false)}>
-          <Wizard
-            projectId={projectId}
-            launches={launches}
-            onClose={() => setOpen(false)}
-          />
-        </Dialog>
+        <Wizard
+          projectId={projectId}
+          launches={launches}
+          onClose={() => setOpen(false)}
+        />
       )}
     </>
-  );
-}
-
-function Dialog({
-  children,
-  onClose,
-}: {
-  readonly children: React.ReactNode;
-  readonly onClose: () => void;
-}) {
-  // Esc cierra el modal. Mismo patrón que los otros modals del proyecto.
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [onClose]);
-
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 sm:items-center"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-3xl rounded-md border border-border bg-bg p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {children}
-      </div>
-    </div>
   );
 }
 
@@ -205,31 +231,98 @@ function Wizard({
     });
   }
 
-  return (
-    <div className="space-y-5">
-      <header className="flex items-baseline justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-semibold text-fg">Importar leads</h2>
-          <p className="mt-1 text-xs text-fg-subtle">
-            Paso {step === "upload" ? 1 : step === "mapping" ? 2 : step === "review" ? 3 : 4} de 4
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Cerrar"
-          className="text-fg-muted hover:text-fg"
-        >
-          ✕
-        </button>
-      </header>
+  /*
+   * Los botones de navegación viven en el `footer` del Drawer, que es un slot
+   * ÚNICO fuera del cuerpo. Acá eso no genera el problema típico de los forms:
+   * este wizard no tiene ningún `<form>` con submit — cada paso avanza por
+   * `onClick` + `startTransition` sobre las server actions. Así que el footer
+   * puede cambiar de contenido por paso sin trucos de `form={id}`.
+   */
+  const footer = (
+    <FooterBar>
+      {step === "upload" && (
+        <>
+          <FooterBtn kind="secondary" onClick={onClose}>
+            Cancelar
+          </FooterBtn>
+          <FooterBtn
+            kind="primary"
+            onClick={handlePreview}
+            disabled={!file || pending}
+          >
+            {pending ? "Leyendo…" : "Continuar"}
+          </FooterBtn>
+        </>
+      )}
 
+      {step === "mapping" && (
+        <>
+          <FooterBtn
+            kind="secondary"
+            onClick={() => setStep("upload")}
+            disabled={pending}
+          >
+            ← Volver
+          </FooterBtn>
+          <FooterBtn
+            kind="primary"
+            onClick={handleValidate}
+            disabled={!mapping.name || pending}
+          >
+            {pending ? "Validando…" : "Validar archivo"}
+          </FooterBtn>
+        </>
+      )}
+
+      {step === "review" && validation?.ok && (
+        <>
+          <FooterBtn
+            kind="secondary"
+            onClick={() => setStep("mapping")}
+            disabled={pending}
+          >
+            ← Cambiar mapeo
+          </FooterBtn>
+          <FooterBtn
+            kind="primary"
+            onClick={handleConfirm}
+            disabled={validation.validCount === 0 || pending}
+          >
+            {pending
+              ? "Importando…"
+              : validation.validCount > 0
+                ? `Importar ${validation.validCount} leads`
+                : "Sin datos válidos"}
+          </FooterBtn>
+        </>
+      )}
+
+      {step === "result" && (
+        <>
+          <FooterBtn kind="secondary" onClick={reset}>
+            Importar otro archivo
+          </FooterBtn>
+          <FooterBtn kind="primary" onClick={onClose}>
+            {confirmed?.ok ? "Listo" : "Cerrar"}
+          </FooterBtn>
+        </>
+      )}
+    </FooterBar>
+  );
+
+  return (
+    <Drawer
+      open
+      onClose={onClose}
+      title="Importar leads"
+      subtitle={`Paso ${STEP_INDEX[step]} de 4`}
+      width={760}
+      footer={footer}
+    >
       {step === "upload" && (
         <UploadStep
           file={file}
           setFile={setFile}
-          onPreview={handlePreview}
-          pending={pending}
           previewError={preview && !preview.ok ? preview.error : null}
           templateHref={templateHref}
         />
@@ -246,10 +339,7 @@ function Wizard({
           launchId={launchId}
           setLaunchId={setLaunchId}
           launches={launches}
-          onBack={() => setStep("upload")}
-          onValidate={handleValidate}
           validationError={validation && !validation.ok ? validation.error : null}
-          pending={pending}
         />
       )}
 
@@ -259,20 +349,11 @@ function Wizard({
           withErrors={validation.withErrors}
           duplicatesInFile={validation.duplicatesInFile}
           errors={validation.errors}
-          onBack={() => setStep("mapping")}
-          onConfirm={handleConfirm}
-          pending={pending}
         />
       )}
 
-      {step === "result" && confirmed && (
-        <ResultStep
-          result={confirmed}
-          onClose={onClose}
-          onAnother={reset}
-        />
-      )}
-    </div>
+      {step === "result" && confirmed && <ResultStep result={confirmed} />}
+    </Drawer>
   );
 }
 
@@ -281,61 +362,101 @@ function Wizard({
 function UploadStep({
   file,
   setFile,
-  onPreview,
-  pending,
   previewError,
   templateHref,
 }: {
   readonly file: File | null;
   readonly setFile: (f: File | null) => void;
-  readonly onPreview: () => void;
-  readonly pending: boolean;
   readonly previewError: string | null;
   readonly templateHref: string;
 }) {
   return (
-    <div className="space-y-5">
-      <div className="rounded-md border border-accent/30 bg-accent/5 p-4">
-        <p className="text-sm font-medium text-fg">
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <div
+        style={{
+          padding: 14,
+          borderRadius: "var(--kg-r-12)",
+          background: "var(--kg-surface-2-solid)",
+          border: "1px solid var(--kg-border-subtle)",
+        }}
+      >
+        <p
+          style={{
+            margin: 0,
+            fontSize: 13,
+            fontWeight: 600,
+            color: "var(--kg-text-1)",
+          }}
+        >
           ¿No sabés qué columnas tiene que tener el archivo?
         </p>
-        <p className="mt-1 text-xs text-fg-muted">
+        <p
+          className="kg-t7"
+          style={{ margin: "6px 0 0", color: "var(--kg-text-3)", lineHeight: 1.5 }}
+        >
           Descargá la plantilla con los headers de muestra, llenala con tus
           leads y subila acá.
         </p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <a
-            href={templateHref}
-            className="inline-flex items-center rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-fg hover:bg-bg-elevated"
-          >
-            ⬇ Descargar plantilla vacía
-          </a>
-        </div>
+        {/* `<a href>` plano y no `Link`: el destino es un route handler que
+            devuelve un archivo, no una página — el router no debe
+            interceptarlo. */}
+        <a
+          href={templateHref}
+          className="kg-focus"
+          style={{
+            ...secondaryBtn,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            minHeight: 36,
+            marginTop: 12,
+            textDecoration: "none",
+          }}
+        >
+          ⬇ Descargar plantilla vacía
+        </a>
       </div>
 
-      <label className="block">
-        <span className="text-sm font-medium text-fg">Archivo .xlsx</span>
+      <Field label="Archivo .xlsx" htmlFor="import-file">
         <input
+          id="import-file"
           type="file"
           accept=".xlsx"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-          className="mt-1 block w-full rounded-md border border-border bg-bg-elevated p-2 text-sm text-fg"
+          className="kg-focus"
+          style={controlStyle}
         />
-      </label>
+      </Field>
 
-      {previewError && (
-        <p className="rounded-md border border-error/30 bg-error/5 p-3 text-sm text-error">
-          {previewError}
-        </p>
+      {file && (
+        // Confirmación de qué archivo quedó cargado: en mobile el nombre del
+        // input nativo se trunca y el usuario no sabe si tomó el correcto.
+        // `kg-t7` NO se usa acá: aplica `text-transform: uppercase` y
+        // destrozaría el nombre del archivo. Tamaño a mano, tabular para el
+        // peso.
+        <div
+          className="kg-num"
+          style={{
+            color: "var(--kg-text-3)",
+            marginTop: -10,
+            fontSize: 11,
+            fontVariantNumeric: "tabular-nums",
+            wordBreak: "break-all",
+          }}
+        >
+          {file.name} · {formatBytes(file.size)}
+        </div>
       )}
 
-      <div className="flex justify-end">
-        <Button disabled={!file || pending} onClick={onPreview}>
-          {pending ? "Leyendo…" : "Continuar"}
-        </Button>
-      </div>
+      {previewError && <ErrorBanner message={previewError} />}
     </div>
   );
+}
+
+/** Fila del preview de muestra: el id lo agrega el wizard para `rowKey`. */
+interface SampleRow {
+  readonly id: string;
+  readonly values: Record<string, string>;
 }
 
 function MappingStep({
@@ -348,10 +469,7 @@ function MappingStep({
   launchId,
   setLaunchId,
   launches,
-  onBack,
-  onValidate,
   validationError,
-  pending,
 }: {
   readonly headers: ReadonlyArray<string>;
   readonly sampleRows: ReadonlyArray<Record<string, string>>;
@@ -364,28 +482,44 @@ function MappingStep({
   readonly launchId: string;
   readonly setLaunchId: (v: string) => void;
   readonly launches: ReadonlyArray<{ id: string; name: string }>;
-  readonly onBack: () => void;
-  readonly onValidate: () => void;
   readonly validationError: string | null;
-  readonly pending: boolean;
 }) {
   const headerOptions = [
     { value: "", label: "— ninguna —" },
     ...headers.map((h) => ({ value: h, label: h })),
   ];
 
+  // `KgDataTable` pide `rowKey: (row) => string` y las sample rows son objetos
+  // planos sin id. El índice alcanza: son 5 filas de muestra, sin orden ni
+  // selección.
+  const previewRows: ReadonlyArray<SampleRow> = sampleRows.map((values, i) => ({
+    id: `sample-${i}`,
+    values,
+  }));
+
   return (
-    <div className="space-y-5">
-      <p className="text-xs text-fg-subtle">
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <p className="kg-t6" style={{ margin: 0, color: "var(--kg-text-3)" }}>
         Asociá las columnas del xlsx con los campos de leads. El teléfono se
         normaliza al formato internacional usando el país que elijas.
       </p>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      {/*
+        Los selects van NATIVOS, no con `KgFilterSelect`: ese componente navega
+        con `router.push(href)` — sirve para filtros de URL, no para juntar el
+        estado de un wizard que después viaja en un FormData.
+
+        Mobile primero: apilados en 390px, 2 columnas recién en md+.
+      */}
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {IMPORT_FIELDS.map((field) => (
-          <label key={field} className="block text-sm">
-            <span className="text-fg-subtle">{FIELD_LABELS[field]}</span>
+          <Field
+            key={field}
+            label={FIELD_LABELS[field]}
+            htmlFor={`map-${field}`}
+          >
             <select
+              id={`map-${field}`}
               value={mapping[field] ?? ""}
               onChange={(e) =>
                 setMapping((prev) => ({
@@ -393,7 +527,7 @@ function MappingStep({
                   [field]: e.target.value || undefined,
                 }))
               }
-              className="mt-1 w-full rounded-md border border-border bg-bg-elevated p-2 text-sm text-fg"
+              style={controlStyle}
             >
               {headerOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -401,15 +535,15 @@ function MappingStep({
                 </option>
               ))}
             </select>
-          </label>
+          </Field>
         ))}
 
-        <label className="block text-sm">
-          <span className="text-fg-subtle">País default del teléfono</span>
+        <Field label="País default del teléfono" htmlFor="map-country">
           <select
+            id="map-country"
             value={country}
             onChange={(e) => setCountry(e.target.value)}
-            className="mt-1 w-full rounded-md border border-border bg-bg-elevated p-2 text-sm text-fg"
+            style={controlStyle}
           >
             {COUNTRIES.map((c) => (
               <option key={c.code} value={c.code}>
@@ -417,14 +551,14 @@ function MappingStep({
               </option>
             ))}
           </select>
-        </label>
+        </Field>
 
-        <label className="block text-sm">
-          <span className="text-fg-subtle">Asociar a lanzamiento (opcional)</span>
+        <Field label="Asociar a lanzamiento (opcional)" htmlFor="map-launch">
           <select
+            id="map-launch"
             value={launchId}
             onChange={(e) => setLaunchId(e.target.value)}
-            className="mt-1 w-full rounded-md border border-border bg-bg-elevated p-2 text-sm text-fg"
+            style={controlStyle}
           >
             <option value="">— Ninguno —</option>
             {launches.map((l) => (
@@ -433,53 +567,26 @@ function MappingStep({
               </option>
             ))}
           </select>
-        </label>
+        </Field>
       </div>
 
-      <details className="rounded-md border border-border bg-surface/40 p-3">
-        <summary className="cursor-pointer text-sm font-medium text-fg">
-          Ver preview de las primeras filas
-        </summary>
-        <div className="mt-3 overflow-x-auto rounded-md border border-border">
-          <table className="w-full min-w-[480px] text-xs">
-            <thead className="bg-surface text-left uppercase tracking-wide text-fg-subtle">
-              <tr>
-                {headers.map((h) => (
-                  <th key={h} className="px-2 py-2">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sampleRows.map((row, i) => (
-                <tr key={i} className="border-t border-border">
-                  {headers.map((h) => (
-                    <td key={h} className="px-2 py-2 text-fg-muted">
-                      {row[h] ?? ""}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </details>
+      <Disclosure summary="Ver preview de las primeras filas">
+        {/* La tabla tiene tantas columnas como headers traiga el xlsx: en
+            390px no entran, así que scrollea dentro de su caja (KgDataTable ya
+            hace overflowX) en vez de romper el ancho del drawer. */}
+        <KgDataTable<SampleRow>
+          rows={previewRows}
+          rowKey={(r) => r.id}
+          emptyTitle="El archivo no trajo filas de muestra."
+          columns={headers.map((h) => ({
+            key: h,
+            label: h,
+            render: (r) => r.values[h] ?? "",
+          }))}
+        />
+      </Disclosure>
 
-      {validationError && (
-        <p className="rounded-md border border-error/30 bg-error/5 p-3 text-sm text-error">
-          {validationError}
-        </p>
-      )}
-
-      <div className="flex justify-between">
-        <Button variant="secondary" onClick={onBack} disabled={pending}>
-          ← Volver
-        </Button>
-        <Button disabled={!mapping.name || pending} onClick={onValidate}>
-          {pending ? "Validando…" : "Validar archivo"}
-        </Button>
-      </div>
+      {validationError && <ErrorBanner message={validationError} />}
     </div>
   );
 }
@@ -489,200 +596,314 @@ function ReviewStep({
   withErrors,
   duplicatesInFile,
   errors,
-  onBack,
-  onConfirm,
-  pending,
 }: {
   readonly validCount: number;
   readonly withErrors: number;
   readonly duplicatesInFile: number;
   readonly errors: ReadonlyArray<ImportRowError>;
-  readonly onBack: () => void;
-  readonly onConfirm: () => void;
-  readonly pending: boolean;
 }) {
   const hasErrors = withErrors > 0;
   return (
-    <div className="space-y-5">
-      <div className="grid gap-3 sm:grid-cols-3">
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <StatCard
           label="Listos para importar"
           value={validCount}
-          emphasis="success"
+          tone={validCount > 0 ? "positive" : null}
         />
         <StatCard
           label="No se van a importar"
           value={withErrors}
-          emphasis={hasErrors ? "warning" : "neutral"}
+          tone={hasErrors ? "warning" : null}
         />
         <StatCard
           label="Duplicados internos"
           value={duplicatesInFile}
-          emphasis="neutral"
+          tone={null}
           hint="Mismo teléfono en > 1 fila del archivo"
         />
       </div>
 
       {hasErrors && (
-        <div className="rounded-md border border-warning/40 bg-warning/5 p-3">
-          <p className="text-sm font-medium text-fg">
-            {withErrors} filas no se van a importar
-          </p>
-          <p className="mt-1 text-xs text-fg-muted">
-            Corregilas en el archivo y volvé a subirlo si las querés
-            incluir, o continuá sin ellas.
-          </p>
-          <div className="mt-3 max-h-56 overflow-y-auto rounded-md border border-border bg-bg-elevated">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-surface text-left uppercase tracking-wide text-fg-subtle">
-                <tr>
-                  <th className="px-3 py-2">Fila</th>
-                  <th className="px-3 py-2">Motivo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {errors.map((e, i) => (
-                  <tr key={i} className="border-t border-border">
-                    <td className="px-3 py-1.5 text-fg-muted tabular-nums">
-                      {e.rowNumber}
-                    </td>
-                    <td className="px-3 py-1.5 text-fg">{e.reason}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <>
+          <ErrorBanner
+            tone="warning"
+            message={`${withErrors} filas no se van a importar. Corregilas en el archivo y volvé a subirlo si las querés incluir, o continuá sin ellas.`}
+          />
+          <ErrorRowsTable errors={errors} />
+        </>
       )}
-
-      <div className="flex justify-between">
-        <Button variant="secondary" onClick={onBack} disabled={pending}>
-          ← Cambiar mapeo
-        </Button>
-        <Button
-          disabled={validCount === 0 || pending}
-          onClick={onConfirm}
-        >
-          {pending
-            ? "Importando…"
-            : validCount > 0
-              ? `Importar ${validCount} leads`
-              : "Sin datos válidos"}
-        </Button>
-      </div>
     </div>
   );
 }
 
-function ResultStep({
-  result,
-  onClose,
-  onAnother,
-}: {
-  readonly result: ConfirmResult;
-  readonly onClose: () => void;
-  readonly onAnother: () => void;
-}) {
+function ResultStep({ result }: { readonly result: ConfirmResult }) {
   if (!result.ok) {
     return (
-      <div className="space-y-4">
-        <div className="rounded-md border border-error/40 bg-error/5 p-4">
-          <h3 className="text-base font-semibold text-fg">No pude importar</h3>
-          <p className="mt-2 text-sm text-fg-muted">{result.error}</p>
-        </div>
-        <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={onAnother}>
-            Probar otro archivo
-          </Button>
-          <Button onClick={onClose}>Cerrar</Button>
-        </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <h3 className="kg-t5" style={{ margin: 0, color: "var(--kg-text-1)" }}>
+          No pude importar
+        </h3>
+        <ErrorBanner message={result.error} />
       </div>
     );
   }
 
   const hasErrors = result.errors.length > 0;
   return (
-    <div className="space-y-5">
-      <div className="rounded-md border border-success/40 bg-success/5 p-4">
-        <h3 className="text-base font-semibold text-fg">Import terminado</h3>
-        <ul className="mt-2 space-y-1 text-sm text-fg">
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <div
+        style={{
+          padding: 14,
+          borderRadius: "var(--kg-r-12)",
+          background: "var(--kg-surface-2-solid)",
+          border: "1px solid var(--kg-border-subtle)",
+        }}
+      >
+        {/* El "salió bien" se comunica con el StateDot, no pintando los
+            números de verde: la regla del design system vale para cualquier
+            dato, no sólo para montos. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <StateDot tone="positive" />
+          <h3 className="kg-t5" style={{ margin: 0, color: "var(--kg-text-1)" }}>
+            Import terminado
+          </h3>
+        </div>
+        <ul
+          style={{
+            listStyle: "none",
+            margin: "10px 0 0",
+            padding: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: 5,
+            fontSize: 13,
+            color: "var(--kg-text-2)",
+            lineHeight: 1.5,
+          }}
+        >
           <li>
-            <strong>{result.imported}</strong> leads importados
+            <Count n={result.imported} /> leads importados
           </li>
           <li>
-            <strong>{result.skippedDuplicates}</strong> duplicados (mismo
-            teléfono ya cargado en la base)
+            <Count n={result.skippedDuplicates} /> duplicados (mismo teléfono ya
+            cargado en la base)
           </li>
           {hasErrors && (
             <li>
-              <strong>{result.errors.length}</strong> con error (ver detalle)
+              <Count n={result.errors.length} /> con error (ver detalle)
             </li>
           )}
         </ul>
       </div>
 
       {hasErrors && (
-        <details className="rounded-md border border-border bg-surface/40 p-3" open>
-          <summary className="cursor-pointer text-sm font-medium text-fg">
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
             Detalle de errores ({result.errors.length})
-          </summary>
-          <div className="mt-3 max-h-56 overflow-y-auto rounded-md border border-border bg-bg-elevated">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-surface text-left uppercase tracking-wide text-fg-subtle">
-                <tr>
-                  <th className="px-3 py-2">Fila</th>
-                  <th className="px-3 py-2">Motivo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.errors.map((e, i) => (
-                  <tr key={i} className="border-t border-border">
-                    <td className="px-3 py-1.5 text-fg-muted tabular-nums">
-                      {e.rowNumber}
-                    </td>
-                    <td className="px-3 py-1.5 text-fg">{e.reason}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           </div>
-        </details>
+          <ErrorRowsTable errors={result.errors} />
+        </div>
       )}
-
-      <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={onAnother}>
-          Importar otro archivo
-        </Button>
-        <Button onClick={onClose}>Listo</Button>
-      </div>
     </div>
   );
 }
 
+// ─── presentational helpers ─────────────────────────────────────────────────
+
+/**
+ * Fila de error con key estable: un mismo `rowNumber` puede repetirse si esa
+ * fila del xlsx acumula más de un problema, así que el índice va aparte.
+ */
+interface ErrorRow extends ImportRowError {
+  readonly key: string;
+}
+
+function ErrorRowsTable({
+  errors,
+}: {
+  readonly errors: ReadonlyArray<ImportRowError>;
+}) {
+  const rows: ReadonlyArray<ErrorRow> = errors.map((e, i) => ({
+    ...e,
+    key: `err-${i}`,
+  }));
+  return (
+    <KgDataTable<ErrorRow>
+      rows={rows}
+      rowKey={(r) => r.key}
+      emptyTitle="Sin errores."
+      // El body scrollea dentro del drawer: sin esto una lista de 300 errores
+      // empuja el contenido y deja el reporte imposible de recorrer.
+      maxBodyHeight="240px"
+      columns={[
+        {
+          key: "rowNumber",
+          label: "Fila",
+          align: "right",
+          numeric: true,
+          width: "72px",
+          render: (r) => r.rowNumber,
+        },
+        { key: "reason", label: "Motivo", render: (r) => r.reason },
+      ]}
+    />
+  );
+}
+
+/**
+ * Tarjeta de conteo. El número va SIEMPRE en `--kg-text-1`: el tono viaja en
+ * el `StateDot` junto al label, nunca sobre el dato (regla KG).
+ */
 function StatCard({
   label,
   value,
-  emphasis,
+  tone,
   hint,
 }: {
   readonly label: string;
   readonly value: number;
-  readonly emphasis: "success" | "warning" | "neutral";
+  readonly tone: KgTone | null;
   readonly hint?: string;
 }) {
-  const valueClass =
-    emphasis === "success"
-      ? "text-success"
-      : emphasis === "warning"
-        ? "text-warning"
-        : "text-fg";
   return (
-    <div className="rounded-md border border-border bg-surface p-4">
-      <div className="text-xs uppercase tracking-wide text-fg-subtle">
+    <div
+      style={{
+        padding: 14,
+        borderRadius: "var(--kg-r-12)",
+        background: "var(--kg-surface-2-solid)",
+        border: "1px solid var(--kg-border-subtle)",
+      }}
+    >
+      <div
+        className="kg-t7"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          color: "var(--kg-text-3)",
+        }}
+      >
+        <StateDot tone={tone} />
         {label}
       </div>
-      <div className={`mt-2 text-2xl font-bold ${valueClass}`}>{value}</div>
-      {hint && <div className="mt-1 text-xs text-fg-muted">{hint}</div>}
+      <div
+        className="kg-num"
+        style={{
+          marginTop: 6,
+          fontSize: 24,
+          fontWeight: 700,
+          color: "var(--kg-text-1)",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {value}
+      </div>
+      {hint && (
+        <div
+          className="kg-t7"
+          style={{ marginTop: 4, color: "var(--kg-text-3)", lineHeight: 1.4 }}
+        >
+          {hint}
+        </div>
+      )}
     </div>
   );
+}
+
+/** Número inline dentro de una frase — tabular para que la lista "cierre". */
+function Count({ n }: { readonly n: number }) {
+  return (
+    <strong
+      className="kg-num"
+      style={{ color: "var(--kg-text-1)", fontVariantNumeric: "tabular-nums" }}
+    >
+      {n}
+    </strong>
+  );
+}
+
+/**
+ * `<details>` estilado. Se mantiene el elemento nativo (y no un toggle con
+ * `useState`) porque no necesita estado en JS y ya trae la semántica de
+ * expandido/colapsado para lectores de pantalla.
+ */
+function Disclosure({
+  summary,
+  children,
+}: {
+  readonly summary: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <details
+      style={{
+        borderRadius: "var(--kg-r-12)",
+        border: "1px solid var(--kg-border-subtle)",
+        background: "var(--kg-surface-2-solid)",
+        padding: 12,
+      }}
+    >
+      <summary
+        className="kg-focus"
+        style={{
+          cursor: "pointer",
+          fontSize: 13,
+          fontWeight: 600,
+          color: "var(--kg-text-1)",
+          minHeight: 24,
+        }}
+      >
+        {summary}
+      </summary>
+      <div style={{ marginTop: 12 }}>{children}</div>
+    </details>
+  );
+}
+
+/**
+ * Barra del footer. En 390px los botones se reparten el ancho (`flex-1`) para
+ * llegar cómodos al target de toque; en md+ vuelven a su ancho natural, con
+ * "volver" a la izquierda y la acción principal a la derecha.
+ */
+function FooterBar({ children }: { readonly children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 md:justify-between">{children}</div>
+  );
+}
+
+function FooterBtn({
+  kind,
+  onClick,
+  disabled,
+  children,
+}: {
+  readonly kind: "primary" | "secondary";
+  readonly onClick: () => void;
+  readonly disabled?: boolean;
+  readonly children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="kg-focus flex-1 md:flex-none"
+      style={{
+        ...(kind === "primary" ? primaryBtn : secondaryBtn),
+        minHeight: 36,
+        whiteSpace: "nowrap",
+        opacity: disabled ? 0.6 : 1,
+        cursor: disabled ? "not-allowed" : "pointer",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }

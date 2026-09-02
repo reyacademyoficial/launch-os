@@ -1,39 +1,49 @@
+"use client";
+
+import { HeroKpi, type HeroKpiTone } from "@/components/kg/hero-kpi";
+import { SupportKpi, type SupportKpiTone } from "@/components/kg/support-kpi";
 import {
   fmtMoney,
   fmtMoneyDecimals,
   fmtMultiplier,
   fmtNumber,
   fmtPercent,
-  fmtPercentOrDash,
 } from "@/lib/format";
 import type { LaunchKPIs } from "@/lib/kpis";
 import { fmtUsd, fmtUsdDecimals } from "@/lib/money";
 
-function KpiCard({
-  label,
-  value,
-  hint,
-  emphasis,
-}: {
-  readonly label: string;
-  readonly value: string;
-  readonly hint?: string;
-  readonly emphasis?: "neutral" | "positive" | "negative";
-}) {
-  const valueColor =
-    emphasis === "negative"
-      ? "text-error"
-      : emphasis === "positive"
-        ? "text-success"
-        : "text-fg";
+/**
+ * Bento de KPIs de un lanzamiento.
+ *
+ * POR QUÉ AHORA ES CLIENT
+ * `HeroKpi` y `SupportKpi` reciben `format` como FUNCIÓN, y las funciones no
+ * cruzan el boundary RSC. Como este componente ya recibía todo serializable
+ * (`LaunchKPIs` es un objeto plano + primitivas), marcarlo client no cambia
+ * nada para sus callers. Mismo corte que `overview-kpis.tsx`.
+ *
+ * JERARQUÍA (regla del design system)
+ * Los 17 `KpiCard` locales pesaban todos igual: una grilla plana donde
+ * "Revenue estimado" y "CPL TikTok" gritaban lo mismo. Ahora hay dos niveles —
+ * `HeroKpi` para las dos cifras que se miran primero, `SupportKpi` para el
+ * resto. Cuáles suben depende del rol: con `hideRevenueKpis` (operador) no hay
+ * plata que mostrar, así que arriba van Inversión y Leads.
+ *
+ * LA PLATA NO SE PINTA
+ * El `emphasis` que teñía Profit de verde o rojo se fue. El signo del número
+ * ya dice la dirección; el tono viaja en el `StateDot` del KPI. Ver `tone.ts`.
+ *
+ * LOS HINTS PASARON A TOOLTIP
+ * Los `hint` que colgaban de cada card ahora son `help` (el ⓘ). Son
+ * explicaciones de cómo se calcula cada métrica: quien las necesita las abre,
+ * y sacarlas del flujo deja leer los 17 números de un vistazo.
+ *
+ * La firma pública NO cambia: la consumen `kpi/page.tsx` y el portal de
+ * cliente (`(cliente)/portal/proyectos/[id]/launches/[launchId]/page.tsx`).
+ */
 
-  return (
-    <div className="rounded-md border border-border bg-surface p-4">
-      <div className="text-xs uppercase tracking-wide text-fg-subtle">{label}</div>
-      <div className={`mt-2 text-xl font-bold ${valueColor}`}>{value}</div>
-      {hint && <div className="mt-1 text-xs text-fg-muted">{hint}</div>}
-    </div>
-  );
+/** Formateador tolerante a KPIs sin denominador (`null` → NaN → "—"). */
+function pctOrDash(n: number): string {
+  return Number.isFinite(n) ? fmtPercent(n) : "—";
 }
 
 export function KpiGrid({
@@ -72,8 +82,7 @@ export function KpiGrid({
 }) {
   // Helpers: si hay tasa del launch, dividimos y usamos fmtUsd (prefijo US$).
   // Sin tasa: legacy `fmtMoney` sin distinción.
-  const rate =
-    launchArsPerUsd && launchArsPerUsd > 0 ? launchArsPerUsd : null;
+  const rate = launchArsPerUsd && launchArsPerUsd > 0 ? launchArsPerUsd : null;
   const fMoney = kpisInUsd
     ? fmtUsd
     : rate
@@ -85,151 +94,184 @@ export function KpiGrid({
       ? (n: number) => fmtUsdDecimals(n / rate)
       : (n: number) => fmtMoneyDecimals(n);
 
-  const profitEstEmphasis =
-    kpi.profitEstimated > 0
-      ? "positive"
-      : kpi.profitEstimated < 0
-        ? "negative"
-        : "neutral";
-  const profitRealEmphasis =
-    kpi.profitReal > 0
-      ? "positive"
-      : kpi.profitReal < 0
-        ? "negative"
-        : "neutral";
+  const investmentHelp = kpisInUsd
+    ? "Meta + Google + TikTok · en USD."
+    : rate
+      ? "Meta + Google + TikTok · convertido a USD con la tasa del launch."
+      : "Meta + Google + TikTok.";
 
-  // Footers de funnel: si falta el denominador, el KPI muestra "—". Los
-  // footers describen exactamente la cuenta para que el equipo entienda
-  // qué se está dividiendo.
-  const showRateHint =
+  const amountTone = (n: number): HeroKpiTone =>
+    n > 0 ? "positive" : n < 0 ? "negative" : "neutral";
+  // ROAS < 1 = el lanzamiento no recupera lo que gasta en pauta. Es el umbral
+  // que el operador mira primero.
+  const roasTone = (n: number): SupportKpiTone =>
+    Number.isFinite(n) && n >= 1 ? "positive" : "negative";
+
+  // Si falta el denominador el KPI muestra "—". Estos textos describen
+  // exactamente la cuenta, para que el equipo entienda qué se está dividiendo.
+  const showRateHelp =
     kpi.showRate == null
-      ? "Cargá Inscriptos y Asistentes Clase 1 para ver Show Rate"
-      : `${fmtNumber(kpi.asistentes)} de ${fmtNumber(kpi.registrados)} inscriptos · pico simultáneo Clase 1`;
+      ? "Cargá Inscriptos y Asistentes Clase 1 para ver Show Rate."
+      : `${fmtNumber(kpi.asistentes)} de ${fmtNumber(kpi.registrados)} inscriptos · pico simultáneo Clase 1.`;
 
-  const closeRateC1Hint =
+  const closeRateC1Help =
     kpi.closeRate == null
-      ? "Cargá Asistentes Clase 1 para ver Close Rate"
-      : `${fmtNumber(kpi.hastaPitch)} de ${fmtNumber(kpi.asistentes)} asistentes Clase 1 retenidos hasta Clase 3 · pico simultáneo`;
+      ? "Cargá Asistentes Clase 1 para ver Close Rate."
+      : `${fmtNumber(kpi.hastaPitch)} de ${fmtNumber(kpi.asistentes)} asistentes Clase 1 retenidos hasta Clase 3 · pico simultáneo.`;
 
-  const closeRateC3Hint =
+  const closeRateC3Help =
     kpi.closeRateC3 == null
-      ? "Cargá Asistentes Clase 3 para ver Close Rate hasta el pitch"
-      : `${fmtNumber(kpi.ventas)} de ${fmtNumber(kpi.hastaPitch)} asistentes Clase 3 / pitch · pico simultáneo`;
+      ? "Cargá Asistentes Clase 3 para ver Close Rate hasta el pitch."
+      : `${fmtNumber(kpi.ventas)} de ${fmtNumber(kpi.hastaPitch)} asistentes Clase 3 / pitch · pico simultáneo.`;
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-      {!hideRevenueKpis && (
-        <>
-          <KpiCard
-            label="Revenue estimado"
-            value={fMoney(kpi.revenueEstimated)}
-            hint={`Suma de montos pactados de ${fmtNumber(kpi.ventas)} ventas`}
-          />
-          <KpiCard
-            label="Revenue cobrado"
-            value={fMoney(kpi.revenueCollected)}
-            hint="Suma de cobros registrados"
-          />
-        </>
-      )}
-      <KpiCard
-        label="Inversión total"
-        value={fMoney(kpi.totalInvestment)}
-        hint={
-          kpisInUsd
-            ? "Meta + Google + TikTok · en USD"
-            : rate
-              ? "Meta + Google + TikTok · convertido a USD con la tasa del launch"
-              : "Meta + Google + TikTok"
-        }
-      />
-      {!hideRevenueKpis && (
-        <KpiCard
-          label="CAC"
-          value={fMoneyDec(kpi.cac)}
-          hint={`${fMoney(kpi.totalInvestment)} invertido / ${fmtNumber(kpi.ventas)} ventas`}
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* ── Fila 1 · los dos números que se miran primero ── */}
+      <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2">
+        {hideRevenueKpis ? (
+          <>
+            <HeroKpi
+              label="Inversión total"
+              value={kpi.totalInvestment}
+              format={fMoney}
+              featured
+              help={investmentHelp}
+            />
+            <HeroKpi
+              label="Leads totales"
+              value={kpi.totalLeads}
+              format={fmtNumber}
+              help="Meta + Google + TikTok."
+            />
+          </>
+        ) : (
+          <>
+            <HeroKpi
+              label="Revenue estimado"
+              value={kpi.revenueEstimated}
+              format={fMoney}
+              featured
+              help={`Suma de montos pactados de ${fmtNumber(kpi.ventas)} ventas.`}
+            />
+            <HeroKpi
+              label="Profit real"
+              value={kpi.profitReal}
+              format={fMoney}
+              tone={amountTone(kpi.profitReal)}
+              help={`${fMoney(kpi.revenueCollected)} cobrado − ${fMoney(kpi.totalInvestment)} invertido.`}
+            />
+          </>
+        )}
+      </div>
+
+      {/* ── Fila 2 · el resto, todos del mismo peso ── */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        {!hideRevenueKpis && (
+          <>
+            <SupportKpi
+              label="Revenue cobrado"
+              value={kpi.revenueCollected}
+              format={fMoney}
+              help="Suma de cobros registrados."
+            />
+            <SupportKpi
+              label="Inversión total"
+              value={kpi.totalInvestment}
+              format={fMoney}
+              help={investmentHelp}
+            />
+            <SupportKpi
+              label="CAC"
+              value={kpi.cac}
+              format={fMoneyDec}
+              help={`${fMoney(kpi.totalInvestment)} invertido / ${fmtNumber(kpi.ventas)} ventas.`}
+            />
+            <SupportKpi
+              label="ROAS estimado"
+              value={kpi.roasEstimated}
+              format={fmtMultiplier}
+              tone={roasTone(kpi.roasEstimated)}
+              help={`${fMoney(kpi.revenueEstimated)} pactado / ${fMoney(kpi.totalInvestment)} invertido.`}
+            />
+            <SupportKpi
+              label="ROAS real"
+              value={kpi.roasReal}
+              format={fmtMultiplier}
+              tone={roasTone(kpi.roasReal)}
+              help={`${fMoney(kpi.revenueCollected)} cobrado / ${fMoney(kpi.totalInvestment)} invertido.`}
+            />
+            <SupportKpi
+              label="Profit estimado"
+              value={kpi.profitEstimated}
+              format={fMoney}
+              tone={amountTone(kpi.profitEstimated)}
+              help={`${fMoney(kpi.revenueEstimated)} pactado − ${fMoney(kpi.totalInvestment)} invertido.`}
+            />
+            <SupportKpi
+              label="Leads totales"
+              value={kpi.totalLeads}
+              format={fmtNumber}
+              help="Meta + Google + TikTok."
+            />
+          </>
+        )}
+
+        <SupportKpi
+          label="Show rate"
+          value={kpi.showRate ?? Number.NaN}
+          format={pctOrDash}
+          help={showRateHelp}
         />
-      )}
-
-      {!hideRevenueKpis && (
-        <>
-          <KpiCard
-            label="ROAS estimado"
-            value={fmtMultiplier(kpi.roasEstimated)}
-            hint={`${fMoney(kpi.revenueEstimated)} pactado / ${fMoney(kpi.totalInvestment)} invertido`}
-          />
-          <KpiCard
-            label="ROAS real"
-            value={fmtMultiplier(kpi.roasReal)}
-            hint={`${fMoney(kpi.revenueCollected)} cobrado / ${fMoney(kpi.totalInvestment)} invertido`}
-          />
-          <KpiCard
-            label="Profit estimado"
-            value={fMoney(kpi.profitEstimated)}
-            emphasis={profitEstEmphasis}
-            hint={`${fMoney(kpi.revenueEstimated)} pactado − ${fMoney(kpi.totalInvestment)} invertido`}
-          />
-          <KpiCard
-            label="Profit real"
-            value={fMoney(kpi.profitReal)}
-            emphasis={profitRealEmphasis}
-            hint={`${fMoney(kpi.revenueCollected)} cobrado − ${fMoney(kpi.totalInvestment)} invertido`}
-          />
-        </>
-      )}
-
-      <KpiCard
-        label="Leads totales"
-        value={fmtNumber(kpi.totalLeads)}
-        hint="Meta + Google + TikTok"
-      />
-      <KpiCard
-        label="Show rate"
-        value={fmtPercentOrDash(kpi.showRate)}
-        hint={showRateHint}
-      />
-      <KpiCard
-        label="Close rate"
-        value={fmtPercentOrDash(kpi.closeRate)}
-        hint={closeRateC1Hint}
-      />
-      <KpiCard
-        label="Close rate hasta el pitch"
-        value={fmtPercentOrDash(kpi.closeRateC3)}
-        hint={closeRateC3Hint}
-      />
-
-      {!hideRevenueKpis && (
-        <KpiCard
-          label="% WhatsApp del revenue"
-          value={fmtPercent(kpi.whatsappRevenueShare)}
-          hint={`${fMoney(kpi.whatsappRevenue)} de ${fMoney(kpi.revenueEstimated)}`}
+        <SupportKpi
+          label="Close rate"
+          value={kpi.closeRate ?? Number.NaN}
+          format={pctOrDash}
+          help={closeRateC1Help}
         />
-      )}
-
-      <KpiCard
-        label="CPL Meta"
-        value={fMoneyDec(kpi.cplMeta)}
-        hint={`${fMoney(kpi.metaInv)} / ${fmtNumber(kpi.metaLeads)} leads`}
-      />
-      <KpiCard
-        label="CPL Google"
-        value={fMoneyDec(kpi.cplGoogle)}
-        hint={`${fMoney(kpi.googleInv)} / ${fmtNumber(kpi.googleLeads)} leads`}
-      />
-      <KpiCard
-        label="CPL TikTok"
-        value={fMoneyDec(kpi.cplTiktok)}
-        hint={`${fMoney(kpi.tiktokInv)} / ${fmtNumber(kpi.tiktokLeads)} leads`}
-      />
-
-      {ghlNewLeads !== undefined && (
-        <KpiCard
-          label="Leads GHL"
-          value={fmtNumber(ghlNewLeads)}
-          hint="Contacts nuevos en GHL durante el launch. No se suma a Leads totales."
+        <SupportKpi
+          label="Close rate hasta el pitch"
+          value={kpi.closeRateC3 ?? Number.NaN}
+          format={pctOrDash}
+          help={closeRateC3Help}
         />
-      )}
+
+        {!hideRevenueKpis && (
+          <SupportKpi
+            label="% WhatsApp del revenue"
+            value={kpi.whatsappRevenueShare}
+            format={fmtPercent}
+            help={`${fMoney(kpi.whatsappRevenue)} de ${fMoney(kpi.revenueEstimated)}.`}
+          />
+        )}
+
+        <SupportKpi
+          label="CPL Meta"
+          value={kpi.cplMeta}
+          format={fMoneyDec}
+          help={`${fMoney(kpi.metaInv)} / ${fmtNumber(kpi.metaLeads)} leads.`}
+        />
+        <SupportKpi
+          label="CPL Google"
+          value={kpi.cplGoogle}
+          format={fMoneyDec}
+          help={`${fMoney(kpi.googleInv)} / ${fmtNumber(kpi.googleLeads)} leads.`}
+        />
+        <SupportKpi
+          label="CPL TikTok"
+          value={kpi.cplTiktok}
+          format={fMoneyDec}
+          help={`${fMoney(kpi.tiktokInv)} / ${fmtNumber(kpi.tiktokLeads)} leads.`}
+        />
+
+        {ghlNewLeads !== undefined && (
+          <SupportKpi
+            label="Leads GHL"
+            value={ghlNewLeads}
+            format={fmtNumber}
+            help="Contacts nuevos en GHL durante el launch. No se suma a Leads totales."
+          />
+        )}
+      </div>
     </div>
   );
 }

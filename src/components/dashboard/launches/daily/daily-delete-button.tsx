@@ -2,6 +2,8 @@
 
 import { useState, useTransition } from "react";
 
+import { dangerBtn, smallBtn } from "@/components/kg/form-primitives";
+
 /**
  * Inline two-step delete for a daily row. Lighter than the launch-level
  * type-DELETE modal: a daily row is cheap to recreate, type-to-confirm would
@@ -10,6 +12,12 @@ import { useState, useTransition } from "react";
  * Click once → toggles into a Cancelar / Confirmar pair.
  * Click Confirmar → fires the bound Server Action; revalidatePath inside the
  * action causes the parent page to re-render with the row gone.
+ *
+ * NO se migra a `KgConfirmDialog` a propósito: la cabecera de esa primitiva
+ * declara este caso fuera de alcance (es un two-step INLINE, no un diálogo
+ * modal). Acá sólo cambian los estilos — tokens viejos (`text-fg-muted`,
+ * `text-error`) por `smallBtn` / `dangerBtn` de `form-primitives`. El
+ * comportamiento y el árbol de estados quedan idénticos.
  */
 export function DailyDeleteButton({
   onConfirm,
@@ -21,12 +29,13 @@ export function DailyDeleteButton({
 
   if (confirming) {
     return (
-      <div className="inline-flex items-center gap-2 text-xs">
+      <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
         <button
           type="button"
           onClick={() => setConfirming(false)}
           disabled={isPending}
-          className="text-fg-muted hover:text-fg disabled:opacity-50"
+          className="kg-focus"
+          style={{ ...smallBtn, opacity: isPending ? 0.5 : 1 }}
         >
           Cancelar
         </button>
@@ -38,7 +47,8 @@ export function DailyDeleteButton({
             })
           }
           disabled={isPending}
-          className="font-medium text-error hover:opacity-80 disabled:opacity-50"
+          className="kg-focus"
+          style={{ ...dangerBtn, opacity: isPending ? 0.5 : 1 }}
         >
           {isPending ? "Borrando…" : "Confirmar"}
         </button>
@@ -50,7 +60,8 @@ export function DailyDeleteButton({
     <button
       type="button"
       onClick={() => setConfirming(true)}
-      className="text-xs text-fg-muted hover:text-error"
+      className="kg-focus"
+      style={smallBtn}
     >
       Borrar
     </button>

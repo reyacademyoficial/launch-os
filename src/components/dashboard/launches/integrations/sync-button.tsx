@@ -2,9 +2,13 @@
 
 import { useState, useTransition } from "react";
 
-import { triggerSync } from "@/app/(app)/proyectos/[projectId]/launches/[launchId]/sync-actions";
-import { Button } from "@/components/ui/button";
-import { FieldError } from "@/components/ui/field-error";
+import { triggerSync } from "@/app/(app)/(kg)/proyectos/[projectId]/launches/[launchId]/sync-actions";
+import {
+  ErrorBanner,
+  primaryBtn,
+  secondaryBtn,
+} from "@/components/kg/form-primitives";
+import { StateDot } from "@/components/kg/state-dot";
 import type { SyncProviderId } from "@/lib/integrations/sync";
 
 /**
@@ -13,6 +17,10 @@ import type { SyncProviderId } from "@/lib/integrations/sync";
  *
  * No tira toast — el feedback se ve en la sección de "Estado" del provider
  * card (que se rerenderiza via revalidatePath + Realtime).
+ *
+ * El "está corriendo" se comunica con un `StateDot` de acento adelante del
+ * label, no pintando el texto del botón: el color semántico vive en el dot
+ * (regla del design system), el botón se queda con su tono de jerarquía.
  */
 export function SyncButton({
   projectId,
@@ -51,20 +59,47 @@ export function SyncButton({
     });
   }
 
+  const isBlocked = isPending || disabled === true;
+  const base = variant === "secondary" ? secondaryBtn : primaryBtn;
+
   return (
-    <div className="flex flex-col items-end gap-1">
-      <Button
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-end",
+        gap: 6,
+        minWidth: 0,
+      }}
+    >
+      <button
         type="button"
         onClick={handleClick}
-        disabled={isPending || disabled}
+        disabled={isBlocked}
         title={disabled ? disabledReason : undefined}
-        variant={variant === "secondary" ? "secondary" : undefined}
+        className="kg-focus"
+        style={{
+          ...base,
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 7,
+          whiteSpace: "nowrap",
+          opacity: isBlocked ? 0.5 : 1,
+          cursor: isBlocked ? "not-allowed" : "pointer",
+        }}
       >
+        {isPending && <StateDot tone="accent" />}
         {isPending
           ? (pendingLabel ?? "Sincronizando…")
           : (label ?? "Sincronizar")}
-      </Button>
-      {lastError && <FieldError>{lastError}</FieldError>}
+      </button>
+      {lastError && (
+        // El error del sync puede ser una respuesta larga del provider; se le
+        // pone techo para que no estire la columna de acciones del card.
+        <div style={{ maxWidth: 280 }}>
+          <ErrorBanner message={lastError} />
+        </div>
+      )}
     </div>
   );
 }

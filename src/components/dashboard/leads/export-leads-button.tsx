@@ -3,6 +3,8 @@
 import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { secondaryBtn } from "@/components/kg/form-primitives";
+
 /**
  * Botón "Exportar" del header de leads.
  *
@@ -16,6 +18,10 @@ import { useEffect, useRef, useState } from "react";
  *
  * Permisos: el server hace el gate (`requireCanEditLaunchesIn`). En el client
  * el botón se monta sólo cuando el caller (page.tsx) ya validó `canEdit`.
+ *
+ * Migración KG: sólo cambió la piel (tokens viejos `bg-surface`/`text-fg` →
+ * `secondaryBtn` + vars `--kg-*`). La construcción de los hrefs y el manejo
+ * de foco/Esc quedaron intactos: son la lógica que respeta los filtros.
  */
 export function ExportLeadsButton({ projectId }: { readonly projectId: string }) {
   const searchParams = useSearchParams();
@@ -61,41 +67,93 @@ export function ExportLeadsButton({ projectId }: { readonly projectId: string })
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-3 py-2 text-sm font-semibold text-fg hover:bg-bg-elevated"
+        className="kg-focus"
+        style={{
+          ...secondaryBtn,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 6,
+          minHeight: 36,
+          whiteSpace: "nowrap",
+        }}
       >
         ⬇ Exportar
-        <span className="text-fg-subtle">▾</span>
+        <span aria-hidden style={{ color: "var(--kg-text-3)" }}>
+          ▾
+        </span>
       </button>
 
       {open && (
+        // zIndex 900: por encima del contenido pero debajo de Drawer /
+        // BottomSheet (2000), igual que la barra de selección de KG.
         <div
           role="menu"
-          className="absolute right-0 z-20 mt-1 w-56 rounded-md border border-border bg-bg-elevated p-1 shadow-lg"
+          className="kg-glass-3"
+          style={{
+            position: "absolute",
+            right: 0,
+            top: "calc(100% + 6px)",
+            zIndex: 900,
+            width: 232,
+            padding: 4,
+            borderRadius: "var(--kg-r-12)",
+            border: "1px solid var(--kg-border-default)",
+            boxShadow: "var(--kg-shadow-float)",
+          }}
         >
-          <a
+          <ExportOption
             href={xlsxHref}
-            role="menuitem"
-            onClick={() => setOpen(false)}
-            className="block rounded px-3 py-2 text-sm text-fg hover:bg-surface"
-          >
-            <span className="font-medium">Excel (.xlsx)</span>
-            <span className="ml-1 text-xs text-fg-subtle">
-              respeta filtros
-            </span>
-          </a>
-          <a
+            label="Excel (.xlsx)"
+            onNavigate={() => setOpen(false)}
+          />
+          <ExportOption
             href={csvHref}
-            role="menuitem"
-            onClick={() => setOpen(false)}
-            className="block rounded px-3 py-2 text-sm text-fg hover:bg-surface"
-          >
-            <span className="font-medium">CSV (.csv)</span>
-            <span className="ml-1 text-xs text-fg-subtle">
-              respeta filtros
-            </span>
-          </a>
+            label="CSV (.csv)"
+            onNavigate={() => setOpen(false)}
+          />
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Ítem del menú. Sigue siendo un `<a href>` plano (no un Link de Next): el
+ * destino es un route handler que devuelve un archivo, no una página — el
+ * router de Next no debe interceptarlo.
+ */
+function ExportOption({
+  href,
+  label,
+  onNavigate,
+}: {
+  readonly href: string;
+  readonly label: string;
+  readonly onNavigate: () => void;
+}) {
+  return (
+    <a
+      href={href}
+      role="menuitem"
+      onClick={onNavigate}
+      className="kg-focus"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+        minHeight: 36,
+        justifyContent: "center",
+        padding: "7px 10px",
+        borderRadius: "var(--kg-r-8)",
+        textDecoration: "none",
+        color: "var(--kg-text-1)",
+      }}
+    >
+      <span style={{ fontSize: 13, fontWeight: 600 }}>{label}</span>
+      <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+        respeta filtros
+      </span>
+    </a>
   );
 }

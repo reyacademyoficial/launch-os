@@ -6,8 +6,7 @@ import { syncLaunch, type SyncProviderId } from "./sync";
 
 /**
  * Sync incremental de los 3 providers (meta / ghl / sendflow) para todos los
- * launches abiertos (closed_at IS NULL). ghl_messages queda afuera — es pesado
- * y sigue disparándose a mano desde la UI.
+ * launches abiertos (closed_at IS NULL).
  *
  * Extraído de /api/cron/sync-integrations en la consolidación de crons: el
  * dispatcher unificado (/api/cron/daily-jobs) llama esta función. El endpoint

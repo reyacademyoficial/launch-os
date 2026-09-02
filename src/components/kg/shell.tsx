@@ -9,25 +9,31 @@ import { KgSidebar } from "./sidebar";
 import { KgTopbar } from "./topbar";
 
 /**
- * KingrowShell — chasis de la plataforma para roles no-cliente.
+ * KingrowShell — chasis único de la plataforma, para TODOS los roles del
+ * árbol `(app)` (incluido `/proyectos/*`, desde que Lanzamientos se unificó
+ * al KG System y el ProjectShell dejó de existir).
  *
  * Reutiliza ShellProvider + MobileSidebar de LaunchOS para el patrón mobile
  * (hamburger + slide-in). La sidebar visible en desktop es la KG por capas;
  * la topbar es la KG con "Capa X · Módulo" + toggle de tema.
  *
- * Cliente NO llega acá — el gate de (app)/layout.tsx lo salta a /portal.
+ * `cliente`, `closer` y `operador` SÍ montan este shell — no hay ningún gate
+ * que los salte a /portal. Lo que ven se recorta en `KgSidebar` vía
+ * `ROLE_MODULE_ALLOWLIST` (layers.ts).
  */
 export function KingrowShell({
   profile,
   theme,
+  sidebarCollapsed,
   children,
 }: {
   readonly profile: SessionProfile;
   readonly theme: Theme;
+  readonly sidebarCollapsed: boolean;
   readonly children: React.ReactNode;
 }) {
   return (
-    <ShellProvider>
+    <ShellProvider initialCollapsed={sidebarCollapsed}>
       <PageMenuProvider>
         <div
           className="flex h-dvh overflow-hidden"

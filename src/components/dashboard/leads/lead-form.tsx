@@ -1,19 +1,35 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, type CSSProperties } from "react";
 
-import type { LeadActionState } from "@/app/(app)/proyectos/[projectId]/leads/actions";
-import { Button } from "@/components/ui/button";
-import { FieldError } from "@/components/ui/field-error";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select } from "@/components/ui/select";
+import type { LeadActionState } from "@/app/(app)/(kg)/proyectos/[projectId]/leads/actions";
+import {
+  ErrorBanner,
+  Field,
+  inputStyle,
+  primaryBtn,
+} from "@/components/kg/form-primitives";
 import { LEAD_STATUSES, LEAD_STATUS_LABELS, type LeadRow } from "@/lib/leads/types";
 import type { TeamMemberRow } from "@/lib/team/types";
 
 type FormState = LeadActionState;
 type FormAction = (prev: FormState, formData: FormData) => Promise<FormState>;
 
+/**
+ * `inputStyle` da ~38px de alto con su padding 9/12, pero los `<select>` y
+ * `<textarea>` nativos calculan el alto con la fuente del sistema y en
+ * algunos browsers de Android caen por debajo del target de toque. Fijamos
+ * 36 explícito — misma decisión que en `launches/launch-form.tsx`.
+ */
+const controlStyle: CSSProperties = { ...inputStyle, minHeight: 36 };
+
+/**
+ * Los `<select>` de este form van NATIVOS a propósito, no con
+ * `KgFilterSelect`: ese componente navega con `router.push(href)` y no emite
+ * ningún valor al `FormData` del submit. Acá el form postea a un server
+ * action, así que status / asignado / lanzamiento tienen que ser controles
+ * reales con `name`.
+ */
 export function LeadForm({
   action,
   initial,
@@ -49,51 +65,74 @@ export function LeadForm({
     : null;
 
   return (
-    <form action={formAction} className="space-y-4">
+    <form
+      action={formAction}
+      style={{ display: "flex", flexDirection: "column", gap: 16 }}
+    >
       {recycledFromName && (
-        <div className="rounded-md border border-accent/30 bg-accent/5 px-3 py-2 text-xs text-fg-muted">
-          ↩ Reciclado desde el evergreen <b className="text-fg">{recycledFromName}</b>
+        // Aviso informativo, no un estado del dato: caja neutra con el borde
+        // de acento. No usamos ErrorBanner porque no es un error ni un dato
+        // incompleto — es procedencia.
+        <div
+          className="kg-t7"
+          style={{
+            padding: "10px 14px",
+            borderRadius: "var(--kg-r-8)",
+            background: "var(--kg-accent-halo)",
+            border: "1px solid var(--kg-border-subtle)",
+            color: "var(--kg-text-2)",
+            lineHeight: 1.5,
+          }}
+        >
+          ↩ Reciclado desde el evergreen{" "}
+          <b style={{ color: "var(--kg-text-1)" }}>{recycledFromName}</b>
         </div>
       )}
 
-      <div>
-        <Label htmlFor="lead-name">Nombre *</Label>
-        <Input
+      <Field label="Nombre" htmlFor="lead-name" required>
+        <input
           id="lead-name"
           name="name"
           required
           defaultValue={initial?.name ?? ""}
           placeholder="Ej: Juan Pérez"
+          style={controlStyle}
         />
-      </div>
+      </Field>
 
-      <div>
-        <Label htmlFor="lead-contact">Contacto (tel / email)</Label>
-        <Input
+      <Field label="Contacto (tel / email)" htmlFor="lead-contact">
+        <input
           id="lead-contact"
           name="contact"
           defaultValue={initial?.contact ?? ""}
           placeholder="+54 911… o juan@…"
+          style={controlStyle}
         />
-      </div>
+      </Field>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div>
-          <Label htmlFor="lead-status">Status</Label>
-          <Select id="lead-status" name="status" defaultValue={initial?.status ?? "nuevo"}>
+      {/* Mobile primero: una columna en 390px, 2 recién en md+. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <Field label="Status" htmlFor="lead-status">
+          <select
+            id="lead-status"
+            name="status"
+            defaultValue={initial?.status ?? "nuevo"}
+            style={controlStyle}
+          >
             {LEAD_STATUSES.map((s) => (
               <option key={s} value={s}>
                 {LEAD_STATUS_LABELS[s]}
               </option>
             ))}
-          </Select>
-        </div>
-        <div>
-          <Label htmlFor="lead-assignee">Asignado a</Label>
-          <Select
+          </select>
+        </Field>
+
+        <Field label="Asignado a" htmlFor="lead-assignee">
+          <select
             id="lead-assignee"
             name="team_member_id"
             defaultValue={initial?.team_member_id ?? ""}
+            style={controlStyle}
           >
             <option value="">— Sin asignar —</option>
             {teamMembers.map((t) => (
@@ -105,16 +144,16 @@ export function LeadForm({
             {showInactiveAssignee && initial?.team_member_id && (
               <option value={initial.team_member_id}>(asignación anterior)</option>
             )}
-          </Select>
-        </div>
+          </select>
+        </Field>
       </div>
 
-      <div>
-        <Label htmlFor="lead-launch">Lanzamiento (opcional)</Label>
-        <Select
+      <Field label="Lanzamiento (opcional)" htmlFor="lead-launch">
+        <select
           id="lead-launch"
           name="launch_id"
           defaultValue={initial?.launch_id ?? ""}
+          style={controlStyle}
         >
           <option value="">— Sin asociar —</option>
           {launches.map((l) => (
@@ -122,26 +161,38 @@ export function LeadForm({
               {l.name}
             </option>
           ))}
-        </Select>
-      </div>
+        </select>
+      </Field>
 
-      <div>
-        <Label htmlFor="lead-notes">Notas</Label>
+      <Field label="Notas" htmlFor="lead-notes">
         <textarea
           id="lead-notes"
           name="notes"
           rows={3}
           defaultValue={initial?.notes ?? ""}
-          className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm text-fg placeholder:text-fg-subtle focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
           placeholder="Origen, contexto, próximos pasos…"
+          style={{ ...controlStyle, resize: "vertical", lineHeight: 1.5 }}
         />
-      </div>
+      </Field>
 
-      <div className="flex items-center gap-4 pt-2">
-        <Button type="submit" disabled={pending}>
+      {/* El error va arriba del botón y a ancho completo: en 390px el layout
+          viejo (error al lado del submit) lo empujaba fuera de la vista. */}
+      {state && "error" in state && <ErrorBanner message={state.error} />}
+
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <button
+          type="submit"
+          disabled={pending}
+          className="kg-focus w-full md:w-auto"
+          style={{
+            ...primaryBtn,
+            minHeight: 40,
+            opacity: pending ? 0.7 : 1,
+            cursor: pending ? "not-allowed" : "pointer",
+          }}
+        >
           {pending ? "Guardando…" : submitLabel}
-        </Button>
-        {state && "error" in state && <FieldError>{state.error}</FieldError>}
+        </button>
       </div>
     </form>
   );

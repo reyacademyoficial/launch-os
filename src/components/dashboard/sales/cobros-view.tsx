@@ -1,11 +1,25 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { KgFilterSelectControlled as FilterSelect } from "@/components/kg/filter-select";
 
+import { useMemo, useState, type CSSProperties } from "react";
+
+import {
+  KgDataTable,
+  KgSelectionBar,
+  type Column,
+} from "@/components/kg/data-table";
+import { dangerBtn, primaryBtn } from "@/components/kg/form-primitives";
+import { KgPageFilters } from "@/components/kg/page-menu";
+import { Panel } from "@/components/kg/panel";
+import { RangePills } from "@/components/kg/range-pills";
+import { StateDot } from "@/components/kg/state-dot";
+import { StatusPill } from "@/components/kg/status-pill";
+import { TONE_VAR } from "@/components/kg/tone";
 import type {
   PaymentActionState,
   SaleActionState,
-} from "@/app/(app)/proyectos/[projectId]/leads/sale-actions";
+} from "@/app/(app)/(kg)/proyectos/[projectId]/leads/sale-actions";
 import { buildSaleRanks } from "@/lib/commissions/ranking";
 import type {
   CommissionRuleRow,
@@ -265,6 +279,13 @@ export function CobrosView({
   readonly hideCommission?: boolean;
 }) {
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
+  /**
+   * Remonta el <input> de búsqueda cuando se limpian los filtros. El input
+   * del drawer es NO controlado (ver `CobrosFilters`), así que la única forma
+   * de que refleje un reset externo es cambiarle la `key` — nunca un
+   * `setState` dentro de un efecto, que el ESLint del repo prohíbe.
+   */
+  const [searchKey, setSearchKey] = useState(0);
 
   const leadById = useMemo(
     () => new Map(leads.map((l) => [l.id, l])),
@@ -517,21 +538,44 @@ export function CobrosView({
     (s) => (leadById.get(s.lead_id)?.team_member_id ?? null) === null,
   );
 
+  /** Filtros con valor distinto al default — alimenta el badge de "Filtros". */
+  const activeFilterCount =
+    (filters.query !== "" ? 1 : 0) +
+    (filters.launchId !== "all" ? 1 : 0) +
+    (filters.closerId !== "all" ? 1 : 0) +
+    (filters.modalityId !== "all" ? 1 : 0) +
+    (filters.productId !== "all" ? 1 : 0) +
+    (filters.collection !== "all" ? 1 : 0);
+
   return (
-    <div className="space-y-6">
-      <FilterBar
-        filters={filters}
-        onChange={setFilters}
-        launches={launches}
-        closers={closersInSales}
-        modalities={modalities}
-        products={products}
-        hasUnassignedLaunch={hasUnassignedLaunch}
-        hasUnassignedSales={hasUnassignedSales}
-        totalSalesCount={sales.length}
-        filteredSalesCount={filteredSales.length}
-        filtersActive={filtersActive}
-      />
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/*
+        Los filtros ya no se dibujan arriba de las tablas: `KgPageFilters` los
+        registra en el drawer (desktop) / bottom-sheet (mobile) del botón
+        "Filtros" del ContextBar y devuelve null. El motivo es alto vertical —
+        la franja de 1 input + 5 selects se comía la primera pantalla y esta
+        vista tiene DOS tablas apiladas.
+      */}
+      <KgPageFilters activeCount={activeFilterCount}>
+        <CobrosFilters
+          filters={filters}
+          onChange={setFilters}
+          searchKey={searchKey}
+          onClear={() => {
+            setFilters(EMPTY_FILTERS);
+            setSearchKey((k) => k + 1);
+          }}
+          launches={launches}
+          closers={closersInSales}
+          modalities={modalities}
+          products={products}
+          hasUnassignedLaunch={hasUnassignedLaunch}
+          hasUnassignedSales={hasUnassignedSales}
+          totalSalesCount={sales.length}
+          filteredSalesCount={filteredSales.length}
+          filtersActive={filtersActive}
+        />
+      </KgPageFilters>
 
       <SalesTable
         sales={filteredSales}
@@ -584,9 +628,45 @@ export function CobrosView({
   );
 }
 
-function FilterBar({
+// ─── Filtros (viven en el drawer de página) ───────────────────────────────
+
+/**
+ * Pills del estado de cobro. `RangePills` usa el propio string como label y
+ * como value, así que el mapa traduce pill ↔ `CollectionStatus` sin tocar el
+ * contrato del filtro (`saleMatches` sigue leyendo `all|paid|partial|unpaid`).
+ */
+const COLLECTION_PILLS = ["Todas", "Cobrada", "Parcial", "Sin cobrar"] as const;
+type CollectionPill = (typeof COLLECTION_PILLS)[number];
+const PILL_TO_COLLECTION: Record<CollectionPill, CollectionStatus> = {
+  Todas: "all",
+  Cobrada: "paid",
+  Parcial: "partial",
+  "Sin cobrar": "unpaid",
+};
+const COLLECTION_TO_PILL: Record<CollectionStatus, CollectionPill> = {
+  all: "Todas",
+  paid: "Cobrada",
+  partial: "Parcial",
+  unpaid: "Sin cobrar",
+};
+
+/**
+ * Bloque de filtros del drawer.
+ *
+ * POR QUÉ NO USA `KgFilterSelect`
+ * Esa primitiva es URL-first: cada opción lleva un `href` y elegir dispara
+ * `router.push`. Los filtros de esta vista NO viven en la URL — la page trae
+ * TODAS las ventas/cobros del launch y el filtrado es en memoria, instantáneo.
+ * Moverlos a la URL convertiría cada tecla y cada cambio de select en una
+ * navegación con re-render del server component (refetch completo del dataset)
+ * y en una entrada de historial. Por eso acá se replica el look exacto de
+ * `KgFilterSelect` con un `value`/`onChange` local. Ver reporte de migración.
+ */
+function CobrosFilters({
   filters,
   onChange,
+  searchKey,
+  onClear,
   launches,
   closers,
   modalities,
@@ -599,6 +679,8 @@ function FilterBar({
 }: {
   readonly filters: FilterState;
   readonly onChange: (next: FilterState) => void;
+  readonly searchKey: number;
+  readonly onClear: () => void;
   /** Omitido = vista single-launch (sin dropdown de launch). */
   readonly launches?: ReadonlyArray<{ id: string; name: string }>;
   readonly closers: ReadonlyArray<Pick<TeamMemberRow, "id" | "name" | "active">>;
@@ -611,105 +693,178 @@ function FilterBar({
   readonly filtersActive: boolean;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface/40 px-3 py-2">
-      <input
-        type="search"
-        placeholder="Buscar por nombre del alumno…"
-        value={filters.query}
-        onChange={(e) => onChange({ ...filters, query: e.target.value })}
-        className="min-w-[14rem] flex-1 rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg placeholder:text-fg-subtle"
-        aria-label="Buscar alumno"
-      />
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div
+        style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}
+      >
+        <label
+          htmlFor="cobros-buscar"
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)", fontWeight: 600 }}
+        >
+          Buscar
+        </label>
+        {/*
+          Input NO controlado a propósito. El nodo de filtros se registra en el
+          sheet vía efecto: si el value viviera en el estado del padre, cada
+          tecla re-registraría el grupo entero y el <input> del sheet quedaría
+          un commit detrás del DOM (lo aprendimos migrando leads). Sin `value`,
+          el browser maneja el tipeo y el `onChange` sólo empuja el filtro.
+          La `key` lo remonta cuando "Limpiar" resetea los filtros desde afuera.
+        */}
+        <input
+          key={`cobros-buscar-${searchKey}`}
+          id="cobros-buscar"
+          type="search"
+          className="kg-focus"
+          placeholder="Nombre del alumno…"
+          defaultValue={filters.query}
+          onChange={(e) => onChange({ ...filters, query: e.target.value })}
+          aria-label="Buscar alumno"
+          style={filterFieldStyle}
+        />
+      </div>
+
       {launches && (
-        <select
+        <FilterSelect
+          id="cobros-launch"
+          label="Lanzamiento"
           value={filters.launchId}
-          onChange={(e) => onChange({ ...filters, launchId: e.target.value })}
-          className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg"
-          aria-label="Filtrar por lanzamiento"
-        >
-          <option value="all">Todos los lanzamientos</option>
-          {hasUnassignedLaunch && (
-            <option value={UNASSIGNED_LAUNCH}>Sin launch</option>
-          )}
-          {launches.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.name}
-            </option>
-          ))}
-        </select>
+          onChange={(v) => onChange({ ...filters, launchId: v })}
+          options={[
+            { value: "all", label: "Todos los lanzamientos" },
+            ...(hasUnassignedLaunch
+              ? [{ value: UNASSIGNED_LAUNCH, label: "Sin launch" }]
+              : []),
+            ...launches.map((l) => ({ value: l.id, label: l.name })),
+          ]}
+        />
       )}
-      <select
+
+      <FilterSelect
+        id="cobros-closer"
+        label="Closer"
         value={filters.closerId}
-        onChange={(e) => onChange({ ...filters, closerId: e.target.value })}
-        className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg"
-        aria-label="Filtrar por closer"
-      >
-        <option value="all">Todos los closers</option>
-        {hasUnassignedSales && <option value="unassigned">Sin asignar</option>}
-        {closers.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name}
-            {!c.active ? " (inactivo)" : ""}
-          </option>
-        ))}
-      </select>
-      <select
+        onChange={(v) => onChange({ ...filters, closerId: v })}
+        options={[
+          { value: "all", label: "Todos los closers" },
+          ...(hasUnassignedSales
+            ? [{ value: "unassigned", label: "Sin asignar" }]
+            : []),
+          ...closers.map((c) => ({
+            value: c.id,
+            label: `${c.name}${c.active ? "" : " (inactivo)"}`,
+          })),
+        ]}
+      />
+
+      <FilterSelect
+        id="cobros-modalidad"
+        label="Modalidad"
         value={filters.modalityId}
-        onChange={(e) => onChange({ ...filters, modalityId: e.target.value })}
-        className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg"
-        aria-label="Filtrar por modalidad"
-      >
-        <option value="all">Todas las modalidades</option>
-        {modalities.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.name}
-          </option>
-        ))}
-      </select>
-      <select
+        onChange={(v) => onChange({ ...filters, modalityId: v })}
+        options={[
+          { value: "all", label: "Todas las modalidades" },
+          ...modalities.map((m) => ({ value: m.id, label: m.name })),
+        ]}
+      />
+
+      <FilterSelect
+        id="cobros-producto"
+        label="Producto"
         value={filters.productId}
-        onChange={(e) => onChange({ ...filters, productId: e.target.value })}
-        className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg"
-        aria-label="Filtrar por producto"
+        onChange={(v) => onChange({ ...filters, productId: v })}
+        options={[
+          { value: "all", label: "Todos los productos" },
+          ...products.map((p) => ({
+            value: p.id,
+            label: `${p.name}${p.active ? "" : " (inactivo)"}`,
+          })),
+        ]}
+      />
+
+      <div
+        style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}
       >
-        <option value="all">Todos los productos</option>
-        {products.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
-            {!p.active ? " (inactivo)" : ""}
-          </option>
-        ))}
-      </select>
-      <select
-        value={filters.collection}
-        onChange={(e) =>
-          onChange({ ...filters, collection: e.target.value as CollectionStatus })
-        }
-        className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg"
-        aria-label="Filtrar por estado de cobro"
-      >
-        <option value="all">Cualquier estado</option>
-        <option value="paid">Cobrada</option>
-        <option value="partial">Parcial</option>
-        <option value="unpaid">Sin cobrar</option>
-      </select>
-      <span className="text-xs text-fg-subtle">
-        {filtersActive
-          ? `${filteredSalesCount} de ${totalSalesCount} ventas`
-          : `${totalSalesCount} ventas`}
-      </span>
-      {filtersActive && (
-        <button
-          type="button"
-          onClick={() => onChange(EMPTY_FILTERS)}
-          className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg hover:bg-bg-elevated"
+        <span
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)", fontWeight: 600 }}
         >
-          Limpiar
-        </button>
-      )}
+          Estado de cobro
+        </span>
+        {/* Sólo 4 opciones cortas y mutuamente excluyentes → pills, no select.
+            El wrapper scrollea en 390px para que no desborde el sheet. */}
+        <div style={{ overflowX: "auto", maxWidth: "100%" }}>
+          <RangePills
+            options={COLLECTION_PILLS}
+            value={COLLECTION_TO_PILL[filters.collection]}
+            onChange={(next) =>
+              onChange({ ...filters, collection: PILL_TO_COLLECTION[next] })
+            }
+          />
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          paddingTop: 4,
+          borderTop: "1px solid var(--kg-border-subtle)",
+        }}
+      >
+        <span
+          className="kg-t7 kg-num"
+          style={{ color: "var(--kg-text-3)" }}
+        >
+          {filtersActive
+            ? `${filteredSalesCount} de ${totalSalesCount} ventas`
+            : `${totalSalesCount} ventas`}
+        </span>
+        {filtersActive && (
+          <button
+            type="button"
+            onClick={onClear}
+            className="kg-focus"
+            style={{
+              background: "none",
+              border: "none",
+              padding: 2,
+              fontSize: 11,
+              fontWeight: 700,
+              color: "var(--kg-accent-text)",
+              cursor: "pointer",
+            }}
+          >
+            Limpiar
+          </button>
+        )}
+      </div>
     </div>
   );
 }
+
+/** Campo de texto del drawer. Mismo look que el <select> de abajo. */
+const filterFieldStyle: CSSProperties = {
+  width: "100%",
+  minWidth: 0,
+  padding: "8px 12px",
+  borderRadius: "var(--kg-r-8)",
+  background: "var(--kg-surface-2-solid)",
+  border: "1px solid var(--kg-border-subtle)",
+  color: "var(--kg-text-1)",
+  fontSize: 12,
+  fontWeight: 600,
+  colorScheme: "dark",
+};
+
+/**
+ * Clon local de `KgFilterSelect` con `value`/`onChange` en vez de `href`.
+ * Idéntico visualmente; ver la nota de `CobrosFilters` sobre por qué esta
+ * vista no puede usar la primitiva URL-first.
+ */
 
 // ─── Sales table (Fase 11) ───────────────────────────────────────────────
 
@@ -839,39 +994,321 @@ function SalesTable({
   );
   const visibleIds = useMemo(() => sales.map((s) => s.id), [sales]);
   const visibleIdSet = useMemo(() => new Set(visibleIds), [visibleIds]);
+  /**
+   * La selección se DERIVA en render intersectándola con lo visible: si un
+   * filtro esconde una venta marcada, su id no viaja a la server action. No
+   * hace falta el patrón `{key: searchParams, ids}` de `leads-table` porque
+   * acá los filtros son estado local y no navegan — pero la regla es la
+   * misma: nada de resetear con un `useEffect`.
+   */
   const effectiveSelected = useMemo(() => {
     if (selectedIds.size === 0) return selectedIds;
     const next = new Set<string>();
     for (const id of selectedIds) if (visibleIdSet.has(id)) next.add(id);
     return next;
   }, [selectedIds, visibleIdSet]);
-  const allSelected =
-    visibleIds.length > 0 && effectiveSelected.size === visibleIds.length;
-  const someSelected =
-    !allSelected && effectiveSelected.size > 0;
 
-  function toggleAll() {
-    if (allSelected) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(visibleIds));
-    }
-  }
-  function toggleOne(id: string) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  /** Datos del lead que consume `SaleModal`. Sin cambios respecto de antes. */
+  function leadForModalOf(
+    s: SaleRow,
+  ): Pick<LeadRow, "id" | "name" | "launch_id" | "team_member_id"> {
+    const lead = leadById.get(s.lead_id);
+    return lead
+      ? {
+          id: lead.id,
+          name: lead.name,
+          launch_id: lead.launch_id,
+          team_member_id: lead.team_member_id,
+        }
+      : {
+          id: s.lead_id,
+          name: "—",
+          launch_id: null,
+          team_member_id: s.team_member_id,
+        };
   }
 
-  // 1 (checkbox opcional) + Alumno = 2 cols antes de los numéricos.
-  const totalColSpan = canEdit ? 2 : 1;
+  /** Props del SaleModal comunes a los dos triggers de la fila. */
+  function saleModalProps(s: SaleRow) {
+    const leadForModal = leadForModalOf(s);
+    return {
+      lead: leadForModal,
+      sales: [s],
+      saleRanks: rankBySaleId,
+      paymentsBySaleId: new Map([[s.id, paymentsBySaleId.get(s.id) ?? []]]),
+      installmentsBySaleId: new Map([
+        [s.id, installmentsBySaleId.get(s.id) ?? []],
+      ]),
+      initialSaleId: s.id,
+      allowCreateAnother: false,
+      modalities,
+      products,
+      rules,
+      paymentMethods,
+      teamMembers,
+      createSaleAction: createSaleAction.bind(null, leadForModal.id),
+      updateProductAction: (saleId: string, productId: string) =>
+        updateSaleProductAction(saleId, productId),
+      recalculateAction: recalculateSaleAction,
+      updateSaleAction,
+      addPaymentAction,
+      deletePaymentAction,
+      deleteSaleAction,
+      updatePaymentInstallmentAction,
+      updatePaymentMethodAction,
+      assignLeadOwnerAction: canEdit ? assignLeadOwnerAction : undefined,
+      methodCurrencies,
+      hideCommission,
+    };
+  }
+
+  const cargarCobroColumn: Column<SaleRow> = {
+    key: "cargar",
+    label: (
+      <span title="Cargar un cobro rápido. Para ver el historial completo, tocá el nombre del alumno.">
+        Cargar cobro
+      </span>
+    ),
+    align: "right",
+    render: (s) => {
+      const lead = leadById.get(s.lead_id);
+      return (
+        // `triggerStyle` (agregado por la migración de SaleModal) permite
+        // expresar el botón con vars KG en vez de clases de tokens viejos.
+        <SaleModal
+          {...saleModalProps(s)}
+          triggerLabel="+"
+          triggerAriaLabel={`Cargar cobro a ${lead?.name ?? "alumno"}`}
+          triggerStyle={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            // 28px de lado: el mínimo cómodo para el pulgar en 390px.
+            width: 28,
+            height: 28,
+            borderRadius: "var(--kg-r-8)",
+            border: "1px solid var(--kg-border-accent)",
+            background: "var(--kg-accent-halo)",
+            color: "var(--kg-accent-text)",
+            fontSize: 15,
+            fontWeight: 700,
+            lineHeight: 1,
+            cursor: "pointer",
+          }}
+          variant="add-payment"
+        />
+      );
+    },
+  };
+
+  const columns: ReadonlyArray<Column<SaleRow>> = [
+    {
+      key: "alumno",
+      label: "Alumno",
+      render: (s) => {
+        const lead = leadById.get(s.lead_id);
+        return (
+          <SaleModal
+            {...saleModalProps(s)}
+            invoicesBySaleId={
+              new Map([[s.id, invoicesBySaleId.get(s.id) ?? []]])
+            }
+            fxLookup={fxLookup}
+            triggerLabel={lead?.name ?? "—"}
+            triggerStyle={nameTriggerStyle}
+            // El subrayado en hover es lo único que no se puede expresar con
+            // estilos inline; el resto del look va en `triggerStyle`.
+            triggerClassName="underline-offset-2 hover:underline"
+          />
+        );
+      },
+    },
+    {
+      key: "pactado",
+      label: "Pactado",
+      align: "right",
+      numeric: true,
+      render: (s) => fmtRowMoney(Number(s.total_amount) || 0, s.id),
+    },
+    {
+      key: "cobrado",
+      label: "Cobrado",
+      align: "right",
+      numeric: true,
+      render: (s) => {
+        const salePayments = paymentsBySaleId.get(s.id) ?? [];
+        const saleCurrency: Currency =
+          fxLookup?.bySaleId[s.id]?.currency ?? "ARS";
+        const display = collectedForSale(saleCurrency, salePayments, fxLookup);
+        return (
+          <span style={numericCellStyle}>
+            {fxLookup
+              ? fmtNative(display.amount, display.currency)
+              : fmtMoney(collectedBySale.get(s.id) ?? 0)}
+            {display.mixed && (
+              // El monto no se pinta: el aviso de moneda mezclada es un dot.
+              <span
+                title="Los cobros de esta venta están en moneda distinta al pactado. Se muestra el total convertido a USD."
+                aria-label="Cobros en moneda distinta al pactado"
+                style={{ display: "inline-flex" }}
+              >
+                <StateDot tone="warning" />
+              </span>
+            )}
+          </span>
+        );
+      },
+    },
+    {
+      key: "vencido",
+      label: "Vencido",
+      align: "right",
+      numeric: true,
+      render: (s) => {
+        const overdueAmount = overdueBySale.get(s.id)?.overdueAmount ?? 0;
+        if (overdueAmount <= 0) return <Dash />;
+        return (
+          // Antes el monto vencido iba en rojo. La plata no se pinta: el rojo
+          // se mudó al StateDot y el número queda en el color de la tabla.
+          <span style={numericCellStyle} title="Monto vencido">
+            {fmtRowMoney(overdueAmount, s.id)}
+            <StateDot tone="negative" />
+          </span>
+        );
+      },
+    },
+    {
+      key: "cuotas",
+      label: (
+        <span title="Cantidad de cuotas cuyo vencimiento + gracia ya pasó y siguen con saldo">
+          Cuotas venc.
+        </span>
+      ),
+      align: "right",
+      numeric: true,
+      render: (s) => {
+        const overdueCount = overdueBySale.get(s.id)?.overdueCount ?? 0;
+        if (overdueCount <= 0) return <Dash />;
+        return (
+          <span style={numericCellStyle} title="Cuotas vencidas">
+            {fmtNumber(overdueCount)}
+            <StateDot tone="negative" />
+          </span>
+        );
+      },
+    },
+    {
+      key: "proximo",
+      label: "Próx. vencimiento",
+      render: (s) => {
+        const salePayments = paymentsBySaleId.get(s.id) ?? [];
+        const saleCurrency: Currency =
+          fxLookup?.bySaleId[s.id]?.currency ?? "ARS";
+        const display = collectedForSale(saleCurrency, salePayments, fxLookup);
+        const total = Number(s.total_amount) || 0;
+        // "Al día": con mismatch comparamos ambos en USD; sin mismatch, en la
+        // moneda nativa. Nunca ARS crudo contra USD crudo (bug original).
+        const paidUp = display.mixed
+          ? (() => {
+              const usdTotal = fxLookup?.bySaleId[s.id]?.totalUsd ?? null;
+              return (
+                usdTotal !== null && usdTotal > 0 && display.amount >= usdTotal
+              );
+            })()
+          : total > 0 && display.amount >= total;
+        if (paidUp) return <StatusPill text="Al día" tone={TONE_VAR.positive} />;
+        const nextDue = overdueBySale.get(s.id)?.nextDueDate ?? null;
+        return nextDue ? (
+          <span style={{ color: "var(--kg-text-2)" }}>{fmtDate(nextDue)}</span>
+        ) : (
+          <Dash />
+        );
+      },
+    },
+    ...(canEdit ? [cargarCobroColumn] : []),
+  ];
 
   return (
-    <section className="space-y-3">
-      <h2 className="text-base font-semibold text-fg">Ventas cerradas</h2>
+    <>
+      <Panel title="Ventas cerradas" pad={false}>
+        <KgDataTable
+          columns={columns}
+          rows={sales}
+          rowKey={(s) => s.id}
+          // Dos tablas conviven en esta página, así que `fillHeight` (que se
+          // come todo el alto disponible) no aplica: cada una scrollea dentro
+          // de un techo propio para que el <thead> y la fila de totales queden
+          // sticky y el body de la página no crezca sin fin.
+          maxBodyHeight="min(56vh, 620px)"
+          emptyTitle={
+            totalSalesCount === 0
+              ? "Sin ventas en columna cerrado para este lanzamiento."
+              : filtersActive
+                ? "Ninguna venta coincide con los filtros aplicados."
+                : "Sin ventas."
+          }
+          emptyHint={
+            filtersActive && totalSalesCount > 0
+              ? "Ajustá o limpiá los filtros desde el botón Filtros."
+              : undefined
+          }
+          selection={
+            canEdit
+              ? {
+                  selectedIds: effectiveSelected,
+                  onToggleRow: (id, selected) =>
+                    setSelectedIds((prev) => {
+                      const next = new Set(prev);
+                      if (selected) next.add(id);
+                      else next.delete(id);
+                      return next;
+                    }),
+                  onToggleAll: (selected, ids) =>
+                    setSelectedIds(selected ? new Set(ids) : new Set()),
+                  headerLabel: "Seleccionar todas las ventas visibles",
+                  rowLabel: (s) =>
+                    `Seleccionar venta de ${leadById.get(s.lead_id)?.name ?? "sin alumno"}`,
+                }
+              : undefined
+          }
+          totalsRow={{
+            label: filtersActive
+              ? `Subtotal filtrado · ${sales.length} venta${sales.length === 1 ? "" : "s"}`
+              : `Total · ${sales.length} venta${sales.length === 1 ? "" : "s"}`,
+            // Cubre sólo "Alumno": la columna del checkbox la suma la tabla.
+            labelSpan: 1,
+            cells: {
+              pactado: fmtTotalMoney(totalPactado),
+              cobrado: fmtTotalMoney(totalCobrado),
+              vencido:
+                totalVencido > 0 ? (
+                  // Igual que en la fila: el total vencido dejó de ser rojo.
+                  <span style={numericCellStyle} title="Total vencido">
+                    {fmtTotalMoney(totalVencido)}
+                    <StateDot tone="negative" />
+                  </span>
+                ) : (
+                  "—"
+                ),
+              cuotas:
+                totalCuotasVencidas > 0 ? (
+                  <span style={numericCellStyle} title="Total de cuotas vencidas">
+                    {fmtNumber(totalCuotasVencidas)}
+                    <StateDot tone="negative" />
+                  </span>
+                ) : (
+                  "—"
+                ),
+            },
+          }}
+        />
+      </Panel>
+
+      {/*
+        `KgSelectionBar` se portalea sola a `body` (ver `kg/selection-bar.tsx`):
+        la tabla vive dentro de un `Panel` con `backdrop-filter`, que en tema
+        oscuro sería containing block de cualquier `position: fixed` adentro.
+      */}
       {canEdit && effectiveSelected.size > 0 && (
         <BulkAssignBar
           selectedCount={effectiveSelected.size}
@@ -881,289 +1318,37 @@ function SalesTable({
           onClear={() => setSelectedIds(new Set())}
         />
       )}
-      {sales.length === 0 ? (
-        <p className="rounded-md border border-dashed border-border bg-surface/40 p-8 text-center text-sm text-fg-muted">
-          {totalSalesCount === 0
-            ? "Sin ventas en columna cerrado para este lanzamiento."
-            : filtersActive
-              ? "Ninguna venta coincide con los filtros aplicados."
-              : "Sin ventas."}
-        </p>
-      ) : (
-        <div className="overflow-x-auto rounded-md border border-border">
-          <table className="w-full min-w-[880px] text-sm">
-            <thead className="bg-surface text-left text-xs uppercase tracking-wide text-fg-subtle">
-              <tr>
-                {canEdit && (
-                  <th className="w-8 px-3 py-3 font-medium">
-                    <input
-                      type="checkbox"
-                      checked={allSelected}
-                      ref={(el) => {
-                        if (el) el.indeterminate = someSelected;
-                      }}
-                      onChange={toggleAll}
-                      aria-label="Seleccionar todas las ventas visibles"
-                      className="accent-accent"
-                    />
-                  </th>
-                )}
-                <th className="px-3 py-3 font-medium">Alumno</th>
-                <th className="px-3 py-3 text-right font-medium">Pactado</th>
-                <th className="px-3 py-3 text-right font-medium">Cobrado</th>
-                <th className="px-3 py-3 text-right font-medium">Vencido</th>
-                <th
-                  className="px-3 py-3 text-right font-medium"
-                  title="Cantidad de cuotas cuyo vencimiento + gracia ya pasó y siguen con saldo"
-                >
-                  Cuotas venc.
-                </th>
-                <th className="px-3 py-3 font-medium">Próx. vencimiento</th>
-                {canEdit && (
-                  <th
-                    className="px-3 py-3 text-right font-medium"
-                    title="Cargar un cobro rápido. Para ver el historial completo, tocá el nombre del alumno."
-                  >
-                    Cargar cobro
-                  </th>
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {sales.map((s) => {
-                const lead = leadById.get(s.lead_id);
-                const collected = collectedBySale.get(s.id) ?? 0;
-                const total = Number(s.total_amount) || 0;
-                const od = overdueBySale.get(s.id);
-                const overdueAmount = od?.overdueAmount ?? 0;
-                const overdueCount = od?.overdueCount ?? 0;
-                const nextDue = od?.nextDueDate ?? null;
-                const isSelected = effectiveSelected.has(s.id);
-                const salePayments = paymentsBySaleId.get(s.id) ?? [];
-                const saleCurrency: Currency =
-                  fxLookup?.bySaleId[s.id]?.currency ?? "ARS";
-                const collectedDisplay = collectedForSale(
-                  saleCurrency,
-                  salePayments,
-                  fxLookup,
-                );
-                // "Al día": si hay mismatch, comparamos ambos en USD; sin
-                // mismatch, comparamos en la moneda nativa. Nunca comparamos
-                // ARS crudo contra USD crudo — ese es el bug original.
-                const paidUp = collectedDisplay.mixed
-                  ? (() => {
-                      const usdTotal = fxLookup?.bySaleId[s.id]?.totalUsd ?? null;
-                      return usdTotal !== null && usdTotal > 0 && collectedDisplay.amount >= usdTotal;
-                    })()
-                  : total > 0 && collectedDisplay.amount >= total;
-                const leadForModal: Pick<
-                  LeadRow,
-                  "id" | "name" | "launch_id" | "team_member_id"
-                > = lead
-                  ? {
-                      id: lead.id,
-                      name: lead.name,
-                      launch_id: lead.launch_id,
-                      team_member_id: lead.team_member_id,
-                    }
-                  : {
-                      id: s.lead_id,
-                      name: "—",
-                      launch_id: null,
-                      team_member_id: s.team_member_id,
-                    };
-
-                return (
-                  <tr
-                    key={s.id}
-                    className={
-                      "border-t border-border hover:bg-surface " +
-                      (isSelected ? "bg-accent/5" : "")
-                    }
-                  >
-                    {canEdit && (
-                      <td className="px-3 py-3">
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggleOne(s.id)}
-                          aria-label={`Seleccionar venta de ${lead?.name ?? "sin alumno"}`}
-                          className="accent-accent"
-                        />
-                      </td>
-                    )}
-                    <td className="px-3 py-3 font-medium text-fg">
-                      <SaleModal
-                        triggerLabel={lead?.name ?? "—"}
-                        triggerClassName="underline-offset-2 hover:underline"
-                        lead={leadForModal}
-                        sales={[s]}
-                        saleRanks={rankBySaleId}
-                        paymentsBySaleId={new Map([[s.id, salePayments]])}
-                        installmentsBySaleId={new Map([
-                          [s.id, installmentsBySaleId.get(s.id) ?? []],
-                        ])}
-                        invoicesBySaleId={new Map([
-                          [s.id, invoicesBySaleId.get(s.id) ?? []],
-                        ])}
-                        initialSaleId={s.id}
-                        allowCreateAnother={false}
-                        modalities={modalities}
-                        products={products}
-                        rules={rules}
-                        paymentMethods={paymentMethods}
-                        teamMembers={teamMembers}
-                        createSaleAction={createSaleAction.bind(
-                          null,
-                          leadForModal.id,
-                        )}
-                        updateProductAction={(saleId, productId) =>
-                          updateSaleProductAction(saleId, productId)
-                        }
-                        recalculateAction={recalculateSaleAction}
-                        updateSaleAction={updateSaleAction}
-                        addPaymentAction={addPaymentAction}
-                        deletePaymentAction={deletePaymentAction}
-                        deleteSaleAction={deleteSaleAction}
-                        updatePaymentInstallmentAction={
-                          updatePaymentInstallmentAction
-                        }
-                        updatePaymentMethodAction={updatePaymentMethodAction}
-                        assignLeadOwnerAction={
-                          canEdit ? assignLeadOwnerAction : undefined
-                        }
-                        fxLookup={fxLookup}
-                        methodCurrencies={methodCurrencies}
-                        hideCommission={hideCommission}
-                      />
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums text-fg">
-                      {fmtRowMoney(total, s.id)}
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums text-fg">
-                      <div className="flex items-center justify-end gap-1">
-                        <span>
-                          {fxLookup
-                            ? fmtNative(collectedDisplay.amount, collectedDisplay.currency)
-                            : fmtMoney(collected)}
-                        </span>
-                        {collectedDisplay.mixed && (
-                          <span
-                            className="rounded bg-warning/15 px-1 py-0.5 text-[10px] font-medium text-warning"
-                            title="Los cobros de esta venta están en moneda distinta al pactado. Se muestra el total convertido a USD."
-                          >
-                            moneda distinta
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td
-                      className={
-                        "px-3 py-3 text-right tabular-nums " +
-                        (overdueAmount > 0 ? "text-error" : "text-fg-subtle")
-                      }
-                    >
-                      {overdueAmount > 0
-                        ? fmtRowMoney(overdueAmount, s.id)
-                        : "—"}
-                    </td>
-                    <td
-                      className={
-                        "px-3 py-3 text-right tabular-nums " +
-                        (overdueCount > 0 ? "text-error" : "text-fg-subtle")
-                      }
-                    >
-                      {overdueCount > 0 ? fmtNumber(overdueCount) : "—"}
-                    </td>
-                    <td className="px-3 py-3 text-fg-muted">
-                      {paidUp ? (
-                        <span className="text-success">Al día</span>
-                      ) : nextDue ? (
-                        fmtDate(nextDue)
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    {canEdit && (
-                      <td className="px-3 py-3 text-right">
-                        <SaleModal
-                          triggerLabel="+"
-                          triggerAriaLabel={`Cargar cobro a ${lead?.name ?? "alumno"}`}
-                          triggerClassName="inline-flex h-7 w-7 items-center justify-center rounded-md border border-accent/40 bg-accent/10 text-base font-bold leading-none text-accent hover:bg-accent/20"
-                          variant="add-payment"
-                          lead={leadForModal}
-                          sales={[s]}
-                          saleRanks={rankBySaleId}
-                          paymentsBySaleId={new Map([[s.id, salePayments]])}
-                          installmentsBySaleId={new Map([
-                            [s.id, installmentsBySaleId.get(s.id) ?? []],
-                          ])}
-                          initialSaleId={s.id}
-                          allowCreateAnother={false}
-                          modalities={modalities}
-                          products={products}
-                          rules={rules}
-                          paymentMethods={paymentMethods}
-                          teamMembers={teamMembers}
-                          createSaleAction={createSaleAction.bind(
-                            null,
-                            leadForModal.id,
-                          )}
-                          updateProductAction={(saleId, productId) =>
-                            updateSaleProductAction(saleId, productId)
-                          }
-                          recalculateAction={recalculateSaleAction}
-                          updateSaleAction={updateSaleAction}
-                          addPaymentAction={addPaymentAction}
-                          deletePaymentAction={deletePaymentAction}
-                          deleteSaleAction={deleteSaleAction}
-                          updatePaymentInstallmentAction={
-                            updatePaymentInstallmentAction
-                          }
-                          updatePaymentMethodAction={updatePaymentMethodAction}
-                          assignLeadOwnerAction={
-                            canEdit ? assignLeadOwnerAction : undefined
-                          }
-                          methodCurrencies={methodCurrencies}
-                          hideCommission={hideCommission}
-                        />
-                      </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-            <tfoot className="border-t-2 border-border bg-surface/60 text-sm">
-              <tr>
-                <td
-                  className="px-3 py-3 font-semibold text-fg"
-                  colSpan={totalColSpan}
-                >
-                  {filtersActive
-                    ? `Subtotal filtrado · ${sales.length} venta${sales.length === 1 ? "" : "s"}`
-                    : `Total · ${sales.length} venta${sales.length === 1 ? "" : "s"}`}
-                </td>
-                <td className="px-3 py-3 text-right font-semibold tabular-nums text-fg">
-                  {fmtTotalMoney(totalPactado)}
-                </td>
-                <td className="px-3 py-3 text-right font-semibold tabular-nums text-fg">
-                  {fmtTotalMoney(totalCobrado)}
-                </td>
-                <td className="px-3 py-3 text-right font-semibold tabular-nums text-error">
-                  {totalVencido > 0 ? fmtTotalMoney(totalVencido) : "—"}
-                </td>
-                <td className="px-3 py-3 text-right font-semibold tabular-nums text-error">
-                  {totalCuotasVencidas > 0 ? fmtNumber(totalCuotasVencidas) : "—"}
-                </td>
-                <td className="px-3 py-3" />
-                {canEdit && <td className="px-3 py-3" />}
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      )}
-    </section>
+    </>
   );
+}
+
+/**
+ * Trigger del nombre del alumno: se lee como texto de la celda, no como
+ * botón. El subrayado sólo aparece en hover (vía clase, ver call site).
+ */
+const nameTriggerStyle: CSSProperties = {
+  background: "none",
+  border: "none",
+  padding: 0,
+  // La tipografía la hereda del <td> (el reset del repo pone `font: inherit`
+  // en los botones); acá sólo se refuerza el peso del nombre.
+  fontWeight: 600,
+  color: "var(--kg-text-1)",
+  textAlign: "left",
+  cursor: "pointer",
+};
+
+/** Celda numérica con un dot de estado al lado del número (nunca encima). */
+const numericCellStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "flex-end",
+  gap: 6,
+};
+
+/** Placeholder gris para celdas sin valor. */
+function Dash() {
+  return <span style={{ color: "var(--kg-text-3)" }}>—</span>;
 }
 
 // ─── Payments table ───────────────────────────────────────────────────────
@@ -1217,143 +1402,164 @@ function PaymentsTable({
     : (_p: PaymentRow, amount: number): string => fmtMoney(amount);
   const fmtTotal = fxLookup ? fmtUsd : fmtMoney;
 
+  const accionesColumn: Column<PaymentRow> = {
+    key: "acciones",
+    label: "Acciones",
+    align: "right",
+    render: (p) => (
+      <DeletePaymentButton
+        paymentId={p.id}
+        amount={Number(p.amount)}
+        deletePaymentAction={deletePaymentAction}
+      />
+    ),
+  };
+
+  const columns: ReadonlyArray<Column<PaymentRow>> = [
+    {
+      key: "fecha",
+      label: "Fecha",
+      render: (p) => (
+        <span className="kg-num" style={{ color: "var(--kg-text-2)" }}>
+          {fmtDate(p.paid_at)}
+        </span>
+      ),
+    },
+    {
+      key: "alumno",
+      label: "Alumno",
+      render: (p) => {
+        const sale = salesById.get(p.sale_id);
+        const lead = sale ? leadById.get(sale.lead_id) : null;
+        return <span style={{ fontWeight: 600 }}>{lead?.name ?? "—"}</span>;
+      },
+    },
+    {
+      key: "producto",
+      label: "Producto",
+      render: (p) => {
+        const sale = salesById.get(p.sale_id);
+        const product = sale ? productById.get(sale.product_id) : null;
+        return product?.name ?? <Dash />;
+      },
+    },
+    {
+      key: "modalidad",
+      label: "Modalidad",
+      render: (p) => {
+        const sale = salesById.get(p.sale_id);
+        const modality = sale
+          ? modalityById.get(sale.payment_modality_id)
+          : null;
+        return modality?.name ?? <Dash />;
+      },
+    },
+    {
+      key: "cuota",
+      label: "Cuota #",
+      render: (p) => {
+        const inst = p.installment_id
+          ? (installmentById.get(p.installment_id) ?? null)
+          : null;
+        // El "sin cuota" era texto ámbar; ahora es un pill con dot (el texto
+        // queda neutro, el color vive sólo en el punto).
+        return inst ? (
+          `Cuota ${inst.number}`
+        ) : (
+          <StatusPill text="Sin cuota" tone={TONE_VAR.warning} />
+        );
+      },
+    },
+    {
+      key: "metodo",
+      label: "Método",
+      render: (p) => {
+        const method = p.payment_method_id
+          ? (paymentMethodById.get(p.payment_method_id) ?? null)
+          : null;
+        return method ? (
+          method.name
+        ) : (
+          <StatusPill text="Sin método" tone={TONE_VAR.warning} />
+        );
+      },
+    },
+    {
+      key: "monto",
+      label: "Monto",
+      align: "right",
+      numeric: true,
+      render: (p) => fmtRowPay(p, Number(p.amount)),
+    },
+    {
+      key: "acumulado",
+      label: "Acumulado venta",
+      align: "right",
+      numeric: true,
+      render: (p) => {
+        const acc = accumByPaymentId.get(p.id);
+        if (!acc) return fmtRowPay(p, 0);
+        if (!fxLookup) return fmtMoney(acc.amount);
+        return (
+          <span style={numericCellStyle}>
+            {fmtNative(acc.amount, acc.currency)}
+            {acc.mixed && (
+              <span
+                title="La venta tiene cobros en más de una moneda. El acumulado se muestra convertido a USD."
+                aria-label="Venta con cobros en más de una moneda"
+                style={{ display: "inline-flex" }}
+              >
+                <StateDot tone="warning" />
+              </span>
+            )}
+          </span>
+        );
+      },
+    },
+    ...(canEdit ? [accionesColumn] : []),
+  ];
+
   return (
-    <section className="space-y-3">
-      <div className="flex items-baseline justify-between gap-3">
-        <h2 className="text-base font-semibold text-fg">Historial de cobros</h2>
-        {filtersActive && (
-          <span className="text-xs text-fg-subtle">
+    <Panel
+      title="Historial de cobros"
+      pad={false}
+      actions={
+        filtersActive ? (
+          <span className="kg-t7 kg-num" style={{ color: "var(--kg-text-3)" }}>
             {payments.length} de {totalPaymentsCount} cobros
           </span>
-        )}
-      </div>
-      {payments.length === 0 ? (
-        <p className="rounded-md border border-dashed border-border bg-surface/40 p-8 text-center text-sm text-fg-muted">
-          {totalPaymentsCount === 0 ? (
-            <>
-              Sin cobros registrados todavía. Usá el botón <b>+</b> en la tabla
-              de ventas para cargar el primero.
-            </>
-          ) : filtersActive ? (
-            "Ningún cobro coincide con los filtros aplicados."
-          ) : (
-            "Sin cobros."
-          )}
-        </p>
-      ) : (
-        <div className="overflow-x-auto rounded-md border border-border">
-          <table className="w-full min-w-[880px] text-sm">
-            <thead className="bg-surface text-left text-xs uppercase tracking-wide text-fg-subtle">
-              <tr>
-                <th className="px-3 py-3 font-medium">Fecha</th>
-                <th className="px-3 py-3 font-medium">Alumno</th>
-                <th className="px-3 py-3 font-medium">Producto</th>
-                <th className="px-3 py-3 font-medium">Modalidad</th>
-                <th className="px-3 py-3 font-medium">Cuota #</th>
-                <th className="px-3 py-3 font-medium">Método</th>
-                <th className="px-3 py-3 text-right font-medium">Monto</th>
-                <th className="px-3 py-3 text-right font-medium">Acumulado venta</th>
-                {canEdit && <th className="px-3 py-3" aria-label="Acciones" />}
-              </tr>
-            </thead>
-            <tbody>
-              {payments.map((p) => {
-                const sale = salesById.get(p.sale_id);
-                const lead = sale ? leadById.get(sale.lead_id) : null;
-                const modality = sale
-                  ? modalityById.get(sale.payment_modality_id)
-                  : null;
-                const product = sale ? productById.get(sale.product_id) : null;
-                const inst = p.installment_id
-                  ? installmentById.get(p.installment_id) ?? null
-                  : null;
-                const method = p.payment_method_id
-                  ? paymentMethodById.get(p.payment_method_id) ?? null
-                  : null;
-                return (
-                  <tr
-                    key={p.id}
-                    className="border-t border-border hover:bg-surface"
-                  >
-                    <td className="px-3 py-3 text-fg-muted">
-                      {fmtDate(p.paid_at)}
-                    </td>
-                    <td className="px-3 py-3 font-medium text-fg">
-                      {lead?.name ?? "—"}
-                    </td>
-                    <td className="px-3 py-3 text-fg-muted">
-                      {product?.name ?? "—"}
-                    </td>
-                    <td className="px-3 py-3 text-fg-muted">
-                      {modality?.name ?? "—"}
-                    </td>
-                    <td className="px-3 py-3 text-fg-muted">
-                      {inst ? `Cuota ${inst.number}` : (
-                        <span className="text-warning">Sin cuota</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-3 text-fg-muted">
-                      {method?.name ?? (
-                        <span className="text-warning">—</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums text-fg">
-                      {fmtRowPay(p, Number(p.amount))}
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums text-fg-muted">
-                      {(() => {
-                        const acc = accumByPaymentId.get(p.id);
-                        if (!acc) return fmtRowPay(p, 0);
-                        if (!fxLookup) return fmtMoney(acc.amount);
-                        return (
-                          <span className="inline-flex items-center gap-1">
-                            {fmtNative(acc.amount, acc.currency)}
-                            {acc.mixed && (
-                              <span
-                                className="rounded bg-warning/15 px-1 py-0.5 text-[10px] font-medium text-warning"
-                                title="La venta tiene cobros en más de una moneda. El acumulado se muestra convertido a USD."
-                              >
-                                moneda distinta
-                              </span>
-                            )}
-                          </span>
-                        );
-                      })()}
-                    </td>
-                    {canEdit && (
-                      <td className="px-3 py-3 text-right">
-                        <DeletePaymentButton
-                          paymentId={p.id}
-                          amount={Number(p.amount)}
-                          deletePaymentAction={deletePaymentAction}
-                        />
-                      </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-            <tfoot className="border-t-2 border-border bg-surface/60 text-sm">
-              <tr>
-                <td
-                  className="px-3 py-3 font-semibold text-fg"
-                  colSpan={6}
-                >
-                  {filtersActive
-                    ? `Subtotal filtrado · ${payments.length} cobro${payments.length === 1 ? "" : "s"}`
-                    : `Total · ${payments.length} cobro${payments.length === 1 ? "" : "s"}`}
-                </td>
-                <td className="px-3 py-3 text-right font-semibold tabular-nums text-fg">
-                  {fmtTotal(totalMonto)}
-                </td>
-                <td className="px-3 py-3" />
-                {canEdit && <td className="px-3 py-3" />}
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      )}
-    </section>
+        ) : undefined
+      }
+    >
+      <KgDataTable
+        columns={columns}
+        rows={payments}
+        rowKey={(p) => p.id}
+        maxBodyHeight="min(56vh, 620px)"
+        emptyTitle={
+          totalPaymentsCount === 0
+            ? "Sin cobros registrados todavía."
+            : filtersActive
+              ? "Ningún cobro coincide con los filtros aplicados."
+              : "Sin cobros."
+        }
+        emptyHint={
+          totalPaymentsCount === 0
+            ? "Usá el botón + de la tabla de ventas para cargar el primero."
+            : filtersActive
+              ? "Ajustá o limpiá los filtros desde el botón Filtros."
+              : undefined
+        }
+        totalsRow={{
+          label: filtersActive
+            ? `Subtotal filtrado · ${payments.length} cobro${payments.length === 1 ? "" : "s"}`
+            : `Total · ${payments.length} cobro${payments.length === 1 ? "" : "s"}`,
+          // Cubre Fecha → Método: el total sólo aplica a la columna "Monto".
+          labelSpan: 6,
+          cells: { monto: fmtTotal(totalMonto) },
+        }}
+      />
+    </Panel>
   );
 }
 
@@ -1381,7 +1587,13 @@ function DeletePaymentButton({
         }
       }}
       aria-label="Borrar cobro"
-      className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-error hover:bg-error/10 disabled:opacity-50"
+      className="kg-focus"
+      style={{
+        ...dangerBtn,
+        padding: "3px 10px",
+        opacity: pending ? 0.5 : 1,
+        cursor: pending ? "wait" : "pointer",
+      }}
     >
       {pending ? "…" : "×"}
     </button>
@@ -1447,17 +1659,34 @@ function BulkAssignBar({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-md border border-accent/40 bg-accent/5 px-3 py-2">
-      <span className="text-sm font-medium text-fg">
-        {selectedCount} venta{selectedCount === 1 ? "" : "s"} seleccionada
-        {selectedCount === 1 ? "" : "s"}
-      </span>
+    <KgSelectionBar
+      count={selectedCount}
+      noun={selectedCount === 1 ? "venta" : "ventas"}
+      onClear={pending ? undefined : onClear}
+      message={
+        feedback && (
+          <span
+            style={{
+              // Pintar un MENSAJE sí está permitido — lo que no se pinta es
+              // la plata. Éste es el resultado de la última acción masiva.
+              color:
+                feedback.fail === 0 ? "var(--kg-text-3)" : TONE_VAR.negative,
+            }}
+          >
+            {feedback.fail === 0
+              ? `${feedback.ok} venta${feedback.ok === 1 ? "" : "s"} actualizada${feedback.ok === 1 ? "" : "s"}.`
+              : `${feedback.ok} OK · ${feedback.fail} con error${feedback.firstError ? ` (${feedback.firstError})` : ""}.`}
+          </span>
+        )
+      }
+    >
       <select
         value={productId}
         onChange={(e) => setProductId(e.target.value)}
         disabled={pending}
         aria-label="Producto a asignar en bulk"
-        className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg disabled:opacity-50"
+        className="kg-focus"
+        style={barControlStyle(pending)}
       >
         <option value="">Elegí producto…</option>
         {activeProducts.map((p) => (
@@ -1466,44 +1695,61 @@ function BulkAssignBar({
           </option>
         ))}
       </select>
-      <label className="flex items-center gap-1 text-xs text-fg-muted">
+
+      <label
+        title="Actualizar comisión con la regla del nuevo producto"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          fontSize: 11,
+          fontWeight: 600,
+          color: "var(--kg-text-2)",
+          cursor: pending ? "wait" : "pointer",
+        }}
+      >
         <input
           type="checkbox"
           checked={regenerate}
           disabled={pending}
           onChange={(e) => setRegenerate(e.target.checked)}
-          className="accent-accent"
+          className="kg-focus"
+          style={{ accentColor: "var(--kg-accent-500)" }}
         />
-        Actualizar comisión con la regla del nuevo producto
+        Actualizar comisión
       </label>
+
       <button
         type="button"
         disabled={pending || !productId}
         onClick={apply}
-        className="rounded-md border border-accent/40 bg-accent/10 px-3 py-1 text-sm font-medium text-accent hover:bg-accent/20 disabled:opacity-50"
+        className="kg-focus"
+        style={{
+          ...primaryBtn,
+          padding: "6px 14px",
+          fontSize: 11,
+          opacity: pending || !productId ? 0.5 : 1,
+          cursor: pending ? "wait" : productId ? "pointer" : "default",
+        }}
       >
         {pending ? "Asignando…" : "Asignar"}
       </button>
-      <button
-        type="button"
-        onClick={onClear}
-        disabled={pending}
-        className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg hover:bg-bg-elevated disabled:opacity-50"
-      >
-        Limpiar
-      </button>
-      {feedback && (
-        <span
-          className={
-            "text-xs " +
-            (feedback.fail === 0 ? "text-success" : "text-error")
-          }
-        >
-          {feedback.fail === 0
-            ? `${feedback.ok} venta${feedback.ok === 1 ? "" : "s"} actualizada${feedback.ok === 1 ? "" : "s"}.`
-            : `${feedback.ok} OK · ${feedback.fail} con error${feedback.firstError ? ` (${feedback.firstError})` : ""}.`}
-        </span>
-      )}
-    </div>
+    </KgSelectionBar>
   );
+}
+
+/** Control (select / label) dentro de la KgSelectionBar. */
+function barControlStyle(pending: boolean): CSSProperties {
+  return {
+    padding: "6px 12px",
+    borderRadius: 999,
+    background: "var(--kg-surface-2-solid)",
+    border: "1px solid var(--kg-border-subtle)",
+    color: "var(--kg-text-1)",
+    fontSize: 11,
+    fontWeight: 700,
+    colorScheme: "dark",
+    opacity: pending ? 0.6 : 1,
+    cursor: pending ? "wait" : "pointer",
+  };
 }

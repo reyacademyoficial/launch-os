@@ -1,13 +1,8 @@
 import "server-only";
 
 import { evaluateAlertsForLaunch } from "@/lib/alerts/evaluate";
-import { tryComputeLaunchCalendar } from "@/lib/launches/calendar";
 import { createServiceClient } from "@/lib/supabase/service";
 
-import {
-  fetchGhlInboundMessagesByDay,
-  type MessagesByDayResult,
-} from "./ghl";
 import { fetchMetaInsights, type MetaInsightDay } from "./meta";
 import {
   fetchSendflowAnalytics,
@@ -36,7 +31,7 @@ import { runGhlSync, type GhlRunSummary } from "./sync-ghl";
  *    `config_missing` y termina.
  */
 
-export type SyncProviderId = "meta" | "ghl" | "ghl_messages" | "sendflow";
+export type SyncProviderId = "meta" | "ghl" | "sendflow";
 
 // Cast laxo para llamar a `expire_stale_integration_runs` (RPC fuera del
 // Database type generado) y para queries contra columnas nuevas que el
@@ -122,8 +117,8 @@ interface GhlProviderConfig {
   /**
    * Pipeline de GHL elegida en el modal de config. Cuando está presente, el
    * sync cuenta los leads por vendedor en esa pipeline y los persiste en
-   * `ghl_pipeline_lead_counts`. Opcional — si no está configurado el sync
-   * sigue corriendo el flujo de contacts/conversations normal.
+   * `ghl_pipeline_lead_counts`. Opcional — sin pipeline configurada el sync
+   * solo trae el count de leads nuevos por día.
    */
   pipeline_id?: string;
 }
@@ -218,20 +213,6 @@ export async function syncLaunch(
     });
   }
 
-  // 2a.ter) GHL Messages (Fase B): provider separado, no corre dentro del
-  //         sync GHL interactivo porque es heavy (cap 500 conversations × N
-  //         pages de mensajes c/u). Botón aparte + cron en 3c.
-  if (input.provider === "ghl_messages") {
-    return await runGhlMessagesBranch({
-      service,
-      input,
-      launchId: launch.id,
-      projectId: launch.project_id,
-      dateStart: launch.date_start,
-      dateEnd: launch.date_end,
-      integrationConfig: launch.integration_config,
-    });
-  }
 
   // 2a.bis) SendFlow: provider read-only de métricas de comunidad. Modelo
   //         (entered/removed/clicks por ventana) y errores (sin rate-limit
@@ -555,97 +536,32 @@ async function runGhlBranch(args: {
   // Calendario del launch — para la ventana compra+cierre (señal de tibio).
   // Si no tiene launch_date, warmWindow queda null y el adapter usa
   // [date_start, date_end] como fallback.
-  const launchRowRes = await service
-    .from("launches")
-    .select(
-      "launch_date, dur_creacion, dur_nutricion, dur_captacion, dur_calentamiento, dur_compra, dur_cierre, is_evergreen",
-    )
-    .eq("id", args.launchId)
-    .maybeSingle();
-  const launchRow = launchRowRes.data as {
-    launch_date: string | null;
-    dur_creacion: number;
-    dur_nutricion: number;
-    dur_captacion: number;
-    dur_calentamiento: number;
-    dur_compra: number;
-    dur_cierre: number;
-    is_evergreen: boolean;
-  } | null;
-  const calendar = tryComputeLaunchCalendar({
-    launchDate: launchRow?.launch_date ?? undefined,
-    durCreacion: launchRow?.dur_creacion,
-    durNutricion: launchRow?.dur_nutricion,
-    durCaptacion: launchRow?.dur_captacion,
-    durCalentamiento: launchRow?.dur_calentamiento,
-    durCompra: launchRow?.dur_compra,
-    durCierre: launchRow?.dur_cierre,
-    isEvergreen: launchRow?.is_evergreen ?? false,
-  });
-  const warmWindow = calendar
-    ? { start: calendar.compra.startDate, end: calendar.cierre.endDate }
-    : null;
-
-  // Incremental: tomamos started_at del último run con status='success'.
-  // Filtramos por stage='all' o NULL para no confundir con runs viejos por
-  // stage (appointments/conversations/contacts) que tenían su propio cutoff.
-  const lastSuccessRes = await loose(service)
-    .from("integration_runs")
-    .select("started_at")
-    .eq("launch_id", args.launchId)
-    .eq("provider", "ghl")
-    .eq("status", "success")
-    .in("stage", ["all", null])
-    .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const lastSuccessAt =
-    (lastSuccessRes.data as { started_at: string } | null)?.started_at ?? null;
-
   const summary: GhlRunSummary = await runGhlSync({
     service,
     token,
     locationId: cfg.location_id,
-    // `default_country` queda en config por compat (DB) pero el sync ahora
-    // normaliza por-contacto con el `country` que GHL emite. No se hardcodea
-    // "AR" cuando falta: se pasa lo que el operador haya configurado (o "")
-    // y el adapter resuelve E.164-only sin asumir país.
-    defaultCountry: cfg.default_country ?? "",
     pipelineId: cfg.pipeline_id ?? null,
     projectId: args.projectId,
     launchId: args.launchId,
     since: args.dateStart,
     until: args.dateEnd,
-    warmWindow,
-    lastSuccessAt,
   });
 
-  if (summary.status === "success" || summary.status === "partial") {
-    // Post-refactor 2026-08-10: el sync GHL solo actualiza team_member_id en
-    // leads existentes. `rows_written` = cantidad de UPDATEs efectivos.
-    const written = summary.counts.leads_updated;
-
-    // Bug 3 fix — antes el sync devolvía success aunque hubiera truncado por
-    // MAX_PAGES. Ahora si runGhlSync marcó partial, lo propagamos como tal
-    // con los endpoints truncados en error_detail. Los datos parciales ya
-    // quedaron escritos en DB (eso es lo que `written` cuenta); la UI/notif
-    // marca "Sync GHL terminó parcial" para que el operador sepa que faltan
-    // páginas más viejas.
-    if (summary.status === "partial") {
-      return await finalizeRun(service, runId, "partial", written, {
-        cause: "ghl_hit_max_pages",
-        hit_max_pages_endpoints: summary.hitMaxPages,
-        message: `GHL truncó por MAX_PAGES en: ${summary.hitMaxPages.join(", ")}. Faltan páginas más viejas.`,
+  if (summary.status === "success") {
+    // `rows_written` = días de `launch_daily_ads` escritos con el count de
+    // leads. El conteo de pipeline se sobreescribe entero cada corrida, así
+    // que no aporta un delta significativo para este número.
+    return await finalizeRun(
+      service,
+      runId,
+      "success",
+      summary.counts.daily_rows_written,
+      {
+        cause: "ghl_summary",
         counts: summary.counts,
         meta: summary.meta,
-      });
-    }
-
-    return await finalizeRun(service, runId, "success", written, {
-      cause: "ghl_summary",
-      counts: summary.counts,
-      meta: summary.meta,
-    });
+      },
+    );
   }
 
   return await finalizeRun(service, runId, summary.status, 0, {
@@ -909,186 +825,6 @@ async function runSendflowBranch(args: {
   }
 
   return await finalizeRun(service, runId, "success", 1, null);
-}
-
-/**
- * Bifurcación del orchestrator para GHL Messages (Fase B). Lee config GHL
- * (location_id) + secret del MISMO provider 'ghl' del launch (reusa el PIT,
- * no necesita un secret aparte), llama al adapter `fetchGhlInboundMessagesByDay`
- * con cap 500 conversaciones, y upsertea por (launch_id, date) en
- * `launch_messages_daily`.
- *
- * Diferencia vs el sync GHL interactivo:
- *  - No tiene noción de stages (1 sola corrida = todos los mensajes del rango).
- *  - No cuenta como sync GHL "fresco" — el sync interactivo sigue corriendo
- *    su propio scheduling; estos datos son para análisis retrospectivo.
- *  - El UPSERT por (launch_id, date) hace que re-corriendo sobre la misma
- *    ventana no duplique. Si una corrida pasada agregó días que esta no ve
- *    (porque cambió la ventana del launch), esos días quedan — no se borran
- *    (decisión: data histórica no se pisa por nuevas corridas más chicas).
- *
- * Estados finales:
- *  - success: escribió al menos 1 día (o 0 si no hubo inbound — válido).
- *  - partial: alguna conv pegó MAX_PAGES o se hit el cap de conversations.
- *  - token_invalid / rate_limited: idem otros providers.
- *  - error / config_missing: idem otros providers.
- */
-async function runGhlMessagesBranch(args: {
-  service: ServiceClient;
-  input: SyncLaunchInput;
-  launchId: string;
-  projectId: string;
-  dateStart: string;
-  dateEnd: string;
-  integrationConfig: Record<string, unknown>;
-}): Promise<SyncLaunchResult> {
-  const { service, input } = args;
-  const launchSnapshot: LaunchSnapshot = {
-    id: args.launchId,
-    project_id: args.projectId,
-    date_start: args.dateStart,
-    date_end: args.dateEnd,
-    closed_at: null,
-    integration_config: args.integrationConfig,
-  };
-
-  const cfg = readGhlConfig(args.integrationConfig);
-  if (!cfg.location_id) {
-    return await recordTerminalRun(
-      service,
-      input,
-      launchSnapshot,
-      "config_missing",
-      "Falta el Location ID de GHL. Configurá la integración GHL primero.",
-      { cause: "missing_location_id" },
-    );
-  }
-
-  // Reusa el PIT del provider 'ghl' — no hay token aparte para messages.
-  const secretRes = await service
-    .from("launch_secrets")
-    .select("secret")
-    .eq("launch_id", args.launchId)
-    .eq("provider", "ghl")
-    .maybeSingle();
-  const token = (secretRes.data as { secret: string } | null)?.secret ?? null;
-  if (!token) {
-    return await recordTerminalRun(
-      service,
-      input,
-      launchSnapshot,
-      "config_missing",
-      "Falta el PIT de GHL — configurá GHL primero (este sync reusa el mismo token).",
-      { cause: "missing_token" },
-    );
-  }
-
-  const runPayload = {
-    launch_id: args.launchId,
-    provider: "ghl_messages",
-    triggered_by: input.triggeredBy,
-    status: "running",
-    window_start: args.dateStart,
-    window_end: args.dateEnd,
-  } as never;
-
-  const runInsert = await service
-    .from("integration_runs")
-    .insert(runPayload)
-    .select("id")
-    .maybeSingle();
-  const runId = (runInsert.data as { id: string } | null)?.id;
-  if (!runId) {
-    return {
-      runId: "",
-      status: "error",
-      rowsWritten: 0,
-      errorMessage:
-        runInsert.error?.message ?? "No pude insertar el integration_run inicial",
-    };
-  }
-
-  const result: MessagesByDayResult | { ok: false; kind: "token_invalid" | "rate_limited" | "error"; message: string; detail: Record<string, unknown>; retryAfterSeconds?: number | null } =
-    await fetchGhlInboundMessagesByDay({
-      token,
-      locationId: cfg.location_id,
-      since: args.dateStart,
-      until: args.dateEnd,
-      conversationsCap: 500,
-    });
-
-  if (!result.ok) {
-    return await finalizeRun(service, runId, result.kind, 0, {
-      cause: "messages_fetch_failed",
-      ...result.detail,
-      message: result.message,
-      retryAfterSeconds: result.retryAfterSeconds ?? null,
-    });
-  }
-
-  // Build upsert payload. Días con inbound=0 pero observados igual los
-  // guardamos para que el chart muestre el 0 explícito (si quedaran fuera,
-  // el chart `connectNulls` los interpolaría como línea fantasma).
-  const dates = Object.keys(result.byDate).sort();
-  const rows = dates.map((date) => ({
-    launch_id: args.launchId,
-    date,
-    inbound_count: result.byDate[date]!.inbound,
-    observed_message_types: result.byDate[date]!.observedTypes,
-    synced_at: new Date().toISOString(),
-  }));
-
-  if (rows.length > 0) {
-    const upsert = await loose(service)
-      .from("launch_messages_daily")
-      .upsert(rows as never, { onConflict: "launch_id,date" });
-    if (upsert.error) {
-      return await finalizeRun(service, runId, "error", 0, {
-        cause: "upsert_failed",
-        message: upsert.error.message,
-        meta: result.meta,
-      });
-    }
-  }
-
-  // Partial si pegamos algún tope defensivo — el operador va a querer saber.
-  const isPartial =
-    result.meta.conversations_hit_cap ||
-    result.meta.conversations_hit_max_pages ||
-    result.meta.conversations_messages_hit_max > 0 ||
-    result.meta.per_conv_rate_limited > 0;
-
-  if (isPartial) {
-    return await finalizeRun(service, runId, "partial", rows.length, {
-      cause: "ghl_messages_partial",
-      meta: result.meta,
-      message: buildMessagesPartialMessage(result.meta),
-    });
-  }
-
-  return await finalizeRun(service, runId, "success", rows.length, {
-    cause: "ghl_messages_summary",
-    meta: result.meta,
-  });
-}
-
-function buildMessagesPartialMessage(meta: MessagesByDayResult["meta"]): string {
-  const reasons: string[] = [];
-  if (meta.conversations_hit_cap) {
-    reasons.push(`cap 500 conversaciones alcanzado (${meta.conversations_in_window} en ventana)`);
-  }
-  if (meta.conversations_hit_max_pages) {
-    reasons.push("paginación de conversations llegó al tope");
-  }
-  if (meta.conversations_messages_hit_max > 0) {
-    reasons.push(
-      `${meta.conversations_messages_hit_max} conversaciones con historial truncado`,
-    );
-  }
-  if (meta.per_conv_rate_limited > 0) {
-    reasons.push(`${meta.per_conv_rate_limited} conversaciones rate-limited`);
-  }
-  return `Sync de mensajes terminó parcial: ${reasons.join("; ")}.`;
 }
 
 function buildAdsRow(

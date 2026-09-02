@@ -1,13 +1,21 @@
 "use client";
 
-import { useOptimistic, useState, useTransition, type DragEvent } from "react";
+import { useOptimistic, useState, useTransition } from "react";
 
-import type { LeadActionState } from "@/app/(app)/proyectos/[projectId]/leads/actions";
+import type { LeadActionState } from "@/app/(app)/(kg)/proyectos/[projectId]/leads/actions";
 import type {
   PaymentActionState,
   SaleActionState,
-} from "@/app/(app)/proyectos/[projectId]/leads/sale-actions";
+} from "@/app/(app)/(kg)/proyectos/[projectId]/leads/sale-actions";
 import { SaleModal } from "@/components/dashboard/sales/sale-modal";
+import { KgConfirmDialog } from "@/components/kg/confirm-dialog";
+import {
+  dangerBtn,
+  inputStyle,
+  smallBtn,
+} from "@/components/kg/form-primitives";
+import { KgKanban } from "@/components/kg/kanban";
+import { StatusPill } from "@/components/kg/status-pill";
 import { computeCommission, findApplicableRule } from "@/lib/commissions/calc";
 import { buildSaleRanks } from "@/lib/commissions/ranking";
 import type {
@@ -85,13 +93,37 @@ type AssignLeadOwnerAction = (
 
 /**
  * Tablero kanban del pipeline. Columnas = LEAD_STATUSES, ordenadas según el
- * orden canónico definido en `lib/leads/types`. Drag-and-drop usando HTML5
- * nativo — sin libs externas — porque las cards son livianas y el dataset es
- * chico (un proyecto típico no pasa de ~cientos de leads abiertos).
+ * orden canónico definido en `lib/leads/types`.
  *
- * El UPDATE optimista se aplica con `useOptimistic` para que el lead salte de
- * columna sin esperar al server. Si la action falla, React revierte al estado
- * del prop (el siguiente render desde el server pisa el optimistic).
+ * ───────────────────────────────────────────────────────────────────────────
+ * MIGRACIÓN AL DESIGN SYSTEM KG
+ * ───────────────────────────────────────────────────────────────────────────
+ * El chasis del board (columnas, headers, drop-zones, cards arrastrables,
+ * carrusel en mobile) salió de acá y vive en `@/components/kg/kanban`. Este
+ * archivo se quedó SÓLO con lo que es de leads: filtros, cálculo de comisión
+ * por card y los modales de venta/edición.
+ *
+ * Lo que NO cambió, a propósito:
+ *   - Los props públicos: `leads/page.tsx` los pasa igual que siempre.
+ *   - El drag & drop sigue siendo HTML5 nativo (ahora dentro de `KgKanban`),
+ *     con el mismo dataTransfer "text/plain".
+ *   - El update optimista sigue acá, con `useOptimistic`: el lead salta de
+ *     columna sin esperar al server y si la action falla React revierte al
+ *     estado del prop. `KgKanban` es una primitiva CONTROLADA justamente para
+ *     que esta pieza no se mueva de lugar (ver su cabecera).
+ *   - Los gates de permisos: `canEdit` decide si `onMove` existe (sin él el
+ *     board es de sólo lectura) y si se muestran las acciones por card.
+ *
+ * Lo que sí cambió, y por qué:
+ *   - La comisión ya no se pinta de acento. LA PLATA NO SE PINTA (`tone.ts`):
+ *     el "+" delante del número es la única señal de dirección que necesita,
+ *     igual que el signo menos en las tablas.
+ *   - La pill de `source` pasó a `StatusPill` (dot neutro + texto), en vez del
+ *     chip con fondo tintado que hacía efecto semáforo junto al resto.
+ *   - El `confirm()` nativo del borrado pasó a `KgConfirmDialog`.
+ *   - El filtro de setter queda como `<select>` nativo con `inputStyle` y NO
+ *     como `KgFilterSelect`: `KgFilterSelect` navega por URL, y este filtro
+ *     vive en estado LOCAL a propósito (ver nota abajo).
  */
 export function KanbanBoard({
   leads,
@@ -171,7 +203,6 @@ export function KanbanBoard({
   readonly fxLookup?: FxLookup;
 }) {
   const [, startTransition] = useTransition();
-  const [dragOverCol, setDragOverCol] = useState<LeadStatus | null>(null);
   const [optimistic, setOptimistic] = useOptimistic(
     leads,
     (current, action: { id: string; status: LeadStatus }) =>
@@ -181,7 +212,8 @@ export function KanbanBoard({
   // Filtros client-side: el board ya tiene todos los leads pinned en memoria,
   // entonces el search + setter filter operan sobre `optimistic` antes de
   // bucketear. Sin round-trip al server, sin URL state — el caso de uso es
-  // "buscar mientras trabajo el kanban", no compartir el filtro.
+  // "buscar mientras trabajo el kanban", no compartir el filtro. Por eso el
+  // select va nativo con `inputStyle` y no con `KgFilterSelect`, que navega.
   const [query, setQuery] = useState("");
   const [setterFilter, setSetterFilter] = useState<"all" | "unassigned" | string>(
     "all",
@@ -195,35 +227,6 @@ export function KanbanBoard({
   // consistente con el leaderboard.
   const allSales = Array.from(salesByLeadId.values()).flat();
   const rankBySaleId = buildSaleRanks(allSales);
-
-  function handleDragStart(e: DragEvent<HTMLDivElement>, leadId: string) {
-    e.dataTransfer.setData("text/plain", leadId);
-    e.dataTransfer.effectAllowed = "move";
-  }
-
-  function handleDragOver(e: DragEvent<HTMLDivElement>, status: LeadStatus) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    if (dragOverCol !== status) setDragOverCol(status);
-  }
-
-  function handleDragLeave(status: LeadStatus) {
-    if (dragOverCol === status) setDragOverCol(null);
-  }
-
-  function handleDrop(e: DragEvent<HTMLDivElement>, status: LeadStatus) {
-    e.preventDefault();
-    setDragOverCol(null);
-    const leadId = e.dataTransfer.getData("text/plain");
-    if (!leadId) return;
-    const lead = optimistic.find((l) => l.id === leadId);
-    if (!lead || lead.status === status) return;
-
-    startTransition(async () => {
-      setOptimistic({ id: leadId, status });
-      await moveAction(leadId, status);
-    });
-  }
 
   const normalizedQuery = query.trim().toLowerCase();
   const matchesQuery = (lead: LeadRow): boolean => {
@@ -249,280 +252,352 @@ export function KanbanBoard({
     (lead) => matchesQuery(lead) && matchesSetter(lead),
   );
 
-  const buckets: Record<LeadStatus, LeadRow[]> = {
-    frio: [],
-    tibio: [],
-    agendado: [],
-    cerrado: [],
-    perdido: [],
-  };
-  for (const lead of filtered) buckets[lead.status].push(lead);
-
-  const filtersActive =
-    normalizedQuery !== "" || setterFilter !== "all";
+  const filtersActive = normalizedQuery !== "" || setterFilter !== "all";
   const totalCount = optimistic.length;
   const filteredCount = filtered.length;
 
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface/40 px-3 py-2">
-        <input
-          type="search"
-          placeholder="Buscar por nombre, teléfono o email…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="min-w-[14rem] flex-1 rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg placeholder:text-fg-subtle"
-          aria-label="Buscar lead"
-        />
-        <select
-          value={setterFilter}
-          onChange={(e) => setSetterFilter(e.target.value)}
-          className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg"
-          aria-label="Filtrar por setter"
+  /**
+   * Movimiento de columna. `KgKanban` infiere el tipo del id de columna desde
+   * `columnOf`, así que `status` llega tipado como `LeadStatus` — no hace
+   * falta validar nada acá. La primitiva ya descartó los no-movimientos
+   * (misma columna, id desconocido).
+   */
+  function handleMove(leadId: string, status: LeadStatus) {
+    startTransition(async () => {
+      setOptimistic({ id: leadId, status });
+      await moveAction(leadId, status);
+    });
+  }
+
+  const toolbar = (
+    <div
+      className="kg-glass"
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: 8,
+        padding: "10px 12px",
+        borderRadius: "var(--kg-r-16)",
+      }}
+    >
+      <input
+        type="search"
+        placeholder="Buscar por nombre, teléfono o email…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        aria-label="Buscar lead"
+        className="kg-focus"
+        style={{
+          ...inputStyle,
+          width: "auto",
+          flex: "1 1 14rem",
+          minWidth: "12rem",
+          minHeight: 36,
+        }}
+      />
+      <select
+        value={setterFilter}
+        onChange={(e) => setSetterFilter(e.target.value)}
+        aria-label="Filtrar por setter"
+        className="kg-focus"
+        style={{
+          ...inputStyle,
+          width: "auto",
+          minHeight: 36,
+          cursor: "pointer",
+        }}
+      >
+        <option value="all">Todos los setters</option>
+        <option value="unassigned">Sin asignar</option>
+        {setters.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name}
+            {!s.active ? " (inactivo)" : ""}
+          </option>
+        ))}
+      </select>
+      <span
+        className="kg-num"
+        style={{ color: "var(--kg-text-3)", fontSize: 11 }}
+      >
+        {filtersActive
+          ? `${filteredCount} de ${totalCount}`
+          : `${totalCount} leads`}
+      </span>
+      {filtersActive && (
+        <button
+          type="button"
+          onClick={() => {
+            setQuery("");
+            setSetterFilter("all");
+          }}
+          className="kg-focus"
+          style={{ ...smallBtn, minHeight: 36 }}
         >
-          <option value="all">Todos los setters</option>
-          <option value="unassigned">Sin asignar</option>
-          {setters.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-              {!s.active ? " (inactivo)" : ""}
-            </option>
-          ))}
-        </select>
-        <span className="text-xs text-fg-subtle">
-          {filtersActive
-            ? `${filteredCount} de ${totalCount}`
-            : `${totalCount} leads`}
-        </span>
-        {filtersActive && (
-          <button
-            type="button"
-            onClick={() => {
-              setQuery("");
-              setSetterFilter("all");
-            }}
-            className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg hover:bg-bg-elevated"
-          >
-            Limpiar
-          </button>
-        )}
-      </div>
-      <div className="flex gap-3 overflow-x-auto pb-2">
-      {LEAD_STATUSES.map((status) => {
-        const items = buckets[status];
-        const isDragOver = dragOverCol === status;
-        return (
-          <div
-            key={status}
-            onDragOver={canEdit ? (e) => handleDragOver(e, status) : undefined}
-            onDragLeave={canEdit ? () => handleDragLeave(status) : undefined}
-            onDrop={canEdit ? (e) => handleDrop(e, status) : undefined}
-            className={
-              "flex w-72 shrink-0 flex-col rounded-md border bg-surface/40 " +
-              (isDragOver ? "border-accent bg-accent/5" : "border-border")
-            }
-          >
-            <header className="flex items-baseline justify-between border-b border-border px-3 py-2">
-              <h2 className="text-xs font-semibold uppercase tracking-wide text-fg">
-                {LEAD_STATUS_LABELS[status]}
-              </h2>
-              <span className="text-xs text-fg-subtle">{items.length}</span>
-            </header>
-            <div className="flex flex-col gap-2 p-2">
-              {items.length === 0 ? (
-                <p className="px-2 py-6 text-center text-xs text-fg-subtle">
-                  Sin leads
-                </p>
-              ) : (
-                items.map((lead) => {
-                  const assignee = lead.team_member_id
-                    ? memberById.get(lead.team_member_id)
-                    : null;
-                  // Fase 8: cada lead puede tener N ventas. Sumamos cobrado
-                  // y comisión de todas para el preview de la card.
-                  const leadSales = salesByLeadId.get(lead.id) ?? [];
-                  // Con fxLookup: si todos los sales del lead son la misma
-                  // moneda nativa, mostramos el total en esa moneda; si son
-                  // mixed, convertimos a USD para no mezclar. Sin fxLookup:
-                  // legacy suma cruda.
-                  let uniformCurrency: "ARS" | "USD" | null = null;
-                  if (fxLookup) {
-                    for (const s of leadSales) {
-                      const c = fxLookup.bySaleId[s.id]?.currency ?? "USD";
-                      if (uniformCurrency === null) uniformCurrency = c;
-                      else if (uniformCurrency !== c) {
-                        uniformCurrency = null;
-                        break;
-                      }
-                    }
-                  }
-                  const displayInUsd = fxLookup != null && uniformCurrency == null;
-                  let totalCollected = 0;
-                  // Comisiones acumuladas por moneda — el tier fixed lleva
-                  // moneda propia (0107) y el usuario pidió no convertir.
-                  let commissionArs = 0;
-                  let commissionUsd = 0;
-                  for (const s of leadSales) {
-                    const pays = paymentsBySaleId.get(s.id) ?? [];
-                    const rule = findApplicableRule(
-                      rules,
-                      s.payment_modality_id,
-                      s.launch_id,
-                      s.product_id,
-                    );
-                    // Normalizar payments a la moneda del sale antes del
-                    // calc — el ratio collected/pledged asume unidades
-                    // homogéneas. TODO(ui): pintar warning cuando hasMixed.
-                    const { normalized } = normalizePaymentsForSaleCurrency(
-                      s,
-                      pays,
-                      fxLookup,
-                    );
-                    const b = computeCommission(
-                      s,
-                      normalized,
-                      rule,
-                      rankBySaleId.get(s.id) ?? 0,
-                    );
-                    if (displayInUsd && fxLookup) {
-                      const saleUsd = fxLookup.bySaleId[s.id]?.totalUsd ?? null;
-                      const saleTotal = Number(s.total_amount) || 0;
-                      const scale =
-                        saleUsd !== null && saleTotal > 0
-                          ? saleUsd / saleTotal
-                          : 1;
-                      totalCollected += b.collected * scale;
-                    } else {
-                      totalCollected += b.collected;
-                    }
-                    if (b.commissionCurrency === "USD") commissionUsd += b.commission;
-                    else commissionArs += b.commission;
-                  }
-                  const hasSales = leadSales.length > 0;
-                  const fmtCardMoney = fxLookup
-                    ? displayInUsd
-                      ? (n: number) => fmtUsd(n)
-                      : (n: number) => fmtNative(n, uniformCurrency ?? "USD")
-                    : (n: number) => fmtMoney(n);
-
-                  return (
-                    <div
-                      key={lead.id}
-                      draggable={canEdit}
-                      onDragStart={(e) => handleDragStart(e, lead.id)}
-                      className={
-                        "rounded-md border border-border bg-bg-elevated p-3 text-sm " +
-                        (canEdit ? "cursor-grab active:cursor-grabbing" : "")
-                      }
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate font-medium text-fg">
-                            {lead.name}
-                          </div>
-                          {lead.contact && (
-                            <div className="mt-0.5 truncate text-xs text-fg-muted">
-                              {lead.contact}
-                            </div>
-                          )}
-                        </div>
-                        {lead.source !== "manual" && (
-                          <span className="rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium uppercase text-accent">
-                            {lead.source}
-                          </span>
-                        )}
-                      </div>
-
-                      {hasSales && (
-                        <div className="mt-2 flex items-center justify-between rounded-md bg-surface/60 px-2 py-1 text-xs">
-                          <span className="text-fg-subtle">
-                            Cobrado {fmtCardMoney(totalCollected)}
-                            {leadSales.length > 1 && (
-                              <span className="ml-1 text-fg-muted">
-                                · {leadSales.length} ventas
-                              </span>
-                            )}
-                          </span>
-                          <span className="font-medium text-accent">
-                            {commissionArs > 0 && commissionUsd > 0
-                              ? `+${fmtNative(commissionArs, "ARS")} · +${fmtNative(commissionUsd, "USD")}`
-                              : commissionUsd > 0
-                                ? `+${fmtNative(commissionUsd, "USD")}`
-                                : `+${fmtNative(commissionArs, "ARS")}`}
-                          </span>
-                        </div>
-                      )}
-
-                      <div className="mt-2 flex items-center justify-between gap-2 text-xs text-fg-subtle">
-                        <span className="truncate">
-                          {assignee ? assignee.name : "Sin asignar"}
-                        </span>
-                        {canEdit && (
-                          <div className="flex items-center gap-1">
-                            <SaleModal
-                              triggerLabel={
-                                hasSales
-                                  ? leadSales.length > 1
-                                    ? `💰 ${leadSales.length}`
-                                    : "💰"
-                                  : "Venta"
-                              }
-                              triggerClassName={
-                                hasSales
-                                  ? "rounded-md border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-xs text-accent hover:bg-accent/20"
-                                  : "rounded-md border border-border bg-surface px-2 py-0.5 text-xs text-fg hover:bg-bg-elevated"
-                              }
-                              lead={lead}
-                              sales={leadSales}
-                              saleRanks={rankBySaleId}
-                              paymentsBySaleId={paymentsBySaleId}
-                              installmentsBySaleId={installmentsBySaleId}
-                              invoicesBySaleId={invoicesBySaleId}
-                              modalities={modalities}
-                              products={products}
-                              rules={rules}
-                              paymentMethods={paymentMethods}
-                              teamMembers={teamMembers}
-                              createSaleAction={createSaleAction.bind(null, lead.id)}
-                              updateProductAction={(saleId, productId) =>
-                                updateSaleProductAction(saleId, productId)
-                              }
-                              recalculateAction={recalculateSaleAction}
-                              updateSaleAction={updateSaleAction}
-                              addPaymentAction={addPaymentAction}
-                              deletePaymentAction={deletePaymentAction}
-                              deleteSaleAction={deleteSaleAction}
-                              updatePaymentInstallmentAction={
-                                updatePaymentInstallmentAction
-                              }
-                              updatePaymentMethodAction={updatePaymentMethodAction}
-                              assignLeadOwnerAction={
-                                canEdit ? assignLeadOwnerAction : undefined
-                              }
-                              fxLookup={fxLookup}
-                            />
-                            <LeadRowActions
-                              lead={lead}
-                              teamMembers={teamMembers}
-                              launches={launches}
-                              updateAction={updateAction.bind(null, lead.id)}
-                              deleteAction={deleteAction.bind(null, lead.id)}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        );
-      })}
-      </div>
+          Limpiar
+        </button>
+      )}
     </div>
   );
+
+  /**
+   * Contenido de la card. El chasis (borde, fondo, asa de arrastre, foco) lo
+   * pone `KgKanban`; acá va sólo lo que es de un lead.
+   */
+  function renderLeadCard(lead: LeadRow) {
+    const assignee = lead.team_member_id
+      ? memberById.get(lead.team_member_id)
+      : null;
+    // Fase 8: cada lead puede tener N ventas. Sumamos cobrado y comisión de
+    // todas para el preview de la card.
+    const leadSales = salesByLeadId.get(lead.id) ?? [];
+    // Con fxLookup: si todos los sales del lead son la misma moneda nativa,
+    // mostramos el total en esa moneda; si son mixed, convertimos a USD para
+    // no mezclar. Sin fxLookup: legacy suma cruda.
+    let uniformCurrency: "ARS" | "USD" | null = null;
+    if (fxLookup) {
+      for (const s of leadSales) {
+        const c = fxLookup.bySaleId[s.id]?.currency ?? "USD";
+        if (uniformCurrency === null) uniformCurrency = c;
+        else if (uniformCurrency !== c) {
+          uniformCurrency = null;
+          break;
+        }
+      }
+    }
+    const displayInUsd = fxLookup != null && uniformCurrency == null;
+    let totalCollected = 0;
+    // Comisiones acumuladas por moneda — el tier fixed lleva moneda propia
+    // (0107) y el usuario pidió no convertir.
+    let commissionArs = 0;
+    let commissionUsd = 0;
+    for (const s of leadSales) {
+      const pays = paymentsBySaleId.get(s.id) ?? [];
+      const rule = findApplicableRule(
+        rules,
+        s.payment_modality_id,
+        s.launch_id,
+        s.product_id,
+      );
+      // Normalizar payments a la moneda del sale antes del calc — el ratio
+      // collected/pledged asume unidades homogéneas.
+      // TODO(ui): pintar warning cuando hasMixed.
+      const { normalized } = normalizePaymentsForSaleCurrency(s, pays, fxLookup);
+      const b = computeCommission(
+        s,
+        normalized,
+        rule,
+        rankBySaleId.get(s.id) ?? 0,
+      );
+      if (displayInUsd && fxLookup) {
+        const saleUsd = fxLookup.bySaleId[s.id]?.totalUsd ?? null;
+        const saleTotal = Number(s.total_amount) || 0;
+        const scale =
+          saleUsd !== null && saleTotal > 0 ? saleUsd / saleTotal : 1;
+        totalCollected += b.collected * scale;
+      } else {
+        totalCollected += b.collected;
+      }
+      if (b.commissionCurrency === "USD") commissionUsd += b.commission;
+      else commissionArs += b.commission;
+    }
+    const hasSales = leadSales.length > 0;
+    const fmtCardMoney = fxLookup
+      ? displayInUsd
+        ? (n: number) => fmtUsd(n)
+        : (n: number) => fmtNative(n, uniformCurrency ?? "USD")
+      : (n: number) => fmtMoney(n);
+    const commissionText =
+      commissionArs > 0 && commissionUsd > 0
+        ? `+${fmtNative(commissionArs, "ARS")} · +${fmtNative(commissionUsd, "USD")}`
+        : commissionUsd > 0
+          ? `+${fmtNative(commissionUsd, "USD")}`
+          : `+${fmtNative(commissionArs, "ARS")}`;
+
+    return (
+      <>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div
+              className="kg-t5"
+              style={{
+                color: "var(--kg-text-1)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {lead.name}
+            </div>
+            {lead.contact && (
+              <div
+                style={{
+                  marginTop: 2,
+                  color: "var(--kg-text-3)",
+                  fontSize: 11,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {lead.contact}
+              </div>
+            )}
+          </div>
+          {/* `source` es una marca categórica, no un estado: dot neutro. */}
+          {lead.source !== "manual" && <StatusPill text={lead.source} />}
+        </div>
+
+        {hasSales && (
+          <div
+            style={{
+              marginTop: 8,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              padding: "6px 8px",
+              borderRadius: "var(--kg-r-8)",
+              background: "var(--kg-surface-1)",
+              fontSize: 11,
+            }}
+          >
+            <span style={{ color: "var(--kg-text-3)", minWidth: 0 }}>
+              Cobrado{" "}
+              <span className="kg-num" style={{ color: "var(--kg-text-2)" }}>
+                {fmtCardMoney(totalCollected)}
+              </span>
+              {leadSales.length > 1 && <> · {leadSales.length} ventas</>}
+            </span>
+            {/*
+              LA PLATA NO SE PINTA: la comisión ya no va en color de acento.
+              El "+" alcanza como señal de dirección.
+            */}
+            <span
+              className="kg-num"
+              style={{
+                color: "var(--kg-text-1)",
+                fontWeight: 700,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {commissionText}
+            </span>
+          </div>
+        )}
+
+        <div
+          style={{
+            marginTop: 8,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            fontSize: 11,
+            color: "var(--kg-text-3)",
+          }}
+        >
+          <span
+            style={{
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {assignee ? assignee.name : "Sin asignar"}
+          </span>
+          {canEdit && (
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <SaleModal
+                triggerLabel={
+                  hasSales
+                    ? leadSales.length > 1
+                      ? `💰 ${leadSales.length}`
+                      : "💰"
+                    : "Venta"
+                }
+                triggerClassName={
+                  hasSales ? SALE_TRIGGER_ACTIVE_CLASS : SALE_TRIGGER_CLASS
+                }
+                lead={lead}
+                sales={leadSales}
+                saleRanks={rankBySaleId}
+                paymentsBySaleId={paymentsBySaleId}
+                installmentsBySaleId={installmentsBySaleId}
+                invoicesBySaleId={invoicesBySaleId}
+                modalities={modalities}
+                products={products}
+                rules={rules}
+                paymentMethods={paymentMethods}
+                teamMembers={teamMembers}
+                createSaleAction={createSaleAction.bind(null, lead.id)}
+                updateProductAction={(saleId, productId) =>
+                  updateSaleProductAction(saleId, productId)
+                }
+                recalculateAction={recalculateSaleAction}
+                updateSaleAction={updateSaleAction}
+                addPaymentAction={addPaymentAction}
+                deletePaymentAction={deletePaymentAction}
+                deleteSaleAction={deleteSaleAction}
+                updatePaymentInstallmentAction={updatePaymentInstallmentAction}
+                updatePaymentMethodAction={updatePaymentMethodAction}
+                assignLeadOwnerAction={canEdit ? assignLeadOwnerAction : undefined}
+                fxLookup={fxLookup}
+              />
+              <LeadRowActions
+                lead={lead}
+                teamMembers={teamMembers}
+                launches={launches}
+                updateAction={updateAction.bind(null, lead.id)}
+                deleteAction={deleteAction.bind(null, lead.id)}
+              />
+            </div>
+          )}
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <KgKanban
+      items={filtered}
+      itemKey={(lead) => lead.id}
+      columnOf={(lead) => lead.status}
+      itemLabel={(lead) => lead.name}
+      columns={LEAD_STATUSES.map((status) => ({
+        id: status,
+        label: LEAD_STATUS_LABELS[status],
+      }))}
+      emptyText="Sin leads"
+      ariaLabel="Pipeline de leads"
+      toolbar={toolbar}
+      // Sin permiso de edición no hay `onMove`: la primitiva apaga drag, drop
+      // y teclado de una sola vez. Mismo gate que tenía el board a mano.
+      onMove={canEdit ? handleMove : undefined}
+      renderItem={renderLeadCard}
+    />
+  );
 }
+
+/**
+ * `SaleModal` (se migra en una etapa posterior) sólo acepta `triggerClassName`
+ * — no `style` — y reemplaza sus clases por completo. Hasta que se migre, el
+ * único vehículo para los tokens `--kg-*` es Tailwind con valores arbitrarios.
+ * Es la excepción documentada a la regla de inline styles: en cuanto SaleModal
+ * exponga `triggerStyle`, esto pasa a `smallBtn`.
+ */
+const SALE_TRIGGER_CLASS =
+  "kg-focus inline-flex min-h-9 items-center gap-1 rounded-full border " +
+  "border-[var(--kg-border-subtle)] bg-transparent px-2.5 text-[11px] " +
+  "font-semibold text-[var(--kg-text-2)]";
+
+/** Variante con borde de acento cuando el lead ya tiene ventas cargadas. */
+const SALE_TRIGGER_ACTIVE_CLASS =
+  "kg-focus inline-flex min-h-9 items-center gap-1 rounded-full border " +
+  "border-[var(--kg-border-accent)] bg-transparent px-2.5 text-[11px] " +
+  "font-semibold text-[var(--kg-accent-text)]";
 
 function LeadRowActions({
   lead,
@@ -543,12 +618,19 @@ function LeadRowActions({
   readonly deleteAction: () => Promise<void>;
 }) {
   const [isPending, startTransition] = useTransition();
+  const [askDelete, setAskDelete] = useState(false);
+
   return (
-    <div className="flex items-center gap-1">
+    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+      {/*
+        El trigger sigue siendo el `Button` legacy de `lead-form-modal.tsx`,
+        que se migra en otra etapa y sólo acepta className. Se deja tal cual
+        para no cambiarle el render mientras tanto.
+      */}
       <LeadFormModal
         triggerLabel="✎"
         triggerVariant="secondary"
-        triggerClassName="!px-1.5 !py-0.5 !text-xs"
+        triggerClassName="kg-focus !px-1.5 !py-0.5 !text-xs"
         title={`Editar ${lead.name}`}
         submitLabel="Guardar"
         action={updateAction}
@@ -559,17 +641,38 @@ function LeadRowActions({
       <button
         type="button"
         disabled={isPending}
-        onClick={() => {
-          if (!confirm(`¿Borrar lead "${lead.name}"?`)) return;
+        onClick={() => setAskDelete(true)}
+        aria-label="Borrar lead"
+        className="kg-focus"
+        style={{
+          ...dangerBtn,
+          padding: "0 10px",
+          minHeight: 36,
+          opacity: isPending ? 0.5 : 1,
+        }}
+      >
+        ×
+      </button>
+      <KgConfirmDialog
+        open={askDelete}
+        onClose={() => setAskDelete(false)}
+        title="Borrar lead"
+        description={
+          <>
+            Vas a borrar{" "}
+            <b style={{ color: "var(--kg-text-1)" }}>{lead.name}</b>. Esta
+            acción no se puede deshacer.
+          </>
+        }
+        confirmLabel="Borrar"
+        pendingLabel="Borrando…"
+        pending={isPending}
+        onConfirm={() => {
           startTransition(async () => {
             await deleteAction();
           });
         }}
-        aria-label="Borrar lead"
-        className="rounded-md border border-border bg-surface px-1.5 py-0.5 text-xs text-error hover:bg-error/10 disabled:opacity-50"
-      >
-        ×
-      </button>
+      />
     </div>
   );
 }

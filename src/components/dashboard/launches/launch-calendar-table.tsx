@@ -1,3 +1,5 @@
+import { KgDataTable, type Column } from "@/components/kg/data-table";
+import { Panel } from "@/components/kg/panel";
 import { fmtDate } from "@/lib/format";
 import type { LaunchCalendar } from "@/lib/launches/calendar";
 
@@ -8,7 +10,86 @@ import type { LaunchCalendar } from "@/lib/launches/calendar";
  * Used in two places:
  *   - Live preview en el form de crear/editar launch.
  *   - Sección "Calendario" en el detalle del launch.
+ *
+ * MIGRACIÓN KG
+ * La `<table>` a mano (thead `bg-surface text-fg-subtle`, filas
+ * `border-t border-border`, celdas `text-fg` / `text-fg-muted`) pasó a
+ * `KgDataTable`. Se gana el chrome del DS —header en versalitas, hover de
+ * fila, scroll horizontal propio en 390px— y se pierden ~35 LOC de markup.
+ *
+ * El `div.overflow-x-auto.rounded-md.border-border` que enmarcaba la tabla se
+ * reemplaza por `Panel pad={false}`: mismo rol (caja con borde y esquinas),
+ * pero con las vars `--kg-*`. Sin `title` porque los dos consumidores ya
+ * ponen su propio encabezado encima ("Calendario", "Preview en vivo") — un
+ * título acá sería el mismo texto dos veces.
+ *
+ * Sin `fillHeight`: son 6-8 filas fijas, la tabla nunca necesita llenar el
+ * viewport ni scrollear en vertical. `fillHeight` acá clavaría la altura al
+ * alto disponible y dejaría un hueco vacío debajo de las etapas.
+ *
+ * El `<p>` con la ventana total dejó de ser un párrafo suelto debajo: ahora
+ * viaja en `footerActions`, o sea en la misma barra donde `KgDataTable`
+ * cuenta las filas. Es metadata de la tabla, no del bloque.
+ *
+ * NO se marca `"use client"` a propósito: `KgDataTable` no tiene hooks y este
+ * componente lo consumen tanto una page SERVER (`calendario/page.tsx`) como
+ * dos árboles client (`launch-form.tsx`, `calculator/calendar-section.tsx`).
+ * Las `render` de las columnas se definen y se ejecutan del mismo lado —
+ * nunca cruzan el boundary RSC.
  */
+
+/** Fila de una etapa del calendario. Shape local, solo de presentación. */
+interface StageRow {
+  readonly name: string;
+  readonly range: string;
+  readonly hint?: string;
+}
+
+const COLUMNS: ReadonlyArray<Column<StageRow>> = [
+  {
+    key: "name",
+    label: "Etapa",
+    render: (r) => (
+      <span style={{ fontWeight: 600, color: "var(--kg-text-1)" }}>
+        {r.name}
+      </span>
+    ),
+  },
+  {
+    key: "range",
+    label: "Fechas",
+    // `kg-num` + tabular-nums: las fechas tienen que alinear dígito con
+    // dígito para que la progresión de etapas se lea en vertical de un
+    // vistazo. Se dejan a la izquierda —no son magnitudes, son etiquetas—
+    // así que `numeric` va sin `align: "right"`.
+    numeric: true,
+    render: (r) => (
+      <span style={{ color: "var(--kg-text-2)" }}>{r.range}</span>
+    ),
+  },
+  {
+    key: "hint",
+    label: "Nota",
+    render: (r) => (
+      <span
+        style={{
+          // Las celdas de `KgDataTable` van `nowrap` (pensadas para montos);
+          // acá la nota es prosa y tiene que envolver, si no la tabla se
+          // estira a 900px y obliga a scrollear en desktop.
+          whiteSpace: "normal",
+          display: "inline-block",
+          maxWidth: 320,
+          fontSize: 11.5,
+          lineHeight: 1.4,
+          color: "var(--kg-text-3)",
+        }}
+      >
+        {r.hint ?? "—"}
+      </span>
+    ),
+  },
+];
+
 export function LaunchCalendarTable({
   calendar,
 }: {
@@ -17,11 +98,7 @@ export function LaunchCalendarTable({
   // Evergreen tiene una sola clase — clase2/clase3 llegan en null y se ocultan.
   const isEvergreen = calendar.consumo.clase2 === null;
 
-  const rows: ReadonlyArray<{
-    name: string;
-    range: string;
-    hint?: string;
-  }> = [
+  const rows: ReadonlyArray<StageRow> = [
     {
       name: "Creación",
       range: rangeLabel(calendar.creacion.startDate, calendar.creacion.endDate),
@@ -83,46 +160,26 @@ export function LaunchCalendarTable({
   ];
 
   return (
-    <div className="space-y-3">
-      <div className="overflow-x-auto rounded-md border border-border">
-        <table className="w-full text-sm">
-          <thead className="bg-surface text-left text-xs uppercase tracking-wide text-fg-subtle">
-            <tr>
-              <th scope="col" className="px-3 py-2 font-medium">
-                Etapa
-              </th>
-              <th scope="col" className="px-3 py-2 font-medium">
-                Fechas
-              </th>
-              <th scope="col" className="px-3 py-2 font-medium">
-                Nota
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.name} className="border-t border-border">
-                <td className="whitespace-nowrap px-3 py-2 font-medium text-fg">
-                  {row.name}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2 text-fg-muted">
-                  {row.range}
-                </td>
-                <td className="px-3 py-2 text-xs text-fg-subtle">
-                  {row.hint ?? "—"}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p className="text-xs text-fg-subtle">
-        Ventana total del lanzamiento (date_start → date_end):{" "}
-        <span className="font-medium text-fg">
-          {fmtDate(calendar.windowStart)} → {fmtDate(calendar.windowEnd)}
-        </span>
-      </p>
-    </div>
+    <Panel pad={false}>
+      <KgDataTable
+        columns={COLUMNS}
+        rows={rows}
+        rowKey={(r) => r.name}
+        emptyTitle="Sin etapas calculadas"
+        emptyHint="Cargá la fecha de lanzamiento y las duraciones para ver el calendario."
+        footerActions={
+          <span style={{ color: "var(--kg-text-3)" }}>
+            Ventana total (date_start → date_end):{" "}
+            <strong
+              className="kg-num"
+              style={{ color: "var(--kg-text-2)", fontWeight: 600 }}
+            >
+              {fmtDate(calendar.windowStart)} → {fmtDate(calendar.windowEnd)}
+            </strong>
+          </span>
+        }
+      />
+    </Panel>
   );
 }
 

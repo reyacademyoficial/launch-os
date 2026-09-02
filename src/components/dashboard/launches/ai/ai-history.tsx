@@ -2,6 +2,12 @@
 
 import { useState } from "react";
 
+import { EmptyState } from "@/components/kg/empty-state";
+import { smallBtn } from "@/components/kg/form-primitives";
+import { Panel } from "@/components/kg/panel";
+import { StatRow } from "@/components/kg/stat-row";
+import { StatusPill } from "@/components/kg/status-pill";
+import { TONE_VAR } from "@/components/kg/tone";
 import type { AiRunRow } from "@/lib/ai/types";
 
 import { SummaryMarkdown } from "./summary-markdown";
@@ -10,6 +16,19 @@ import { SummaryMarkdown } from "./summary-markdown";
  * Lista de corridas de IA, más reciente primero. Cada item es colapsable —
  * el output completo se ve cuando expandís. Default: el más reciente abierto.
  * Status='error' muestra el mensaje de error en lugar del output.
+ *
+ * MIGRACIÓN KG
+ * El `<ul>` de `<li>` con superficie propia (`rounded-md border-border
+ * bg-surface`) pasa a un `Panel` por corrida: el autor y el estado viven en
+ * el header del Panel y los metadatos (fecha + modelo) en un `StatRow`, que
+ * es justo la jerarquía-3 del design system.
+ *
+ * QUÉ NO SE MIGRÓ, Y POR QUÉ: `Breakdown`. Es un total que se abre en partes
+ * con barras proporcionales — necesita un número y sus componentes. Una
+ * corrida de IA no expone ninguna magnitud descomponible (no persistimos
+ * tokens ni costo en `ai_runs`), así que meterla acá sería inventar datos.
+ * Si en algún momento el run guarda tokens de prompt/completion, ese es el
+ * lugar natural para `Breakdown`.
  */
 export function AiHistory({
   runs,
@@ -20,14 +39,17 @@ export function AiHistory({
 }) {
   if (runs.length === 0) {
     return (
-      <p className="rounded-md border border-dashed border-border bg-surface/40 p-6 text-center text-sm text-fg-muted">
-        Sin corridas anteriores. La primera que generes va a aparecer acá.
-      </p>
+      <Panel pad={false}>
+        <EmptyState
+          title="Sin corridas anteriores"
+          hint="La primera que generes va a aparecer acá, con su output completo."
+        />
+      </Panel>
     );
   }
 
   return (
-    <ul className="space-y-3">
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {runs.map((run, idx) => (
         <RunItem
           key={run.id}
@@ -36,7 +58,7 @@ export function AiHistory({
           defaultOpen={idx === 0}
         />
       ))}
-    </ul>
+    </div>
   );
 }
 
@@ -57,49 +79,61 @@ function RunItem({
       : null;
 
   return (
-    <li className="overflow-hidden rounded-md border border-border bg-surface">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-bg-elevated"
-      >
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 text-sm font-medium text-fg">
-            <span>{authorName}</span>
-            {isError && (
-              <span className="rounded bg-error/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-error">
-                Error
-              </span>
-            )}
-          </div>
-          <div className="mt-0.5 text-xs text-fg-subtle">
-            {formatRelativeDate(run.created_at)}
-            <span className="mx-2">·</span>
-            {run.model}
-          </div>
-        </div>
+    <Panel
+      title={
         <span
-          aria-hidden
-          className={
-            "text-fg-subtle transition-transform " + (open ? "rotate-180" : "")
-          }
+          style={{ display: "inline-flex", alignItems: "center", gap: 10 }}
         >
-          ▾
+          {authorName}
+          <StatusPill
+            text={isError ? "Error" : "OK"}
+            tone={isError ? TONE_VAR.negative : TONE_VAR.positive}
+          />
         </span>
-      </button>
-      {open && (
-        <div className="border-t border-border bg-bg-elevated/50 px-6 py-5">
-          {isError ? (
-            <p className="text-sm text-error">{errorMessage}</p>
+      }
+      actions={
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="kg-focus"
+          style={{ ...smallBtn, whiteSpace: "nowrap" }}
+        >
+          {open ? "Ocultar" : "Ver"}
+        </button>
+      }
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <StatRow
+          items={[
+            { l: "Fecha", v: formatRelativeDate(run.created_at) },
+            { l: "Modelo", v: run.model },
+          ]}
+        />
+
+        {open &&
+          (isError ? (
+            // El detalle del error se lee como contenido, no como alerta de
+            // formulario: la corrida ya está marcada con el StatusPill del
+            // header y duplicar el tono rojo en un banner sería redundante.
+            <p
+              className="kg-t6"
+              style={{ color: "var(--kg-text-2)", margin: 0 }}
+            >
+              {errorMessage}
+            </p>
           ) : run.output_text ? (
             <SummaryMarkdown text={run.output_text} />
           ) : (
-            <p className="text-sm text-fg-muted">Sin contenido.</p>
-          )}
-        </div>
-      )}
-    </li>
+            <p
+              className="kg-t6"
+              style={{ color: "var(--kg-text-3)", margin: 0 }}
+            >
+              Sin contenido.
+            </p>
+          ))}
+      </div>
+    </Panel>
   );
 }
 

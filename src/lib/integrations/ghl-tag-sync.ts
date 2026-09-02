@@ -2,7 +2,7 @@ import "server-only";
 
 import { createServiceClient } from "@/lib/supabase/service";
 
-import { GHL_API_BASE, GHL_API_VERSION } from "./ghl";
+import { GHL_API_BASE, GHL_API_VERSION, ghlRateLimitedFetch } from "./ghl";
 
 /**
  * Sync PULL de tags GHL → progreso de módulos (Fase C, plan Academia).
@@ -370,8 +370,9 @@ interface FetchContactsByTagArgs {
 
 /**
  * Pagina `POST /contacts/search` filtrando por `tags contains <tag>`.
- * Deduplica por contact.id entre páginas. Corta al primer 4xx/5xx (no vale
- * la pena reintentar acá — el próximo sync diario lo re-intenta).
+ * Deduplica por contact.id entre páginas. Pasa por el throttle de la location
+ * (comparte cuota con el sync de launches) y reintenta los 429; ante cualquier
+ * otro 4xx/5xx corta y el próximo sync diario lo re-intenta.
  *
  * Exportada solo para tests.
  */
@@ -404,17 +405,19 @@ export async function fetchContactsByTag(
 
     let res: Response;
     try {
-      res = await fetch(CONTACTS_SEARCH_URL, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${args.token}`,
-          Version: GHL_API_VERSION,
-          Accept: "application/json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-        cache: "no-store",
-      });
+      res = await ghlRateLimitedFetch(args.token, () =>
+        fetch(CONTACTS_SEARCH_URL, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${args.token}`,
+            Version: GHL_API_VERSION,
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+          cache: "no-store",
+        }),
+      );
     } catch {
       break; // red caída — corte silencioso, retomamos en próximo sync
     }

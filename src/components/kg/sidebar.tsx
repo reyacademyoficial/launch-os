@@ -2,6 +2,7 @@ import type { SessionProfile } from "@/lib/supabase/auth";
 
 import { KgBrand } from "./brand";
 import {
+  aliasPrefixesFor,
   canSeeDev,
   canSeeOrganization,
   canSeeSystem,
@@ -46,6 +47,7 @@ export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
   // cliente y operador ven un subconjunto de módulos; el resto ve todo.
   const isRestricted =
     profile.role === "cliente" || profile.role === "operador";
+  const isCloser = profile.role === "closer";
 
   return (
     <aside
@@ -70,6 +72,7 @@ export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
                   key={m.id}
                   href={m.href}
                   label={m.label}
+                  matchPrefixes={aliasPrefixesFor(m.id)}
                   icon={<m.icon size={18} />}
                 />
               ))}
@@ -77,7 +80,13 @@ export function KgSidebar({ profile }: { readonly profile: SessionProfile }) {
           );
         })}
 
-        {!isRestricted && UTILITY_MODULES.length > 0 && (
+        {/*
+          Utilidades NO usa `isRestricted`: la Calculadora la venía viendo
+          también el operador y el cliente desde la sidebar del ProjectShell
+          (`canUseCalculator` los deja pasar). El único excluido es closer,
+          que ya rebotaba a /lanzamientos al entrar.
+        */}
+        {!isCloser && UTILITY_MODULES.length > 0 && (
           <LayerGroup label="Utilidades">
             {UTILITY_MODULES.map((m) => (
               <KgNavItem

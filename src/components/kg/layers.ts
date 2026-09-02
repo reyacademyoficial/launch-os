@@ -5,6 +5,7 @@ import type { Role } from "@/lib/supabase/auth";
 import {
   IconAca,
   IconAdmin,
+  IconCalc,
   IconCli,
   IconExec,
   IconFin,
@@ -73,10 +74,15 @@ export const LAYERS: readonly KgLayer[] = [
 /**
  * Sección "Utilidades" — no es una capa, va debajo de las capas. Herramientas
  * transversales sin scope de módulo.
- * Calculadora se movió a la sidebar del ProjectShell (LaunchOS) — desde ahí
- * tiene contexto de proyecto y es donde el operador la usa realmente.
+ *
+ * Calculadora vivió un tiempo en la sidebar del ProjectShell (LaunchOS). Al
+ * unificar Lanzamientos al chasis KG ese shell desapareció y la Calculadora
+ * se habría quedado sin ninguna entrada de navegación, así que vuelve acá —
+ * que es además su lugar natural: es transversal, no tiene scope de proyecto.
  */
-export const UTILITY_MODULES: readonly KgModule[] = [];
+export const UTILITY_MODULES: readonly KgModule[] = [
+  { id: "calculadora", label: "Calculadora", href: "/calculadora", icon: IconCalc },
+];
 
 /**
  * Sección "Organización" — configuración a nivel org (Kingrow). Personas
@@ -117,6 +123,31 @@ const HIDDEN_MODULES: readonly KgModule[] = [
   { id: "admin-proyectos", label: "Proyectos", href: "/admin/proyectos", icon: IconAdmin },
   { id: "admin-usuarios", label: "Usuarios", href: "/admin/usuarios", icon: IconAdmin },
 ];
+
+/**
+ * Prefijos de URL que PERTENECEN a un módulo sin ser su `href`.
+ *
+ * Caso único hoy: el módulo Lanzamientos tiene `href: "/lanzamientos"` (el
+ * picker de proyectos), pero todo el trabajo real ocurre en
+ * `/proyectos/[id]/…` — que antes era un shell aparte y ahora es parte del
+ * mismo módulo. Sin este alias la topbar mostraría "Sistema · Kingrow" y el
+ * ítem de la sidebar quedaría apagado mientras estás dentro de un proyecto.
+ *
+ * Se declara aparte en vez de agregar una segunda entrada a `LAYERS` porque
+ * eso duplicaría el ítem visible en la sidebar.
+ */
+export const MODULE_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  lanzamientos: ["/proyectos"],
+};
+
+/** Prefijos alias de un módulo. Array vacío si no tiene. */
+export function aliasPrefixesFor(moduleId: string): readonly string[] {
+  return MODULE_ALIASES[moduleId] ?? [];
+}
+
+function matchesPrefix(pathname: string, prefix: string): boolean {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
 
 export function canSeeSystem(ctx: { role: Role; isDevPrivileged: boolean }): boolean {
   return ctx.role === "superadmin" || ctx.isDevPrivileged;
@@ -198,6 +229,16 @@ export function resolveActive(pathname: string):
   | { readonly layer: KgLayer; readonly layerLabel: string; readonly module: KgModule }
   | { readonly layer: null; readonly layerLabel: string; readonly module: KgModule }
   | null {
+  // Alias primero: `/proyectos/*` pertenece a Lanzamientos y ningún href de
+  // módulo lo matchea por prefijo.
+  for (const layer of LAYERS) {
+    for (const m of layer.modules) {
+      if (aliasPrefixesFor(m.id).some((p) => matchesPrefix(pathname, p))) {
+        return { layer, layerLabel: layer.label, module: m };
+      }
+    }
+  }
+
   for (const group of FLAT_GROUPS) {
     for (const m of group.modules) {
       if (pathname === m.href || pathname.startsWith(`${m.href}/`)) {

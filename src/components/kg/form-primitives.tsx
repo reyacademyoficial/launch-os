@@ -1,5 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 
+import { TONE_VAR } from "./tone";
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Primitives compartidas de drawers de formulario (KG).
 //
@@ -62,17 +64,60 @@ export function Field({
   );
 }
 
-export function ErrorBanner({ message }: { readonly message: string }) {
+/**
+ * Tono del banner.
+ *
+ *   error   → algo FALLÓ y el usuario tiene que reintentar (default; es el
+ *             comportamiento histórico, no se toca).
+ *   warning → nada falló, pero el dato está incompleto y conviene avisarlo.
+ *             Caso real: los avisos FX de `kpi/page.tsx` ("Faltan tasas FX
+ *             para 3 ventas y 2 cobros…") y el `missingCount` de
+ *             `cobros/page.tsx`. Hoy esas páginas pintan un div a mano con
+ *             `border-warning/40 bg-warning/10` (tokens VIEJOS); con esta
+ *             variante pasan a la primitiva sin inventar estilo.
+ */
+export type ErrorBannerTone = "error" | "warning";
+
+/**
+ * Banner de aviso en formularios y páginas.
+ *
+ * La firma vieja (`<ErrorBanner message={...} />`) sigue compilando y
+ * renderizando EXACTAMENTE igual: `tone` es opcional y default `"error"`, y
+ * la rama de error conserva los mismos hex hardcodeados de antes. Los
+ * consumidores actuales de esta primitiva —`production-batch-drawer.tsx` y
+ * `session-form-drawer.tsx` en `src/components/marketing/`— no cambian.
+ *
+ * El warning sí usa `TONE_VAR.warning` (var `--kg-warning-500`, que respeta
+ * dark/light) para borde y texto. El fondo va en rgba fija al 10%: es un
+ * tinte ámbar que lee bien sobre las dos superficies y evita `color-mix`,
+ * que no se usa en ninguna parte del repo todavía.
+ *
+ * `role` cambia con el tono: "alert" interrumpe al lector de pantalla (bien
+ * para un error de submit), "status" no (bien para un aviso que ya estaba
+ * en la página al cargar, como el de FX).
+ */
+export function ErrorBanner({
+  message,
+  tone = "error",
+}: {
+  readonly message: string;
+  readonly tone?: ErrorBannerTone;
+}) {
+  const isWarning = tone === "warning";
   return (
     <div
-      role="alert"
+      role={isWarning ? "status" : "alert"}
       style={{
         padding: "10px 14px",
         borderRadius: "var(--kg-r-8)",
-        background: "rgba(239,68,68,0.10)",
-        border: "1px solid #EF4444",
-        color: "#EF4444",
+        background: isWarning ? "rgba(255,184,0,0.10)" : "rgba(239,68,68,0.10)",
+        border: `1px solid ${isWarning ? TONE_VAR.warning : "#EF4444"}`,
+        color: isWarning ? TONE_VAR.warning : "#EF4444",
         fontSize: 12,
+        // Sólo en warning: el texto del aviso FX es largo y envuelve. En
+        // error se deja el default para que el render histórico no cambie
+        // ni un píxel.
+        ...(isWarning ? { lineHeight: 1.45 } : null),
       }}
     >
       {message}

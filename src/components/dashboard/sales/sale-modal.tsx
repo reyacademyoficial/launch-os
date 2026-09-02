@@ -1,16 +1,36 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import {
+  useActionState,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 
 import type {
   PaymentActionState,
   SaleActionState,
-} from "@/app/(app)/proyectos/[projectId]/leads/sale-actions";
-import { Button } from "@/components/ui/button";
-import { FieldError } from "@/components/ui/field-error";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select } from "@/components/ui/select";
+} from "@/app/(app)/(kg)/proyectos/[projectId]/leads/sale-actions";
+import { KgConfirmDialog } from "@/components/kg/confirm-dialog";
+import { Drawer } from "@/components/kg/drawer";
+import { EmptyState } from "@/components/kg/empty-state";
+import {
+  ErrorBanner,
+  Field,
+  dangerBtn,
+  inputStyle,
+  primaryBtn,
+  secondaryBtn,
+  smallBtn,
+} from "@/components/kg/form-primitives";
+import { StatRow } from "@/components/kg/stat-row";
+import { StatusPill } from "@/components/kg/status-pill";
+import { KgTabsSelect } from "@/components/kg/tabs-bar-view";
+import { TONE_VAR } from "@/components/kg/tone";
 import { computeCommission, findApplicableRule } from "@/lib/commissions/calc";
 import type {
   CommissionRuleRow,
@@ -174,6 +194,84 @@ type BoundUpdateProduct = (
 type BoundRecalculate = () => Promise<{ ok: true } | { error: string }>;
 type BoundDeleteSale = () => Promise<void>;
 
+// ─── Estilos locales de la migración KG ────────────────────────────────────
+
+/**
+ * `inputStyle` da ~38px con su padding, pero los `<select>` nativos calculan
+ * su alto con la fuente del sistema y en Android caen por debajo del target
+ * de toque. Igual que en `launch-form.tsx`, fijamos 36 explícito.
+ */
+const controlStyle: CSSProperties = { ...inputStyle, minHeight: 36 };
+
+/**
+ * Select "desnudo": el de asignar closer/método/producto vive DENTRO de una
+ * tarjeta de datos y antes se dibujaba sin caja (`!border-0 !bg-transparent`).
+ * Mantiene el target de toque de 36px pero no repite el marco de la tarjeta.
+ */
+const bareSelectStyle: CSSProperties = {
+  ...controlStyle,
+  background: "transparent",
+  border: "1px solid transparent",
+  padding: "6px 0",
+  color: "var(--kg-text-1)",
+};
+
+/** Caja de sub-bloque dentro del cuerpo del drawer (form de cobro, avisos). */
+const subCardStyle: CSSProperties = {
+  borderRadius: "var(--kg-r-12)",
+  border: "1px solid var(--kg-border-subtle)",
+  background: "var(--kg-surface-2-solid)",
+  padding: 14,
+};
+
+/** Lista con divisores — reemplaza `divide-y divide-border` de Tailwind. */
+const listStyle: CSSProperties = {
+  listStyle: "none",
+  margin: 0,
+  padding: 0,
+  borderRadius: "var(--kg-r-12)",
+  border: "1px solid var(--kg-border-subtle)",
+  overflow: "hidden",
+};
+
+/** Título de sección — mismo idiom que `FormSection` de `launch-form.tsx`. */
+function SectionTitle({
+  children,
+  actions,
+}: {
+  readonly children: ReactNode;
+  readonly actions?: ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "baseline",
+        justifyContent: "space-between",
+        gap: 8,
+      }}
+    >
+      <h4 className="kg-t7" style={{ margin: 0, color: "var(--kg-accent-text)" }}>
+        {children}
+      </h4>
+      {actions}
+    </div>
+  );
+}
+
+/** Bloque vertical con gap — reemplaza `space-y-*`. */
+function Stack({
+  gap = 12,
+  children,
+}: {
+  readonly gap?: number;
+  readonly children: ReactNode;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap }}>{children}</div>
+  );
+}
+
 /**
  * Modal que sirve tanto para "cargar venta" como para la ficha completa del
  * alumno (Fase 11). Encabezado en modo `list` muestra closer + producto +
@@ -183,41 +281,37 @@ type BoundDeleteSale = () => Promise<void>;
  * se linkea a una cuota puntual. Al regenerar el plan (cambiar cantidad o
  * frecuencia), los payments quedan huérfanos y el operador los re-asigna
  * desde la lista de cobros.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * MIGRACIÓN KG — qué cambió y qué NO
+ * ─────────────────────────────────────────────────────────────────────────
+ * Cambió SOLO el chasis y los estilos: el overlay propio (`fixed inset-0` +
+ * caja `max-h-[90vh]` con tokens viejos `bg-bg-elevated`/`border-border`)
+ * pasó a `Drawer`, y `Button`/`Input`/`Label`/`Select`/`FieldError` de
+ * `components/ui` a `Field` + `inputStyle` + los botones de
+ * `form-primitives` + `ErrorBanner`. Los badges pasaron a `StatusPill`, los
+ * vacíos a `EmptyState`, el bloque de datos de la ficha a `StatRow` y los
+ * dos `confirm()` nativos a `KgConfirmDialog`.
+ *
+ * NO cambió NADA de la lógica: mismos `name` de campo, mismas validaciones,
+ * mismos cálculos de comisión / cuotas / FX y las mismas server actions con
+ * los mismos gates (`updateSaleAction`, `deleteSaleAction`, etc. siguen
+ * siendo opcionales y siguen decidiendo qué se muestra).
  */
-export function SaleModal({
-  triggerLabel,
-  triggerClassName,
-  triggerAriaLabel,
-  variant = "full",
-  lead,
-  sales,
-  saleRanks,
-  paymentsBySaleId,
-  installmentsBySaleId,
-  invoicesBySaleId,
-  modalities,
-  products,
-  rules,
-  paymentMethods,
-  teamMembers,
-  initialSaleId,
-  allowCreateAnother = true,
-  createSaleAction,
-  updateSaleAction,
-  updateProductAction,
-  recalculateAction,
-  addPaymentAction,
-  deletePaymentAction,
-  deleteSaleAction,
-  updatePaymentInstallmentAction,
-  updatePaymentMethodAction,
-  assignLeadOwnerAction,
-  fxLookup,
-  methodCurrencies,
-  hideCommission = false,
-}: {
+export interface SaleModalProps {
   readonly triggerLabel: string;
   readonly triggerClassName?: string;
+  /**
+   * Estilo inline del trigger. AGREGADO en la migración KG (opcional, no
+   * rompe a nadie): el kanban migrado tenía que expresar `smallBtn` con
+   * Tailwind de valores arbitrarios (`border-[var(--kg-border-subtle)]`…)
+   * porque acá sólo había `triggerClassName`. Con esto, un call site puede
+   * pasar directo las primitivas de `form-primitives`.
+   *
+   * Convive con `triggerClassName`: si llegan los dos, la clase se aplica
+   * igual (útil para responsive/utilidades) y el estilo va por `style`.
+   */
+  readonly triggerStyle?: CSSProperties;
   /** Accessible label del botón trigger. Necesario cuando `triggerLabel` es solo un ícono ("+") y no describe la acción a lectores de pantalla. */
   readonly triggerAriaLabel?: string;
   /**
@@ -271,24 +365,129 @@ export function SaleModal({
    * ve la ficha del alumno pero no la comisión propia.
    */
   readonly hideCommission?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<"list" | "new" | "edit">("list");
-  const [selectedSaleId, setSelectedSaleId] = useState<string | null>(null);
+}
 
-  useEffect(() => {
-    if (!open) return;
-    setMode(sales.length === 0 ? "new" : "list");
-    if (sales.length === 0) {
-      setSelectedSaleId(null);
-      return;
-    }
-    if (initialSaleId && sales.some((s) => s.id === initialSaleId)) {
-      setSelectedSaleId(initialSaleId);
-    } else {
-      setSelectedSaleId(sales[0]!.id);
-    }
-  }, [open, sales, initialSaleId]);
+/**
+ * Modo inicial: si el lead no tiene ninguna venta, el modal abre directo en
+ * el form de alta. Idéntico al `setMode(sales.length === 0 ? "new" : "list")`
+ * que hacía el `useEffect` de apertura.
+ */
+function initialModeFor(
+  sales: ReadonlyArray<SaleRow>,
+): "list" | "new" | "edit" {
+  return sales.length === 0 ? "new" : "list";
+}
+
+/** Venta pre-seleccionada: la pedida por prop si existe, si no la primera. */
+function initialSelectedIdFor(
+  sales: ReadonlyArray<SaleRow>,
+  initialSaleId: string | undefined,
+): string | null {
+  if (sales.length === 0) return null;
+  if (initialSaleId && sales.some((s) => s.id === initialSaleId)) {
+    return initialSaleId;
+  }
+  return sales[0]!.id;
+}
+
+export function SaleModal(props: SaleModalProps) {
+  const { triggerLabel, triggerClassName, triggerStyle, triggerAriaLabel } = props;
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      {/*
+        El contrato del trigger NO cambia: si el call site pasa
+        `triggerClassName`, sus clases siguen siendo las únicas que se
+        aplican (los 3 consumidores actuales dependen de eso — ej. el link
+        subrayado de la tabla de cobros, que no debe volverse pill). El
+        estilo inline sólo aparece si lo piden explícito con `triggerStyle`,
+        o —cuando no llega ninguno de los dos— como default KG.
+      */}
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label={triggerAriaLabel}
+        title={triggerAriaLabel}
+        className={`kg-focus${triggerClassName ? ` ${triggerClassName}` : ""}`}
+        style={
+          triggerStyle ??
+          (triggerClassName
+            ? undefined
+            : { ...smallBtn, minHeight: 36, whiteSpace: "nowrap" })
+        }
+      >
+        {triggerLabel}
+      </button>
+
+      {/*
+        El cuerpo se monta recién al abrir y se desmonta al cerrar. Eso es lo
+        que resetea `mode`/`selectedSaleId` entre aperturas — antes lo hacía
+        un `useEffect` con `setState` adentro, que es error de ESLint
+        (`react-hooks/set-state-in-effect`). Mismo patrón que `ConfirmBody`
+        en `KgConfirmDialog`.
+      */}
+      {open && <SaleModalBody {...props} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+function SaleModalBody({
+  onClose,
+  variant = "full",
+  lead,
+  sales,
+  saleRanks,
+  paymentsBySaleId,
+  installmentsBySaleId,
+  invoicesBySaleId,
+  modalities,
+  products,
+  rules,
+  paymentMethods,
+  teamMembers,
+  initialSaleId,
+  allowCreateAnother = true,
+  createSaleAction,
+  updateSaleAction,
+  updateProductAction,
+  recalculateAction,
+  addPaymentAction,
+  deletePaymentAction,
+  deleteSaleAction,
+  updatePaymentInstallmentAction,
+  updatePaymentMethodAction,
+  assignLeadOwnerAction,
+  fxLookup,
+  methodCurrencies,
+  hideCommission = false,
+}: SaleModalProps & { readonly onClose: () => void }) {
+  const [mode, setMode] = useState<"list" | "new" | "edit">(() =>
+    initialModeFor(sales),
+  );
+  const [selectedSaleId, setSelectedSaleId] = useState<string | null>(() =>
+    initialSelectedIdFor(sales, initialSaleId),
+  );
+
+  /*
+   * Re-adopción de props en estado, en RENDER (no en un efecto — ESLint lo
+   * prohíbe; ver `editable-grid.tsx`). El `useEffect` viejo tenía
+   * `[open, sales, initialSaleId]` como deps: además de correr al abrir,
+   * corría cada vez que el server revalidaba y mandaba un `sales` nuevo. De
+   * eso depende un flujo real: al borrar una de dos ventas, `onSaleDeleted`
+   * pone `selectedSaleId = null` y es esta re-adopción la que vuelve a
+   * seleccionar la venta que quedó (si no, el modal se queda en "Elegí una
+   * venta" sin selector que tocar). El token de identidad es la referencia
+   * del array, exactamente lo que comparaba el array de deps.
+   */
+  const [salesToken, setSalesToken] = useState<ReadonlyArray<SaleRow>>(sales);
+  const [initialSaleIdToken, setInitialSaleIdToken] = useState(initialSaleId);
+  if (salesToken !== sales || initialSaleIdToken !== initialSaleId) {
+    setSalesToken(sales);
+    setInitialSaleIdToken(initialSaleId);
+    setMode(initialModeFor(sales));
+    setSelectedSaleId(initialSelectedIdFor(sales, initialSaleId));
+  }
 
   const selectedSale =
     variant === "add-payment"
@@ -313,184 +512,169 @@ export function SaleModal({
             : "Ficha del alumno";
 
   return (
-    <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        aria-label={triggerAriaLabel}
-        title={triggerAriaLabel}
-        className={
-          triggerClassName ??
-          "rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg hover:bg-bg-elevated"
-        }
-      >
-        {triggerLabel}
-      </button>
-
-      {open && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 sm:p-6"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setOpen(false);
-          }}
-        >
-          <div className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-md border border-border bg-bg-elevated shadow-card">
-            <header className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
-              <div>
-                <h3 className="text-lg font-bold text-fg">{headerTitle}</h3>
-                <p className="mt-0.5 text-xs text-fg-subtle">{lead.name}</p>
-              </div>
+    /*
+      Drawer en vez del modal centrado propio: trae Esc-to-close,
+      click-outside, header con título + subtítulo (el nombre del alumno) y
+      cuerpo con scroll — el mismo contrato que había, sin markup a mano. En
+      390px ocupa el ancho completo (antes el modal centrado con `p-4` dejaba
+      ~358px útiles para una ficha con tablas). El variant compacto de cobro
+      va más angosto porque sólo tiene un form corto.
+    */
+    <Drawer
+      open
+      onClose={onClose}
+      title={headerTitle}
+      subtitle={lead.name}
+      width={variant === "add-payment" ? 560 : 820}
+    >
+      <Stack gap={20}>
+        {variant === "full" && mode === "list" && sales.length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            {sales.length > 1 && (
+              <SaleTabs
+                sales={sales}
+                products={products}
+                selectedSaleId={selectedSaleId}
+                onSelect={setSelectedSaleId}
+                fxLookup={fxLookup}
+              />
+            )}
+            {allowCreateAnother && (
               <button
                 type="button"
-                onClick={() => setOpen(false)}
-                aria-label="Cerrar"
-                className="text-fg-subtle hover:text-fg"
+                onClick={() => setMode("new")}
+                className="kg-focus"
+                style={{ ...smallBtn, marginLeft: "auto", minHeight: 36 }}
               >
-                ×
+                + Nueva venta
               </button>
-            </header>
-
-            {variant === "full" && mode === "list" && sales.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface/40 px-6 py-3">
-                {sales.length > 1 && (
-                  <SaleTabs
-                    sales={sales}
-                    products={products}
-                    selectedSaleId={selectedSaleId}
-                    onSelect={setSelectedSaleId}
-                    fxLookup={fxLookup}
-                  />
-                )}
-                {allowCreateAnother && (
-                  <button
-                    type="button"
-                    onClick={() => setMode("new")}
-                    className="ml-auto rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg hover:bg-bg-elevated"
-                  >
-                    + Nueva venta
-                  </button>
-                )}
-              </div>
             )}
-
-            <div className="flex-1 overflow-y-auto px-6 py-6">
-              {variant === "add-payment" ? (
-                selectedSale ? (
-                  <AddPaymentOnly
-                    sale={selectedSale}
-                    payments={paymentsBySaleId.get(selectedSale.id) ?? []}
-                    installments={
-                      installmentsBySaleId.get(selectedSale.id) ?? []
-                    }
-                    invoices={invoicesBySaleId?.get(selectedSale.id) ?? []}
-                    paymentMethods={paymentMethods}
-                    addPaymentAction={(prev, fd) =>
-                      addPaymentAction(selectedSale.id, prev, fd)
-                    }
-                    onSuccess={() => setOpen(false)}
-                    fxLookup={fxLookup}
-                    methodCurrencies={methodCurrencies ?? {}}
-                  />
-                ) : (
-                  <p className="text-sm text-fg-muted">
-                    No hay venta cargada para este alumno.
-                  </p>
-                )
-              ) : mode === "new" ? (
-                <NewSaleForm
-                  lead={lead}
-                  modalities={modalities}
-                  products={products}
-                  teamMembers={teamMembers}
-                  createSaleAction={createSaleAction}
-                  onCancel={
-                    sales.length > 0 ? () => setMode("list") : undefined
-                  }
-                  onSuccess={() => {
-                    if (sales.length > 0) setMode("list");
-                    else setOpen(false);
-                  }}
-                />
-              ) : mode === "edit" && selectedSale && updateSaleAction ? (
-                <EditSaleForm
-                  sale={selectedSale}
-                  modalities={modalities}
-                  products={products}
-                  updateSaleAction={(prev, fd) =>
-                    updateSaleAction(selectedSale.id, prev, fd)
-                  }
-                  onCancel={() => setMode("list")}
-                  onSuccess={() => setMode("list")}
-                  hideCommission={hideCommission}
-                />
-              ) : selectedSale ? (
-                <SalePanel
-                  sale={selectedSale}
-                  saleRank={saleRanks.get(selectedSale.id) ?? 0}
-                  payments={paymentsBySaleId.get(selectedSale.id) ?? []}
-                  installments={installmentsBySaleId.get(selectedSale.id) ?? []}
-                  invoices={invoicesBySaleId?.get(selectedSale.id) ?? []}
-                  paymentMethods={paymentMethods}
-                  modalities={modalities}
-                  products={products}
-                  rules={rules}
-                  launchId={selectedSale.launch_id}
-                  methodCurrencies={methodCurrencies ?? {}}
-                  lead={lead}
-                  teamMembers={teamMembers}
-                  onEdit={
-                    updateSaleAction ? () => setMode("edit") : undefined
-                  }
-                  updateProductAction={
-                    updateProductAction
-                      ? (productId) =>
-                          updateProductAction(selectedSale.id, productId)
-                      : undefined
-                  }
-                  recalculateAction={
-                    recalculateAction
-                      ? () => recalculateAction(selectedSale.id)
-                      : undefined
-                  }
-                  addPaymentAction={(prev, fd) =>
-                    addPaymentAction(selectedSale.id, prev, fd)
-                  }
-                  deletePaymentAction={deletePaymentAction}
-                  deleteSaleAction={
-                    deleteSaleAction
-                      ? () => deleteSaleAction(selectedSale.id)
-                      : undefined
-                  }
-                  updatePaymentInstallmentAction={updatePaymentInstallmentAction}
-                  updatePaymentMethodAction={updatePaymentMethodAction}
-                  assignOwnerAction={
-                    assignLeadOwnerAction
-                      ? (teamMemberId) =>
-                          assignLeadOwnerAction(lead.id, teamMemberId)
-                      : undefined
-                  }
-                  onSaleDeleted={() => {
-                    if (sales.length > 1) {
-                      setSelectedSaleId(null);
-                    } else {
-                      setOpen(false);
-                    }
-                  }}
-                  fxLookup={fxLookup}
-                  hideCommission={hideCommission}
-                />
-              ) : (
-                <p className="text-sm text-fg-muted">
-                  Elegí una venta del selector.
-                </p>
-              )}
-            </div>
           </div>
+        )}
+
+        <div>
+          {variant === "add-payment" ? (
+            selectedSale ? (
+              <AddPaymentOnly
+                sale={selectedSale}
+                payments={paymentsBySaleId.get(selectedSale.id) ?? []}
+                installments={
+                  installmentsBySaleId.get(selectedSale.id) ?? []
+                }
+                invoices={invoicesBySaleId?.get(selectedSale.id) ?? []}
+                paymentMethods={paymentMethods}
+                addPaymentAction={(prev, fd) =>
+                  addPaymentAction(selectedSale.id, prev, fd)
+                }
+                onSuccess={onClose}
+                fxLookup={fxLookup}
+                methodCurrencies={methodCurrencies ?? {}}
+              />
+            ) : (
+              <EmptyState
+                title="Sin venta cargada"
+                hint="Este alumno todavía no tiene una venta a la que imputar el cobro."
+              />
+            )
+          ) : mode === "new" ? (
+            <NewSaleForm
+              lead={lead}
+              modalities={modalities}
+              products={products}
+              teamMembers={teamMembers}
+              createSaleAction={createSaleAction}
+              onCancel={
+                sales.length > 0 ? () => setMode("list") : undefined
+              }
+              onSuccess={() => {
+                if (sales.length > 0) setMode("list");
+                else onClose();
+              }}
+            />
+          ) : mode === "edit" && selectedSale && updateSaleAction ? (
+            <EditSaleForm
+              sale={selectedSale}
+              modalities={modalities}
+              products={products}
+              updateSaleAction={(prev, fd) =>
+                updateSaleAction(selectedSale.id, prev, fd)
+              }
+              onCancel={() => setMode("list")}
+              onSuccess={() => setMode("list")}
+              hideCommission={hideCommission}
+            />
+          ) : selectedSale ? (
+            <SalePanel
+              sale={selectedSale}
+              saleRank={saleRanks.get(selectedSale.id) ?? 0}
+              payments={paymentsBySaleId.get(selectedSale.id) ?? []}
+              installments={installmentsBySaleId.get(selectedSale.id) ?? []}
+              invoices={invoicesBySaleId?.get(selectedSale.id) ?? []}
+              paymentMethods={paymentMethods}
+              modalities={modalities}
+              products={products}
+              rules={rules}
+              launchId={selectedSale.launch_id}
+              methodCurrencies={methodCurrencies ?? {}}
+              lead={lead}
+              teamMembers={teamMembers}
+              onEdit={
+                updateSaleAction ? () => setMode("edit") : undefined
+              }
+              updateProductAction={
+                updateProductAction
+                  ? (productId) =>
+                      updateProductAction(selectedSale.id, productId)
+                  : undefined
+              }
+              recalculateAction={
+                recalculateAction
+                  ? () => recalculateAction(selectedSale.id)
+                  : undefined
+              }
+              addPaymentAction={(prev, fd) =>
+                addPaymentAction(selectedSale.id, prev, fd)
+              }
+              deletePaymentAction={deletePaymentAction}
+              deleteSaleAction={
+                deleteSaleAction
+                  ? () => deleteSaleAction(selectedSale.id)
+                  : undefined
+              }
+              updatePaymentInstallmentAction={updatePaymentInstallmentAction}
+              updatePaymentMethodAction={updatePaymentMethodAction}
+              assignOwnerAction={
+                assignLeadOwnerAction
+                  ? (teamMemberId) =>
+                      assignLeadOwnerAction(lead.id, teamMemberId)
+                  : undefined
+              }
+              onSaleDeleted={() => {
+                if (sales.length > 1) {
+                  setSelectedSaleId(null);
+                } else {
+                  onClose();
+                }
+              }}
+              fxLookup={fxLookup}
+              hideCommission={hideCommission}
+            />
+          ) : (
+            <EmptyState
+              title="Ninguna venta seleccionada"
+              hint="Elegí una venta del selector de arriba para ver su ficha."
+            />
+          )}
         </div>
-      )}
-    </>
+      </Stack>
+    </Drawer>
   );
 }
 
@@ -507,31 +691,25 @@ function SaleTabs({
   readonly onSelect: (saleId: string) => void;
   readonly fxLookup?: FxLookup;
 }) {
+  /*
+   * Las pestañas son `KgTabsSelect`: la variante del DS que NO navega. Elegir
+   * una venta vive en estado local del drawer — un `<Link>` cerraría el
+   * drawer y perdería el modo de edición. Antes acá se replicaba la pill del
+   * sistema a mano; la primitiva se agregó justamente por este caso.
+   */
   return (
-    <div className="flex flex-wrap gap-1" role="tablist">
-      {sales.map((s, i) => {
+    <KgTabsSelect
+      ariaLabel="Ventas del alumno"
+      value={selectedSaleId}
+      onSelect={onSelect}
+      options={sales.map((s, i) => {
         const product = products.find((p) => p.id === s.product_id);
-        const active = s.id === selectedSaleId;
-        return (
-          <button
-            key={s.id}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            onClick={() => onSelect(s.id)}
-            className={
-              "rounded-md border px-2 py-1 text-xs " +
-              (active
-                ? "border-accent bg-accent/10 text-accent"
-                : "border-border bg-surface text-fg-muted hover:text-fg")
-            }
-          >
-            #{i + 1} · {product?.name ?? "—"} ·{" "}
-            {fmtSaleMoney(fxLookup, s, Number(s.total_amount))}
-          </button>
-        );
+        return {
+          value: s.id,
+          label: `#${i + 1} · ${product?.name ?? "—"} · ${fmtSaleMoney(fxLookup, s, Number(s.total_amount))}`,
+        };
       })}
-    </div>
+    />
   );
 }
 
@@ -576,26 +754,34 @@ function NewSaleForm({
 
   if (activeModalities.length === 0) {
     return (
-      <div className="rounded-md border border-dashed border-border bg-surface/40 p-4 text-sm text-fg-muted">
-        No hay modalidades de pago configuradas. Pedile al admin que cargue
-        las modalidades en <b>Comisiones</b> antes de registrar ventas.
-      </div>
+      <EmptyState
+        title="Sin modalidades de pago"
+        hint="Pedile al admin que cargue las modalidades en Comisiones antes de registrar ventas."
+      />
     );
   }
   if (activeProducts.length === 0) {
     return (
-      <div className="rounded-md border border-dashed border-border bg-surface/40 p-4 text-sm text-fg-muted">
-        No hay productos configurados. Pedile al admin que cargue el catálogo
-        en <b>Productos</b> antes de registrar ventas.
-      </div>
+      <EmptyState
+        title="Sin productos configurados"
+        hint="Pedile al admin que cargue el catálogo en Productos antes de registrar ventas."
+      />
     );
   }
 
   return (
-    <form action={formAction} className="space-y-4">
-      <div>
-        <Label htmlFor="sale-product">Producto *</Label>
-        <Select id="sale-product" name="product_id" required defaultValue="">
+    <form
+      action={formAction}
+      style={{ display: "flex", flexDirection: "column", gap: 16 }}
+    >
+      <Field label="Producto" htmlFor="sale-product" required>
+        <select
+          id="sale-product"
+          name="product_id"
+          required
+          defaultValue=""
+          style={controlStyle}
+        >
           <option value="" disabled>
             Elegí un producto
           </option>
@@ -604,15 +790,15 @@ function NewSaleForm({
               {p.name}
             </option>
           ))}
-        </Select>
-      </div>
-      <div>
-        <Label htmlFor="sale-modality">Modalidad de pago *</Label>
-        <Select
+        </select>
+      </Field>
+      <Field label="Modalidad de pago" htmlFor="sale-modality" required>
+        <select
           id="sale-modality"
           name="payment_modality_id"
           required
           defaultValue=""
+          style={controlStyle}
         >
           <option value="" disabled>
             Elegí una modalidad
@@ -622,13 +808,13 @@ function NewSaleForm({
               {m.name}
             </option>
           ))}
-        </Select>
-      </div>
+        </select>
+      </Field>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-[2fr_1fr_1fr]">
-        <div>
-          <Label htmlFor="sale-total">Monto pactado *</Label>
-          <Input
+      {/* Mobile primero: apilado en 390px, 3 columnas recién en md+. */}
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-[2fr_1fr_1fr]">
+        <Field label="Monto pactado" htmlFor="sale-total" required>
+          <input
             id="sale-total"
             name="total_amount"
             type="number"
@@ -636,56 +822,87 @@ function NewSaleForm({
             min="0"
             required
             placeholder="Ej: 1000"
+            className="kg-num"
             onChange={(e) => setTotalAmount(parseFloat(e.target.value) || 0)}
+            style={controlStyle}
           />
-        </div>
-        <div>
-          <Label htmlFor="sale-currency">Moneda</Label>
-          <Select id="sale-currency" name="currency" defaultValue="ARS">
+        </Field>
+        <Field label="Moneda" htmlFor="sale-currency">
+          <select
+            id="sale-currency"
+            name="currency"
+            defaultValue="ARS"
+            style={controlStyle}
+          >
             <option value="ARS">Pesos (ARS)</option>
             <option value="USD">Dólares (USD)</option>
-          </Select>
-        </div>
-        <div>
-          <Label htmlFor="sale-closed-at">Fecha de cierre</Label>
-          <Input
+          </select>
+        </Field>
+        <Field label="Fecha de cierre" htmlFor="sale-closed-at">
+          <input
             id="sale-closed-at"
             name="closed_at"
             type="date"
             defaultValue={today}
             onChange={(e) => setClosedAt(e.target.value)}
+            style={controlStyle}
           />
-        </div>
+        </Field>
       </div>
 
       <InstallmentPlanFields totalAmount={totalAmount} startDate={closedAt} />
 
-      <div className="rounded-md border border-border bg-surface/40 px-3 py-2 text-xs">
-        <div className="uppercase tracking-wide text-fg-subtle">
+      <div style={subCardStyle}>
+        <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
           Atribución
         </div>
-        <div className="mt-1 text-fg">{ownerName ?? "Sin asignar"}</div>
-        <p className="mt-1 text-fg-subtle">
+        <div
+          className="kg-t5"
+          style={{ color: "var(--kg-text-1)", marginTop: 4 }}
+        >
+          {ownerName ?? "Sin asignar"}
+        </div>
+        <p
+          className="kg-t6"
+          style={{ color: "var(--kg-text-3)", margin: "6px 0 0" }}
+        >
           La venta se imputa al dueño del lead. Para cambiar la atribución,
           editá el setter desde la tarjeta del lead.
         </p>
       </div>
 
-      <div className="flex items-center gap-4 pt-2">
-        <Button type="submit" disabled={pending}>
+      {state && "error" in state && <ErrorBanner message={state.error} />}
+
+      {/* En 390px los botones se apilan a ancho completo (target de toque). */}
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-3">
+        <button
+          type="submit"
+          disabled={pending}
+          className="kg-focus"
+          style={{
+            ...primaryBtn,
+            minHeight: 40,
+            opacity: pending ? 0.7 : 1,
+            cursor: pending ? "not-allowed" : "pointer",
+          }}
+        >
           {pending ? "Registrando…" : "Registrar venta"}
-        </Button>
+        </button>
         {onCancel && (
           <button
             type="button"
             onClick={onCancel}
             disabled={pending}
-            className="text-xs text-fg-muted hover:text-fg disabled:opacity-50"
+            className="kg-focus"
+            style={{
+              ...secondaryBtn,
+              minHeight: 40,
+              opacity: pending ? 0.5 : 1,
+            }}
           >
             Cancelar
           </button>
         )}
-        {state && "error" in state && <FieldError>{state.error}</FieldError>}
       </div>
     </form>
   );
@@ -765,6 +982,8 @@ function SalePanel({
   );
   const breakdown = computeCommission(sale, normalizedPayments, rule, saleRank);
   const [deletePending, startDeleteTransition] = useTransition();
+  /** Sólo abre/cierra el `KgConfirmDialog` que reemplazó al `confirm()`. */
+  const [askDelete, setAskDelete] = useState(false);
 
   const today = todayInAR();
   const closerName = lead.team_member_id
@@ -795,58 +1014,77 @@ function SalePanel({
   const missingMethod = payments.filter((p) => !p.payment_method_id).length;
 
   return (
-    <div className="space-y-6">
+    <Stack gap={22}>
       {/* Encabezado ficha */}
-      <section className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2">
+      <Stack gap={12}>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
           <ClientBadge classification={classification} />
           {overdue.overdueCount > 0 && (
-            <span className="rounded-full bg-error/10 px-2 py-0.5 text-xs font-medium text-error">
-              {overdue.overdueCount} cuota{overdue.overdueCount === 1 ? "" : "s"} vencida{overdue.overdueCount === 1 ? "" : "s"}
-              {" · "}
-              {fmtSaleMoney(fxLookup, sale, overdue.overdueAmount)}
-            </span>
+            /*
+              El monto vencido NO se pinta de rojo: el estado viaja en el dot
+              del StatusPill y el texto queda neutro (regla del DS).
+            */
+            <StatusPill
+              tone={TONE_VAR.negative}
+              text={`${overdue.overdueCount} cuota${overdue.overdueCount === 1 ? "" : "s"} vencida${overdue.overdueCount === 1 ? "" : "s"} · ${fmtSaleMoney(fxLookup, sale, overdue.overdueAmount)}`}
+            />
           )}
           {onEdit && (
             <button
               type="button"
               onClick={onEdit}
-              className="ml-auto rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg hover:bg-bg-elevated"
+              className="kg-focus"
+              style={{ ...smallBtn, marginLeft: "auto", minHeight: 36 }}
             >
               Editar venta
             </button>
           )}
         </div>
 
-        <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
-          {assignOwnerAction ? (
-            <CloserAssignField
-              currentOwnerId={lead.team_member_id ?? null}
-              teamMembers={teamMembers}
-              assignOwnerAction={assignOwnerAction}
-            />
-          ) : (
-            <FieldRow label="Closer" value={closerName ?? "Sin asignar"} />
-          )}
-          <FieldRow label="Producto" value={product?.name ?? "—"} />
-          <FieldRow label="Modalidad" value={modality?.name ?? "—"} />
-          <FieldRow label="Fecha de cierre" value={fmtDate(sale.closed_at)} />
-          <FieldRow
-            label="Plan"
-            value={
-              sale.installment_count === 1
-                ? "Pago único"
-                : `${sale.installment_count} · ${frequencyLabel(sale.installment_frequency)}`
-            }
+        {/*
+          Los datos de cabecera pasaron de 6 tarjetitas en grilla a un
+          `StatRow` (nivel 3 del DS: métricas de apoyo, no tarjetas). El
+          Closer sale del StatRow SÓLO cuando es editable — ahí necesita un
+          `<select>` y el StatRow no acepta controles.
+        */}
+        {assignOwnerAction && (
+          <CloserAssignField
+            currentOwnerId={lead.team_member_id ?? null}
+            teamMembers={teamMembers}
+            assignOwnerAction={assignOwnerAction}
           />
-          <FieldRow label="% cobrado" value={fmtPercent(collectedPct)} />
-        </div>
+        )}
+        <StatRow
+          items={[
+            ...(assignOwnerAction
+              ? []
+              : [{ l: "Closer", v: closerName ?? "Sin asignar" }]),
+            { l: "Producto", v: product?.name ?? "—" },
+            { l: "Modalidad", v: modality?.name ?? "—" },
+            { l: "Fecha de cierre", v: fmtDate(sale.closed_at) },
+            {
+              l: "Plan",
+              v:
+                sale.installment_count === 1
+                  ? "Pago único"
+                  : `${sale.installment_count} · ${frequencyLabel(sale.installment_frequency)}`,
+            },
+            { l: "% cobrado", v: fmtPercent(collectedPct) },
+          ]}
+        />
 
         <div
           className={
             hideCommission
-              ? "grid grid-cols-1 gap-3 sm:grid-cols-2"
-              : "grid grid-cols-1 gap-3 sm:grid-cols-3"
+              ? "grid grid-cols-1 gap-3 md:grid-cols-2"
+              : "grid grid-cols-1 gap-3 md:grid-cols-3"
           }
         >
           <Card label="Pactado" value={fmtSaleMoney(fxLookup, sale, Number(sale.total_amount))} />
@@ -868,7 +1106,7 @@ function SalePanel({
             />
           )}
         </div>
-      </section>
+      </Stack>
 
       {!hideCommission && (
         <CommissionSnapshotBar
@@ -910,27 +1148,30 @@ function SalePanel({
       />
 
       {/* Lista de cobros */}
-      <section className="space-y-2">
-        <div className="flex items-baseline justify-between">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-fg-subtle">
-            Historial de cobros
-          </h4>
-          {missingMethod > 0 && (
-            <span className="text-xs text-warning">
-              {missingMethod} cobro{missingMethod === 1 ? "" : "s"} sin método
-            </span>
-          )}
-        </div>
+      <Stack gap={8}>
+        <SectionTitle
+          actions={
+            missingMethod > 0 ? (
+              <StatusPill
+                tone={TONE_VAR.warning}
+                text={`${missingMethod} cobro${missingMethod === 1 ? "" : "s"} sin método`}
+              />
+            ) : undefined
+          }
+        >
+          Historial de cobros
+        </SectionTitle>
         {payments.length === 0 ? (
-          <p className="rounded-md border border-dashed border-border bg-surface/40 p-4 text-sm text-fg-muted">
-            Todavía no se cargó ningún cobro.
-          </p>
+          <EmptyState
+            title="Todavía no se cargó ningún cobro"
+            hint="Usá el form de arriba para imputar el primer pago a una cuota."
+          />
         ) : (
-          <ul className="divide-y divide-border rounded-md border border-border">
+          <ul style={listStyle}>
             {payments
               .slice()
               .sort((a, b) => a.paid_at.localeCompare(b.paid_at))
-              .map((p) => (
+              .map((p, i) => (
                 <PaymentRowItem
                   key={p.id}
                   payment={p}
@@ -939,63 +1180,84 @@ function SalePanel({
                   deletePaymentAction={deletePaymentAction}
                   updatePaymentMethodAction={updatePaymentMethodAction}
                   fxLookup={fxLookup}
+                  first={i === 0}
                 />
               ))}
           </ul>
         )}
-      </section>
+      </Stack>
 
       {deleteSaleAction && (
-        <section className="rounded-md border border-error/30 bg-error/5 p-4">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-error">
+        <section
+          style={{
+            ...subCardStyle,
+            border: `1px solid ${TONE_VAR.negative}`,
+            background: "rgba(220,20,60,0.06)",
+          }}
+        >
+          <h4 className="kg-t7" style={{ margin: 0, color: TONE_VAR.negative }}>
             Borrar venta
           </h4>
-          <p className="mt-1 text-xs text-fg-muted">
+          <p
+            className="kg-t6"
+            style={{ color: "var(--kg-text-3)", margin: "6px 0 12px" }}
+          >
             Se borra la venta, sus cuotas y sus {payments.length} cobro
             {payments.length === 1 ? "" : "s"}. El lead queda intacto en la
-            columna <b>cerrado</b> — movelo a otra columna si querés.
+            columna <b style={{ color: "var(--kg-text-2)" }}>cerrado</b> —
+            movelo a otra columna si querés.
           </p>
           <button
             type="button"
             disabled={deletePending}
-            onClick={() => {
-              const msg =
-                payments.length > 0
-                  ? `¿Borrar la venta de ${fmtSaleMoney(fxLookup, sale, Number(sale.total_amount))} y sus ${payments.length} cobros?`
-                  : `¿Borrar la venta de ${fmtSaleMoney(fxLookup, sale, Number(sale.total_amount))}?`;
-              if (!confirm(msg)) return;
+            onClick={() => setAskDelete(true)}
+            className="kg-focus"
+            style={{
+              ...dangerBtn,
+              minHeight: 36,
+              opacity: deletePending ? 0.5 : 1,
+            }}
+          >
+            {deletePending ? "Borrando…" : "Borrar venta"}
+          </button>
+
+          {/*
+            El `confirm()` nativo pasó a `KgConfirmDialog`: mismo texto, misma
+            acción y el mismo `useTransition` de antes (se le pasa `pending`
+            para que el diálogo no se pueda cerrar a mitad del borrado).
+          */}
+          <KgConfirmDialog
+            open={askDelete}
+            onClose={() => setAskDelete(false)}
+            title="Borrar venta"
+            description={
+              payments.length > 0
+                ? `¿Borrar la venta de ${fmtSaleMoney(fxLookup, sale, Number(sale.total_amount))} y sus ${payments.length} cobros?`
+                : `¿Borrar la venta de ${fmtSaleMoney(fxLookup, sale, Number(sale.total_amount))}?`
+            }
+            confirmLabel="Borrar venta"
+            onConfirm={() => {
+              // Cierra al confirmar (como el `confirm()` nativo). El estado
+              // "Borrando…" lo sigue mostrando el botón de la sección con su
+              // `useTransition` original.
+              setAskDelete(false);
               startDeleteTransition(async () => {
                 await deleteSaleAction();
                 onSaleDeleted();
               });
             }}
-            className="mt-3 rounded-md border border-error/40 bg-error/10 px-3 py-1.5 text-xs font-medium text-error hover:bg-error/20 disabled:opacity-50"
-          >
-            {deletePending ? "Borrando…" : "Borrar venta"}
-          </button>
+          />
         </section>
       )}
-    </div>
+    </Stack>
   );
 }
 
-function FieldRow({
-  label,
-  value,
-}: {
-  readonly label: string;
-  readonly value: string;
-}) {
-  return (
-    <div className="rounded-md border border-border bg-surface/40 px-3 py-2">
-      <div className="uppercase tracking-wide text-fg-subtle">{label}</div>
-      <div className="mt-1 text-fg">{value}</div>
-    </div>
-  );
-}
+// `FieldRow` (la tarjetita label+valor) desapareció: sus 6 usos son ahora un
+// solo `StatRow` del DS. Ver el bloque de encabezado de `SalePanel`.
 
 /**
- * Reemplaza el `FieldRow` estático de "Closer" cuando el operador tiene
+ * Reemplaza la fila estática de "Closer" del StatRow cuando el operador tiene
  * permiso de edición. Cambiar acá dispara `updateLead` + sync a sales — un
  * solo lead puede tener varias sales, todas heredan el nuevo dueño. El
  * dropdown incluye una opción "Sin asignar" para desasignar explícitamente.
@@ -1024,9 +1286,16 @@ function CloserAssignField({
   );
 
   return (
-    <div className="rounded-md border border-border bg-surface/40 px-3 py-2">
-      <div className="uppercase tracking-wide text-fg-subtle">Closer</div>
-      <Select
+    <div style={{ ...subCardStyle, padding: "8px 14px" }}>
+      <label
+        htmlFor="sale-closer-assign"
+        className="kg-t7"
+        style={{ display: "block", color: "var(--kg-text-3)" }}
+      >
+        Closer
+      </label>
+      <select
+        id="sale-closer-assign"
         value={currentOwnerId ?? ""}
         disabled={pending}
         onChange={(e) => {
@@ -1038,7 +1307,8 @@ function CloserAssignField({
             if ("error" in res) setError(res.error);
           });
         }}
-        className="mt-1 w-full !border-0 !bg-transparent !px-0 !py-0 !text-fg"
+        className="kg-focus"
+        style={{ ...bareSelectStyle, opacity: pending ? 0.5 : 1 }}
       >
         <option value="">Sin asignar</option>
         {selectable.map((t) => (
@@ -1047,9 +1317,11 @@ function CloserAssignField({
             {!t.active ? " (inactivo)" : ""}
           </option>
         ))}
-      </Select>
+      </select>
       {error && (
-        <div className="mt-1 text-[10px] text-error">{error}</div>
+        <div style={{ marginTop: 6 }}>
+          <ErrorBanner message={error} />
+        </div>
       )}
     </div>
   );
@@ -1060,27 +1332,17 @@ function ClientBadge({
 }: {
   readonly classification: ClientClassification;
 }) {
-  const styles: Record<ClientClassification, { label: string; className: string }> = {
-    bueno: {
-      label: "Bueno",
-      className: "bg-success/10 text-success",
-    },
-    regular: {
-      label: "Regular",
-      className: "bg-warning/15 text-warning",
-    },
-    malo: {
-      label: "Malo",
-      className: "bg-error/10 text-error",
-    },
+  // Mismo mapeo de siempre, pero el color va SOLO en el dot del StatusPill
+  // (el texto queda neutro — nada de pills tintados en fila).
+  const styles: Record<ClientClassification, { label: string; tone: string }> = {
+    bueno: { label: "Bueno", tone: TONE_VAR.positive },
+    regular: { label: "Regular", tone: TONE_VAR.warning },
+    malo: { label: "Malo", tone: TONE_VAR.negative },
   };
   const s = styles[classification];
   return (
-    <span
-      className={`rounded-full px-2 py-0.5 text-xs font-medium ${s.className}`}
-      title="Clasificación por historial de vencimientos"
-    >
-      Cliente: {s.label}
+    <span title="Clasificación por historial de vencimientos">
+      <StatusPill tone={s.tone} text={`Cliente: ${s.label}`} />
     </span>
   );
 }
@@ -1109,21 +1371,20 @@ function InstallmentsTimeline({
     return null;
   }
   return (
-    <section className="space-y-2">
-      <h4 className="text-xs font-semibold uppercase tracking-wide text-fg-subtle">
-        Cronograma de cuotas
-      </h4>
-      <ol className="divide-y divide-border rounded-md border border-border">
-        {statuses.map((st) => (
+    <Stack gap={8}>
+      <SectionTitle>Cronograma de cuotas</SectionTitle>
+      <ol style={listStyle}>
+        {statuses.map((st, i) => (
           <InstallmentRowItem
             key={st.installment.id}
             status={st}
             sale={sale}
             fxLookup={fxLookup}
+            first={i === 0}
           />
         ))}
       </ol>
-    </section>
+    </Stack>
   );
 }
 
@@ -1131,61 +1392,68 @@ function InstallmentRowItem({
   status,
   sale,
   fxLookup,
+  first,
 }: {
   readonly status: InstallmentStatus;
   readonly sale: SaleRow;
   readonly fxLookup?: FxLookup;
+  /** La primera fila no lleva separador (la caja de la lista ya tiene borde). */
+  readonly first: boolean;
 }) {
   const { installment: inst, paid, remaining, daysOverdue, state } = status;
   const label = statusLabel(state);
   return (
-    <li className="flex items-center justify-between gap-4 px-4 py-2 text-sm">
-      <div className="min-w-0 flex-1">
-        <div className="font-medium text-fg">Cuota {inst.number}</div>
-        <div className="text-xs text-fg-subtle">
+    /* En 390px la fila se parte: datos arriba, monto + estado abajo. */
+    <li
+      className="flex flex-wrap items-center gap-x-4 gap-y-2"
+      style={{
+        padding: "10px 14px",
+        borderTop: first ? "none" : "1px solid var(--kg-border-subtle)",
+        fontSize: 13,
+      }}
+    >
+      <div style={{ minWidth: 140, flex: 1 }}>
+        <div className="kg-t5" style={{ color: "var(--kg-text-1)" }}>
+          Cuota {inst.number}
+        </div>
+        <div className="kg-t6" style={{ color: "var(--kg-text-3)" }}>
           Vence {fmtDate(inst.due_date)}
           {state === "overdue" && (
-            <span className="ml-1 text-error">
-              · {daysOverdue} día{daysOverdue === 1 ? "" : "s"} de atraso
-            </span>
+            <> · {daysOverdue} día{daysOverdue === 1 ? "" : "s"} de atraso</>
           )}
         </div>
       </div>
-      <div className="text-right text-xs">
-        <div className="tabular-nums text-fg">
+      <div style={{ textAlign: "right" }}>
+        {/* El monto NO lleva color de estado: eso vive en el pill de al lado. */}
+        <div className="kg-num" style={{ fontSize: 12, color: "var(--kg-text-1)" }}>
           {fmtSaleMoney(fxLookup, sale, paid)} /{" "}
           {fmtSaleMoney(fxLookup, sale, Number(inst.amount))}
         </div>
         {remaining > 0 && state !== "paid" && (
-          <div className="text-fg-subtle">
+          <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
             Saldo {fmtSaleMoney(fxLookup, sale, remaining)}
           </div>
         )}
       </div>
-      <span
-        className={
-          "rounded-full px-2 py-0.5 text-xs font-medium " + label.className
-        }
-      >
-        {label.text}
-      </span>
+      <StatusPill tone={label.tone} text={label.text} />
     </li>
   );
 }
 
 function statusLabel(state: InstallmentStatus["state"]): {
   text: string;
-  className: string;
+  tone: string | undefined;
 } {
   switch (state) {
     case "paid":
-      return { text: "Pagada", className: "bg-success/10 text-success" };
+      return { text: "Pagada", tone: TONE_VAR.positive };
     case "partial":
-      return { text: "Parcial", className: "bg-accent/10 text-accent" };
+      return { text: "Parcial", tone: TONE_VAR.accent };
     case "overdue":
-      return { text: "Vencida", className: "bg-error/10 text-error" };
+      return { text: "Vencida", tone: TONE_VAR.negative };
     default:
-      return { text: "Pendiente", className: "bg-surface text-fg-muted" };
+      // Pendiente no tiene tono: `StatusPill` cae al dot neutro.
+      return { text: "Pendiente", tone: undefined };
   }
 }
 
@@ -1203,16 +1471,34 @@ function OrphanPaymentsPanel({
   readonly fxLookup?: FxLookup;
 }) {
   return (
-    <section className="space-y-2 rounded-md border border-warning/40 bg-warning/5 p-3">
-      <h4 className="text-xs font-semibold uppercase tracking-wide text-warning">
+    <section
+      style={{
+        ...subCardStyle,
+        border: `1px solid ${TONE_VAR.warning}`,
+        background: "rgba(255,184,0,0.06)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+      }}
+    >
+      <h4 className="kg-t7" style={{ margin: 0, color: TONE_VAR.warning }}>
         Cobros sin cuota asignada ({orphanPayments.length})
       </h4>
-      <p className="text-xs text-fg-muted">
+      <p className="kg-t6" style={{ margin: 0, color: "var(--kg-text-3)" }}>
         Se regeneró el plan de cuotas y estos cobros quedaron flotando.
         Elegí a qué cuota pertenece cada uno para volver a computarlos en los
         totales por cuota.
       </p>
-      <ul className="space-y-2">
+      <ul
+        style={{
+          listStyle: "none",
+          margin: 0,
+          padding: 0,
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
         {orphanPayments.map((p) => (
           <OrphanPaymentRow
             key={p.id}
@@ -1245,14 +1531,17 @@ function OrphanPaymentRow({
   const [error, setError] = useState<string | null>(null);
 
   return (
-    <li className="flex flex-wrap items-center gap-2 text-xs">
-      <span className="text-fg-muted">
+    <li
+      className="flex flex-wrap items-center gap-2"
+      style={{ fontSize: 12, color: "var(--kg-text-3)" }}
+    >
+      <span>
         {fmtDate(payment.paid_at)} ·{" "}
-        <span className="tabular-nums text-fg">
+        <span className="kg-num" style={{ color: "var(--kg-text-1)" }}>
           {fmtPaymentMoney(fxLookup, payment)}
         </span>
       </span>
-      <Select
+      <select
         aria-label="Cuota a asignar"
         disabled={pending}
         defaultValue=""
@@ -1265,7 +1554,8 @@ function OrphanPaymentRow({
             if ("error" in r) setError(r.error);
           });
         }}
-        className="max-w-[16rem]"
+        className="kg-focus"
+        style={{ ...controlStyle, maxWidth: 256, opacity: pending ? 0.5 : 1 }}
       >
         <option value="" disabled>
           Elegí cuota…
@@ -1276,13 +1566,29 @@ function OrphanPaymentRow({
             {fmtSaleMoney(fxLookup, sale, Number(i.amount))}
           </option>
         ))}
-      </Select>
-      {pending && <span className="text-fg-subtle">Guardando…</span>}
-      {error && <FieldError>{error}</FieldError>}
+      </select>
+      {pending && <span>Guardando…</span>}
+      {error && (
+        <div style={{ width: "100%" }}>
+          <ErrorBanner message={error} />
+        </div>
+      )}
     </li>
   );
 }
 
+/**
+ * Tarjeta de monto (Pactado / Cobrado / Comisión).
+ *
+ * NO usa `SupportKpi` del DS: esa primitiva pide `value: number` + `format`
+ * y acá los importes ya vienen formateados por los helpers FX (la moneda
+ * depende de si los cobros coinciden con el pactado), no hay slot de `hint`
+ * para la fórmula de la comisión, y su número de 27px está calibrado para
+ * una página de KPIs, no para el cuerpo de un drawer.
+ *
+ * El `accent` sólo tiñe el BORDE. El valor va siempre en `--kg-text-1`: la
+ * plata no se pinta.
+ */
 function Card({
   label,
   value,
@@ -1296,18 +1602,35 @@ function Card({
 }) {
   return (
     <div
-      className={
-        "rounded-md border p-3 " +
-        (accent ? "border-accent/40 bg-accent/5" : "border-border bg-surface/40")
-      }
+      className="kg-glass"
+      style={{
+        borderRadius: "var(--kg-r-16)",
+        border: `1px solid ${accent ? "var(--kg-border-accent)" : "var(--kg-border-subtle)"}`,
+        padding: "12px 14px",
+      }}
     >
-      <div className="text-xs uppercase tracking-wide text-fg-subtle">
+      <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
         {label}
       </div>
-      <div className={"mt-1 text-lg font-bold " + (accent ? "text-accent" : "text-fg")}>
+      <div
+        className="kg-num"
+        style={{
+          marginTop: 6,
+          fontSize: 18,
+          fontWeight: 700,
+          color: "var(--kg-text-1)",
+        }}
+      >
         {value}
       </div>
-      {hint && <div className="mt-0.5 text-xs text-fg-muted">{hint}</div>}
+      {hint && (
+        <div
+          className="kg-t7"
+          style={{ marginTop: 4, color: "var(--kg-text-3)", letterSpacing: 0, textTransform: "none" }}
+        >
+          {hint}
+        </div>
+      )}
     </div>
   );
 }
@@ -1394,18 +1717,18 @@ function PaymentForm({
 
   if (installments.length === 0) {
     return (
-      <div className="rounded-md border border-dashed border-border bg-surface/40 p-3 text-xs text-fg-muted">
-        No hay cuotas todavía para esta venta. Editá la venta para regenerar
-        el plan.
-      </div>
+      <EmptyState
+        title="Sin cuotas generadas"
+        hint="Esta venta todavía no tiene plan de cuotas. Editá la venta para regenerarlo."
+      />
     );
   }
   if (activeMethods.length === 0) {
     return (
-      <div className="rounded-md border border-dashed border-warning/40 bg-warning/5 p-3 text-xs text-warning">
-        No hay métodos de pago activos. Pedile al admin que cargue al menos
-        uno en <b>Métodos de pago</b> antes de registrar cobros.
-      </div>
+      <EmptyState
+        title="Sin métodos de pago activos"
+        hint="Pedile al admin que cargue al menos uno en Métodos de pago antes de registrar cobros."
+      />
     );
   }
 
@@ -1413,15 +1736,17 @@ function PaymentForm({
     <form
       ref={formRef}
       action={handleSubmit}
-      className="space-y-3 rounded-md border border-border bg-surface/40 p-4"
+      style={{
+        ...subCardStyle,
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+      }}
     >
-      <h4 className="text-xs font-semibold uppercase tracking-wide text-fg-subtle">
-        Cargar cobro
-      </h4>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div>
-          <Label htmlFor="pay-installment">Cuota *</Label>
-          <Select
+      <SectionTitle>Cargar cobro</SectionTitle>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <Field label="Cuota" htmlFor="pay-installment" required>
+          <select
             id="pay-installment"
             name="installment_id"
             value={installmentId}
@@ -1433,6 +1758,7 @@ function PaymentForm({
               if (st) setUserAmount(String(st.remaining));
             }}
             required
+            style={controlStyle}
           >
             <option value="" disabled>
               Elegí una cuota
@@ -1451,11 +1777,10 @@ function PaymentForm({
                 </option>
               );
             })}
-          </Select>
-        </div>
-        <div>
-          <Label htmlFor="pay-method">Método de pago *</Label>
-          <Select
+          </select>
+        </Field>
+        <Field label="Método de pago" htmlFor="pay-method" required>
+          <select
             id="pay-method"
             name="payment_method_id"
             value={selectedMethodId}
@@ -1465,6 +1790,7 @@ function PaymentForm({
               setSelectedMethodId(id);
               setSelectedCurrency(methodCurrencies[id] ?? "ARS");
             }}
+            style={controlStyle}
           >
             <option value="" disabled>
               Elegí un método
@@ -1474,13 +1800,13 @@ function PaymentForm({
                 {m.name}
               </option>
             ))}
-          </Select>
-        </div>
+          </select>
+        </Field>
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-        <div>
-          <Label htmlFor="pay-amount">Monto *</Label>
-          <Input
+      {/* 5 campos: apilados en 390px, 2 columnas en md y 4 recién en lg. */}
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <Field label="Monto" htmlFor="pay-amount" required>
+          <input
             id="pay-amount"
             name="amount"
             type="number"
@@ -1490,49 +1816,79 @@ function PaymentForm({
             value={amount}
             onChange={(e) => setUserAmount(e.target.value)}
             placeholder="100"
+            className="kg-num"
+            style={controlStyle}
           />
-        </div>
+        </Field>
         <div>
-          <Label>Moneda</Label>
-          <div className="flex gap-1 mt-1">
-            {(["ARS", "USD"] as const).map((c) => (
-              <button
-                key={c}
-                type="button"
-                onClick={() => setSelectedCurrency(c)}
-                className={`flex-1 rounded border px-2 py-1.5 text-xs font-medium transition-colors ${
-                  selectedCurrency === c
-                    ? "border-accent bg-accent text-white"
-                    : "border-border bg-surface text-fg-muted hover:text-fg"
-                }`}
-              >
-                {c}
-              </button>
-            ))}
+          {/*
+            Grupo de 2 botones, no un control único: va con label de grupo en
+            vez de `Field` (que necesita un `htmlFor`). El valor viaja al
+            FormData por el hidden de siempre, con el mismo `name`.
+          */}
+          <div
+            className="kg-t7"
+            style={{ color: "var(--kg-text-3)", marginBottom: 6 }}
+          >
+            Moneda
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {(["ARS", "USD"] as const).map((c) => {
+              const active = selectedCurrency === c;
+              return (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setSelectedCurrency(c)}
+                  aria-pressed={active}
+                  className="kg-focus"
+                  style={{
+                    flex: 1,
+                    minHeight: 36,
+                    borderRadius: "var(--kg-r-8)",
+                    border: `1px solid ${active ? "var(--kg-accent-500)" : "var(--kg-border-subtle)"}`,
+                    background: active
+                      ? "var(--kg-accent-halo)"
+                      : "var(--kg-surface-2-solid)",
+                    color: active ? "var(--kg-accent-text)" : "var(--kg-text-2)",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    transition: "all var(--kg-dur) var(--kg-ease)",
+                  }}
+                >
+                  {c}
+                </button>
+              );
+            })}
           </div>
           <input type="hidden" name="original_currency" value={selectedCurrency} />
         </div>
-        <div>
-          <Label htmlFor="pay-date">Fecha</Label>
-          <Input
+        <Field label="Fecha" htmlFor="pay-date">
+          <input
             id="pay-date"
             name="paid_at"
             type="date"
             defaultValue={todayInAR()}
+            style={controlStyle}
           />
-        </div>
-        <div>
-          <Label htmlFor="pay-transaction">Nº de transacción</Label>
-          <Input
+        </Field>
+        <Field label="Nº de transacción" htmlFor="pay-transaction">
+          <input
             id="pay-transaction"
             name="transaction_number"
             placeholder="Opcional (comprobante del banco)"
+            style={controlStyle}
           />
-        </div>
-        <div>
-          <Label htmlFor="pay-notes">Notas</Label>
-          <Input id="pay-notes" name="notes" placeholder="Opcional" />
-        </div>
+        </Field>
+        <Field label="Notas" htmlFor="pay-notes">
+          <input
+            id="pay-notes"
+            name="notes"
+            placeholder="Opcional"
+            style={controlStyle}
+          />
+        </Field>
       </div>
       <input
         type="hidden"
@@ -1540,11 +1896,13 @@ function PaymentForm({
         value={matchedInvoice?.id ?? ""}
       />
       {installmentId ? (
-        <div className="text-xs text-fg-muted">
+        <div className="kg-t6" style={{ color: "var(--kg-text-3)" }}>
           {matchedInvoice ? (
             <>
               Se aplicará a la factura{" "}
-              <b className="text-fg">{matchedInvoice.invoice_number ?? "—"}</b>{" "}
+              <b style={{ color: "var(--kg-text-1)" }}>
+                {matchedInvoice.invoice_number ?? "—"}
+              </b>{" "}
               (emitida por esta cuota).
             </>
           ) : (
@@ -1552,11 +1910,21 @@ function PaymentForm({
           )}
         </div>
       ) : null}
-      <div className="flex items-center gap-3">
-        <Button type="submit" disabled={pending}>
+      {error && <ErrorBanner message={error} />}
+      <div>
+        <button
+          type="submit"
+          disabled={pending}
+          className="kg-focus w-full md:w-auto"
+          style={{
+            ...primaryBtn,
+            minHeight: 40,
+            opacity: pending ? 0.7 : 1,
+            cursor: pending ? "not-allowed" : "pointer",
+          }}
+        >
           {pending ? "Cargando…" : "+ Agregar cobro"}
-        </Button>
-        {error && <FieldError>{error}</FieldError>}
+        </button>
       </div>
     </form>
   );
@@ -1569,6 +1937,7 @@ function PaymentRowItem({
   deletePaymentAction,
   updatePaymentMethodAction,
   fxLookup,
+  first,
 }: {
   readonly payment: PaymentRow;
   readonly installments: ReadonlyArray<InstallmentRow>;
@@ -1576,10 +1945,14 @@ function PaymentRowItem({
   readonly deletePaymentAction: DeletePaymentAction;
   readonly updatePaymentMethodAction?: UpdatePaymentMethodAction;
   readonly fxLookup?: FxLookup;
+  /** La primera fila no lleva separador (la caja de la lista ya tiene borde). */
+  readonly first: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const [methodPending, startMethodTransition] = useTransition();
   const [methodError, setMethodError] = useState<string | null>(null);
+  /** Sólo abre/cierra el `KgConfirmDialog` que reemplazó al `confirm()`. */
+  const [askDelete, setAskDelete] = useState(false);
 
   const inst = installments.find((i) => i.id === payment.installment_id) ?? null;
   const method = paymentMethods.find((m) => m.id === payment.payment_method_id) ?? null;
@@ -1588,23 +1961,50 @@ function PaymentRowItem({
   );
 
   return (
-    <li className="flex items-start justify-between gap-4 px-4 py-3 text-sm">
-      <div className="min-w-0 flex-1 space-y-1">
-        <div className="flex items-baseline gap-2">
-          <span className="font-medium tabular-nums text-fg">
+    <li
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: 12,
+        padding: "12px 14px",
+        borderTop: first ? "none" : "1px solid var(--kg-border-subtle)",
+      }}
+    >
+      <div
+        style={{
+          minWidth: 0,
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          gap: 6,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          <span
+            className="kg-num"
+            style={{ fontSize: 13, fontWeight: 600, color: "var(--kg-text-1)" }}
+          >
             {fmtPaymentMoney(fxLookup, payment)}
           </span>
-          <span className="text-xs text-fg-subtle">{fmtDate(payment.paid_at)}</span>
+          <span className="kg-t6" style={{ color: "var(--kg-text-3)" }}>
+            {fmtDate(payment.paid_at)}
+          </span>
         </div>
-        <div className="flex flex-wrap items-center gap-2 text-xs text-fg-muted">
+        <div
+          className="flex flex-wrap items-center gap-2"
+          style={{ fontSize: 12, color: "var(--kg-text-3)" }}
+        >
           <span>
-            {inst ? `Cuota ${inst.number}` : (
-              <span className="text-warning">Sin cuota</span>
+            {inst ? (
+              `Cuota ${inst.number}`
+            ) : (
+              <StatusPill tone={TONE_VAR.warning} text="Sin cuota" />
             )}
           </span>
           <span>·</span>
           {updatePaymentMethodAction ? (
-            <Select
+            <select
               aria-label="Método de pago"
               disabled={methodPending}
               value={payment.payment_method_id ?? ""}
@@ -1616,7 +2016,13 @@ function PaymentRowItem({
                   if ("error" in r) setMethodError(r.error);
                 });
               }}
-              className="max-w-[12rem] py-0.5 text-xs"
+              className="kg-focus"
+              style={{
+                ...controlStyle,
+                maxWidth: 192,
+                fontSize: 12,
+                opacity: methodPending ? 0.5 : 1,
+              }}
             >
               <option value="">— Sin método —</option>
               {activeMethods.map((m) => (
@@ -1625,7 +2031,7 @@ function PaymentRowItem({
                   {!m.active ? " (inactivo)" : ""}
                 </option>
               ))}
-            </Select>
+            </select>
           ) : (
             <span>{method?.name ?? "Sin método"}</span>
           )}
@@ -1636,26 +2042,44 @@ function PaymentRowItem({
             </>
           )}
         </div>
-        {methodError && <FieldError>{methodError}</FieldError>}
+        {methodError && <ErrorBanner message={methodError} />}
       </div>
       <button
         type="button"
         disabled={isPending}
-        onClick={() => {
-          if (
-            !confirm(
-              `¿Borrar cobro de ${fmtPaymentMoney(fxLookup, payment)}?`,
-            )
-          )
-            return;
+        onClick={() => setAskDelete(true)}
+        aria-label={`Borrar cobro de ${fmtPaymentMoney(fxLookup, payment)}`}
+        title="Borrar cobro"
+        className="kg-focus"
+        style={{
+          ...dangerBtn,
+          minHeight: 36,
+          minWidth: 36,
+          padding: 0,
+          flexShrink: 0,
+          opacity: isPending ? 0.5 : 1,
+        }}
+      >
+        ×
+      </button>
+
+      {/* Mismo texto que el `confirm()` nativo que había acá. */}
+      <KgConfirmDialog
+        open={askDelete}
+        onClose={() => setAskDelete(false)}
+        title="Borrar cobro"
+        description={`¿Borrar cobro de ${fmtPaymentMoney(fxLookup, payment)}?`}
+        confirmLabel="Borrar cobro"
+        onConfirm={() => {
+          // Se cierra al confirmar, igual que el `confirm()` nativo: el
+          // feedback de "Borrando…" ya lo da el botón de la fila con su
+          // `useTransition` (que no se tocó).
+          setAskDelete(false);
           startTransition(async () => {
             await deletePaymentAction(payment.id);
           });
         }}
-        className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-error hover:bg-error/10 disabled:opacity-50"
-      >
-        ×
-      </button>
+      />
     </li>
   );
 }
@@ -1679,18 +2103,32 @@ function ProductAssign({
 
   if (!updateProductAction) {
     return (
-      <section className="rounded-md border border-border bg-surface/40 px-3 py-2 text-xs">
-        <div className="uppercase tracking-wide text-fg-subtle">Producto</div>
-        <div className="mt-1 text-fg">{currentProductName}</div>
+      <section style={{ ...subCardStyle, padding: "8px 14px" }}>
+        <div className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+          Producto
+        </div>
+        <div
+          className="kg-t5"
+          style={{ color: "var(--kg-text-1)", marginTop: 4 }}
+        >
+          {currentProductName}
+        </div>
       </section>
     );
   }
 
   return (
-    <section className="rounded-md border border-border bg-surface/40 px-3 py-2 text-xs">
-      <div className="uppercase tracking-wide text-fg-subtle">Producto</div>
-      <div className="mt-1 flex items-center gap-2">
-        <Select
+    <section style={{ ...subCardStyle, padding: "8px 14px" }}>
+      <label
+        htmlFor="sale-product-assign"
+        className="kg-t7"
+        style={{ display: "block", color: "var(--kg-text-3)" }}
+      >
+        Producto
+      </label>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <select
+          id="sale-product-assign"
           aria-label="Producto asignado a la venta"
           defaultValue={currentProductId}
           disabled={pending}
@@ -1703,6 +2141,8 @@ function ProductAssign({
               if ("error" in result) setError(result.error);
             });
           }}
+          className="kg-focus"
+          style={{ ...bareSelectStyle, opacity: pending ? 0.5 : 1 }}
         >
           {activeProducts.map((p) => (
             <option key={p.id} value={p.id}>
@@ -1710,10 +2150,18 @@ function ProductAssign({
               {!p.active ? " (inactivo)" : ""}
             </option>
           ))}
-        </Select>
-        {pending && <span className="text-fg-subtle">Guardando…</span>}
+        </select>
+        {pending && (
+          <span className="kg-t6" style={{ color: "var(--kg-text-3)" }}>
+            Guardando…
+          </span>
+        )}
       </div>
-      {error && <FieldError>{error}</FieldError>}
+      {error && (
+        <div style={{ marginBottom: 8 }}>
+          <ErrorBanner message={error} />
+        </div>
+      )}
     </section>
   );
 }
@@ -1730,15 +2178,17 @@ function CommissionSnapshotBar({
   const [justRecalculated, setJustRecalculated] = useState(false);
 
   return (
-    <section className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface/40 px-3 py-2 text-xs">
+    <section
+      className="flex flex-wrap items-center gap-2"
+      style={{ ...subCardStyle, padding: "10px 14px" }}
+    >
       {hasSnapshot ? (
-        <span className="rounded-full bg-success/10 px-2 py-0.5 text-success">
-          Comisión congelada al cierre
-        </span>
+        <StatusPill tone={TONE_VAR.positive} text="Comisión congelada al cierre" />
       ) : (
-        <span className="rounded-full bg-warning/15 px-2 py-0.5 text-warning">
-          Sin regla congelada (usando la vigente)
-        </span>
+        <StatusPill
+          tone={TONE_VAR.warning}
+          text="Sin regla congelada (usando la vigente)"
+        />
       )}
       {recalculateAction && (
         <>
@@ -1754,14 +2204,24 @@ function CommissionSnapshotBar({
                 else setJustRecalculated(true);
               });
             }}
-            className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg hover:bg-bg-elevated disabled:opacity-50"
+            className="kg-focus"
+            style={{
+              ...smallBtn,
+              minHeight: 36,
+              marginLeft: "auto",
+              opacity: pending ? 0.5 : 1,
+            }}
           >
             {pending ? "Recalculando…" : "Recalcular con regla actual"}
           </button>
           {justRecalculated && (
-            <span className="text-success">Actualizada.</span>
+            <StatusPill tone={TONE_VAR.positive} text="Actualizada." />
           )}
-          {error && <FieldError>{error}</FieldError>}
+          {error && (
+            <div style={{ width: "100%" }}>
+              <ErrorBanner message={error} />
+            </div>
+          )}
         </>
       )}
     </section>
@@ -1807,14 +2267,17 @@ function EditSaleForm({
   );
 
   return (
-    <form action={formAction} className="space-y-4">
-      <div>
-        <Label htmlFor="edit-product">Producto *</Label>
-        <Select
+    <form
+      action={formAction}
+      style={{ display: "flex", flexDirection: "column", gap: 16 }}
+    >
+      <Field label="Producto" htmlFor="edit-product" required>
+        <select
           id="edit-product"
           name="product_id"
           required
           defaultValue={sale.product_id}
+          style={controlStyle}
         >
           {visibleProducts.map((p) => (
             <option key={p.id} value={p.id}>
@@ -1822,15 +2285,15 @@ function EditSaleForm({
               {!p.active ? " (inactivo)" : ""}
             </option>
           ))}
-        </Select>
-      </div>
-      <div>
-        <Label htmlFor="edit-modality">Modalidad de pago *</Label>
-        <Select
+        </select>
+      </Field>
+      <Field label="Modalidad de pago" htmlFor="edit-modality" required>
+        <select
           id="edit-modality"
           name="payment_modality_id"
           required
           defaultValue={sale.payment_modality_id}
+          style={controlStyle}
         >
           {visibleModalities.map((m) => (
             <option key={m.id} value={m.id}>
@@ -1838,13 +2301,12 @@ function EditSaleForm({
               {!m.active ? " (inactiva)" : ""}
             </option>
           ))}
-        </Select>
-      </div>
+        </select>
+      </Field>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-[2fr_1fr_1fr]">
-        <div>
-          <Label htmlFor="edit-total">Monto pactado *</Label>
-          <Input
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-[2fr_1fr_1fr]">
+        <Field label="Monto pactado" htmlFor="edit-total" required>
+          <input
             id="edit-total"
             name="total_amount"
             type="number"
@@ -1853,29 +2315,31 @@ function EditSaleForm({
             required
             value={String(totalAmount)}
             onChange={(e) => setTotalAmount(parseFloat(e.target.value) || 0)}
+            className="kg-num"
+            style={controlStyle}
           />
-        </div>
-        <div>
-          <Label htmlFor="edit-currency">Moneda</Label>
-          <Select
+        </Field>
+        <Field label="Moneda" htmlFor="edit-currency">
+          <select
             id="edit-currency"
             name="currency"
             defaultValue={sale.currency ?? "ARS"}
+            style={controlStyle}
           >
             <option value="ARS">Pesos (ARS)</option>
             <option value="USD">Dólares (USD)</option>
-          </Select>
-        </div>
-        <div>
-          <Label htmlFor="edit-closed-at">Fecha de cierre</Label>
-          <Input
+          </select>
+        </Field>
+        <Field label="Fecha de cierre" htmlFor="edit-closed-at">
+          <input
             id="edit-closed-at"
             name="closed_at"
             type="date"
             value={closedAt}
             onChange={(e) => setClosedAt(e.target.value)}
+            style={controlStyle}
           />
-        </div>
+        </Field>
       </div>
 
       <InstallmentPlanFields
@@ -1886,42 +2350,76 @@ function EditSaleForm({
         defaultGraceDays={sale.grace_days}
       />
 
-      <div className="rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-fg-muted">
-        <b className="text-warning">Aviso:</b> si cambiás la cantidad de
-        cuotas, la frecuencia, el monto o la fecha de cierre, se regenera el
-        plan y todos los cobros ya cargados quedan flotando. Los podés
-        re-asignar cuota por cuota desde la ficha.
-      </div>
+      {/*
+        Aviso, no error: nada falló todavía. Es exactamente el caso del tono
+        `warning` de `ErrorBanner` (role="status", no interrumpe al lector).
+      */}
+      <ErrorBanner
+        tone="warning"
+        message="Aviso: si cambiás la cantidad de cuotas, la frecuencia, el monto o la fecha de cierre, se regenera el plan y todos los cobros ya cargados quedan flotando. Los podés re-asignar cuota por cuota desde la ficha."
+      />
 
       {!hideCommission && (
-        <label className="flex items-start gap-2 text-xs text-fg-muted">
+        <label
+          htmlFor="edit-regenerate"
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 8,
+            minHeight: 36,
+            fontSize: 12,
+            color: "var(--kg-text-2)",
+            cursor: "pointer",
+          }}
+        >
           <input
+            id="edit-regenerate"
             type="checkbox"
             name="regenerate"
-            className="mt-0.5 accent-accent"
+            style={{
+              marginTop: 2,
+              cursor: "pointer",
+              accentColor: "var(--kg-accent-500)",
+            }}
           />
           <span>
             Recalcular comisión con la regla actual.
-            <span className="ml-1 text-fg-subtle">
+            <span style={{ marginLeft: 4, color: "var(--kg-text-3)" }}>
               Por default el snapshot queda como estaba al cierre (Fase 7).
             </span>
           </span>
         </label>
       )}
 
-      <div className="flex items-center gap-4 pt-2">
-        <Button type="submit" disabled={pending}>
+      {state && "error" in state && <ErrorBanner message={state.error} />}
+
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-3">
+        <button
+          type="submit"
+          disabled={pending}
+          className="kg-focus"
+          style={{
+            ...primaryBtn,
+            minHeight: 40,
+            opacity: pending ? 0.7 : 1,
+            cursor: pending ? "not-allowed" : "pointer",
+          }}
+        >
           {pending ? "Guardando…" : "Guardar cambios"}
-        </Button>
+        </button>
         <button
           type="button"
           onClick={onCancel}
           disabled={pending}
-          className="text-xs text-fg-muted hover:text-fg disabled:opacity-50"
+          className="kg-focus"
+          style={{
+            ...secondaryBtn,
+            minHeight: 40,
+            opacity: pending ? 0.5 : 1,
+          }}
         >
           Cancelar
         </button>
-        {state && "error" in state && <FieldError>{state.error}</FieldError>}
       </div>
     </form>
   );
@@ -1973,38 +2471,39 @@ function AddPaymentOnly({
       : null;
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-md border border-border bg-surface/40 px-3 py-2 text-xs text-fg-muted">
-        Pactado{" "}
-        <b className="tabular-nums text-fg">
-          {fmtSaleMoney(fxLookup, sale, Number(sale.total_amount))}
-        </b>
-        {" · "}
-        Cobrado{" "}
-        <b className="tabular-nums text-fg">
-          {fmtCollected(collectedDisplay, fxLookup)}
-        </b>
+    <Stack gap={16}>
+      {/*
+        Resumen de la venta con `StatRow` (nivel 3 del DS). El aviso de
+        moneda mixta sale del renglón del monto y pasa a un `StatusPill`
+        aparte: el estado no se pinta encima de la plata.
+      */}
+      <Stack gap={8}>
+        <StatRow
+          items={[
+            {
+              l: "Pactado",
+              v: fmtSaleMoney(fxLookup, sale, Number(sale.total_amount)),
+            },
+            { l: "Cobrado", v: fmtCollected(collectedDisplay, fxLookup) },
+            {
+              l: collectedDisplay.mixed && balanceUsd !== null
+                ? "Saldo (USD)"
+                : "Saldo",
+              v:
+                balanceNative !== null
+                  ? fmtSaleMoney(fxLookup, sale, balanceNative)
+                  : balanceUsd !== null
+                    ? fmtUsd(balanceUsd)
+                    : "—",
+            },
+          ]}
+        />
         {collectedDisplay.mixed && (
-          <span
-            className="ml-1 rounded bg-warning/15 px-1 py-0.5 text-[10px] font-medium text-warning"
-            title="Cobros en moneda distinta al pactado. Total mostrado convertido a USD."
-          >
-            moneda distinta
+          <span title="Cobros en moneda distinta al pactado. Total mostrado convertido a USD.">
+            <StatusPill tone={TONE_VAR.warning} text="Moneda distinta al pactado" />
           </span>
         )}
-        {" · "}
-        Saldo{" "}
-        <b className="tabular-nums text-fg">
-          {balanceNative !== null
-            ? fmtSaleMoney(fxLookup, sale, balanceNative)
-            : balanceUsd !== null
-              ? fmtUsd(balanceUsd)
-              : "—"}
-        </b>
-        {collectedDisplay.mixed && balanceUsd !== null && (
-          <span className="ml-1 text-[10px] text-fg-muted">(USD)</span>
-        )}
-      </div>
+      </Stack>
       <PaymentForm
         installments={installments}
         invoices={invoices ?? []}
@@ -2015,6 +2514,6 @@ function AddPaymentOnly({
         methodCurrencies={methodCurrencies}
         saleCurrency={fxLookup?.bySaleId[sale.id]?.currency ?? "ARS"}
       />
-    </div>
+    </Stack>
   );
 }

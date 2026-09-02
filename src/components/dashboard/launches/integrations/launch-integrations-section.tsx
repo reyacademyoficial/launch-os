@@ -1,5 +1,11 @@
 import "server-only";
 
+import { EmptyState } from "@/components/kg/empty-state";
+import { ErrorBanner } from "@/components/kg/form-primitives";
+import { Panel } from "@/components/kg/panel";
+import { StatRow, type StatRowItem } from "@/components/kg/stat-row";
+import { StatusPill } from "@/components/kg/status-pill";
+import { TONE_VAR } from "@/components/kg/tone";
 import { getInstructions } from "@/lib/integrations/instructions";
 import {
   getLaunchIntegrationStatus,
@@ -28,12 +34,10 @@ import { SyncButton } from "./sync-button";
 
 /**
  * Catálogo de providers separado en dos arrays para que TS narrowee bien:
- *   - los AVAILABLE tienen id : ConfigurableProvider (backend implementado +
- *     UI de config). `ghl_messages` queda EXCLUIDO acá porque no tiene config
- *     propia ni card propia — es un sub-sync del card de GHL (botón aparte).
+ *   - los AVAILABLE tienen backend implementado + UI de config.
  *   - los SOON son placeholders con un label, sin más logic.
  */
-type ConfigurableProvider = Exclude<SyncProviderId, "ghl_messages">;
+type ConfigurableProvider = SyncProviderId;
 
 const AVAILABLE_PROVIDERS: ReadonlyArray<{
   id: ConfigurableProvider;
@@ -111,16 +115,16 @@ export async function LaunchIntegrationsSection({
   );
 
   return (
-    <section className="space-y-4">
-      <header>
-        <h2 className="text-base font-semibold text-fg">Integraciones</h2>
-        <p className="text-xs text-fg-subtle">
-          Conectá las APIs de ads para que los datos diarios se carguen solos.
-          Cada lanzamiento tiene sus propias credenciales y campañas.
-        </p>
-      </header>
+    // El `<h2>Integraciones</h2>` del header viejo se borró: el ContextBar de
+    // la page ya titula la pestaña y repetirlo dejaba dos títulos idénticos
+    // uno encima del otro. Sobrevive la bajada, que sí explica algo.
+    <section style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <p className="kg-t6" style={{ color: "var(--kg-text-3)", margin: 0 }}>
+        Conectá las APIs de ads para que los datos diarios se carguen solos.
+        Cada lanzamiento tiene sus propias credenciales y campañas.
+      </p>
 
-      <div className="space-y-3">
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {AVAILABLE_PROVIDERS.map((p) => {
           // Provider available: extraemos los datos de display de forma
           // distinta según el shape de config del provider.
@@ -153,185 +157,227 @@ export async function LaunchIntegrationsSection({
                   ? "Hay una sincronización en curso"
                   : undefined;
 
+          // Los datos de config del card dejaron de ser un `<div>` por línea
+          // con `text-fg-subtle` y pasan a un único `StatRow`: es exactamente
+          // la jerarquía-3 del design system (métricas de apoyo, no tarjetas).
+          // "Última sync OK" y el resumen de opportunities entran al mismo
+          // StatRow porque son del mismo nivel de lectura.
+          const statItems: StatRowItem[] = [
+            ...display.fields.map((f) => ({ l: f.label, v: f.value })),
+          ];
+          if (status?.lastSuccessAt) {
+            statItems.push({
+              l: "Última sync OK",
+              v: new Date(status.lastSuccessAt).toLocaleString("es-AR", {
+                day: "numeric",
+                month: "short",
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+            });
+          }
+          if (ghlSummary) {
+            statItems.push({
+              l: "Opportunities",
+              v: `${ghlSummary.fetched} sincronizadas`,
+            });
+            if (ghlSummary.wonInWindow > 0) {
+              statItems.push({
+                l: "Ganadas en la ventana",
+                v: `${ghlSummary.wonInWindow} · ${ghlSummary.wonRevenueInWindow.toLocaleString(
+                  "es-AR",
+                  {
+                    style: "currency",
+                    currency: "USD",
+                    maximumFractionDigits: 0,
+                  },
+                )}`,
+              });
+            }
+          }
+
+          const badge = statusBadge(status?.lastRunStatus ?? null);
+          const totalCampaigns = (display.campaignDetails ?? []).reduce(
+            (s, a) => s + a.campaignIds.length,
+            0,
+          );
+
           return (
-            <article
+            <Panel
               key={p.id}
-              className="rounded-md border border-border bg-surface p-4"
+              title={p.label}
+              // El estado del último run es metadata del provider, no una
+              // acción: va en el slot `actions` del Panel como StatusPill
+              // (dot de color + texto neutro), reemplazando al badge de fondo
+              // tintado que producía efecto semáforo con 3 cards seguidos.
+              actions={<StatusPill text={badge.label} tone={badge.tone} />}
             >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-3">
-                    <h3 className="text-sm font-semibold text-fg">{p.label}</h3>
-                    <StatusBadge status={status?.lastRunStatus ?? null} />
-                  </div>
-                  <div className="mt-1 space-y-0.5 text-xs text-fg-subtle">
-                    {display.hasConfig ? (
-                      <>
-                        {display.fields.map((f) => (
-                          <div key={f.label}>
-                            <span className="text-fg-muted">{f.label}:</span>{" "}
-                            {f.code ? (
-                              <code className="text-fg">{f.value}</code>
-                            ) : (
-                              <span className="text-fg">{f.value}</span>
-                            )}
+              <div
+                style={{ display: "flex", flexDirection: "column", gap: 14 }}
+              >
+                {display.hasConfig ? (
+                  <StatRow items={statItems} />
+                ) : (
+                  <EmptyState
+                    title="Sin configurar"
+                    hint={display.missingMessage}
+                  />
+                )}
+
+                {display.campaignDetails &&
+                  display.campaignDetails.length > 0 && (
+                    // `<details>` nativo: es un server component, no hay
+                    // estado que manejar y el colapsado sale gratis.
+                    <details>
+                      <summary
+                        className="kg-t7 kg-focus"
+                        style={{
+                          cursor: "pointer",
+                          userSelect: "none",
+                          color: "var(--kg-accent-text)",
+                        }}
+                      >
+                        Ver campañas ({totalCampaigns})
+                      </summary>
+                      <div
+                        style={{
+                          marginTop: 10,
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 10,
+                          paddingLeft: 8,
+                        }}
+                      >
+                        {display.campaignDetails.map((account) => (
+                          <div key={account.adAccountId}>
+                            <code
+                              className="kg-t7"
+                              style={{ color: "var(--kg-text-3)" }}
+                            >
+                              {account.adAccountId}
+                            </code>
+                            <ul
+                              style={{
+                                margin: "4px 0 0",
+                                paddingLeft: 16,
+                                listStyle: "disc",
+                              }}
+                            >
+                              {account.campaignIds.map((id) => (
+                                <li key={id}>
+                                  <code
+                                    className="kg-num"
+                                    style={{
+                                      fontSize: 11.5,
+                                      color: "var(--kg-text-2)",
+                                    }}
+                                  >
+                                    {id}
+                                  </code>
+                                </li>
+                              ))}
+                            </ul>
                           </div>
                         ))}
-                        {display.campaignDetails && display.campaignDetails.length > 0 && (
-                          <details className="mt-1">
-                            <summary className="cursor-pointer select-none text-accent hover:underline">
-                              Ver campañas (
-                              {display.campaignDetails.reduce((s, a) => s + a.campaignIds.length, 0)}
-                              )
-                            </summary>
-                            <div className="mt-1.5 space-y-2 pl-2">
-                              {display.campaignDetails.map((account) => (
-                                <div key={account.adAccountId}>
-                                  <code className="text-fg-muted">{account.adAccountId}</code>
-                                  <ul className="mt-0.5 ml-3 space-y-0.5">
-                                    {account.campaignIds.map((id) => (
-                                      <li key={id}>
-                                        <code className="text-fg">{id}</code>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              ))}
-                            </div>
-                          </details>
-                        )}
-                      </>
-                    ) : (
-                      <div>Sin configurar</div>
-                    )}
-                    {status?.lastSuccessAt && (
-                      <div>
-                        Última sync OK:{" "}
-                        <span className="text-fg">
-                          {new Date(status.lastSuccessAt).toLocaleString("es-AR", {
-                            day: "numeric",
-                            month: "short",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </span>
                       </div>
-                    )}
-                    {ghlSummary && (
-                      <div>
-                        Opportunities:{" "}
-                        <span className="text-fg">
-                          {ghlSummary.fetched} sincronizadas
-                        </span>
-                        {ghlSummary.wonInWindow > 0 && (
-                          <>
-                            {" · "}
-                            <span className="text-fg">
-                              {ghlSummary.wonInWindow} ganadas (
-                              {ghlSummary.wonRevenueInWindow.toLocaleString(
-                                "es-AR",
-                                {
-                                  style: "currency",
-                                  currency: "USD",
-                                  maximumFractionDigits: 0,
-                                },
-                              )}
-                              )
-                            </span>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  {instructions && (
-                    <div className="mt-2">
+                    </details>
+                  )}
+
+                {/*
+                  Acciones y ayuda en una sola fila: la ayuda pegada a la
+                  izquierda (se lee antes de tocar nada) y los botones a la
+                  derecha. En 390px la fila envuelve sola.
+                */}
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    alignItems: "flex-start",
+                    justifyContent: "space-between",
+                    gap: 10,
+                  }}
+                >
+                  <div>
+                    {instructions && (
                       <InstructionsModal
                         title={instructions.title}
                         markdown={instructions.markdown}
                       />
-                    </div>
-                  )}
-                </div>
+                    )}
+                  </div>
 
-                <div className="flex flex-col items-end gap-2">
-                  <ConfigModal
-                    projectId={projectId}
-                    launchId={launchId}
-                    provider={p.id}
-                    providerLabel={p.label}
-                    hasSecret={hasSecret}
-                    initialConfig={display.initialConfig}
-                  />
-                  {p.id === "ghl" && hasSecret && display.hasConfig && (
-                    <GhlMappingModal projectId={projectId} launchId={launchId} />
-                  )}
-                  <SyncButton
-                    projectId={projectId}
-                    launchId={launchId}
-                    provider={p.id}
-                    disabled={disabled}
-                    disabledReason={disabledReason}
-                  />
-                  {p.id === "ghl" && (
-                    <GhlMessagesSyncButton
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      alignItems: "flex-start",
+                      justifyContent: "flex-end",
+                      gap: 8,
+                    }}
+                  >
+                    <ConfigModal
                       projectId={projectId}
                       launchId={launchId}
-                      isClosed={isClosed}
+                      provider={p.id}
+                      providerLabel={p.label}
                       hasSecret={hasSecret}
-                      hasConfig={display.hasConfig}
-                      missingMessage={display.missingMessage}
-                      messagesStatus={
-                        statusByProvider.get("ghl_messages") ?? null
-                      }
+                      initialConfig={display.initialConfig}
                     />
-                  )}
+                    {p.id === "ghl" && hasSecret && display.hasConfig && (
+                      <GhlMappingModal
+                        projectId={projectId}
+                        launchId={launchId}
+                      />
+                    )}
+                    <SyncButton
+                      projectId={projectId}
+                      launchId={launchId}
+                      provider={p.id}
+                      disabled={disabled}
+                      disabledReason={disabledReason}
+                    />
+                  </div>
                 </div>
-              </div>
 
-              <div className="mt-3">
                 <RunsHistory runs={runs} filterProvider={p.id} />
-              </div>
 
-              {status?.lastRunStatus === "token_invalid" && (
-                <div className="mt-3 rounded-md border border-error/40 bg-error/10 p-3 text-xs text-error">
-                  El token dejó de funcionar. Generá uno nuevo y reconectá con
-                  el botón <strong>Editar conexión</strong>.
-                </div>
-              )}
-              {status?.lastRunStatus === "rate_limited" && (
-                <div className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-warning">
-                  El proveedor nos pidió esperar antes de pedir más datos. Reintentá en unos minutos.
-                </div>
-              )}
-            </article>
+                {/*
+                  Los dos avisos accionables pasan a `ErrorBanner`: mismo
+                  contenido, pero el tono sale de la primitiva en vez de
+                  `border-error/40 bg-error/10` (tokens viejos).
+                */}
+                {status?.lastRunStatus === "token_invalid" && (
+                  <ErrorBanner message="El token dejó de funcionar. Generá uno nuevo y reconectá con el botón “Editar conexión”." />
+                )}
+                {status?.lastRunStatus === "rate_limited" && (
+                  <ErrorBanner
+                    tone="warning"
+                    message="El proveedor nos pidió esperar antes de pedir más datos. Reintentá en unos minutos."
+                  />
+                )}
+              </div>
+            </Panel>
           );
         })}
 
         {SOON_PROVIDERS.map((p) => (
-          <article
+          // Mismo Panel que los providers reales, pero atenuado: el borde
+          // punteado del card viejo no existe en el design system, así que el
+          // "todavía no" se comunica con opacidad + el pill neutro.
+          <Panel
             key={p.id}
-            className="rounded-md border border-dashed border-border bg-surface/40 p-4"
+            title={p.label}
+            style={{ opacity: 0.6 }}
+            actions={<StatusPill text="Próximamente" />}
           >
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-3">
-                  <h3 className="text-sm font-semibold text-fg-muted">
-                    {p.label}
-                  </h3>
-                  <span className="rounded bg-fg-subtle/15 px-2 py-0.5 text-[10px] uppercase tracking-wide text-fg-muted">
-                    Próximamente
-                  </span>
-                </div>
-                <p className="mt-1 text-xs text-fg-subtle">
-                  Integración disponible en una próxima fase.
-                </p>
-              </div>
-            </div>
-          </article>
+            <p className="kg-t6" style={{ color: "var(--kg-text-3)", margin: 0 }}>
+              Integración disponible en una próxima fase.
+            </p>
+          </Panel>
         ))}
       </div>
 
-      <p className="text-xs text-fg-subtle">
+      <p className="kg-t7" style={{ color: "var(--kg-text-3)", margin: 0 }}>
         Nota: cuando el sync escribe nuevos datos, los KPIs y el gráfico se
         actualizan automáticamente — no hace falta recargar.
       </p>
@@ -450,63 +496,6 @@ function numOr0(v: unknown): number {
   return 0;
 }
 
-/**
- * Botón "Sync mensajes" — sub-sync del card de GHL (Fase B).
- *
- * Pega al mismo PIT + location_id del provider 'ghl' (no necesita config
- * separada). El backend usa provider='ghl_messages' en integration_runs para
- * tener su propia historia, status badge y notificaciones independientes
- * del sync GHL interactivo.
- *
- * Variant secondary para que se note que es secundario al "Sincronizar"
- * principal del card.
- */
-function GhlMessagesSyncButton({
-  projectId,
-  launchId,
-  isClosed,
-  hasSecret,
-  hasConfig,
-  missingMessage,
-  messagesStatus,
-}: {
-  readonly projectId: string;
-  readonly launchId: string;
-  readonly isClosed: boolean;
-  readonly hasSecret: boolean;
-  readonly hasConfig: boolean;
-  readonly missingMessage: string;
-  readonly messagesStatus: {
-    lastRunStatus: string | null;
-    lastSuccessAt: string | null;
-  } | null;
-}) {
-  const isRunning = messagesStatus?.lastRunStatus === "running";
-  const disabled = isClosed || !hasSecret || !hasConfig || isRunning;
-  const disabledReason = isClosed
-    ? "Lanzamiento cerrado"
-    : !hasSecret
-      ? "Configurá GHL primero (token)"
-      : !hasConfig
-        ? missingMessage
-        : isRunning
-          ? "Sync de mensajes en curso"
-          : undefined;
-
-  return (
-    <SyncButton
-      projectId={projectId}
-      launchId={launchId}
-      provider="ghl_messages"
-      disabled={disabled}
-      disabledReason={disabledReason}
-      label="Sync mensajes"
-      pendingLabel="Sincronizando mensajes…"
-      variant="secondary"
-    />
-  );
-}
-
 function buildGhlDisplay(cfg: GhlConfigShape): ProviderDisplay {
   const locationId = cfg.location_id ?? "";
   const defaultCountry = cfg.default_country ?? "AR";
@@ -553,50 +542,33 @@ function buildSendflowDisplay(cfg: SendflowConfigShape): ProviderDisplay {
   };
 }
 
-function StatusBadge({ status }: { readonly status: string | null }) {
+/**
+ * Estado del último run → `{ label, tone }` para el `StatusPill` del Panel.
+ *
+ * Antes era un `<StatusBadge>` que devolvía un chip con FONDO tintado
+ * (`bg-success/15 text-success`…). Con tres cards apilados eso pintaba tres
+ * rectángulos de colores distintos y el ojo leía "semáforo" antes que
+ * "provider". El design system resuelve esto con el pill sin fondo: el color
+ * queda en un dot de 5px y el texto va neutro.
+ *
+ * Devuelve la CSS var directamente porque es lo que `StatusPill` consume como
+ * `tone` — mismo contrato que `launchStatusTone()`.
+ */
+function statusBadge(status: string | null): {
+  readonly label: string;
+  readonly tone: string;
+} {
   if (!status) {
-    return (
-      <span className="rounded bg-fg-subtle/15 px-2 py-0.5 text-[10px] uppercase tracking-wide text-fg-muted">
-        Sin sincronizar
-      </span>
-    );
+    return { label: "Sin sincronizar", tone: "var(--kg-neutral-500)" };
   }
-  const map: Record<string, { label: string; classes: string }> = {
-    running: {
-      label: "Sincronizando",
-      classes: "bg-accent/15 text-accent",
-    },
-    success: {
-      label: "Conectado",
-      classes: "bg-success/15 text-success",
-    },
-    error: {
-      label: "Error",
-      classes: "bg-error/15 text-error",
-    },
-    token_invalid: {
-      label: "Reconectar",
-      classes: "bg-error/15 text-error",
-    },
-    rate_limited: {
-      label: "Rate limit",
-      classes: "bg-warning/15 text-warning",
-    },
-    config_missing: {
-      label: "Falta config",
-      classes: "bg-warning/15 text-warning",
-    },
-    partial: {
-      label: "Parcial",
-      classes: "bg-warning/15 text-warning",
-    },
+  const map: Record<string, { label: string; tone: string }> = {
+    running: { label: "Sincronizando", tone: TONE_VAR.accent },
+    success: { label: "Conectado", tone: TONE_VAR.positive },
+    error: { label: "Error", tone: TONE_VAR.negative },
+    token_invalid: { label: "Reconectar", tone: TONE_VAR.negative },
+    rate_limited: { label: "Rate limit", tone: TONE_VAR.warning },
+    config_missing: { label: "Falta config", tone: TONE_VAR.warning },
+    partial: { label: "Parcial", tone: TONE_VAR.warning },
   };
-  const cfg = map[status] ?? { label: status, classes: "bg-surface text-fg-muted" };
-  return (
-    <span
-      className={`rounded px-2 py-0.5 text-[10px] uppercase tracking-wide ${cfg.classes}`}
-    >
-      {cfg.label}
-    </span>
-  );
+  return map[status] ?? { label: status, tone: "var(--kg-neutral-500)" };
 }

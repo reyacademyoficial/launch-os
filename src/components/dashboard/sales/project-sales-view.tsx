@@ -1,12 +1,27 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { KgFilterSelectControlled as FilterSelect } from "@/components/kg/filter-select";
 
+import {
+  useMemo,
+  useState,
+  useTransition,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+
+import { KgDataTable, type Column } from "@/components/kg/data-table";
+import { dangerBtn, smallBtn } from "@/components/kg/form-primitives";
+import { KgPageFilters } from "@/components/kg/page-menu";
+import { RangePills } from "@/components/kg/range-pills";
+import { StateDot } from "@/components/kg/state-dot";
+import { StatusPill } from "@/components/kg/status-pill";
+import { TONE_VAR } from "@/components/kg/tone";
 import type {
   FirstPaymentContext,
   PaymentActionState,
   SaleActionState,
-} from "@/app/(app)/proyectos/[projectId]/leads/sale-actions";
+} from "@/app/(app)/(kg)/proyectos/[projectId]/leads/sale-actions";
 import { computeCommission, findApplicableRule } from "@/lib/commissions/calc";
 import { buildSaleRanks } from "@/lib/commissions/ranking";
 import type {
@@ -287,6 +302,13 @@ export function ProjectSalesView({
   readonly hideCommission?: boolean;
 }) {
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
+  /**
+   * Remonta el <input> de búsqueda al limpiar los filtros. El input del drawer
+   * es NO controlado (ver `SalesFilters`), así que la única forma de reflejar
+   * un reset externo es cambiarle la `key` — nunca un `setState` en un efecto,
+   * que el ESLint del repo prohíbe.
+   */
+  const [searchKey, setSearchKey] = useState(0);
 
   const leadById = useMemo(
     () => new Map(leads.map((l) => [l.id, l])),
@@ -632,10 +654,273 @@ export function ProjectSalesView({
     return out;
   }
 
+  /** Filtros con valor distinto al default — alimenta el badge de "Filtros". */
+  const activeFilterCount =
+    (filters.query !== "" ? 1 : 0) +
+    (filters.launchId !== "all" ? 1 : 0) +
+    (filters.closerId !== "all" ? 1 : 0) +
+    (filters.productId !== "all" ? 1 : 0) +
+    (filters.paymentMethodId !== "all" ? 1 : 0) +
+    (filters.collection !== "all" ? 1 : 0);
+
+  /** Datos del lead que consume `SaleModal`. Sin cambios respecto de antes. */
+  function leadForModalOf(
+    s: SaleRow,
+  ): Pick<LeadRow, "id" | "name" | "launch_id" | "team_member_id"> {
+    const lead = leadById.get(s.lead_id);
+    return lead
+      ? {
+          id: lead.id,
+          name: lead.name,
+          launch_id: lead.launch_id,
+          team_member_id: lead.team_member_id,
+        }
+      : {
+          id: s.lead_id,
+          name: "—",
+          launch_id: null,
+          team_member_id: s.team_member_id,
+        };
+  }
+
+  /** Props del SaleModal comunes a los dos triggers de la fila (nombre y "Editar"). */
+  function saleModalProps(s: SaleRow) {
+    const leadForModal = leadForModalOf(s);
+    return {
+      lead: leadForModal,
+      sales: [s],
+      saleRanks: rankBySaleId,
+      paymentsBySaleId: new Map([[s.id, paymentsBySaleId.get(s.id) ?? []]]),
+      installmentsBySaleId: new Map([
+        [s.id, installmentsBySaleId.get(s.id) ?? []],
+      ]),
+      invoicesBySaleId: new Map([[s.id, invoicesBySaleId.get(s.id) ?? []]]),
+      initialSaleId: s.id,
+      allowCreateAnother: false,
+      modalities,
+      products,
+      rules,
+      paymentMethods,
+      teamMembers,
+      createSaleAction: createSaleAction.bind(null, leadForModal.id),
+      updateProductAction: (saleId: string, productId: string) =>
+        updateSaleProductAction(saleId, productId),
+      recalculateAction: recalculateSaleAction,
+      updateSaleAction,
+      addPaymentAction,
+      deletePaymentAction,
+      deleteSaleAction,
+      updatePaymentInstallmentAction,
+      updatePaymentMethodAction,
+      assignLeadOwnerAction: canEdit ? assignLeadOwnerAction : undefined,
+      fxLookup,
+      hideCommission,
+    };
+  }
+
+  const comisionColumn: Column<SaleRow> = {
+    key: "comision",
+    label: "Comisión",
+    align: "right",
+    numeric: true,
+    // Antes iba en carmesí (`text-accent`). La plata no se pinta: el número
+    // queda en el color de la tabla como el resto de los importes.
+    render: (s) => {
+      const commission = commissionBySale.get(s.id) ?? {
+        amount: 0,
+        currency: "ARS" as const,
+      };
+      return fmtNative(commission.amount, commission.currency);
+    },
+  };
+
+  const accionesColumn: Column<SaleRow> = {
+    key: "acciones",
+    label: "Acciones",
+    align: "right",
+    render: (s) => {
+      const lead = leadById.get(s.lead_id);
+      const salePayments = paymentsBySaleId.get(s.id) ?? [];
+      return (
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            gap: 8,
+          }}
+        >
+          {/* `triggerStyle` (agregado por la migración de SaleModal) deja
+              usar la primitiva `smallBtn` en vez de clases de tokens viejos. */}
+          <SaleModal
+            {...saleModalProps(s)}
+            triggerLabel="Editar"
+            triggerStyle={smallBtn}
+          />
+          <DeleteSaleButton
+            saleId={s.id}
+            leadName={lead?.name ?? "alumno"}
+            paymentCount={salePayments.length}
+            totalAmountLabel={fmtRow(Number(s.total_amount) || 0, s.id)}
+            deleteSaleAction={deleteSaleAction}
+          />
+        </span>
+      );
+    },
+  };
+
+  const columns: ReadonlyArray<Column<SaleRow>> = [
+    {
+      key: "alumno",
+      label: "Alumno",
+      render: (s) => {
+        const lead = leadById.get(s.lead_id);
+        return (
+          <SaleModal
+            {...saleModalProps(s)}
+            triggerLabel={lead?.name ?? "—"}
+            triggerStyle={nameTriggerStyle}
+            // El subrayado en hover es lo único que no se puede expresar con
+            // estilos inline; el resto del look va en `triggerStyle`.
+            triggerClassName="underline-offset-2 hover:underline"
+          />
+        );
+      },
+    },
+    {
+      key: "producto",
+      label: "Producto",
+      render: (s) => productById.get(s.product_id)?.name ?? <Dash />,
+    },
+    {
+      key: "pactado",
+      label: "Monto pactado",
+      align: "right",
+      numeric: true,
+      render: (s) => fmtRow(Number(s.total_amount), s.id),
+    },
+    {
+      key: "cobrado",
+      label: "Monto cobrado",
+      align: "right",
+      numeric: true,
+      render: (s) => {
+        const salePayments = paymentsBySaleId.get(s.id) ?? [];
+        const saleCurrency: Currency =
+          fxLookup?.bySaleId[s.id]?.currency ?? "ARS";
+        const display = collectedForSale(saleCurrency, salePayments, fxLookup);
+        return (
+          <span style={numericCellStyle}>
+            {fxLookup
+              ? fmtNative(display.amount, display.currency)
+              : fmtMoney(display.amount)}
+            {display.mixed && (
+              // El monto no se pinta: el aviso de moneda mezclada es un dot.
+              <span
+                title="Los cobros de esta venta están en moneda distinta al pactado. Total mostrado convertido a USD."
+                aria-label="Cobros en moneda distinta al pactado"
+                style={{ display: "inline-flex" }}
+              >
+                <StateDot tone="warning" />
+              </span>
+            )}
+          </span>
+        );
+      },
+    },
+    ...(hideCommission ? [] : [comisionColumn]),
+    {
+      key: "metodo",
+      label: "Método",
+      render: (s) => {
+        const display = renderMethodCell(
+          methodIdsBySale.get(s.id),
+          paymentMethodById,
+        );
+        return <span title={display.title}>{display.text}</span>;
+      },
+    },
+    {
+      key: "vendedor",
+      label: "Vendedor",
+      render: (s) => {
+        // Atribución del dueño del lead (autoritativa). Ver las notas del
+        // filtro `closerId` sobre por qué no leemos `sale.team_member_id`.
+        const closerId = leadById.get(s.lead_id)?.team_member_id ?? null;
+        const closer = closerId ? teamById.get(closerId) : null;
+        return closer ? (
+          closer.name
+        ) : (
+          <StatusPill text="Sin asignar" tone={TONE_VAR.warning} />
+        );
+      },
+    },
+    {
+      key: "lanzamiento",
+      label: "Lanzamiento",
+      render: (s) =>
+        (s.launch_id ? launchById.get(s.launch_id)?.name : null) ?? <Dash />,
+    },
+    ...(canEdit ? [accionesColumn] : []),
+  ];
+
   return (
-    <div className="space-y-6">
+    // `paddingTop` en vez de margen: la vista se monta dentro del Panel de la
+    // page (pad={false}) justo debajo de su nota introductoria.
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 14,
+        paddingTop: 12,
+      }}
+    >
+      {/*
+        Los filtros ya no viven arriba de la tabla: `KgPageFilters` los registra
+        en el drawer (desktop) / bottom-sheet (mobile) del botón "Filtros" del
+        ContextBar y devuelve null. Motivo: alto vertical — la franja de 1 input
+        + 5 selects se comía la primera pantalla y esta tabla es la vista.
+      */}
+      <KgPageFilters activeCount={activeFilterCount}>
+        <SalesFilters
+          filters={filters}
+          onChange={setFilters}
+          searchKey={searchKey}
+          onClear={() => {
+            setFilters(EMPTY_FILTERS);
+            setSearchKey((k) => k + 1);
+          }}
+          launches={launches}
+          closers={teamMembers}
+          products={products}
+          paymentMethods={paymentMethods}
+          hasUnassignedLaunch={hasUnassignedLaunch}
+          hasUnassignedCloser={hasUnassignedCloser}
+          hasNoMethodPayment={hasNoMethodPayment}
+          totalSalesCount={sales.length}
+          filteredSalesCount={filteredSales.length}
+          filtersActive={filtersActive}
+        />
+      </KgPageFilters>
+
+      {/*
+        Export + alta. Van acá y no en `actions` del Panel porque el Panel lo
+        pone la PAGE (`ventas/page.tsx` envuelve esta vista en
+        `<Panel title="Todas las ventas" pad={false}>`): meter otro Panel sería
+        una tarjeta glass dentro de otra. El padding lateral (20px) iguala el
+        de la nota introductoria de la page para que todo alinee.
+      */}
       {canEdit && (
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            gap: 8,
+            padding: "0 20px",
+          }}
+        >
           <ExportSalesButton
             projectId={projectId}
             getRows={buildExportRows}
@@ -656,292 +941,91 @@ export function ProjectSalesView({
           />
         </div>
       )}
-      <FilterBar
-        filters={filters}
-        onChange={setFilters}
-        launches={launches}
-        closers={teamMembers}
-        products={products}
-        paymentMethods={paymentMethods}
-        hasUnassignedLaunch={hasUnassignedLaunch}
-        hasUnassignedCloser={hasUnassignedCloser}
-        hasNoMethodPayment={hasNoMethodPayment}
-        totalSalesCount={sales.length}
-        filteredSalesCount={filteredSales.length}
-        filtersActive={filtersActive}
-      />
 
-      {filteredSales.length === 0 ? (
-        <p className="rounded-md border border-dashed border-border bg-surface/40 p-8 text-center text-sm text-fg-muted">
-          {sales.length === 0
+      <KgDataTable
+        columns={columns}
+        rows={filteredSales}
+        rowKey={(s) => s.id}
+        // Techo de alto en vez de `fillHeight`: la page todavía no propaga
+        // altura (no hay `Panel fillHeight` ni la cadena `h-full min-h-0`).
+        // Con esto el <thead> y la fila de totales quedan sticky y el body
+        // scrollea dentro del Panel en vez de estirar la página.
+        maxBodyHeight="min(62vh, 720px)"
+        emptyTitle={
+          sales.length === 0
             ? "Sin ventas registradas en el proyecto todavía."
-            : "Ninguna venta coincide con los filtros aplicados."}
-        </p>
-      ) : (
-        <div className="overflow-x-auto rounded-md border border-border">
-          <table className="w-full min-w-[1080px] text-sm">
-            <thead className="bg-surface text-left text-xs uppercase tracking-wide text-fg-subtle">
-              <tr>
-                <th className="px-3 py-3 font-medium">Alumno</th>
-                <th className="px-3 py-3 font-medium">Producto</th>
-                <th className="px-3 py-3 text-right font-medium">
-                  Monto pactado
-                </th>
-                <th className="px-3 py-3 text-right font-medium">
-                  Monto cobrado
-                </th>
-                {!hideCommission && (
-                  <th className="px-3 py-3 text-right font-medium">Comisión</th>
-                )}
-                <th className="px-3 py-3 font-medium">Método</th>
-                <th className="px-3 py-3 font-medium">Vendedor</th>
-                <th className="px-3 py-3 font-medium">Lanzamiento</th>
-                {canEdit && (
-                  <th className="px-3 py-3 text-right font-medium">Acciones</th>
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {filteredSales.map((s) => {
-                const lead = leadById.get(s.lead_id);
-                const product = productById.get(s.product_id);
-                // Atribución del dueño del lead (autoritativa). Ver notas
-                // en el filtro `closerId` sobre por qué no leemos
-                // `sale.team_member_id`.
-                const closerId = lead?.team_member_id ?? null;
-                const closer = closerId ? teamById.get(closerId) : null;
-                const launch = s.launch_id
-                  ? launchById.get(s.launch_id)
-                  : null;
-                const commission = commissionBySale.get(s.id) ?? {
-                  amount: 0,
-                  currency: "ARS" as const,
-                };
-                const methodSet = methodIdsBySale.get(s.id);
-                const methodDisplay = renderMethodCell(
-                  methodSet,
-                  paymentMethodById,
-                );
-                const salePayments = paymentsBySaleId.get(s.id) ?? [];
-                const saleInstallments = installmentsBySaleId.get(s.id) ?? [];
-                const saleCurrency: Currency =
-                  fxLookup?.bySaleId[s.id]?.currency ?? "ARS";
-                const collectedDisplay = collectedForSale(
-                  saleCurrency,
-                  salePayments,
-                  fxLookup,
-                );
-
-                const leadForModal: Pick<
-                  LeadRow,
-                  "id" | "name" | "launch_id" | "team_member_id"
-                > = lead
-                  ? {
-                      id: lead.id,
-                      name: lead.name,
-                      launch_id: lead.launch_id,
-                      team_member_id: lead.team_member_id,
-                    }
-                  : {
-                      id: s.lead_id,
-                      name: "—",
-                      launch_id: null,
-                      team_member_id: s.team_member_id,
-                    };
-
-                return (
-                  <tr
-                    key={s.id}
-                    className="border-t border-border hover:bg-surface"
-                  >
-                    <td className="px-3 py-3 font-medium text-fg">
-                      <SaleModal
-                        triggerLabel={lead?.name ?? "—"}
-                        triggerClassName="underline-offset-2 hover:underline"
-                        lead={leadForModal}
-                        sales={[s]}
-                        saleRanks={rankBySaleId}
-                        paymentsBySaleId={new Map([[s.id, salePayments]])}
-                        installmentsBySaleId={
-                          new Map([[s.id, saleInstallments]])
-                        }
-                        invoicesBySaleId={
-                          new Map([[s.id, invoicesBySaleId.get(s.id) ?? []]])
-                        }
-                        initialSaleId={s.id}
-                        allowCreateAnother={false}
-                        modalities={modalities}
-                        products={products}
-                        rules={rules}
-                        paymentMethods={paymentMethods}
-                        teamMembers={teamMembers}
-                        createSaleAction={createSaleAction.bind(
-                          null,
-                          leadForModal.id,
-                        )}
-                        updateProductAction={(saleId, productId) =>
-                          updateSaleProductAction(saleId, productId)
-                        }
-                        recalculateAction={recalculateSaleAction}
-                        updateSaleAction={updateSaleAction}
-                        addPaymentAction={addPaymentAction}
-                        deletePaymentAction={deletePaymentAction}
-                        deleteSaleAction={deleteSaleAction}
-                        updatePaymentInstallmentAction={
-                          updatePaymentInstallmentAction
-                        }
-                        updatePaymentMethodAction={updatePaymentMethodAction}
-                        assignLeadOwnerAction={
-                          canEdit ? assignLeadOwnerAction : undefined
-                        }
-                        fxLookup={fxLookup}
-                        hideCommission={hideCommission}
-                      />
-                    </td>
-                    <td className="px-3 py-3 text-fg-muted">
-                      {product?.name ?? "—"}
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums text-fg">
-                      {fmtRow(Number(s.total_amount), s.id)}
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums text-fg">
-                      <div className="flex items-center justify-end gap-1">
-                        <span>
-                          {fxLookup
-                            ? fmtNative(collectedDisplay.amount, collectedDisplay.currency)
-                            : fmtMoney(collectedDisplay.amount)}
-                        </span>
-                        {collectedDisplay.mixed && (
-                          <span
-                            className="rounded bg-warning/15 px-1 py-0.5 text-[10px] font-medium text-warning"
-                            title="Los cobros de esta venta están en moneda distinta al pactado. Total mostrado convertido a USD."
-                          >
-                            moneda distinta
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    {!hideCommission && (
-                      <td className="px-3 py-3 text-right tabular-nums text-accent">
-                        {fmtNative(commission.amount, commission.currency)}
-                      </td>
-                    )}
-                    <td
-                      className="px-3 py-3 text-fg-muted"
-                      title={methodDisplay.title}
-                    >
-                      {methodDisplay.text}
-                    </td>
-                    <td className="px-3 py-3 text-fg-muted">
-                      {closer?.name ?? (
-                        <span className="text-warning">Sin asignar</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-3 text-fg-muted">
-                      {launch?.name ?? "—"}
-                    </td>
-                    {canEdit && (
-                      <td className="px-3 py-3">
-                        <div className="flex items-center justify-end gap-2">
-                          <SaleModal
-                            triggerLabel="Editar"
-                            triggerClassName="rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg hover:bg-bg-elevated"
-                            lead={leadForModal}
-                            sales={[s]}
-                            saleRanks={rankBySaleId}
-                            paymentsBySaleId={
-                              new Map([[s.id, salePayments]])
-                            }
-                            installmentsBySaleId={
-                              new Map([[s.id, saleInstallments]])
-                            }
-                            invoicesBySaleId={
-                              new Map([[s.id, invoicesBySaleId.get(s.id) ?? []]])
-                            }
-                            initialSaleId={s.id}
-                            allowCreateAnother={false}
-                            modalities={modalities}
-                            products={products}
-                            rules={rules}
-                            paymentMethods={paymentMethods}
-                            teamMembers={teamMembers}
-                            createSaleAction={createSaleAction.bind(
-                              null,
-                              leadForModal.id,
-                            )}
-                            updateProductAction={(saleId, productId) =>
-                              updateSaleProductAction(saleId, productId)
-                            }
-                            recalculateAction={recalculateSaleAction}
-                            updateSaleAction={updateSaleAction}
-                            addPaymentAction={addPaymentAction}
-                            deletePaymentAction={deletePaymentAction}
-                            deleteSaleAction={deleteSaleAction}
-                            updatePaymentInstallmentAction={
-                              updatePaymentInstallmentAction
-                            }
-                            updatePaymentMethodAction={
-                              updatePaymentMethodAction
-                            }
-                            assignLeadOwnerAction={
-                              canEdit ? assignLeadOwnerAction : undefined
-                            }
-                            fxLookup={fxLookup}
-                            hideCommission={hideCommission}
-                          />
-                          <DeleteSaleButton
-                            saleId={s.id}
-                            leadName={lead?.name ?? "alumno"}
-                            paymentCount={salePayments.length}
-                            totalAmountLabel={fmtRow(
-                              Number(s.total_amount) || 0,
-                              s.id,
-                            )}
-                            deleteSaleAction={deleteSaleAction}
-                          />
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-            <tfoot className="border-t-2 border-border bg-surface/60 text-sm">
-              <tr>
-                <td className="px-3 py-3 font-semibold text-fg" colSpan={2}>
-                  {filtersActive
-                    ? `Subtotal filtrado · ${filteredSales.length} venta${filteredSales.length === 1 ? "" : "s"}`
-                    : `Total · ${filteredSales.length} venta${filteredSales.length === 1 ? "" : "s"}`}
-                </td>
-                <td className="px-3 py-3 text-right font-semibold tabular-nums text-fg">
-                  {fmtTotal(totalPactado)}
-                </td>
-                <td className="px-3 py-3 text-right font-semibold tabular-nums text-fg">
-                  {fmtTotal(totalCobrado)}
-                </td>
-                {!hideCommission && (
-                  <td className="px-3 py-3 text-right font-semibold tabular-nums text-accent">
-                    {totalComisionArs > 0 && totalComisionUsd > 0 ? (
-                      <div className="flex flex-col items-end leading-tight">
-                        <span>{fmtNative(totalComisionArs, "ARS")}</span>
-                        <span>{fmtNative(totalComisionUsd, "USD")}</span>
-                      </div>
-                    ) : totalComisionUsd > 0 ? (
-                      fmtNative(totalComisionUsd, "USD")
-                    ) : (
-                      fmtNative(totalComisionArs, "ARS")
-                    )}
-                  </td>
-                )}
-                <td className="px-3 py-3" colSpan={3} />
-                {canEdit && <td className="px-3 py-3" />}
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      )}
+            : "Ninguna venta coincide con los filtros aplicados."
+        }
+        emptyHint={
+          sales.length === 0
+            ? canEdit
+              ? "Cargá la primera con + Nueva venta."
+              : undefined
+            : "Ajustá o limpiá los filtros desde el botón Filtros."
+        }
+        totalsRow={{
+          label: filtersActive
+            ? `Subtotal filtrado · ${filteredSales.length} venta${filteredSales.length === 1 ? "" : "s"}`
+            : `Total · ${filteredSales.length} venta${filteredSales.length === 1 ? "" : "s"}`,
+          // Cubre Alumno + Producto; los importes arrancan en "Monto pactado".
+          labelSpan: 2,
+          cells: {
+            pactado: fmtTotal(totalPactado),
+            cobrado: fmtTotal(totalCobrado),
+            // La comisión NO se convierte entre monedas (decisión de negocio,
+            // migración 0107): con mezcla se muestran los dos totales.
+            comision:
+              totalComisionArs > 0 && totalComisionUsd > 0 ? (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    flexDirection: "column",
+                    alignItems: "flex-end",
+                    lineHeight: 1.25,
+                  }}
+                >
+                  <span>{fmtNative(totalComisionArs, "ARS")}</span>
+                  <span>{fmtNative(totalComisionUsd, "USD")}</span>
+                </span>
+              ) : totalComisionUsd > 0 ? (
+                fmtNative(totalComisionUsd, "USD")
+              ) : (
+                fmtNative(totalComisionArs, "ARS")
+              ),
+          },
+        }}
+      />
     </div>
   );
+}
+
+/**
+ * Trigger del nombre del alumno: se lee como texto de la celda, no como
+ * botón. El subrayado sólo aparece en hover (vía clase, ver call site).
+ */
+const nameTriggerStyle: CSSProperties = {
+  background: "none",
+  border: "none",
+  padding: 0,
+  // La tipografía la hereda del <td> (el reset del repo pone `font: inherit`
+  // en los botones); acá sólo se refuerza el peso del nombre.
+  fontWeight: 600,
+  color: "var(--kg-text-1)",
+  textAlign: "left",
+  cursor: "pointer",
+};
+
+/** Celda numérica con un dot de estado al lado del número (nunca encima). */
+const numericCellStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "flex-end",
+  gap: 6,
+};
+
+/** Placeholder gris para celdas sin valor. */
+function Dash() {
+  return <span style={{ color: "var(--kg-text-3)" }}>—</span>;
 }
 
 /**
@@ -952,9 +1036,9 @@ export function ProjectSalesView({
 function renderMethodCell(
   methodSet: ReadonlySet<string | null> | undefined,
   paymentMethodById: ReadonlyMap<string, PaymentMethodRow>,
-): { text: React.ReactNode; title?: string } {
+): { text: ReactNode; title?: string } {
   if (!methodSet || methodSet.size === 0) {
-    return { text: "—" };
+    return { text: <Dash /> };
   }
   const withMethod = Array.from(methodSet).filter(
     (id): id is string => id !== null,
@@ -965,9 +1049,9 @@ function renderMethodCell(
     .sort((a, b) => a.localeCompare(b));
 
   if (names.length === 0) {
-    // Solo cobros sin método.
+    // Solo cobros sin método. El ámbar ya no pinta el texto: vive en el dot.
     return {
-      text: <span className="text-warning">Sin método</span>,
+      text: <StatusPill text="Sin método" tone={TONE_VAR.warning} />,
     };
   }
   if (names.length === 1) {
@@ -975,9 +1059,7 @@ function renderMethodCell(
     if (hasNull) {
       return {
         text: (
-          <>
-            {label} <span className="text-warning">+ sin método</span>
-          </>
+          <StatusPill text={`${label} + sin método`} tone={TONE_VAR.warning} />
         ),
         title: `${label}; algún cobro sin método asignado`,
       };
@@ -1011,9 +1093,45 @@ function methodLabelPlain(
   return names.join(", ");
 }
 
-function FilterBar({
+// ─── Filtros (viven en el drawer de página) ───────────────────────────────
+
+/**
+ * Pills del estado de cobro. `RangePills` usa el propio string como label y
+ * como value; el mapa traduce pill ↔ `CollectionStatus` para no tocar el
+ * contrato del filtro (`saleMatches` sigue leyendo `all|paid|partial|unpaid`).
+ */
+const COLLECTION_PILLS = ["Todas", "Cobrada", "Parcial", "Sin cobrar"] as const;
+type CollectionPill = (typeof COLLECTION_PILLS)[number];
+const PILL_TO_COLLECTION: Record<CollectionPill, CollectionStatus> = {
+  Todas: "all",
+  Cobrada: "paid",
+  Parcial: "partial",
+  "Sin cobrar": "unpaid",
+};
+const COLLECTION_TO_PILL: Record<CollectionStatus, CollectionPill> = {
+  all: "Todas",
+  paid: "Cobrada",
+  partial: "Parcial",
+  unpaid: "Sin cobrar",
+};
+
+/**
+ * Bloque de filtros del drawer.
+ *
+ * POR QUÉ NO USA `KgFilterSelect`
+ * Esa primitiva es URL-first: cada opción lleva un `href` y elegir dispara
+ * `router.push`. Los filtros de esta vista NO viven en la URL — la page trae
+ * TODAS las ventas del proyecto y el filtrado (más el subset que exporta el
+ * xlsx) es en memoria, instantáneo. Moverlos a la URL convertiría cada cambio
+ * en una navegación con re-render del server component (refetch completo) y en
+ * una entrada de historial. Por eso se replica el look de `KgFilterSelect` con
+ * `value`/`onChange` local. Ver reporte de migración.
+ */
+function SalesFilters({
   filters,
   onChange,
+  searchKey,
+  onClear,
   launches,
   closers,
   products,
@@ -1027,6 +1145,8 @@ function FilterBar({
 }: {
   readonly filters: FilterState;
   readonly onChange: (next: FilterState) => void;
+  readonly searchKey: number;
+  readonly onClear: () => void;
   readonly launches: ReadonlyArray<{ id: string; name: string }>;
   readonly closers: ReadonlyArray<
     Pick<TeamMemberRow, "id" | "name" | "active">
@@ -1041,114 +1161,177 @@ function FilterBar({
   readonly filtersActive: boolean;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface/40 px-3 py-2">
-      <input
-        type="search"
-        placeholder="Buscar por nombre del alumno…"
-        value={filters.query}
-        onChange={(e) => onChange({ ...filters, query: e.target.value })}
-        className="min-w-[14rem] flex-1 rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg placeholder:text-fg-subtle"
-        aria-label="Buscar alumno"
-      />
-      <select
-        value={filters.launchId}
-        onChange={(e) => onChange({ ...filters, launchId: e.target.value })}
-        className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg"
-        aria-label="Filtrar por lanzamiento"
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div
+        style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}
       >
-        <option value="all">Todos los lanzamientos</option>
-        {hasUnassignedLaunch && (
-          <option value={UNASSIGNED_LAUNCH}>Sin launch</option>
-        )}
-        {launches.map((l) => (
-          <option key={l.id} value={l.id}>
-            {l.name}
-          </option>
-        ))}
-      </select>
-      <select
-        value={filters.closerId}
-        onChange={(e) => onChange({ ...filters, closerId: e.target.value })}
-        className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg"
-        aria-label="Filtrar por vendedor"
-      >
-        <option value="all">Todos los vendedores</option>
-        {hasUnassignedCloser && (
-          <option value={UNASSIGNED_CLOSER}>Sin asignar</option>
-        )}
-        {closers.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name}
-            {!c.active ? " (inactivo)" : ""}
-          </option>
-        ))}
-      </select>
-      <select
-        value={filters.productId}
-        onChange={(e) => onChange({ ...filters, productId: e.target.value })}
-        className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg"
-        aria-label="Filtrar por producto"
-      >
-        <option value="all">Todos los productos</option>
-        {products.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
-            {!p.active ? " (inactivo)" : ""}
-          </option>
-        ))}
-      </select>
-      <select
-        value={filters.paymentMethodId}
-        onChange={(e) =>
-          onChange({ ...filters, paymentMethodId: e.target.value })
-        }
-        className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg"
-        aria-label="Filtrar por método de pago"
-      >
-        <option value="all">Todos los métodos</option>
-        {hasNoMethodPayment && (
-          <option value={NO_METHOD}>Sin método asignado</option>
-        )}
-        {paymentMethods.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.name}
-            {!m.active ? " (inactivo)" : ""}
-          </option>
-        ))}
-      </select>
-      <select
-        value={filters.collection}
-        onChange={(e) =>
-          onChange({
-            ...filters,
-            collection: e.target.value as CollectionStatus,
-          })
-        }
-        className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-fg"
-        aria-label="Filtrar por estado de cobro"
-      >
-        <option value="all">Cualquier estado</option>
-        <option value="paid">Cobrada</option>
-        <option value="partial">Parcial</option>
-        <option value="unpaid">Sin cobrar</option>
-      </select>
-      <span className="text-xs text-fg-subtle">
-        {filtersActive
-          ? `${filteredSalesCount} de ${totalSalesCount} ventas`
-          : `${totalSalesCount} ventas`}
-      </span>
-      {filtersActive && (
-        <button
-          type="button"
-          onClick={() => onChange(EMPTY_FILTERS)}
-          className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg hover:bg-bg-elevated"
+        <label
+          htmlFor="ventas-buscar"
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)", fontWeight: 600 }}
         >
-          Limpiar
-        </button>
-      )}
+          Buscar
+        </label>
+        {/*
+          Input NO controlado a propósito: el nodo de filtros se registra en el
+          sheet vía efecto, así que si el value viviera en el estado del padre
+          cada tecla re-registraría el grupo y el <input> quedaría un commit
+          detrás del DOM (lo aprendimos migrando leads). La `key` lo remonta
+          cuando "Limpiar" resetea los filtros desde afuera.
+        */}
+        <input
+          key={`ventas-buscar-${searchKey}`}
+          id="ventas-buscar"
+          type="search"
+          className="kg-focus"
+          placeholder="Nombre del alumno…"
+          defaultValue={filters.query}
+          onChange={(e) => onChange({ ...filters, query: e.target.value })}
+          aria-label="Buscar alumno"
+          style={filterFieldStyle}
+        />
+      </div>
+
+      <FilterSelect
+        id="ventas-launch"
+        label="Lanzamiento"
+        value={filters.launchId}
+        onChange={(v) => onChange({ ...filters, launchId: v })}
+        options={[
+          { value: "all", label: "Todos los lanzamientos" },
+          ...(hasUnassignedLaunch
+            ? [{ value: UNASSIGNED_LAUNCH, label: "Sin launch" }]
+            : []),
+          ...launches.map((l) => ({ value: l.id, label: l.name })),
+        ]}
+      />
+
+      <FilterSelect
+        id="ventas-vendedor"
+        label="Vendedor"
+        value={filters.closerId}
+        onChange={(v) => onChange({ ...filters, closerId: v })}
+        options={[
+          { value: "all", label: "Todos los vendedores" },
+          ...(hasUnassignedCloser
+            ? [{ value: UNASSIGNED_CLOSER, label: "Sin asignar" }]
+            : []),
+          ...closers.map((c) => ({
+            value: c.id,
+            label: `${c.name}${c.active ? "" : " (inactivo)"}`,
+          })),
+        ]}
+      />
+
+      <FilterSelect
+        id="ventas-producto"
+        label="Producto"
+        value={filters.productId}
+        onChange={(v) => onChange({ ...filters, productId: v })}
+        options={[
+          { value: "all", label: "Todos los productos" },
+          ...products.map((p) => ({
+            value: p.id,
+            label: `${p.name}${p.active ? "" : " (inactivo)"}`,
+          })),
+        ]}
+      />
+
+      <FilterSelect
+        id="ventas-metodo"
+        label="Método de pago"
+        value={filters.paymentMethodId}
+        onChange={(v) => onChange({ ...filters, paymentMethodId: v })}
+        options={[
+          { value: "all", label: "Todos los métodos" },
+          ...(hasNoMethodPayment
+            ? [{ value: NO_METHOD, label: "Sin método asignado" }]
+            : []),
+          ...paymentMethods.map((m) => ({
+            value: m.id,
+            label: `${m.name}${m.active ? "" : " (inactivo)"}`,
+          })),
+        ]}
+      />
+
+      <div
+        style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}
+      >
+        <span
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)", fontWeight: 600 }}
+        >
+          Estado de cobro
+        </span>
+        {/* Cuatro opciones cortas y excluyentes → pills, no select. El wrapper
+            scrollea en 390px para que no desborde el bottom-sheet. */}
+        <div style={{ overflowX: "auto", maxWidth: "100%" }}>
+          <RangePills
+            options={COLLECTION_PILLS}
+            value={COLLECTION_TO_PILL[filters.collection]}
+            onChange={(next) =>
+              onChange({ ...filters, collection: PILL_TO_COLLECTION[next] })
+            }
+          />
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          paddingTop: 4,
+          borderTop: "1px solid var(--kg-border-subtle)",
+        }}
+      >
+        <span className="kg-t7 kg-num" style={{ color: "var(--kg-text-3)" }}>
+          {filtersActive
+            ? `${filteredSalesCount} de ${totalSalesCount} ventas`
+            : `${totalSalesCount} ventas`}
+        </span>
+        {filtersActive && (
+          <button
+            type="button"
+            onClick={onClear}
+            className="kg-focus"
+            style={{
+              background: "none",
+              border: "none",
+              padding: 2,
+              fontSize: 11,
+              fontWeight: 700,
+              color: "var(--kg-accent-text)",
+              cursor: "pointer",
+            }}
+          >
+            Limpiar
+          </button>
+        )}
+      </div>
     </div>
   );
 }
+
+/** Campo del drawer. Mismo look que el <select> de `KgFilterSelect`. */
+const filterFieldStyle: CSSProperties = {
+  width: "100%",
+  minWidth: 0,
+  padding: "8px 12px",
+  borderRadius: "var(--kg-r-8)",
+  background: "var(--kg-surface-2-solid)",
+  border: "1px solid var(--kg-border-subtle)",
+  color: "var(--kg-text-1)",
+  fontSize: 12,
+  fontWeight: 600,
+  colorScheme: "dark",
+};
+
+/**
+ * Clon local de `KgFilterSelect` con `value`/`onChange` en vez de `href`. Ver
+ * la nota de `SalesFilters` sobre por qué esta vista no usa la primitiva.
+ */
 
 function DeleteSaleButton({
   saleId,
@@ -1181,7 +1364,13 @@ function DeleteSaleButton({
         });
       }}
       aria-label={`Borrar venta de ${leadName}`}
-      className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-error hover:bg-error/10 disabled:opacity-50"
+      className="kg-focus"
+      style={{
+        ...dangerBtn,
+        padding: "3px 10px",
+        opacity: pending ? 0.5 : 1,
+        cursor: pending ? "wait" : "pointer",
+      }}
     >
       {pending ? "…" : "Borrar"}
     </button>
