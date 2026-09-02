@@ -198,10 +198,19 @@ export default async function ProjectCobrosPage({
   return (
     <div className="flex h-full min-h-0 flex-col gap-5">
       {/*
-        "Pendiente" = pactado − cobrado, el mismo valor del StatCard de abajo.
-        Va sin color: financiar en cuotas es lo normal acá, un saldo abierto no
-        es una alarma. El aviso que sí importa (cobros sin tasa FX) sigue en el
-        banner de abajo porque necesita explicar cómo resolverlo.
+        La barra pinnea la plata mientras el humano scrollea la tabla larga:
+        pactado / cobrado / pendiente. Sin color — financiar en cuotas es lo
+        normal acá, un saldo abierto no es una alarma.
+
+        El 4º stat NO es fijo: aparece solo cuando hay ventas o cobros en ARS
+        sin tasa FX cargada, porque en ese caso los totales de arriba están
+        incompletos y el humano tiene que saberlo aunque el banner explicativo
+        ya se haya ido con el scroll. Sin ese caso no mostramos un "0"
+        permanente, que sería ruido.
+
+        Estos números se repiten hoy en los StatCards de abajo. Se resuelve al
+        migrar esas cards a HeroKpi/SupportKpi (etapa de componentes), donde la
+        fila pasa a llevar métricas que la barra no cubre.
       */}
       <ContextBar
         icon={<IconLaunch size={16} />}
@@ -213,7 +222,15 @@ export default async function ProjectCobrosPage({
             l: "Pendiente",
             v: fmtUsd(Math.max(pledgedRevenue - collectedRevenue, 0)),
           },
-          { l: "Ventas cerradas", v: fmtNumber(salesCount) },
+          ...(missingCount > 0
+            ? [
+                {
+                  l: "Sin tasa FX",
+                  v: fmtNumber(missingCount),
+                  c: "#FFB800",
+                },
+              ]
+            : [{ l: "Ventas cerradas", v: fmtNumber(salesCount) }]),
         ]}
       />
 

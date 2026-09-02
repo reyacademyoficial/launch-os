@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
 
+import { ContextBar } from "@/components/kg/context-bar";
+import { IconLaunch } from "@/components/kg/icons";
 import { Badge } from "@/components/ui/badge";
 import { listAlertRulesForLaunch } from "@/lib/alerts/list";
 import {
   ALERT_METRIC_LABELS,
   type AlertMetric,
 } from "@/lib/alerts/types";
+import { fmtNumber } from "@/lib/format";
 import { userCanEditLaunchesIn } from "@/lib/supabase/auth";
 
 import { AlertRuleForm } from "./rule-form";
@@ -39,83 +42,107 @@ export default async function LaunchAlertasPage({
     userCanEditLaunchesIn(projectId),
   ]);
 
+  const activeRules = rules.filter((r) => r.active).length;
+  // Métricas distintas cubiertas: dos reglas sobre la misma métrica (ej. dos
+  // umbrales de CPL) vigilan lo mismo, así que el count de reglas solo no
+  // dice cuánta superficie del launch está realmente monitoreada.
+  const metricsCovered = new Set(rules.map((r) => r.metric)).size;
+
   return (
-    <div className="space-y-8">
-      <section className="space-y-2">
-        <header>
-          <h2 className="text-base font-semibold text-fg">Reglas de alerta</h2>
-          <p className="text-xs text-fg-subtle">
-            Configurá umbrales por lanzamiento. Cuando se cruzan, el equipo
-            recibe una notificación deduplicada por día.
-          </p>
-        </header>
-      </section>
+    <div className="flex flex-col gap-5">
+      <ContextBar
+        icon={<IconLaunch size={16} />}
+        title="Alertas"
+        stats={[
+          { l: "Reglas", v: fmtNumber(rules.length) },
+          {
+            l: "Activas",
+            v: fmtNumber(activeRules),
+            // Sin reglas activas el launch no dispara ninguna notificación.
+            c: activeRules === 0 ? "#FFB800" : undefined,
+          },
+          { l: "Pausadas", v: fmtNumber(rules.length - activeRules) },
+          { l: "Métricas cubiertas", v: fmtNumber(metricsCovered) },
+        ]}
+      />
 
-      {canEdit && <AlertRuleForm projectId={projectId} launchId={launchId} />}
+      <div className="space-y-8">
+        <section className="space-y-2">
+          <header>
+            <h2 className="text-base font-semibold text-fg">Reglas de alerta</h2>
+            <p className="text-xs text-fg-subtle">
+              Configurá umbrales por lanzamiento. Cuando se cruzan, el equipo
+              recibe una notificación deduplicada por día.
+            </p>
+          </header>
+        </section>
 
-      <section className="space-y-3">
-        {rules.length === 0 ? (
-          <p className="text-sm text-fg-muted">
-            Sin reglas configuradas todavía
-            {canEdit ? "." : ". Pedile al admin/operador que cree alguna."}
-          </p>
-        ) : (
-          <div className="overflow-x-auto rounded-md border border-border">
-            <table className="w-full min-w-[480px] text-sm">
-              <thead className="bg-surface text-left text-xs uppercase tracking-wide text-fg-subtle">
-                <tr>
-                  <th scope="col" className="px-4 py-3 font-medium">
-                    Métrica
-                  </th>
-                  <th scope="col" className="px-4 py-3 font-medium">
-                    Condición
-                  </th>
-                  <th scope="col" className="px-4 py-3 font-medium">
-                    Estado
-                  </th>
-                  {canEdit && (
-                    <th scope="col" className="px-4 py-3 text-right font-medium">
-                      Acciones
+        {canEdit && <AlertRuleForm projectId={projectId} launchId={launchId} />}
+
+        <section className="space-y-3">
+          {rules.length === 0 ? (
+            <p className="text-sm text-fg-muted">
+              Sin reglas configuradas todavía
+              {canEdit ? "." : ". Pedile al admin/operador que cree alguna."}
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-md border border-border">
+              <table className="w-full min-w-[480px] text-sm">
+                <thead className="bg-surface text-left text-xs uppercase tracking-wide text-fg-subtle">
+                  <tr>
+                    <th scope="col" className="px-4 py-3 font-medium">
+                      Métrica
                     </th>
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {rules.map((r) => (
-                  <tr
-                    key={r.id}
-                    className="border-t border-border transition-colors hover:bg-bg-elevated"
-                  >
-                    <td className="px-4 py-3 font-medium text-fg">
-                      {ALERT_METRIC_LABELS[r.metric as AlertMetric]}
-                    </td>
-                    <td className="px-4 py-3 text-fg-muted">
-                      {r.metric === "sin_leads"
-                        ? `≥ ${r.threshold} días`
-                        : `${r.operator} ${r.threshold}`}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge variant={r.active ? "success" : "neutral"}>
-                        {r.active ? "Activa" : "Inactiva"}
-                      </Badge>
-                    </td>
+                    <th scope="col" className="px-4 py-3 font-medium">
+                      Condición
+                    </th>
+                    <th scope="col" className="px-4 py-3 font-medium">
+                      Estado
+                    </th>
                     {canEdit && (
-                      <td className="px-4 py-3 text-right">
-                        <AlertRuleRowActions
-                          projectId={projectId}
-                          launchId={launchId}
-                          ruleId={r.id}
-                          active={r.active}
-                        />
-                      </td>
+                      <th scope="col" className="px-4 py-3 text-right font-medium">
+                        Acciones
+                      </th>
                     )}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+                </thead>
+                <tbody>
+                  {rules.map((r) => (
+                    <tr
+                      key={r.id}
+                      className="border-t border-border transition-colors hover:bg-bg-elevated"
+                    >
+                      <td className="px-4 py-3 font-medium text-fg">
+                        {ALERT_METRIC_LABELS[r.metric as AlertMetric]}
+                      </td>
+                      <td className="px-4 py-3 text-fg-muted">
+                        {r.metric === "sin_leads"
+                          ? `≥ ${r.threshold} días`
+                          : `${r.operator} ${r.threshold}`}
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge variant={r.active ? "success" : "neutral"}>
+                          {r.active ? "Activa" : "Inactiva"}
+                        </Badge>
+                      </td>
+                      {canEdit && (
+                        <td className="px-4 py-3 text-right">
+                          <AlertRuleRowActions
+                            projectId={projectId}
+                            launchId={launchId}
+                            ruleId={r.id}
+                            active={r.active}
+                          />
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   );
 }

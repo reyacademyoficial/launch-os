@@ -169,6 +169,17 @@ html {
   --kg-blur-2: blur(24px);
   --kg-blur-3: blur(40px);
 
+  /*
+    Skeleton · tokens PROPIOS, no reusa las superficies.
+    En dark los valores son los de --kg-surface-1-solid / 2-solid, que es lo
+    que .kg-skel usaba antes. En light NO se puede hacer lo mismo: el light de
+    KG es de superficies blancas planas (surface-1 = surface-2 = #ffffff), así
+    que el gradiente del shimmer colapsaba a blanco-sobre-blanco y el skeleton
+    quedaba invisible. Con tokens propios cada tema elige su par de grises.
+  */
+  --kg-skel-base: #111116;
+  --kg-skel-hi: #16161c;
+
   /* Bordes */
   --kg-border-subtle: rgba(255, 255, 255, 0.06);
   --kg-border-default: rgba(255, 255, 255, 0.1);
@@ -267,6 +278,10 @@ html {
     --kg-blur-2: none;
     --kg-blur-3: none;
 
+    /* Ver la nota en :root — en light el skeleton necesita grises propios. */
+    --kg-skel-base: #e9e7e4;
+    --kg-skel-hi: #f4f2f0;
+
     --kg-border-subtle: rgba(16, 16, 22, 0.07);
     --kg-border-default: rgba(16, 16, 22, 0.12);
     --kg-border-strong: rgba(16, 16, 22, 0.2);
@@ -323,6 +338,10 @@ html[data-theme="light"] {
   --kg-blur-1: none;
   --kg-blur-2: none;
   --kg-blur-3: none;
+
+  /* Ver la nota en :root — en light el skeleton necesita grises propios. */
+  --kg-skel-base: #e9e7e4;
+  --kg-skel-hi: #f4f2f0;
 
   --kg-border-subtle: rgba(16, 16, 22, 0.07);
   --kg-border-default: rgba(16, 16, 22, 0.12);
@@ -466,9 +485,9 @@ html[data-theme="light"] {
 .kg-skel {
   background: linear-gradient(
     90deg,
-    var(--kg-surface-1-solid) 0px,
-    var(--kg-surface-2-solid) 160px,
-    var(--kg-surface-1-solid) 320px
+    var(--kg-skel-base) 0px,
+    var(--kg-skel-hi) 160px,
+    var(--kg-skel-base) 320px
   );
   background-size: 640px 100%;
   animation: kg-shim 1.3s linear infinite;
