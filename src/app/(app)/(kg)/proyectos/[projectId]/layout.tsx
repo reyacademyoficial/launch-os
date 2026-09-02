@@ -2,7 +2,6 @@ import { redirect } from "next/navigation";
 
 import { KgProjectNav } from "@/components/kg/project-nav";
 import type { TabItem } from "@/components/kg/tabs-bar";
-import { canViewAuditLog } from "@/lib/auth/permissions";
 import { listAccessibleProjects } from "@/lib/projects/list";
 import { requireSessionProfile } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -59,14 +58,16 @@ export default async function ProjectLayout({
 
   const base = `/proyectos/${projectId}`;
   const isOperador = profile.role === "operador";
-  const isCliente = profile.role === "cliente";
   const isCloser = profile.role === "closer";
 
   // Reglas heredadas de la sidebar del ProjectShell:
   //   operador → sin Overview (no ve KPIs agregados del proyecto)
-  //   cliente  → sin Leads (la page ya lo rebota al overview)
   //   closer   → SOLO Ventas + Cobros
-  //   auditoría → canViewAuditLog (operador y cliente afuera)
+  //
+  // Leads y Auditoría se sacaron del menú (decisión de producto, no técnica):
+  // las rutas `/leads` y `/audit` y todo su código siguen intactos — solo
+  // dejaron de listarse como pestañas. Quien tenga el link directo (ej. el
+  // kanban linkeando a `/leads` desde otro lado) sigue entrando normal.
   const tabs: readonly TabItem[] = isCloser
     ? [
         { href: `${base}/ventas`, label: "Ventas" },
@@ -78,10 +79,6 @@ export default async function ProjectLayout({
         { href: `${base}/analitica`, label: "Analítica" },
         { href: `${base}/ventas`, label: "Ventas" },
         { href: `${base}/cobros`, label: "Cobros" },
-        ...(isCliente ? [] : [{ href: `${base}/leads`, label: "Leads" }]),
-        ...(canViewAuditLog(profile, projectId)
-          ? [{ href: `${base}/audit`, label: "Auditoría" }]
-          : []),
       ];
 
   return (
