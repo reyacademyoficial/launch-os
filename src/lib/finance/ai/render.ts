@@ -8,10 +8,33 @@
  *   · Tablas en pipe: compactas y ordenadas, el modelo las lee bien.
  *   · Todo en USD y declarado como tal en el encabezado.
  *
+ * ── Dos niveles de detalle ────────────────────────────────────────────────
+ * El snapshot viaja en el system prompt de CADA request, así que es el costo
+ * dominante de un hilo largo. `detail: "compact"` recorta las listas largas
+ * (gastos individuales, impagos, nómina por persona) y deja los agregados.
+ *
+ * El criterio: a partir del segundo turno el detalle fino ya circuló por la
+ * conversación — está en la respuesta anterior del asistente, que sigue en
+ * el historial. Repetir las 30 filas de gastos en cada turno es pagar dos
+ * veces por el mismo dato. Si el modelo necesita un detalle que no está en
+ * la vista compacta, el bloque se lo dice explícitamente para que lo pida en
+ * vez de inventarlo.
+ *
  * Es una función pura: entra el snapshot, sale un string. Testeable.
  */
 
 import type { FinanceSnapshot } from "./types";
+
+export type SnapshotDetail = "full" | "compact";
+
+export interface RenderOptions {
+  /** "full" en el primer turno; "compact" de ahí en más. Default "full". */
+  readonly detail?: SnapshotDetail;
+}
+
+/** Cortes de las listas en modo compacto — lo suficiente para razonar, no todo. */
+const COMPACT_CATEGORIES = 8;
+const COMPACT_RECURRING = 8;
 
 /** Entero sin separadores. Un monto que no existe es "—", nunca 0. */
 function n(value: number | null | undefined): string {
@@ -25,7 +48,12 @@ function pct(value: number | null | undefined): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
-export function renderFinanceSnapshot(s: FinanceSnapshot): string {
+export function renderFinanceSnapshot(
+  s: FinanceSnapshot,
+  opts: RenderOptions = {},
+): string {
+  const detail = opts.detail ?? "full";
+  const compact = detail === "compact";
   const out: string[] = [];
 
   out.push("# SNAPSHOT FINANCIERO");
@@ -87,14 +115,21 @@ export function renderFinanceSnapshot(s: FinanceSnapshot): string {
   }
 
   // ─── Categorías ──────────────────────────────────────────────────────
-  out.push("", "## Gastos por categoría (ventana completa)");
-  if (s.categories.length === 0) {
+  const categories = compact
+    ? s.categories.slice(0, COMPACT_CATEGORIES)
+    : s.categories;
+  const hiddenCategories = s.categories.length - categories.length;
+  out.push(
+    "",
+    `## Gastos por categoría (ventana completa)${hiddenCategories > 0 ? ` — top ${categories.length}` : ""}`,
+  );
+  if (categories.length === 0) {
     out.push("Sin gastos cargados en la ventana.");
   } else {
     out.push(
       "categoria | bucket_pyl | total | %_del_gasto | cant | meses_con_gasto | promedio_mensual | ultimo_mes_cerrado",
     );
-    for (const c of s.categories) {
+    for (const c of categories) {
       out.push(
         [
           c.label,
@@ -108,20 +143,27 @@ export function renderFinanceSnapshot(s: FinanceSnapshot): string {
         ].join(" | "),
       );
     }
+    if (hiddenCategories > 0) {
+      out.push(`(+${hiddenCategories} categorías menores no listadas)`);
+    }
   }
 
   // ─── Recurrentes ─────────────────────────────────────────────────────
+  const recurring = compact
+    ? s.recurring.slice(0, COMPACT_RECURRING)
+    : s.recurring;
+  const hiddenRecurring = s.recurring.length - recurring.length;
   out.push(
     "",
-    `## Gastos recurrentes (misma descripción en 3+ meses distintos)`,
+    `## Gastos recurrentes (misma descripción en 3+ meses distintos)${hiddenRecurring > 0 ? ` — top ${recurring.length}` : ""}`,
   );
-  if (s.recurring.length === 0) {
+  if (recurring.length === 0) {
     out.push("No se detectaron gastos recurrentes en la ventana.");
   } else {
     out.push(
       "descripcion | categoria | proveedor | meses | total | promedio_mensual | min | max | ultimo (fecha/monto)",
     );
-    for (const r of s.recurring) {
+    for (const r of recurring) {
       out.push(
         [
           r.description,
@@ -136,6 +178,23 @@ export function renderFinanceSnapshot(s: FinanceSnapshot): string {
         ].join(" | "),
       );
     }
+    if (hiddenRecurring > 0) {
+      out.push(`(+${hiddenRecurring} recurrentes menores no listados)`);
+    }
+  }
+
+  // ─── Bloques de detalle fino ─────────────────────────────────────────
+  // Son las listas más caras en tokens y las menos consultadas después del
+  // primer turno. En compacto se reemplazan por su resumen de una línea.
+  if (compact) {
+    out.push("", "## Detalle fino (no incluido en este turno)");
+    out.push(
+      `- Gastos individuales, impagos y nómina por persona se listaron al inicio del hilo. Resúmenes: ${s.topExpenses.length} gastos grandes (el mayor: ${n(s.topExpenses[0]?.netUsd ?? 0)}), ${s.unpaidExpenses.length} impagos, ${s.payrollByPerson.length} personas en nómina.`,
+    );
+    out.push(
+      "- Si necesitás una fila puntual que no está acá, pedísela al usuario o remitite a lo que ya dijiste en el hilo. NO la inventes.",
+    );
+    return finish(out, s);
   }
 
   // ─── Top gastos ──────────────────────────────────────────────────────
@@ -197,11 +256,17 @@ export function renderFinanceSnapshot(s: FinanceSnapshot): string {
     }
   }
 
-  // ─── Avisos ──────────────────────────────────────────────────────────
+  return finish(out, s);
+}
+
+/**
+ * Cierre común de ambos modos. Los avisos de calidad de dato van SIEMPRE:
+ * son la diferencia entre un análisis confiable y uno que suena confiable.
+ */
+function finish(out: string[], s: FinanceSnapshot): string {
   if (s.warnings.length > 0) {
     out.push("", "## Avisos de calidad de dato");
     for (const w of s.warnings) out.push(`- ${w}`);
   }
-
   return out.join("\n");
 }

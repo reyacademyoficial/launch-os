@@ -15,9 +15,9 @@
 import type { ChatTurn } from "@/lib/ai/client";
 
 export interface TrimHistoryOptions {
-  /** Tope de turnos (user + assistant) que viajan. Default 20. */
+  /** Tope de turnos (user + assistant) que viajan. Default 14. */
   readonly maxTurns?: number;
-  /** Tope de caracteres sumados. Default 24000 (~6k tokens). */
+  /** Tope de caracteres sumados. Default 10000 (~2.5k tokens). */
   readonly maxChars?: number;
 }
 
@@ -31,8 +31,10 @@ export function trimHistory(
   turns: readonly ChatTurn[],
   opts: TrimHistoryOptions = {},
 ): TrimmedHistory {
-  const maxTurns = opts.maxTurns ?? 20;
-  const maxChars = opts.maxChars ?? 24_000;
+  // 14 turnos ≈ 7 idas y vueltas: cubre de sobra las referencias hacia atrás
+  // ("sacá ese", "el segundo") sin arrastrar un hilo entero en cada request.
+  const maxTurns = opts.maxTurns ?? 14;
+  const maxChars = opts.maxChars ?? 10_000;
 
   const kept: ChatTurn[] = [];
   let chars = 0;
