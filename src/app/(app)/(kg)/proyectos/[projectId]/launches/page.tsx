@@ -127,7 +127,7 @@ export default async function LaunchesPage({
   const finalizados = launches.filter((l) => l.status === "Finalizado").length;
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-5">
+    <div className="flex flex-col gap-5">
       <ContextBar
         icon={<IconLaunch size={16} />}
         title="Lanzamientos"

@@ -143,7 +143,7 @@ export default async function AnalyticsPage({
   const launchesForFilter = launches.map((l) => ({ id: l.id, name: l.name }));
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-5">
+    <div className="flex flex-col gap-5">
       {/*
         Los filtros y las tabs scrollean fuera de vista en tablas largas, así
         que la barra repite el estado que cambia lo que se está leyendo: cuánto

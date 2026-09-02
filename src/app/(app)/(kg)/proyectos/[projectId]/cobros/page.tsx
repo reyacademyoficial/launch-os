@@ -196,7 +196,7 @@ export default async function ProjectCobrosPage({
   const executeBulkAction = recalculateCommissionsBulk.bind(null, projectId);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-5">
+    <div className="flex flex-col gap-5">
       {/*
         La barra pinnea la plata mientras el humano scrollea la tabla larga:
         pactado / cobrado / pendiente. Sin color — financiar en cuotas es lo

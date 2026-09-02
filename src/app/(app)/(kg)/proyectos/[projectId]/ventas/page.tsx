@@ -143,7 +143,7 @@ export default async function ProjectSalesPage({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-5">
+    <div className="flex flex-col gap-5">
       {/*
         Conteos y no importes: las ventas del proyecto conviven en ARS y USD y
         acá el contexto FX sólo se usa fila por fila (fxLookup), no para un

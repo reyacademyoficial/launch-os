@@ -216,7 +216,7 @@ export default async function LeadsPage({
   const activeMembers = teamMembers.filter((m) => m.active).length;
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-5">
+    <div className="flex flex-col gap-5">
       {/*
         El total de leads NO entra acá: cada vista lo trae por su cuenta (la
         tabla paginada dentro de `TablaTab`, el kanban filtrado a promovidos),

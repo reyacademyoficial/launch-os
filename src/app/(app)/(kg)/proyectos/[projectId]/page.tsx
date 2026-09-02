@@ -3,18 +3,15 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { LaunchFormModal } from "@/components/dashboard/launches/launch-form-modal";
-import { StatusBadge } from "@/components/dashboard/launches/status-badge";
 import { ContextBar } from "@/components/kg/context-bar";
+import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { IconLaunch } from "@/components/kg/icons";
-import {
-  fmtLaunchWindow,
-  fmtMoney,
-  fmtMoneyDecimals,
-  fmtMultiplier,
-  fmtNumber,
-  fmtPercent,
-} from "@/lib/format";
+import { Panel } from "@/components/kg/panel";
+import { StatusPill } from "@/components/kg/status-pill";
+import { fmtLaunchWindow, fmtMoney, fmtNumber } from "@/lib/format";
 import { calculateLaunchKPIs } from "@/lib/kpis";
+import { launchStatusTone } from "@/lib/launches/status-tone";
+import type { LaunchStatus } from "@/lib/launches/types";
 import { listAggregatesForProject } from "@/lib/launch-daily/list";
 import {
   getKanbanSalesAggregatesForProject,
@@ -37,10 +34,21 @@ import {
 } from "@/lib/supabase/auth";
 
 import { createLaunch } from "./launches/actions";
+import { OverviewKpis } from "./overview-kpis";
 
 export const metadata: Metadata = { title: "Overview" };
 
 const RECENT_LIMIT = 5;
+
+/** Fila ya resuelta de la tabla "Últimos lanzamientos". */
+interface RecentLaunchRow {
+  readonly id: string;
+  readonly name: string;
+  readonly window: string;
+  readonly status: LaunchStatus | string | null;
+  /** Monto YA formateado — el formateador depende del FX de cada launch. */
+  readonly revenueEstimated: string;
+}
 
 export default async function OverviewPage({
   params,
@@ -143,8 +151,8 @@ export default async function OverviewPage({
   const aggInUsd = Array.from(effectiveRateByLaunch.values()).some(
     (r) => r !== null,
   );
-  const fAgg = aggInUsd ? fmtUsd : fmtMoney;
-  const fAggDec = aggInUsd ? fmtUsd : fmtMoneyDecimals;
+  // El par de formateadores USD/local ya no vive acá: se eligen del lado
+  // client en `OverviewKpis`, que solo recibe `inUsd`.
   const createAction = createLaunch.bind(null, projectId);
   const copyableLaunches = launches.map((l) => ({ id: l.id, name: l.name }));
 
@@ -173,12 +181,82 @@ export default async function OverviewPage({
     );
   }
 
-  const profitColor = agg.totalProfit >= 0 ? "text-success" : "text-error";
-  const roasColor = agg.aggregateROAS >= 1 ? "text-success" : "text-error";
   const recent = launches.slice(0, RECENT_LIMIT);
 
+  // Filas de la tabla de "Últimos lanzamientos". El KPI por lanzamiento se
+  // resuelve acá (y no dentro de la columna) porque `calculateLaunchKPIs`
+  // necesita los mapas de FX y de agregados que ya trajo esta page; la
+  // columna solo formatea lo que le llega.
+  const recentRows: readonly RecentLaunchRow[] = recent.map((l) => {
+    const launchRow = l as unknown as { ads_currency?: string };
+    const revenueRate = effectiveRateByLaunch.get(l.id) ?? null;
+    const usdRevenue = revenueUsdMap.get(l.id);
+
+    const lk = calculateLaunchKPIs(l, {
+      adsAggregate: adsAggregates.get(l.id),
+      kanbanSalesAggregate: kanbanSalesAggregates.get(l.id),
+      adsRatePerUsd:
+        launchRow.ads_currency === "ARS" && revenueRate ? revenueRate : null,
+      kanbanPledgedUsd: usdRevenue?.pledgedUsd ?? null,
+      kanbanCollectedUsd: usdRevenue?.collectedUsd ?? null,
+      revenueRatePerUsd: revenueRate,
+    });
+
+    return {
+      id: l.id,
+      name: l.name,
+      window: fmtLaunchWindow(l.date_start, l.date_end),
+      status: l.status,
+      // El formateador se elige por lanzamiento: si tiene tasa de revenue
+      // cargada el monto ya está en USD, si no queda en moneda local.
+      revenueEstimated: (revenueRate ? fmtUsd : fmtMoney)(lk.revenueEstimated),
+    };
+  });
+
+  const recentColumns: ReadonlyArray<Column<RecentLaunchRow>> = [
+    {
+      key: "name",
+      label: "Lanzamiento",
+      render: (r) => (
+        <Link
+          href={`/proyectos/${projectId}/launches/${r.id}`}
+          className="kg-focus"
+          style={{
+            color: "var(--kg-text-1)",
+            fontWeight: 600,
+            textDecoration: "none",
+          }}
+        >
+          {r.name}
+        </Link>
+      ),
+    },
+    {
+      key: "window",
+      label: "Fecha",
+      width: "230px",
+      render: (r) => (
+        <span style={{ color: "var(--kg-text-3)" }}>{r.window}</span>
+      ),
+    },
+    {
+      key: "status",
+      label: "Status",
+      width: "140px",
+      render: (r) => <StatusPill text={r.status} tone={launchStatusTone(r.status)} />,
+    },
+    {
+      key: "revenue",
+      label: "Revenue est.",
+      align: "right",
+      numeric: true,
+      width: "160px",
+      render: (r) => r.revenueEstimated,
+    },
+  ];
+
   return (
-    <div className="flex h-full min-h-0 flex-col gap-5">
+    <div className="flex flex-col gap-5">
       {/*
         La barra lleva la FORMA del proyecto (cuántos lanzamientos, en qué
         estado, cuántas ventas), no su economía. La economía ya vive en las
@@ -200,141 +278,85 @@ export default async function OverviewPage({
         ]}
       />
 
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold">{name}</h1>
-          {project?.business_name && (
-            <p className="mt-1 text-sm text-fg-subtle">{project.business_name}</p>
-          )}
-        </div>
-        <Link
-          href={`/proyectos/${projectId}/launches`}
-          className="text-sm text-fg-muted hover:text-fg"
-        >
-          Ver todos →
-        </Link>
+      <header>
+        <h1 className="kg-t3" style={{ color: "var(--kg-text-1)" }}>
+          {name}
+        </h1>
+        {project?.business_name && (
+          <p className="mt-1 text-sm" style={{ color: "var(--kg-text-3)" }}>
+            {project.business_name}
+          </p>
+        )}
       </header>
 
-      {/* Aggregate KPIs */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <AggCard label="Revenue total" value={fAgg(agg.totalRevenue)} />
-        <AggCard label="Inversión total" value={fAgg(agg.totalInvestment)} />
-        <AggCard
-          label="Profit"
-          value={fAgg(agg.totalProfit)}
-          valueClassName={profitColor}
-        />
-        <AggCard
-          label="ROAS agregado"
-          value={fmtMultiplier(agg.aggregateROAS)}
-          valueClassName={roasColor}
-        />
-        <AggCard
-          label="CAC agregado"
-          value={fAggDec(agg.aggregateCAC)}
-          hint={`${fmtNumber(agg.totalVentas)} ventas totales`}
-        />
-        <AggCard
-          label="Leads totales"
-          value={fmtNumber(agg.totalLeads)}
-          hint="Meta + Google + TikTok"
-        />
-        <AggCard
-          label="Show rate agregado"
-          value={fmtPercent(agg.aggregateShowRate)}
-          hint={`${fmtNumber(agg.totalAsistentes)} de ${fmtNumber(agg.totalRegistrados)} reg.`}
-        />
-        <AggCard
-          label="Close rate agregado"
-          value={fmtPercent(agg.aggregateCloseRate)}
-          hint={`${fmtNumber(agg.totalVentas)} de ${fmtNumber(agg.totalAsistentes)} asist.`}
-        />
-      </div>
+      {/*
+        Los 8 AggCard locales pasaron a HeroKpi (Revenue, Profit) + SupportKpi
+        (el resto). El corte a un componente client es obligado: esas
+        primitivas reciben `format` como función y las funciones no cruzan el
+        boundary RSC. Ver el comentario de `overview-kpis.tsx`.
+      */}
+      <OverviewKpis
+        data={{
+          totalRevenue: agg.totalRevenue,
+          totalInvestment: agg.totalInvestment,
+          totalProfit: agg.totalProfit,
+          aggregateROAS: agg.aggregateROAS,
+          aggregateCAC: agg.aggregateCAC,
+          totalLeads: agg.totalLeads,
+          aggregateShowRate: agg.aggregateShowRate,
+          aggregateCloseRate: agg.aggregateCloseRate,
+          totalVentas: agg.totalVentas,
+          totalAsistentes: agg.totalAsistentes,
+          totalRegistrados: agg.totalRegistrados,
+          inUsd: aggInUsd,
+        }}
+      />
 
-      {/* Recent launches */}
-      <section className="space-y-3">
-        <header className="flex items-baseline justify-between">
-          <h2 className="text-base font-semibold text-fg">Últimos lanzamientos</h2>
-          {canEdit && (
-            <LaunchFormModal
-              triggerLabel="+ Nuevo"
-              triggerVariant="secondary"
-              triggerClassName="!px-2 !py-1 !text-xs"
-              title="Nuevo lanzamiento"
-              submitLabel="Crear lanzamiento"
-              action={createAction}
-              copyableLaunches={copyableLaunches}
-              recycleTargetOptions={copyableLaunches}
-            />
-          )}
-        </header>
+      {/*
+        Últimos lanzamientos. La lista de <li> con links pasó a KgDataTable:
+        el dato es tabular (nombre, ventana, status, revenue) y como tabla
+        cierra verticalmente por columna en vez de repetir la etiqueta
+        "Revenue est." en cada fila.
 
-        <ul className="space-y-2">
-          {recent.map((l) => {
-            const launchRow = l as unknown as {
-              ads_currency?: string;
-            };
-            const revenueRate = effectiveRateByLaunch.get(l.id) ?? null;
-            const usdRevenue = revenueUsdMap.get(l.id);
-
-            const lk = calculateLaunchKPIs(l, {
-              adsAggregate: adsAggregates.get(l.id),
-              kanbanSalesAggregate: kanbanSalesAggregates.get(l.id),
-              adsRatePerUsd:
-                launchRow.ads_currency === "ARS" && revenueRate
-                  ? revenueRate
-                  : null,
-              kanbanPledgedUsd: usdRevenue?.pledgedUsd ?? null,
-              kanbanCollectedUsd: usdRevenue?.collectedUsd ?? null,
-              revenueRatePerUsd: revenueRate,
-            });
-
-            const fMoney = revenueRate ? fmtUsd : fmtMoney;
-
-            return (
-              <li key={l.id}>
-                <Link
-                  href={`/proyectos/${projectId}/launches/${l.id}`}
-                  className="flex items-center justify-between gap-4 rounded-md border border-border bg-surface px-4 py-3 transition-colors hover:border-accent/40 hover:bg-bg-elevated"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-medium text-fg">{l.name}</div>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-fg-subtle">
-                      <span>{fmtLaunchWindow(l.date_start, l.date_end)}</span>
-                      <span>·</span>
-                      <StatusBadge status={l.status} />
-                    </div>
-                  </div>
-                  <div className="hidden text-right sm:block">
-                    <div className="text-xs text-fg-subtle">Revenue est.</div>
-                    <div className="text-sm font-bold text-fg">{fMoney(lk.revenueEstimated)}</div>
-                  </div>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      </section>
-    </div>
-  );
-}
-
-function AggCard({
-  label,
-  value,
-  hint,
-  valueClassName = "text-fg",
-}: {
-  readonly label: string;
-  readonly value: string;
-  readonly hint?: string;
-  readonly valueClassName?: string;
-}) {
-  return (
-    <div className="rounded-md border border-border bg-surface p-4">
-      <div className="text-xs uppercase tracking-wide text-fg-subtle">{label}</div>
-      <div className={`mt-2 text-xl font-bold ${valueClassName}`}>{value}</div>
-      {hint && <div className="mt-1 text-xs text-fg-muted">{hint}</div>}
+        El KPI de cada fila se calcula acá arriba (no en la columna) porque
+        `calculateLaunchKPIs` necesita los mapas de FX y de agregados que ya
+        trajo la page — la columna solo formatea.
+      */}
+      <Panel
+        title="Últimos lanzamientos"
+        pad={false}
+        actions={
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+            <Link
+              href={`/proyectos/${projectId}/launches`}
+              className="kg-t7 kg-focus"
+              style={{ color: "var(--kg-text-3)", textDecoration: "none" }}
+            >
+              Ver todos →
+            </Link>
+            {canEdit && (
+              <LaunchFormModal
+                triggerLabel="+ Nuevo"
+                triggerVariant="secondary"
+                triggerClassName="!px-2 !py-1 !text-xs"
+                title="Nuevo lanzamiento"
+                submitLabel="Crear lanzamiento"
+                action={createAction}
+                copyableLaunches={copyableLaunches}
+                recycleTargetOptions={copyableLaunches}
+              />
+            )}
+          </div>
+        }
+      >
+        <KgDataTable
+          columns={recentColumns}
+          rows={recentRows}
+          rowKey={(r) => r.id}
+          emptyTitle="Sin lanzamientos todavía"
+          emptyHint="Creá el primero para empezar a cargar inversión, leads y ventas."
+        />
+      </Panel>
     </div>
   );
 }

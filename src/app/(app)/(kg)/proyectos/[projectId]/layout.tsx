@@ -88,6 +88,19 @@ export default async function ProjectLayout({
     // h-full + min-h-0 permite a las pages con tablas aplicar `flex-1 min-h-0`
     // a su Panel para llenar lo que quede del viewport sin offsets fijos
     // `calc(100vh - Xpx)`. Mismo patrón que el layout de Financiero.
+    //
+    // ⚠ REGLA PARA LAS PAGES DE ESTE ÁRBOL — el root de cada page elige entre
+    // dos wrappers, y elegir mal RECORTA contenido:
+    //
+    //   · `flex h-full min-h-0 flex-col gap-5` → SOLO si la page usa
+    //     `Panel fillHeight` + `KgDataTable fillHeight`. La tabla llena el
+    //     viewport y scrollea internamente (ej: `audit/page.tsx`).
+    //
+    //   · `flex flex-col gap-5` → todo lo demás. Una page de flujo largo
+    //     (bento de KPIs + panel debajo) con `h-full min-h-0` queda clavada a
+    //     la altura del viewport y lo que sobra NO suma a `main.scrollHeight`:
+    //     el contenido de abajo se vuelve inalcanzable. Le pasó al Overview.
+    //     El dashboard de Financiero usa este wrapper, sin `h-full`.
     <div className="flex h-full min-h-0 flex-col gap-4">
       <KgProjectNav
         items={tabs}

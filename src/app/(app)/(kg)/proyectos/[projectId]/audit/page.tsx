@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { ContextBar } from "@/components/kg/context-bar";
+import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { IconLaunch } from "@/components/kg/icons";
+import { KgPaginator } from "@/components/kg/paginator";
+import { Panel } from "@/components/kg/panel";
 import { canViewAuditLog } from "@/lib/auth/permissions";
 import { listAuditLog } from "@/lib/audit/list";
 import { fCount } from "@/lib/finance/format";
@@ -12,6 +14,20 @@ import { requireSessionProfile } from "@/lib/supabase/auth";
 export const metadata: Metadata = { title: "Audit log" };
 
 const PAGE_SIZE = 50;
+
+/**
+ * Fila tal como la devuelve `listAuditLog`. Se declara acá (en vez de
+ * importarla) solo para tipar las columnas de la tabla — el shape lo manda
+ * la query, no esta page.
+ */
+interface AuditRow {
+  readonly id: string;
+  readonly ts: string;
+  readonly user_name: string | null;
+  readonly user_id: string | null;
+  readonly action: string;
+  readonly detail: unknown;
+}
 
 export default async function AuditLogPage({
   params,
@@ -34,6 +50,39 @@ export default async function AuditLogPage({
   const { rows, total } = await listAuditLog(projectId, page, PAGE_SIZE);
   const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1);
 
+  // `listAuditLog` pagina 0-indexed; `KgPaginator` habla 1-indexed. La
+  // conversión vive acá y NO en la URL: cambiar el ?page= rompería los links
+  // que la gente ya tenga guardados.
+  const columns: ReadonlyArray<Column<AuditRow>> = [
+    {
+      key: "ts",
+      label: "Fecha",
+      width: "180px",
+      render: (r) => (
+        <span className="kg-num" style={{ color: "var(--kg-text-3)" }}>
+          {new Date(r.ts).toLocaleString("es-AR")}
+        </span>
+      ),
+    },
+    {
+      key: "user",
+      label: "Usuario",
+      width: "200px",
+      render: (r) => r.user_name ?? r.user_id ?? "—",
+    },
+    {
+      key: "action",
+      label: "Acción",
+      width: "220px",
+      render: (r) => <strong style={{ fontWeight: 600 }}>{r.action}</strong>,
+    },
+    {
+      key: "detail",
+      label: "Detalle",
+      render: (r) => <DetailCell detail={r.detail} />,
+    },
+  ];
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
@@ -49,95 +98,65 @@ export default async function AuditLogPage({
       />
 
       {/*
-        El "solo lectura" sobrevive al header borrado: es la única parte que el
-        ContextBar no cubre, y es lo que explica por qué la tabla no tiene
-        acciones.
+        "Solo lectura" pasó de ser un <p> suelto a la acción del Panel: es
+        metadata de la tabla (explica por qué no hay botones), no un párrafo
+        de la página.
       */}
-      <p className="text-xs text-fg-subtle">Solo lectura</p>
-
-      {rows.length === 0 ? (
-        <p className="rounded-md border border-dashed border-border bg-surface/40 p-8 text-center text-sm text-fg-muted">
-          Sin actividad registrada.
-        </p>
-      ) : (
-        <>
-          <div className="overflow-x-auto rounded-md border border-border">
-            <table className="w-full min-w-[720px] text-sm">
-              <thead className="bg-surface text-left text-xs uppercase tracking-wide text-fg-subtle">
-                <tr>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    Fecha
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    Usuario
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    Acción
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    Detalle
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr
-                    key={r.id}
-                    className="border-t border-border align-top transition-colors hover:bg-surface"
-                  >
-                    <td className="whitespace-nowrap px-3 py-2 text-xs text-fg-muted">
-                      {new Date(r.ts).toLocaleString("es-AR")}
-                    </td>
-                    <td className="px-3 py-2 text-fg">
-                      {r.user_name ?? r.user_id ?? "—"}
-                    </td>
-                    <td className="px-3 py-2 font-medium text-fg">{r.action}</td>
-                    <td className="px-3 py-2 text-xs text-fg-muted">
-                      <DetailCell detail={r.detail} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {lastPage > 0 && (
-            <nav className="flex items-center justify-between text-xs text-fg-muted">
-              <div>
-                Página {page + 1} de {lastPage + 1}
-              </div>
-              <div className="flex gap-2">
-                {page > 0 && (
-                  <Link
-                    href={`/proyectos/${projectId}/audit?page=${page - 1}`}
-                    className="rounded-md border border-border bg-surface px-3 py-1.5 font-medium text-fg hover:bg-bg-elevated"
-                  >
-                    ← Anterior
-                  </Link>
-                )}
-                {page < lastPage && (
-                  <Link
-                    href={`/proyectos/${projectId}/audit?page=${page + 1}`}
-                    className="rounded-md border border-border bg-surface px-3 py-1.5 font-medium text-fg hover:bg-bg-elevated"
-                  >
-                    Siguiente →
-                  </Link>
-                )}
-              </div>
-            </nav>
-          )}
-        </>
-      )}
+      <Panel
+        title="Actividad"
+        pad={false}
+        fillHeight
+        actions={
+          <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+            Solo lectura
+          </span>
+        }
+      >
+        <KgDataTable
+          columns={columns}
+          rows={rows as ReadonlyArray<AuditRow>}
+          rowKey={(r) => r.id}
+          totalCount={total}
+          fillHeight
+          emptyTitle="Sin actividad registrada"
+          emptyHint="Acá van a aparecer los cambios que el equipo haga sobre el proyecto."
+          footerActions={
+            <KgPaginator
+              page={page + 1}
+              pageSize={PAGE_SIZE}
+              totalCount={total}
+              hrefFor={(n) => `/proyectos/${projectId}/audit?page=${n - 1}`}
+              compact
+            />
+          }
+        />
+      </Panel>
     </div>
   );
 }
 
+/**
+ * El detalle es JSON arbitrario del audit_log. Objeto vacío y null se
+ * colapsan a un guion para no ensuciar la columna con `{}`.
+ */
 function DetailCell({ detail }: { readonly detail: unknown }) {
-  if (detail === null || detail === undefined) return <span>—</span>;
+  if (detail === null || detail === undefined)
+    return <span style={{ color: "var(--kg-text-3)" }}>—</span>;
   if (typeof detail === "object") {
     const json = JSON.stringify(detail);
-    if (json === "{}" || json === "[]") return <span>—</span>;
-    return <code className="break-all">{json}</code>;
+    if (json === "{}" || json === "[]")
+      return <span style={{ color: "var(--kg-text-3)" }}>—</span>;
+    return (
+      <code
+        style={{
+          wordBreak: "break-all",
+          fontSize: 11.5,
+          color: "var(--kg-text-3)",
+        }}
+      >
+        {json}
+      </code>
+    );
   }
-  return <span>{String(detail)}</span>;
+  return <span style={{ color: "var(--kg-text-2)" }}>{String(detail)}</span>;
 }
