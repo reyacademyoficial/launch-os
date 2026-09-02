@@ -9,6 +9,24 @@
  * el resto de la paleta legacy — los componentes LaunchOS existentes siguen
  * renderizando idénticos salvo por el accent. Los componentes nuevos KG usan
  * los tokens --kg-* de más abajo (paralelos, no reemplazan a --color-*).
+ *
+ * ⚠ ESTE BLOQUE ES LEGACY ACOTADO — NO SE BORRA TODAVÍA.
+ * Las utilidades que genera (`bg-surface`, `border-border`, `text-fg-muted`,
+ * `text-fg-subtle`, `text-accent`, `bg-bg-elevated`…) ya NO se usan en el
+ * módulo Lanzamientos: se migró entero a las vars --kg-*. Pero SIGUEN vivas
+ * en árboles que quedaron fuera de esa migración:
+ *
+ *   · (cliente)/portal/**  y  components/client-portal/**
+ *   · (admin)/**  y  components/dashboard/admin/**
+ *   · (auth)/**  ·  components/notifications/**
+ *   · (app)/(kg)/configuracion/**  ·  (app)/(kg)/organizacion/**
+ *   · components/dashboard/calculator/**
+ *
+ * Borrarlas rompe esos árboles en silencio (Tailwind no falla: la clase
+ * simplemente deja de existir y el elemento queda sin estilo). Antes de
+ * tocar nada acá, correr:
+ *
+ *   grep -rlE 'className="[^"]*\b(bg-surface|border-border|text-fg-muted)\b' src
  */
 @theme {
   --font-sans:

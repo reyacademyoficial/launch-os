@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { RecalculateBulkModal } from "@/components/dashboard/commissions/recalculate-bulk-modal";
 import { CobrosView } from "@/components/dashboard/sales/cobros-view";
 import { ContextBar } from "@/components/kg/context-bar";
+import { ErrorBanner } from "@/components/kg/form-primitives";
 import { IconLaunch } from "@/components/kg/icons";
 import { listBanks } from "@/lib/banks/list";
 import { listInvoicesForSales } from "@/lib/invoices/list-by-sale";
@@ -42,6 +43,8 @@ import {
   updateSale,
   updateSaleProduct,
 } from "../leads/sale-actions";
+
+import { CobrosKpis } from "./cobros-kpis";
 
 export const metadata: Metadata = { title: "Cobros" };
 
@@ -198,30 +201,37 @@ export default async function ProjectCobrosPage({
   return (
     <div className="flex flex-col gap-5">
       {/*
-        La barra pinnea la plata mientras el humano scrollea la tabla larga:
-        pactado / cobrado / pendiente. Sin color — financiar en cuotas es lo
-        normal acá, un saldo abierto no es una alarma.
+        REPARTO BARRA ↔ CARDS (antes se duplicaban)
+        Hasta ahora la barra y las StatCards mostraban los MISMOS tres números
+        (pactado / cobrado / pendiente). Con las cards migradas a
+        HeroKpi/SupportKpi el criterio del dashboard de Financiero se aplica
+        acá: el ContextBar COMPLEMENTA a los Hero, no los repite.
 
-        El 4º stat NO es fijo: aparece solo cuando hay ventas o cobros en ARS
-        sin tasa FX cargada, porque en ese caso los totales de arriba están
-        incompletos y el humano tiene que saberlo aunque el banner explicativo
-        ya se haya ido con el scroll. Sin ese caso no mostramos un "0"
-        permanente, que sería ruido.
+        Arriba, en el bento, va la foto que se lee UNA vez al entrar: pactado,
+        cobrado y el volumen detrás (ventas cerradas, cobros cargados).
+        Acá, en la barra sticky, van las dos lecturas del saldo abierto que el
+        operador necesita a la vista MIENTRAS scrollea 64 filas: cuánto falta
+        (Pendiente) y qué porcentaje del pactado ya entró (Avance). Ninguna de
+        las dos está en una card.
 
-        Estos números se repiten hoy en los StatCards de abajo. Se resuelve al
-        migrar esas cards a HeroKpi/SupportKpi (etapa de componentes), donde la
-        fila pasa a llevar métricas que la barra no cubre.
+        Sin color en los montos — financiar en cuotas es lo normal acá, un
+        saldo abierto no es una alarma.
+
+        El 3er stat NO es fijo: aparece solo cuando hay ventas o cobros en ARS
+        sin tasa FX cargada, porque en ese caso los totales están incompletos y
+        el humano tiene que saberlo aunque el banner explicativo ya se haya ido
+        con el scroll. Sin ese caso no mostramos un "0" permanente, que sería
+        ruido.
       */}
       <ContextBar
         icon={<IconLaunch size={16} />}
         title="Cobros"
         stats={[
-          { l: "Pactado", v: fmtUsd(pledgedRevenue) },
-          { l: "Cobrado", v: fmtUsd(collectedRevenue) },
           {
             l: "Pendiente",
             v: fmtUsd(Math.max(pledgedRevenue - collectedRevenue, 0)),
           },
+          { l: "Avance", v: fmtPercent(collectionPct) },
           ...(missingCount > 0
             ? [
                 {
@@ -230,61 +240,53 @@ export default async function ProjectCobrosPage({
                   c: "#FFB800",
                 },
               ]
-            : [{ l: "Ventas cerradas", v: fmtNumber(salesCount) }]),
+            : []),
         ]}
       />
 
-      <section className="space-y-3">
-        <header className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-sm text-fg-muted">
-              Todos los cobros del proyecto. Cuadra con el KPI revenue del
-              kanban: cuenta ventas cuyo lead está en <b>cerrado</b>. Usá el
-              filtro de lanzamiento para acotar.
-            </p>
-          </div>
-          {canEdit && !hideCommission && (
-            <RecalculateBulkModal
-              triggerLabel="Recalcular comisiones"
-              triggerVariant="secondary"
-              triggerClassName="!px-3 !py-1.5 !text-xs"
-              title="Recalcular comisiones del proyecto"
-              scopeDescription="Todas las ventas del proyecto. Elegí si tocar solo las pendientes o incluir las totalmente cobradas."
-              previewAction={previewBulkAction}
-              executeAction={executeBulkAction}
-            />
-          )}
-        </header>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          <StatCard label="Pactado" value={fmtUsd(pledgedRevenue)} />
-          <StatCard
-            label="Cobrado"
-            value={fmtUsd(collectedRevenue)}
-            hint={
-              pledgedRevenue > 0
-                ? `${fmtPercent(collectionPct)} del pactado`
-                : undefined
-            }
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <p
+          className="kg-t6"
+          style={{
+            margin: 0,
+            maxWidth: "62ch",
+            color: "var(--kg-text-3)",
+            lineHeight: 1.5,
+          }}
+        >
+          Todos los cobros del proyecto. Cuadra con el KPI revenue del kanban:
+          cuenta ventas cuyo lead está en <b>cerrado</b>. Usá el filtro de
+          lanzamiento para acotar.
+        </p>
+        {canEdit && !hideCommission && (
+          <RecalculateBulkModal
+            triggerLabel="Recalcular comisiones"
+            triggerVariant="secondary"
+            title="Recalcular comisiones del proyecto"
+            scopeDescription="Todas las ventas del proyecto. Elegí si tocar solo las pendientes o incluir las totalmente cobradas."
+            previewAction={previewBulkAction}
+            executeAction={executeBulkAction}
           />
-          <StatCard label="Ventas cerradas" value={fmtNumber(salesCount)} />
-          <StatCard label="Cobros cargados" value={fmtNumber(paymentsCount)} />
-          <StatCard
-            label="Pendiente"
-            value={fmtUsd(
-              Math.max(pledgedRevenue - collectedRevenue, 0),
-            )}
-          />
-        </div>
-        {missingCount > 0 && (
-          <p className="mt-2 text-xs text-warning">
-            ⚠ {missingCount}{" "}
-            {missingCount === 1 ? "cobro" : "cobros"} en ARS sin tasa (ni del
-            launch ni mensual). Los totales de arriba no los incluyen —
-            cargá la tasa faltante en Financiero · Tasas FX y volvé a esta
-            página.
-          </p>
         )}
-      </section>
+      </div>
+
+      <CobrosKpis
+        data={{
+          pledgedRevenue,
+          collectedRevenue,
+          salesCount,
+          paymentsCount,
+        }}
+      />
+
+      {missingCount > 0 && (
+        <ErrorBanner
+          tone="warning"
+          message={`${missingCount} ${
+            missingCount === 1 ? "cobro" : "cobros"
+          } en ARS sin tasa (ni del launch ni mensual). Los totales de arriba no los incluyen — cargá la tasa faltante en Financiero · Tasas FX y volvé a esta página.`}
+        />
+      )}
 
       <CobrosView
         sales={closedSales}
@@ -313,26 +315,6 @@ export default async function ProjectCobrosPage({
         assignLeadOwnerAction={assignLeadOwnerAction}
         hideCommission={hideCommission}
       />
-    </div>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  hint,
-}: {
-  readonly label: string;
-  readonly value: string;
-  readonly hint?: string;
-}) {
-  return (
-    <div className="rounded-md border border-border bg-surface p-4">
-      <div className="text-xs uppercase tracking-wide text-fg-subtle">
-        {label}
-      </div>
-      <div className="mt-2 text-xl font-bold text-fg">{value}</div>
-      {hint && <div className="mt-1 text-xs text-fg-muted">{hint}</div>}
     </div>
   );
 }

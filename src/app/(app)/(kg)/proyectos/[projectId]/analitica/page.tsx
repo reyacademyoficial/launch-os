@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { AnalyticsFilters } from "@/components/dashboard/analytics/analytics-filters";
@@ -11,6 +10,7 @@ import {
   type TrendsPoint,
 } from "@/components/dashboard/analytics/trends-chart";
 import { ContextBar } from "@/components/kg/context-bar";
+import { KgTabsBarView } from "@/components/kg/tabs-bar-view";
 import { IconLaunch } from "@/components/kg/icons";
 import {
   applyAnalyticsFilter,
@@ -165,6 +165,12 @@ export default async function AnalyticsPage({
         ]}
       />
 
+      {/*
+        No renderiza nada acá: se registra en el contexto de `page-menu` y
+        aparece al tocar "Filtros" en el ContextBar (drawer en desktop,
+        bottom-sheet en mobile). Se deja en esta posición del árbol porque es
+        donde el lector espera encontrar "los filtros de esta página".
+      */}
       <AnalyticsFilters
         launches={launchesForFilter}
         initialDateFrom={filter.dateFrom ?? ""}
@@ -172,24 +178,36 @@ export default async function AnalyticsPage({
         initialLaunchIds={initialLaunchIds}
       />
 
-      <nav className="flex gap-1 border-b border-border" aria-label="Vista de analítica">
-        {VIEWS.map((v) => (
-          <TabLink key={v} projectId={projectId} tab={v} current={view} sp={sp} />
-        ))}
-      </nav>
+      {/*
+        Pestañas de vista. Usa `KgTabsBarView` (la mitad presentacional de
+        `KgTabsBar`) porque acá las pestañas NO son rutas sino valores de
+        `?view=` sobre el mismo pathname: el resolvedor por `usePathname`
+        marcaría siempre la misma. Al pasarle el `activeHref` explícito, la
+        barra se renderiza en el server y no manda JS al browser.
+      */}
+      <KgTabsBarView
+        ariaLabel="Vista de analítica"
+        activeHref={viewHref(projectId, view, sp)}
+        items={VIEWS.map((v) => ({
+          href: viewHref(projectId, v, sp),
+          label: VIEW_LABELS[v],
+        }))}
+      />
 
-      <div>
-        {view === "comparador" && (
-          <ComparatorTable
-            launches={filtered}
-            adsByLaunch={adsByLaunch}
-            kanbanSalesByLaunch={kanbanSalesByLaunch}
-          />
-        )}
-        {view === "embudo" && funnel && <FunnelChart stages={funnel.stages} />}
-        {view === "tendencias" && trends && <TrendsChart points={trends} />}
-        {view === "canales" && channels && <ChannelsTables data={channels} />}
-      </div>
+      {/*
+        Cada vista trae su propio `Panel` (o dos, en Canales y Tendencias) —
+        por eso acá solo hace falta el flujo vertical con el gap del DS.
+      */}
+      {view === "comparador" && (
+        <ComparatorTable
+          launches={filtered}
+          adsByLaunch={adsByLaunch}
+          kanbanSalesByLaunch={kanbanSalesByLaunch}
+        />
+      )}
+      {view === "embudo" && funnel && <FunnelChart stages={funnel.stages} />}
+      {view === "tendencias" && trends && <TrendsChart points={trends} />}
+      {view === "canales" && channels && <ChannelsTables data={channels} />}
     </div>
   );
 }
@@ -201,40 +219,53 @@ function readView(raw: string | string[] | undefined): View {
     : "comparador";
 }
 
-function TabLink({
-  projectId,
-  tab,
-  current,
-  sp,
-}: {
-  readonly projectId: string;
-  readonly tab: View;
-  readonly current: View;
-  readonly sp: Record<string, string | string[] | undefined>;
-}) {
-  // Preservamos los filtros (from/to/launches) al cambiar de tab.
+/**
+ * ═════════════════════════════════════════════════════════════════════════
+ * POR QUÉ ESTAS TABS NO SON `KgTabsBar`
+ * ═════════════════════════════════════════════════════════════════════════
+ * `KgTabsBar` decide cuál está activa con `usePathname()` + match por
+ * prefijo. Estas cuatro vistas NO son rutas: son valores de `?view=` sobre
+ * un mismo pathname. Con ese matcher, "Comparador" (cuyo href no lleva
+ * `view`) quedaría marcada siempre, y en cuanto hubiera un filtro activo su
+ * href pasaría a llevar querystring y no matchearía NADA — ninguna pestaña
+ * pintada. Es una limitación real del componente, no algo que se arregle
+ * eligiendo mejor los hrefs, y `tabs-bar.tsx` está fuera del alcance de esta
+ * migración.
+ *
+ * Así que la barra se arma acá con el MISMO contrato visual de `KgTabsBar`
+ * (contenedor pill sobre `--kg-surface-2-solid`, pill activa en
+ * `--kg-accent-500` con texto blanco, mismos tamaños y roles ARIA) pero con
+ * el activo resuelto en el SERVER a partir del `view` ya parseado. Efecto
+ * lateral bueno: cero JS de cliente para navegar entre vistas, contra el
+ * `usePathname` que `KgTabsBar` obliga a hidratar.
+ *
+ * Lo de abajo reemplaza al `border-b-2 border-accent` sobre `border-border` /
+ * `text-fg-muted` — los tokens que estamos deprecando.
+ */
+
+/**
+ * Href de una vista preservando los filtros activos (from/to/launches).
+ *
+ * Es navegación CON ESTADO: si esto se pierde, cambiar de pestaña resetea en
+ * silencio el recorte que el usuario venía leyendo. NO se toca.
+ *
+ * "comparador" es la vista default, así que va sin `?view=` — mantiene la URL
+ * limpia y hace que la raíz del módulo y la pestaña compartan el mismo href,
+ * que es justo lo que `KgTabsBarView` compara para marcar la activa.
+ */
+function viewHref(
+  projectId: string,
+  tab: View,
+  sp: Record<string, string | string[] | undefined>,
+): string {
   const params = new URLSearchParams();
   const carry = ["from", "to", "launches"] as const;
   for (const key of carry) {
     const v = sp[key];
-    const s = Array.isArray(v) ? v[0] : v;
-    if (s) params.set(key, s);
+    const value = Array.isArray(v) ? v[0] : v;
+    if (value) params.set(key, value);
   }
   if (tab !== "comparador") params.set("view", tab);
   const qs = params.toString();
-  const href = `/proyectos/${projectId}/analitica${qs ? `?${qs}` : ""}`;
-  const isActive = tab === current;
-  return (
-    <Link
-      href={href}
-      className={
-        "border-b-2 px-3 py-2 text-sm font-medium " +
-        (isActive
-          ? "border-accent text-accent"
-          : "border-transparent text-fg-muted hover:text-fg")
-      }
-    >
-      {VIEW_LABELS[tab]}
-    </Link>
-  );
+  return `/proyectos/${projectId}/analitica${qs ? `?${qs}` : ""}`;
 }

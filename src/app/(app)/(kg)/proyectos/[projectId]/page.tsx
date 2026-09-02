@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { LaunchFormModal } from "@/components/dashboard/launches/launch-form-modal";
 import { ContextBar } from "@/components/kg/context-bar";
 import { KgDataTable, type Column } from "@/components/kg/data-table";
+import { EmptyState } from "@/components/kg/empty-state";
 import { IconLaunch } from "@/components/kg/icons";
 import { Panel } from "@/components/kg/panel";
 import { StatusPill } from "@/components/kg/status-pill";
@@ -158,26 +159,42 @@ export default async function OverviewPage({
 
   if (agg.launchCount === 0) {
     return (
-      <section className="max-w-md space-y-4">
+      // Proyecto sin lanzamientos: onboarding, no "sin datos". Por eso el
+      // `EmptyState` lleva el CTA adentro en vez de dejar el botón suelto
+      // debajo de un párrafo.
+      <div className="flex flex-col gap-5">
         <header>
-          <h1 className="text-2xl font-bold">{name}</h1>
+          <h1 className="kg-t3" style={{ color: "var(--kg-text-1)" }}>
+            {name}
+          </h1>
           {project?.business_name && (
-            <p className="mt-1 text-sm text-fg-subtle">{project.business_name}</p>
+            <p className="mt-1 text-sm" style={{ color: "var(--kg-text-3)" }}>
+              {project.business_name}
+            </p>
           )}
         </header>
-        <p className="text-sm text-fg-muted">
-          Sin lanzamientos cargados todavía
-          {canEdit ? "." : ". Pedile al admin que cree el primero."}
-        </p>
-        {canEdit && (
-          <LaunchFormModal
-            triggerLabel="Crear primer lanzamiento"
-            title="Nuevo lanzamiento"
-            submitLabel="Crear lanzamiento"
-            action={createAction}
+        <Panel pad={false}>
+          <EmptyState
+            icon={<IconLaunch size={18} />}
+            title="Sin lanzamientos cargados todavía"
+            hint={
+              canEdit
+                ? "Creá el primero para empezar a cargar inversión, leads y ventas."
+                : "Pedile al admin del proyecto que cree el primero."
+            }
+            actions={
+              canEdit ? (
+                <LaunchFormModal
+                  triggerLabel="Crear primer lanzamiento"
+                  title="Nuevo lanzamiento"
+                  submitLabel="Crear lanzamiento"
+                  action={createAction}
+                />
+              ) : undefined
+            }
           />
-        )}
-      </section>
+        </Panel>
+      </div>
     );
   }
 

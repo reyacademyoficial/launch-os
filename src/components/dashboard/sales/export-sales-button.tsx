@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { ErrorBanner, secondaryBtn } from "@/components/kg/form-primitives";
 import type { SaleExportRow } from "@/lib/launch-sales/export-types";
 
 /**
@@ -68,13 +69,22 @@ export function ExportSalesButton({
     }
   }
 
+  // Exportar es una acción secundaria de la tabla: nunca compite con el
+  // "+ Nueva venta" primario. Por eso `secondaryBtn` y no `primaryBtn`.
+  //
+  // El error va en `ErrorBanner` (misma primitiva que el resto del DS) y no
+  // en un span rojo suelto: en mobile el botón ya ocupa la fila entera, así
+  // que el aviso se apila arriba en vez de empujarlo fuera de pantalla.
   return (
-    <div className="flex items-center gap-2">
-      {error && (
-        <span role="alert" className="text-xs text-error">
-          {error}
-        </span>
-      )}
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-start",
+        gap: 8,
+      }}
+    >
+      {error && <ErrorBanner message={error} />}
       <button
         type="button"
         onClick={onClick}
@@ -84,7 +94,16 @@ export function ExportSalesButton({
             ? "No hay ventas para exportar"
             : "Descarga las ventas visibles (respeta los filtros aplicados)"
         }
-        className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-3 py-2 text-sm font-semibold text-fg hover:bg-bg-elevated disabled:opacity-50"
+        className="kg-focus"
+        style={{
+          ...secondaryBtn,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 6,
+          opacity: pending || disabled ? 0.5 : 1,
+          cursor: pending || disabled ? "not-allowed" : "pointer",
+        }}
       >
         ⬇ {pending ? "Generando…" : "Exportar a Excel"}
       </button>

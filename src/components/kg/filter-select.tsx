@@ -26,6 +26,81 @@ export interface FilterSelectOption {
   readonly href: string;
 }
 
+/**
+ * KG · FilterSelect CONTROLADO — misma pinta, sin navegar.
+ *
+ * POR QUÉ EXISTE APARTE DEL DE ARRIBA
+ * `KgFilterSelect` es URL-first: cada opción trae su `href` y elegir hace
+ * `router.push`. Eso es correcto cuando la page server re-fetchea con el
+ * filtro aplicado (Financiero, Marketing).
+ *
+ * Pero hay vistas que filtran EN MEMORIA: la page trae el dataset completo,
+ * no parsea ningún query param, y el filtro además alimenta el subset que se
+ * exporta a Excel. Llevar eso a la URL convertiría cada cambio de select en
+ * una navegación con re-render del server component (refetch entero) más una
+ * entrada de historial. Es el caso de `cobros-view` y `project-sales-view`.
+ *
+ * Los dos se habían copiado este control a mano — la misma pinta, duplicada
+ * en dos archivos de 1.500 líneas. Esta variante existe para que no haya dos
+ * versiones del mismo select en el repo.
+ *
+ * Comparte el estilo del control con `KgFilterSelect` vía `filterControlStyle`,
+ * así no pueden derivar visualmente.
+ */
+export function KgFilterSelectControlled({
+  id,
+  label,
+  value,
+  onChange,
+  options,
+  ariaLabel,
+}: {
+  readonly id: string;
+  readonly label: string;
+  readonly value: string;
+  readonly onChange: (next: string) => void;
+  readonly options: ReadonlyArray<{ value: string; label: string }>;
+  readonly ariaLabel?: string;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
+      <label
+        htmlFor={id}
+        className="kg-t7"
+        style={{ color: "var(--kg-text-3)", fontWeight: 600 }}
+      >
+        {label}
+      </label>
+      <select
+        id={id}
+        className="kg-focus"
+        value={value}
+        aria-label={ariaLabel ?? label}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ ...filterControlStyle, cursor: "pointer" }}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+/** Estilo del `<select>`. Compartido por las dos variantes. */
+export const filterControlStyle = {
+  width: "100%",
+  padding: "8px 12px",
+  borderRadius: "var(--kg-r-8)",
+  background: "var(--kg-surface-2-solid)",
+  border: "1px solid var(--kg-border-subtle)",
+  color: "var(--kg-text-1)",
+  fontSize: 12,
+  fontWeight: 600,
+} as const;
+
 export function KgFilterSelect({
   label,
   ariaLabel,

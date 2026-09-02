@@ -789,82 +789,9 @@ function TotalsFooter<Row>({
  * zIndex 900: sobre el contenido, debajo de Drawer/BottomSheet (2000) — si se
  * abre un drawer estando la selección activa, el drawer manda.
  */
-export function KgSelectionBar({
-  count,
-  onClear,
-  children,
-  noun = "seleccionados",
-  message,
-}: {
-  readonly count: number;
-  readonly onClear?: () => void;
-  readonly children?: ReactNode;
-  /** Sustantivo en plural: "seleccionados", "ventas", "leads". */
-  readonly noun?: string;
-  /** Feedback de la última acción ("Estado actualizado: 12"). */
-  readonly message?: ReactNode;
-}) {
-  if (count <= 0) return null;
-  return (
-    <div
-      role="region"
-      aria-label="Acciones masivas"
-      className="kg-glass"
-      style={{
-        position: "fixed",
-        left: 12,
-        right: 12,
-        bottom: "calc(12px + env(safe-area-inset-bottom, 0px))",
-        margin: "0 auto",
-        maxWidth: 760,
-        zIndex: 900,
-        display: "flex",
-        flexWrap: "wrap",
-        alignItems: "center",
-        gap: 8,
-        padding: "10px 12px",
-        borderRadius: "var(--kg-r-16)",
-        borderColor: "var(--kg-border-accent)",
-        boxShadow: "var(--kg-shadow-float)",
-      }}
-    >
-      <span
-        aria-live="polite"
-        style={{
-          color: "var(--kg-text-1)",
-          fontSize: 12,
-          fontWeight: 700,
-          fontVariantNumeric: "tabular-nums",
-        }}
-      >
-        {fCount(count)} {noun}
-      </span>
-      {children}
-      {message && (
-        <span style={{ color: "var(--kg-text-3)", fontSize: 11 }}>
-          {message}
-        </span>
-      )}
-      {onClear && (
-        <button
-          type="button"
-          onClick={onClear}
-          className="kg-focus"
-          style={{
-            marginLeft: "auto",
-            padding: "6px 10px",
-            borderRadius: 999,
-            background: "transparent",
-            border: "1px solid var(--kg-border-subtle)",
-            color: "var(--kg-text-2)",
-            fontSize: 11,
-            fontWeight: 600,
-            cursor: "pointer",
-          }}
-        >
-          Limpiar
-        </button>
-      )}
-    </div>
-  );
-}
+// `KgSelectionBar` se mudó a `selection-bar.tsx`: necesita `createPortal`
+// (y por lo tanto `"use client"`) para escapar del `backdrop-filter` de
+// `.kg-glass`, que en tema oscuro convertía a cualquier Panel ancestro en
+// containing block y despegaba la barra del viewport. Se re-exporta acá para
+// que los consumidores la sigan importando junto a la tabla.
+export { KgSelectionBar } from "./selection-bar";

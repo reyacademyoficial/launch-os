@@ -9,7 +9,10 @@ import { KanbanBoard } from "@/components/dashboard/leads/kanban-board";
 import { LeadFormModal } from "@/components/dashboard/leads/lead-form-modal";
 import { LeadsTable } from "@/components/dashboard/leads/leads-table";
 import { ContextBar } from "@/components/kg/context-bar";
-import { IconLaunch } from "@/components/kg/icons";
+import { EmptyState } from "@/components/kg/empty-state";
+import { IconLaunch, IconPanelLeft, IconTable } from "@/components/kg/icons";
+import { Panel } from "@/components/kg/panel";
+import { KgViewToggle } from "@/components/kg/view-toggle";
 import {
   listCommissionRules,
   listPaymentModalities,
@@ -216,7 +219,21 @@ export default async function LeadsPage({
   const activeMembers = teamMembers.filter((m) => m.active).length;
 
   return (
-    <div className="flex flex-col gap-5">
+    /*
+      El wrapper cambia según la vista y NO por gusto: la tabla monta
+      `Panel fillHeight` + `KgDataTable fillHeight`, y ese pattern exige que
+      TODOS los ancestros propaguen altura (`h-full min-h-0`). El kanban, en
+      cambio, crece a lo alto/ancho por su cuenta — clavarle la altura al
+      viewport dejaría fuera de alcance lo que sobrepase, porque deja de
+      sumar al `scrollHeight` del <main>.
+    */
+    <div
+      className={
+        tab === "tabla"
+          ? "flex h-full min-h-0 flex-col gap-5"
+          : "flex flex-col gap-5"
+      }
+    >
       {/*
         El total de leads NO entra acá: cada vista lo trae por su cuenta (la
         tabla paginada dentro de `TablaTab`, el kanban filtrado a promovidos),
@@ -235,16 +252,42 @@ export default async function LeadsPage({
         ]}
       />
 
-      <header className="flex flex-wrap items-baseline justify-between gap-4">
-        <div>
-          <p className="text-xs text-fg-subtle">
-            <Link
-              href={`/proyectos/${projectId}/equipo`}
-              className="underline-offset-2 hover:underline"
-            >
-              {activeMembers} team members activos
-            </Link>
-          </p>
+      <header className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-3">
+          {/*
+            El toggle reemplaza a los tabs con borde inferior: mismo contrato
+            de URL (`?view=kanban`, tabla es el default sin param), una fila
+            menos de alto y sin tokens deprecados.
+          */}
+          <KgViewToggle
+            active={tab}
+            ariaLabel="Vista de leads"
+            options={[
+              {
+                value: "tabla",
+                label: "Vista tabla",
+                icon: <IconTable size={16} />,
+                href: `/proyectos/${projectId}/leads`,
+              },
+              {
+                value: "kanban",
+                label: "Kanban (promovidos)",
+                icon: <IconPanelLeft size={16} />,
+                href: `/proyectos/${projectId}/leads?view=kanban`,
+              },
+            ]}
+          />
+          <Link
+            href={`/proyectos/${projectId}/equipo`}
+            className="kg-t7 kg-focus"
+            style={{
+              color: "var(--kg-text-3)",
+              textDecoration: "underline",
+              textUnderlineOffset: 2,
+            }}
+          >
+            {activeMembers} team members activos
+          </Link>
         </div>
         {canEdit && (
           <div className="flex flex-wrap gap-2">
@@ -274,17 +317,6 @@ export default async function LeadsPage({
           </div>
         )}
       </header>
-
-      {/* Tabs */}
-      <nav className="flex gap-1 border-b border-border" aria-label="Vista de leads">
-        <TabLink projectId={projectId} tab="tabla" current={tab} label="Tabla" />
-        <TabLink
-          projectId={projectId}
-          tab="kanban"
-          current={tab}
-          label="Kanban (promovidos)"
-        />
-      </nav>
 
       {tab === "kanban" ? (
         <KanbanTab
@@ -329,37 +361,6 @@ export default async function LeadsPage({
         />
       )}
     </div>
-  );
-}
-
-function TabLink({
-  projectId,
-  tab,
-  current,
-  label,
-}: {
-  readonly projectId: string;
-  readonly tab: Tab;
-  readonly current: Tab;
-  readonly label: string;
-}) {
-  const isActive = tab === current;
-  const href =
-    tab === "tabla"
-      ? `/proyectos/${projectId}/leads`
-      : `/proyectos/${projectId}/leads?view=kanban`;
-  return (
-    <Link
-      href={href}
-      className={
-        "border-b-2 px-3 py-2 text-sm font-medium " +
-        (isActive
-          ? "border-accent text-accent"
-          : "border-transparent text-fg-muted hover:text-fg")
-      }
-    >
-      {label}
-    </Link>
   );
 }
 
@@ -433,28 +434,45 @@ async function TablaTab({
   });
 
   return (
-    <LeadsTable
-      projectId={projectId}
-      rows={result.rows}
-      totalCount={result.totalCount}
-      page={result.page}
-      pageSize={result.pageSize}
-      totalPages={result.totalPages}
-      initialSearch={search}
-      initialFilters={{
-        status: status ?? "",
-        source: source ?? "",
-        teamMemberId: teamMemberId ?? "",
-        launchId: launchId ?? "",
-        dateFrom: dateFrom ?? "",
-        dateTo: dateTo ?? "",
-        recycledFrom: recycledFrom ?? "",
-      }}
-      initialSort={{ column: sortColumn, direction: sortDirection }}
-      teamMembers={teamForForm}
-      launches={launchesForForm}
-      evergreenLaunches={evergreenLaunches}
-    />
+    /*
+      `pad={false}` porque la tabla trae su propio padding de celda, y
+      `fillHeight` para que el <tbody> scrollee dentro del panel en vez de
+      empujar la página: con 50 filas por página el header y el paginador
+      quedan siempre a la vista.
+    */
+    <Panel
+      title="Leads"
+      pad={false}
+      fillHeight
+      actions={
+        <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+          {fmtNumber(result.totalCount)} en la vista
+        </span>
+      }
+    >
+      <LeadsTable
+        projectId={projectId}
+        rows={result.rows}
+        totalCount={result.totalCount}
+        page={result.page}
+        pageSize={result.pageSize}
+        totalPages={result.totalPages}
+        initialSearch={search}
+        initialFilters={{
+          status: status ?? "",
+          source: source ?? "",
+          teamMemberId: teamMemberId ?? "",
+          launchId: launchId ?? "",
+          dateFrom: dateFrom ?? "",
+          dateTo: dateTo ?? "",
+          recycledFrom: recycledFrom ?? "",
+        }}
+        initialSort={{ column: sortColumn, direction: sortDirection }}
+        teamMembers={teamForForm}
+        launches={launchesForForm}
+        evergreenLaunches={evergreenLaunches}
+      />
+    </Panel>
   );
 }
 
@@ -566,16 +584,33 @@ async function KanbanTab({
 
   if (leads.length === 0) {
     return (
-      <div className="rounded-md border border-dashed border-border bg-surface/40 p-8 text-center">
-        <p className="text-sm text-fg-muted">
-          El kanban no tiene leads promovidos todavía.
-        </p>
-        <p className="mt-2 text-xs text-fg-subtle">
-          Desde la <Link href={`/proyectos/${projectId}/leads`} className="underline">tabla</Link>,
-          seleccioná los leads que vas a trabajar a mano y promovelos con
-          “★ Al kanban”.
-        </p>
-      </div>
+      <Panel pad={false}>
+        <EmptyState
+          icon={<IconLaunch size={18} />}
+          title="El kanban no tiene leads promovidos todavía"
+          hint="En la tabla, seleccioná los leads que vas a trabajar a mano y promovelos con “★ Al kanban”."
+          actions={
+            <Link
+              href={`/proyectos/${projectId}/leads`}
+              className="kg-focus"
+              style={{
+                padding: "6px 14px",
+                borderRadius: 999,
+                background: "transparent",
+                border: "1px solid var(--kg-border-subtle)",
+                color: "var(--kg-text-2)",
+                fontSize: 12,
+                fontWeight: 700,
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+              }}
+            >
+              Ir a la tabla
+            </Link>
+          }
+        />
+      </Panel>
     );
   }
 

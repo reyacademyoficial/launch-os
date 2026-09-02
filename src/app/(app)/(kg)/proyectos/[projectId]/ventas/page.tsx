@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { ProjectSalesView } from "@/components/dashboard/sales/project-sales-view";
 import { ContextBar } from "@/components/kg/context-bar";
 import { IconLaunch } from "@/components/kg/icons";
+import { Panel } from "@/components/kg/panel";
 import { listBanks } from "@/lib/banks/list";
 import { listInvoicesForSales } from "@/lib/invoices/list-by-sale";
 import {
@@ -161,42 +162,67 @@ export default async function ProjectSalesPage({
         ]}
       />
 
-      <p className="text-sm text-fg-muted">
-        Todas las ventas del proyecto. Tocá el nombre del alumno para abrir su
-        ficha y editar la venta o cargar cobros. Para vencimientos y foco por
-        lanzamiento, usá <b>Cobros</b>.
-      </p>
+      {/*
+        El header suelto (un <p> con tokens viejos) pasó a ser el Panel que
+        envuelve la vista: el título deja de flotar sobre el fondo y la tabla
+        queda dentro de la superficie glass del DS, como en Financiero.
 
-      <ProjectSalesView
-        projectId={projectId}
-        sales={salesData.sales}
-        payments={salesData.payments}
-        installments={salesData.installments}
-        invoices={await listInvoicesForSales(salesData.sales.map((s) => s.id))}
-        leads={salesData.leads}
-        launches={launches.map((l) => ({ id: l.id, name: l.name }))}
-        modalities={modalities}
-        products={products}
-        rules={rules}
-        paymentMethods={paymentMethods}
-        methodCurrencies={methodCurrencies}
-        teamMembers={teamForModal}
-        canEdit={canEdit}
-        createSaleAction={createSaleAction}
-        createSaleWithLeadAction={createSaleWithLeadAction}
-        addPaymentAction={addPaymentAction}
-        getFirstPaymentContextAction={getFirstPaymentContextAction}
-        deletePaymentAction={deletePaymentAction}
-        deleteSaleAction={deleteSaleAction}
-        updateSaleProductAction={updateSaleProductAction}
-        recalculateSaleAction={recalculateSaleAction}
-        updateSaleAction={updateSaleAction}
-        updatePaymentInstallmentAction={updatePaymentInstallmentAction}
-        updatePaymentMethodAction={updatePaymentMethodAction}
-        assignLeadOwnerAction={assignLeadOwnerAction}
-        fxLookup={fxLookup}
-        hideCommission={hideCommission}
-      />
+        `pad={false}` porque `ProjectSalesView` trae su propio espaciado y su
+        tabla va edge-to-edge; el único padding propio del Panel es el de esta
+        nota introductoria.
+
+        Sin `fillHeight`: la vista todavía no scrollea internamente, así que la
+        page sigue con el wrapper `flex flex-col gap-5` (no `h-full min-h-0`).
+        Clavar la altura al viewport dejaría fuera de alcance lo que sobra.
+      */}
+      <Panel title="Todas las ventas" pad={false}>
+        <p
+          className="kg-t6"
+          style={{
+            margin: 0,
+            padding: "14px 20px 0",
+            color: "var(--kg-text-3)",
+            lineHeight: 1.5,
+          }}
+        >
+          Tocá el nombre del alumno para abrir su ficha y editar la venta o
+          cargar cobros. Para vencimientos y foco por lanzamiento, usá{" "}
+          <b>Cobros</b>.
+        </p>
+
+        <ProjectSalesView
+          projectId={projectId}
+          sales={salesData.sales}
+          payments={salesData.payments}
+          installments={salesData.installments}
+          invoices={await listInvoicesForSales(
+            salesData.sales.map((s) => s.id),
+          )}
+          leads={salesData.leads}
+          launches={launches.map((l) => ({ id: l.id, name: l.name }))}
+          modalities={modalities}
+          products={products}
+          rules={rules}
+          paymentMethods={paymentMethods}
+          methodCurrencies={methodCurrencies}
+          teamMembers={teamForModal}
+          canEdit={canEdit}
+          createSaleAction={createSaleAction}
+          createSaleWithLeadAction={createSaleWithLeadAction}
+          addPaymentAction={addPaymentAction}
+          getFirstPaymentContextAction={getFirstPaymentContextAction}
+          deletePaymentAction={deletePaymentAction}
+          deleteSaleAction={deleteSaleAction}
+          updateSaleProductAction={updateSaleProductAction}
+          recalculateSaleAction={recalculateSaleAction}
+          updateSaleAction={updateSaleAction}
+          updatePaymentInstallmentAction={updatePaymentInstallmentAction}
+          updatePaymentMethodAction={updatePaymentMethodAction}
+          assignLeadOwnerAction={assignLeadOwnerAction}
+          fxLookup={fxLookup}
+          hideCommission={hideCommission}
+        />
+      </Panel>
     </div>
   );
 }
