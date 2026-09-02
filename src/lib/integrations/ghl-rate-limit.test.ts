@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { fetchGhlContactCountsByDay } from "./ghl";
+import { fetchGhlContactCountsByDay, ghlRateLimitedFetch } from "./ghl";
 
 /**
  * El adapter absorbe los 429 de GHL con backoff antes de propagarlos. Sin
@@ -153,6 +153,46 @@ describe("ghlFetch — throttle por location", () => {
 
     const result = await settleWithTimers(promise);
     expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(90);
+  });
+});
+
+describe("ghlRateLimitedFetch — adapters con fetch propio", () => {
+  it("reintenta el 429 y devuelve la respuesta final", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(429, { message: "Too Many Requests" }))
+      .mockResolvedValueOnce(jsonResponse(200, { contacts: [] }));
+
+    const res = await settleWithTimers(
+      ghlRateLimitedFetch("pit-adapter", () => fetch("https://x/contacts/search")),
+    );
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("comparte la ventana con el sync sobre el mismo token", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { contacts: [], total: 1 }));
+    const token = "pit-shared";
+
+    // 60 días de daily counts + 30 llamadas del tag-sync = 90 requests con el
+    // MISMO token. El techo de 70 por ventana aplica a la suma, no a cada uno.
+    const promise = Promise.all([
+      fetchGhlContactCountsByDay({
+        token,
+        locationId: "loc-1",
+        since: "2026-01-01",
+        until: "2026-03-01",
+      }),
+      ...Array.from({ length: 30 }, () =>
+        ghlRateLimitedFetch(token, () => fetch("https://x/contacts/search")),
+      ),
+    ]);
+
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(70);
+
+    await settleWithTimers(promise);
     expect(fetchMock).toHaveBeenCalledTimes(90);
   });
 });

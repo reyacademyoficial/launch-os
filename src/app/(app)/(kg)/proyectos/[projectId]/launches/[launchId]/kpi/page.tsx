@@ -485,23 +485,18 @@ function buildOverlayRows(args: {
 
 /**
  * Construye una nota de partial para el chart si el último run de SendFlow
- * o de GHL Messages no terminó success. El brief obliga a surface esto en
+ * no terminó success. El brief obliga a surface esto en
  * UI — el operador necesita saber que los totales pueden estar truncados.
  */
 function buildOverlayPartialNote(
   runs: ReadonlyArray<{ provider: string; status: string | null; errorDetail: unknown }>,
 ): string | null {
   const lastSendflow = runs.find((r) => r.provider === "sendflow");
-  const lastMessages = runs.find((r) => r.provider === "ghl_messages");
 
   const notes: string[] = [];
   if (lastSendflow && lastSendflow.status === "partial") {
     const msg = readErrorDetailMessage(lastSendflow.errorDetail);
     notes.push(`SendFlow: ${msg ?? "sync parcial"}`);
-  }
-  if (lastMessages && lastMessages.status === "partial") {
-    const msg = readErrorDetailMessage(lastMessages.errorDetail);
-    notes.push(`WhatsApp/SMS: ${msg ?? "sync parcial"}`);
   }
   return notes.length === 0 ? null : notes.join(" · ");
 }

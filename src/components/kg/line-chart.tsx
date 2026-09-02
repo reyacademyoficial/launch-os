@@ -700,7 +700,12 @@ export function KgLineChart({
     });
   };
 
-  if (rows.length < 2 || drawn.length === 0) {
+  // Vacío = NO HAY datos, no "hay pocos". Con una sola fila el chart se
+  // dibuja igual: `dot` está activo para series cortas, así que el día único
+  // se ve como un punto. Exigir 2 filas hacía que un lanzamiento con un solo
+  // día de carga dijera "sin datos" teniéndolos — mentirle al operador sobre
+  // su propia información es peor que un gráfico de un punto.
+  if (rows.length === 0 || drawn.length === 0) {
     return <EmptyState title={emptyTitle} hint={emptyHint} />;
   }
 

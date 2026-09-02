@@ -197,7 +197,10 @@ export function KgAreaChart({
     });
   };
 
-  if (rows.length < 2 || drawn.length === 0) {
+  // Vacío = NO HAY datos, no "hay pocos". Ver la nota equivalente en
+  // `line-chart.tsx`: exigir 2 filas hacía que una franja con una sola
+  // medición dijera "sin datos" teniéndolos.
+  if (rows.length === 0 || drawn.length === 0) {
     return <EmptyState title={emptyTitle} hint={emptyHint} />;
   }
 
