@@ -1,22 +1,16 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
+import { KgFilterSelect } from "@/components/kg/filter-select";
 import { IconAca } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
-import {
-  getActiveCourses,
-  getAllProducts,
-  getPropiaProjects,
-} from "@/lib/academia/reference";
+import { getActiveCourses, getAllProducts, getPropiaProjects } from "@/lib/academia/reference";
 import { fCount } from "@/lib/finance/format";
 import { createClient } from "@/lib/supabase/server";
 
-import {
-  ClearFiltersButton,
-  PersistentFilterSync,
-} from "../_shared/persistent-filters";
+import { ClearFiltersButton, PersistentFilterSync } from "../_shared/persistent-filters";
 import type { ImportProjectOption } from "./import-students-button";
 import {
   PendingBuyersView,
@@ -36,13 +30,7 @@ export const metadata: Metadata = { title: "Estudiantes · Academia" };
 export const dynamic = "force-dynamic";
 
 type Status = "active" | "inactive" | "graduated";
-type ShowFilter =
-  | "active"
-  | "graduated"
-  | "inactive"
-  | "all"
-  | "pending"
-  | "expiring";
+type ShowFilter = "active" | "graduated" | "inactive" | "all" | "pending" | "expiring";
 
 interface StudentDbRow {
   readonly id: string;
@@ -103,6 +91,7 @@ export default async function EstudiantesPage({
 }) {
   const sp = await searchParams;
   const show = parseShow(sp.show);
+  const cohortFilter = parseCohortFilter(sp.cohort);
 
   const supabase = await createClient();
 
@@ -125,18 +114,15 @@ export default async function EstudiantesPage({
     supabase.from("cohorts").select("id, project_id, course_id, name, status"),
   ]);
 
-  const allStudents =
-    (studentsRes.data ?? []) as unknown as StudentDbRow[];
+  const allStudents = (studentsRes.data ?? []) as unknown as StudentDbRow[];
   const activeCourses: CourseLink[] = activeCoursesRef.map((c) => ({
     id: c.id,
     product_id: c.product_id,
     project_id: c.project_id,
   }));
   const allProducts = allProductsRef;
-  const enrollments =
-    (enrollmentsRes.data ?? []) as unknown as EnrollmentLink[];
-  const allCohorts =
-    (cohortsRes.data ?? []) as unknown as CohortDbRow[];
+  const enrollments = (enrollmentsRes.data ?? []) as unknown as EnrollmentLink[];
+  const allCohorts = (cohortsRes.data ?? []) as unknown as CohortDbRow[];
 
   const projectNameById = new Map<string, string>();
   for (const p of propiaProjects) projectNameById.set(p.id, p.name);
@@ -166,9 +152,7 @@ export default async function EstudiantesPage({
     cancelled: 3,
   };
   for (const bucket of cohortsByStudent.values()) {
-    bucket.sort(
-      (a, b) => cohortStatusRank[a.status] - cohortStatusRank[b.status],
-    );
+    bucket.sort((a, b) => cohortStatusRank[a.status] - cohortStatusRank[b.status]);
   }
 
   // Derivar el status "efectivo" del alumno desde sus cohortes:
@@ -192,9 +176,7 @@ export default async function EstudiantesPage({
   // filtro "Por vencer" del listado. La query pega al índice parcial
   // `enrollments_active_expiring_idx` (migración 0144).
   const todayYmd = new Date().toISOString().slice(0, 10);
-  const in7DaysYmd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
+  const in7DaysYmd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const expiringRes = await supabase
     .from("enrollments")
     .select("student_id, access_expires_at")
@@ -202,8 +184,7 @@ export default async function EstudiantesPage({
     .not("access_expires_at", "is", null)
     .gte("access_expires_at", todayYmd)
     .lte("access_expires_at", in7DaysYmd);
-  const expiringRows =
-    (expiringRes.data ?? []) as unknown as ExpiringEnrollmentRow[];
+  const expiringRows = (expiringRes.data ?? []) as unknown as ExpiringEnrollmentRow[];
   const expiringStudentIds = new Set<string>();
   for (const e of expiringRows) expiringStudentIds.add(e.student_id);
 
@@ -235,9 +216,7 @@ export default async function EstudiantesPage({
       ? { data: [] as SaleDbRow[] }
       : await supabase
           .from("sales")
-          .select(
-            "id, project_id, product_id, lead_id, total_amount, currency, created_at",
-          )
+          .select("id, project_id, product_id, lead_id, total_amount, currency, created_at")
           .in("product_id", Array.from(courseProductIds))
           .order("created_at", { ascending: false });
   const allSales = (salesRes.data ?? []) as unknown as SaleDbRow[];
@@ -248,10 +227,7 @@ export default async function EstudiantesPage({
   const leadsRes =
     leadIds.length === 0
       ? { data: [] as LeadDbRow[] }
-      : await supabase
-          .from("leads")
-          .select("id, name, email, phone_normalized")
-          .in("id", leadIds);
+      : await supabase.from("leads").select("id, name, email, phone_normalized").in("id", leadIds);
   const allLeads = (leadsRes.data ?? []) as unknown as LeadDbRow[];
   const leadById = new Map<string, LeadDbRow>();
   for (const l of allLeads) leadById.set(l.id, l);
@@ -270,20 +246,12 @@ export default async function EstudiantesPage({
   }
   function isAlreadyStudent(projectId: string, lead: LeadDbRow): boolean {
     if (lead.email) {
-      if (
-        studentKeysByProject.has(
-          `${projectId}::email::${lead.email.toLowerCase()}`,
-        )
-      ) {
+      if (studentKeysByProject.has(`${projectId}::email::${lead.email.toLowerCase()}`)) {
         return true;
       }
     }
     if (lead.phone_normalized) {
-      if (
-        studentKeysByProject.has(
-          `${projectId}::phone::${lead.phone_normalized}`,
-        )
-      ) {
+      if (studentKeysByProject.has(`${projectId}::phone::${lead.phone_normalized}`)) {
         return true;
       }
     }
@@ -321,9 +289,7 @@ export default async function EstudiantesPage({
   const derivedStatusById = new Map<string, Status>();
   for (const s of allStudents) derivedStatusById.set(s.id, deriveStatus(s));
 
-  const activeCount = allStudents.filter(
-    (s) => derivedStatusById.get(s.id) === "active",
-  ).length;
+  const activeCount = allStudents.filter((s) => derivedStatusById.get(s.id) === "active").length;
   const graduatedCount = allStudents.filter(
     (s) => derivedStatusById.get(s.id) === "graduated",
   ).length;
@@ -333,11 +299,23 @@ export default async function EstudiantesPage({
 
   const filtered = allStudents.filter((s) => {
     const st = derivedStatusById.get(s.id) ?? s.status;
-    if (show === "active") return st === "active";
-    if (show === "graduated") return st === "graduated";
-    if (show === "inactive") return st === "inactive";
-    if (show === "pending") return false; // el otro tab gobierna
-    if (show === "expiring") return expiringStudentIds.has(s.id);
+    let matchesShow: boolean;
+    if (show === "active") matchesShow = st === "active";
+    else if (show === "graduated") matchesShow = st === "graduated";
+    else if (show === "inactive") matchesShow = st === "inactive";
+    else if (show === "pending")
+      matchesShow = false; // el otro tab gobierna
+    else if (show === "expiring") matchesShow = expiringStudentIds.has(s.id);
+    else matchesShow = true;
+    if (!matchesShow) return false;
+
+    if (cohortFilter === "none") {
+      const bucket = cohortsByStudent.get(s.id);
+      if (bucket && bucket.length > 0) return false;
+    } else if (cohortFilter !== "") {
+      const bucket = cohortsByStudent.get(s.id) ?? [];
+      if (!bucket.some((c) => c.id === cohortFilter)) return false;
+    }
     return true;
   });
 
@@ -388,12 +366,29 @@ export default async function EstudiantesPage({
     },
   ];
 
-  function buildHref(nextShow: ShowFilter): string {
+  function buildHref(nextShow: ShowFilter, nextCohort: string = cohortFilter): string {
     const params = new URLSearchParams();
     if (nextShow !== "active") params.set("show", nextShow);
+    if (nextCohort !== "") params.set("cohort", nextCohort);
     const qs = params.toString();
     return qs ? `/academia/estudiantes?${qs}` : "/academia/estudiantes";
   }
+
+  // Opciones del filtro de cohorte: "Todas", "Sin cohorte" (sentinel "none")
+  // y una por cada cohorte real, ordenadas alfabéticamente. Reutiliza
+  // `cohortsByStudent` — sin queries adicionales.
+  const cohortFilterOptions = [
+    { value: "", label: "Todas las generaciones", href: buildHref(show, "") },
+    { value: "none", label: "Sin generación asignada", href: buildHref(show, "none") },
+    ...allCohorts
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((c) => ({
+        value: c.id,
+        label: c.name,
+        href: buildHref(show, c.id),
+      })),
+  ];
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-5">
@@ -414,16 +409,23 @@ export default async function EstudiantesPage({
 
       <PersistentFilterSync storageKey="academia:filters:estudiantes" />
 
-      <KgPageFilters activeCount={show !== "active" ? 1 : 0}>
+      <KgPageFilters activeCount={(show !== "active" ? 1 : 0) + (cohortFilter !== "" ? 1 : 0)}>
         <KgParamPills
           ariaLabel="Filtrar por estado"
           options={SHOW_OPTIONS.map((o) => ({
-            label:
-              o.badge && o.badge > 0 ? `${o.label} (${o.badge})` : o.label,
+            label: o.badge && o.badge > 0 ? `${o.label} (${o.badge})` : o.label,
             href: buildHref(o.value),
             active: show === o.value,
           }))}
         />
+        {show !== "pending" && (
+          <KgFilterSelect
+            label="Generación"
+            ariaLabel="Filtrar por generación"
+            options={cohortFilterOptions}
+            active={cohortFilter}
+          />
+        )}
         <ClearFiltersButton
           storageKey="academia:filters:estudiantes"
           basePath="/academia/estudiantes"
@@ -432,10 +434,7 @@ export default async function EstudiantesPage({
 
       {show === "pending" ? (
         <Panel title="Compradores pendientes de alta" pad={false} fillHeight>
-          <PendingBuyersView
-            buyers={pendingBuyers}
-            cohortsByCourse={cohortsByCourse}
-          />
+          <PendingBuyersView buyers={pendingBuyers} cohortsByCourse={cohortsByCourse} />
         </Panel>
       ) : (
         <Panel
@@ -443,17 +442,10 @@ export default async function EstudiantesPage({
           pad={false}
           fillHeight
           actions={
-            <StudentPanelActions
-              projects={projectOptions}
-              importProjects={importProjects}
-            />
+            <StudentPanelActions projects={projectOptions} importProjects={importProjects} />
           }
         >
-          <StudentsView
-            rows={rows}
-            totalCount={rows.length}
-            projects={projectOptions}
-          />
+          <StudentsView rows={rows} totalCount={rows.length} projects={projectOptions} />
         </Panel>
       )}
     </div>
@@ -462,14 +454,17 @@ export default async function EstudiantesPage({
 
 function parseShow(v: string | string[] | undefined): ShowFilter {
   if (typeof v !== "string") return "active";
-  if (
-    v === "graduated" ||
-    v === "inactive" ||
-    v === "all" ||
-    v === "pending" ||
-    v === "expiring"
-  ) {
+  if (v === "graduated" || v === "inactive" || v === "all" || v === "pending" || v === "expiring") {
     return v;
   }
   return "active";
+}
+
+// "" = todas, "none" = sin cohorte asignado, cualquier otro valor = id de
+// cohorte puntual. Sin validar contra `allCohorts` acá — un id inexistente
+// simplemente no matchea nada en `filtered`, mismo comportamiento inofensivo
+// que el resto de los filtros por query param del repo.
+function parseCohortFilter(v: string | string[] | undefined): string {
+  if (typeof v !== "string") return "";
+  return v;
 }

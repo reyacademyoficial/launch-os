@@ -139,6 +139,7 @@ export function ClassesPanel({
             >
               <div style={{ minWidth: 0 }}>
                 <div
+                  suppressHydrationWarning
                   style={{
                     color: "var(--kg-text-1)",
                     fontSize: 13,

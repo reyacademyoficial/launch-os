@@ -30,10 +30,7 @@ const STATUSES = ["active", "inactive", "graduated"] as const;
 
 type Status = (typeof STATUSES)[number];
 
-export type CreateStudentState =
-  | { ok: true; studentId: string }
-  | { error: string }
-  | null;
+export type CreateStudentState = { ok: true; studentId: string } | { error: string } | null;
 
 export interface BulkFailure {
   readonly saleId: string;
@@ -85,9 +82,7 @@ interface StudentPayload {
 
 const YMD_RX = /^\d{4}-\d{2}-\d{2}$/;
 
-function parseStudentFormData(
-  formData: FormData,
-): StudentPayload | string {
+function parseStudentFormData(formData: FormData): StudentPayload | string {
   const projectId = nullIfEmpty(formData.get("project_id"));
   if (projectId == null) return "Elegí un proyecto.";
 
@@ -132,28 +127,23 @@ export async function createStudentManual(
     name: parsed.name,
     email: parsed.email,
     phone: parsed.phone,
+    phone_normalized: parsed.phone,
     status: parsed.status,
     enrolled_at: parsed.enrolledAt,
     notes: parsed.notes,
   } as never;
 
-  const { data, error } = await supabase
-    .from("students")
-    .insert(payload)
-    .select("id")
-    .single();
+  const { data, error } = await supabase.from("students").insert(payload).select("id").single();
 
   if (error) {
     if (error.code === "23505") {
       return {
-        error:
-          "Ya existe un estudiante con ese email o teléfono en el proyecto.",
+        error: "Ya existe un estudiante con ese email o teléfono en el proyecto.",
       };
     }
     if (error.code === "23514") {
       return {
-        error:
-          "El proyecto no es propia. Academia solo admite proyectos con ownership='propia'.",
+        error: "El proyecto no es propia. Academia solo admite proyectos con ownership='propia'.",
       };
     }
     return { error: error.message };
@@ -205,17 +195,12 @@ export async function bulkCreateStudentsFromSales(
   }>;
 
   const leadIds = Array.from(
-    new Set(
-      sales.map((s) => s.lead_id).filter((v): v is string => v != null),
-    ),
+    new Set(sales.map((s) => s.lead_id).filter((v): v is string => v != null)),
   );
   const { data: leadsData } =
     leadIds.length === 0
       ? { data: [] }
-      : await supabase
-          .from("leads")
-          .select("id, name, email, phone_normalized")
-          .in("id", leadIds);
+      : await supabase.from("leads").select("id, name, email, phone_normalized").in("id", leadIds);
   const leads = (leadsData ?? []) as unknown as ReadonlyArray<{
     id: string;
     name: string | null;
@@ -228,10 +213,7 @@ export async function bulkCreateStudentsFromSales(
   const salesTouchedProjects = new Set<string>();
   const salesTouchedStudentPaths = new Set<string>();
   const failures: BulkFailure[] = [];
-  const createdStudentBySale = new Map<
-    string,
-    { studentId: string; projectId: string }
-  >();
+  const createdStudentBySale = new Map<string, { studentId: string; projectId: string }>();
 
   // Alta secuencial. Un batch pequeño no gana con concurrencia en un
   // server action y el orden de errores es más predecible.
@@ -268,25 +250,20 @@ export async function bulkCreateStudentsFromSales(
       name: lead.name,
       email: lead.email ? lead.email.toLowerCase() : null,
       phone: normalizePhone(lead.phone_normalized),
+      phone_normalized: normalizePhone(lead.phone_normalized),
       status: "active" as Status,
       enrolled_at: todayYmd(),
       notes: null,
     } as never;
 
-    const { data, error } = await supabase
-      .from("students")
-      .insert(payload)
-      .select("id")
-      .single();
+    const { data, error } = await supabase.from("students").insert(payload).select("id").single();
 
     if (error) {
       let message = error.message;
       if (error.code === "23505") {
-        message =
-          "Ya existe un estudiante con ese email o teléfono en el proyecto.";
+        message = "Ya existe un estudiante con ese email o teléfono en el proyecto.";
       } else if (error.code === "23514") {
-        message =
-          "El proyecto no es propia. Academia solo admite ownership='propia'.";
+        message = "El proyecto no es propia. Academia solo admite ownership='propia'.";
       }
       failures.push({ saleId, leadName: lead.name, error: message });
       continue;
@@ -324,17 +301,14 @@ export async function bulkCreateStudentsFromSales(
         notes: null,
       } as never;
 
-      const { error } = await supabase
-        .from("enrollments")
-        .insert(enrPayload);
+      const { error } = await supabase.from("enrollments").insert(enrPayload);
 
       if (error) {
         let message = error.message;
         if (error.code === "23505") {
           message = "Ya estaba inscripto en esta generación.";
         } else if (error.code === "23514") {
-          message =
-            "La cohort no coincide con el proyecto/producto del estudiante.";
+          message = "La cohort no coincide con el proyecto/producto del estudiante.";
         }
         // El student SÍ se creó — reportamos como parcial en failures
         // (con studentId en el mensaje para debug).
@@ -388,21 +362,18 @@ export async function updateStudent(
     name: parsed.name,
     email: parsed.email,
     phone: parsed.phone,
+    phone_normalized: parsed.phone,
     status: parsed.status,
     enrolled_at: parsed.enrolledAt,
     notes: parsed.notes,
   } as never;
 
-  const { error } = await supabase
-    .from("students")
-    .update(payload)
-    .eq("id", studentId);
+  const { error } = await supabase.from("students").update(payload).eq("id", studentId);
 
   if (error) {
     if (error.code === "23505") {
       return {
-        error:
-          "Ya existe otro estudiante con ese email o teléfono en el proyecto.",
+        error: "Ya existe otro estudiante con ese email o teléfono en el proyecto.",
       };
     }
     if (error.code === "23514") {
@@ -426,9 +397,7 @@ export async function updateStudent(
 // status='inactive' o 'graduated' es la forma normal de "sacar de vista".
 // ═══════════════════════════════════════════════════════════════════════════
 
-export async function deleteStudent(
-  studentId: string,
-): Promise<DeleteStudentResult> {
+export async function deleteStudent(studentId: string): Promise<DeleteStudentResult> {
   if (!studentId) return { error: "Falta el id del estudiante." };
 
   const supabase = await createSupabaseClient();
@@ -442,10 +411,7 @@ export async function deleteStudent(
       .from("attendance")
       .select("id", { count: "exact", head: true })
       .eq("student_id", studentId),
-    supabase
-      .from("exams")
-      .select("id", { count: "exact", head: true })
-      .eq("student_id", studentId),
+    supabase.from("exams").select("id", { count: "exact", head: true }).eq("student_id", studentId),
     supabase
       .from("certificates")
       .select("id", { count: "exact", head: true })
@@ -468,9 +434,7 @@ export async function deleteStudent(
     deps.push(`${examsCount} examen${examsCount === 1 ? "" : "es"}`);
   }
   if (certsCount > 0) {
-    deps.push(
-      `${certsCount} certificado${certsCount === 1 ? "" : "s"}`,
-    );
+    deps.push(`${certsCount} certificado${certsCount === 1 ? "" : "s"}`);
   }
 
   if (deps.length > 0) {
@@ -481,10 +445,7 @@ export async function deleteStudent(
     };
   }
 
-  const { error } = await supabase
-    .from("students")
-    .delete()
-    .eq("id", studentId);
+  const { error } = await supabase.from("students").delete().eq("id", studentId);
   if (error) return { error: error.message };
 
   revalidatePath("/academia/estudiantes");
@@ -501,9 +462,7 @@ export async function deleteStudent(
 // service_role (RLS 0149 bloquea a authenticated).
 // ═══════════════════════════════════════════════════════════════════════════
 
-export type ExpireEnrollmentResult =
-  | { ok: true; webhookStatus: string }
-  | { error: string };
+export type ExpireEnrollmentResult = { ok: true; webhookStatus: string } | { error: string };
 
 export async function expireEnrollmentNow(
   enrollmentId: string,
@@ -523,10 +482,7 @@ export async function expireEnrollmentNow(
     };
   } catch (err) {
     return {
-      error:
-        err instanceof Error
-          ? err.message
-          : "No se pudo dar de baja el enrollment.",
+      error: err instanceof Error ? err.message : "No se pudo dar de baja el enrollment.",
     };
   }
 }
