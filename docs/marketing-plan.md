@@ -104,6 +104,43 @@ con piece asociada) → confirmar que la piece origen pasa a
 `publicado`. Confirmar también que borrar un `content_edit` con archivos ya
 producidos rebota, y que "Reabrir" bloquea con subidas comprometidas.
 
+**7 · Bug reportado por el usuario — "los dueños sólo me aparecen a mí".**
+`content_owners` no tiene ninguna columna de ownership por usuario — el
+problema era la RLS: la policy de SELECT de **todas** las tablas org-scope
+del proyecto (no sólo Marketing) usaba `can_edit_organization()`, que hoy
+(0051) es literalmente `is_superadmin()` — el parámetro de organización se
+acepta y se ignora, es un placeholder documentado como "pendiente de
+refinar" que nunca se tocó. Efecto real: cualquier usuario con role
+`admin`/`coordinador`/`operador`/`closer`/`analista` (no `superadmin`/`dev`)
+recibía cero filas en `content_owners` y en el resto de Marketing (y en
+`invoices`, `clients`, `tickets`, `tasks`, etc.) — no un bug de Marketing,
+sino un gap de la RLS base que Marketing fue el primer módulo en exponer con
+usuarios reales no-superadmin.
+
+Ya existía precedente idéntico: `0171_organization_select_can_view.sql`
+arregló este mismo problema para la tabla `organization` reemplazando su
+SELECT por `can_view_organization()` (membresía real vía
+`organization_people`/`project_members`, 0173) y dejando el
+INSERT/UPDATE/DELETE en `is_kingrow_admin()` a propósito. **Migración
+`0182_org_scope_select_by_membership.sql`** replica ese mismo fix en las 55
+policies de SELECT del resto del proyecto que seguían en
+`can_edit_organization()` (Marketing incluido) — sólo lectura, la escritura
+no cambia en ningún módulo. Si Marketing necesita que coordinador/operador
+además puedan crear/editar (no sólo ver), eso es un cambio de escritura
+aparte y deliberado, pendiente si se pide.
+
+**8 · Nombre de sesión.** `recording_sessions.name` (0183, nullable) — las
+sesiones no tenían forma de identificarse más que por fecha + dueño.
+Agregado al drawer (`session-form-drawer.tsx`), a la tabla y al calendario
+de `/marketing/grabacion`, y a los labels de sesión que usa el picker de
+Crudos. Sin nombre, todo cae al label viejo (fecha + dueño) — no rompe
+sesiones existentes.
+
+**Pendiente operacional (agregado):** correr `0182` y `0183` en Studio
+después de las anteriores. Verificar post-`0182` que un usuario con role
+`coordinador` u `operador` (no superadmin) ve `content_owners` y el resto de
+Marketing — antes veía listas vacías.
+
 ---
 
 ## Estado al 2026-09-01 (sesión Claude — 0175 · procedimiento operativo real)

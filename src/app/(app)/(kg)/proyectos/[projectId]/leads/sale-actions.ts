@@ -518,10 +518,14 @@ export async function createSaleWithLead(
 }
 
 /**
- * Edita una venta: producto, modalidad, monto pactado, fecha de cierre.
- * NO cambia `launch_id` (para eso el operador crea nueva venta) ni
- * `team_member_id` (se hereda del lead, denormalización mantenida por
- * updateLead).
+ * Edita una venta: producto, modalidad, monto pactado, fecha de cierre y
+ * lanzamiento asociado. NO cambia `team_member_id` (se hereda del lead,
+ * denormalización mantenida por updateLead).
+ *
+ * LANZAMIENTO — `sales.launch_id` es la atribución PROPIA de la venta desde
+ * Fase 8, independiente de `leads.launch_id`. Reasignarlo acá sólo mueve la
+ * venta entre agregados de KPI/leaderboard/comisiones por launch; no toca el
+ * lead. Vacío ("") = sin lanzamiento (`null`).
  *
  * SNAPSHOT DE COMISIÓN — política Fase 7:
  *   - Por default NO regenera el snapshot. La comisión histórica queda
@@ -554,6 +558,7 @@ export async function updateSale(
   const currency = currencyRaw === "USD" ? "USD" : "ARS";
   const closedAtRaw = str(formData, "closed_at");
   const regenerate = formData.get("regenerate") !== null;
+  const launch_id = nullable(str(formData, "launch_id"));
 
   const installmentInput = parseInstallmentInput(formData);
   if ("error" in installmentInput) return installmentInput;
@@ -569,6 +574,19 @@ export async function updateSale(
     .maybeSingle();
   if (!productData) {
     return { error: "Producto inexistente o de otro proyecto." };
+  }
+
+  // Guard de pertenencia del lanzamiento — null (sin lanzamiento) es válido.
+  if (launch_id) {
+    const { data: launchData } = await supabase
+      .from("launches")
+      .select("id")
+      .eq("id", launch_id)
+      .eq("project_id", projectId)
+      .maybeSingle();
+    if (!launchData) {
+      return { error: "Lanzamiento inexistente o de otro proyecto." };
+    }
   }
 
   // El dueño de la venta es el del lead — no se recibe del form. Mantenerlo
@@ -603,10 +621,13 @@ export async function updateSale(
 
   let snapshotUpdate: Record<string, unknown> = {};
   if (regenerate) {
+    // Usa el launch NUEVO (no `saleRef.launch_id`): si el operador está
+    // reasignando el lanzamiento en la misma edición, la comisión recalculada
+    // tiene que reflejar la regla vigente para el destino, no para el origen.
     const snapshot = await resolveSnapshotForSale(
       projectId,
       payment_modality_id,
-      saleRef.launch_id,
+      launch_id,
       product_id,
     );
     if (!snapshot) {
@@ -624,6 +645,7 @@ export async function updateSale(
     total_amount,
     currency,
     team_member_id,
+    launch_id,
     installment_count: installmentInput.count,
     installment_frequency: installmentInput.frequency,
     grace_days: installmentInput.graceDays,
@@ -667,6 +689,14 @@ export async function updateSale(
       "generate_invoices_for_sale" as never,
       { p_sale_id: saleId } as never,
     );
+  }
+
+  // Si se reasignó el lanzamiento, `revalidateForSale` (que lookupea el
+  // launch_id post-update) sólo revalida el NUEVO — el KPI/leaderboard del
+  // launch de ORIGEN se queda con cache stale a menos que lo pidamos acá.
+  if (saleRef.launch_id && saleRef.launch_id !== launch_id) {
+    revalidatePath(`/proyectos/${projectId}/launches/${saleRef.launch_id}`);
+    revalidatePath(`/proyectos/${projectId}/launches/${saleRef.launch_id}/kpi`);
   }
 
   await revalidateForSale(projectId, saleId);

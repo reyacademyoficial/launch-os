@@ -154,6 +154,7 @@ export function isRecordingRole(v: string): v is RecordingRole {
 export interface RecordingSessionRow {
   readonly id: string;
   readonly contentOwnerId: string;
+  readonly name: string | null;
   readonly scheduledAt: string;
   readonly durationMinutes: number | null;
   readonly location: string | null;

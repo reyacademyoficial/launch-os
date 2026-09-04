@@ -30,6 +30,7 @@ interface OwnerLite {
 interface SessionLite {
   readonly id: string;
   readonly content_owner_id: string;
+  readonly name: string | null;
   readonly scheduled_at: string;
 }
 
@@ -63,7 +64,7 @@ export default async function CrudosPage({
     supabase.from("content_owners").select("id, name, active").order("name"),
     supabase
       .from("recording_sessions")
-      .select("id, content_owner_id, scheduled_at")
+      .select("id, content_owner_id, name, scheduled_at")
       .order("scheduled_at", { ascending: false }),
     supabase
       .from("content_raws")
@@ -99,9 +100,11 @@ export default async function CrudosPage({
   const sessionOptions = sessions.map((s) => ({
     id: s.id,
     contentOwnerId: s.content_owner_id,
-    label: `${formatDay(s.scheduled_at)} · ${
-      ownersById.get(s.content_owner_id)?.name ?? "(dueño)"
-    }`,
+    label:
+      s.name ??
+      `${formatDay(s.scheduled_at)} · ${
+        ownersById.get(s.content_owner_id)?.name ?? "(dueño)"
+      }`,
   }));
 
   const normalized: RawRowData[] = raws.map((r) => {
@@ -113,7 +116,9 @@ export default async function CrudosPage({
       contentOwnerId: r.content_owner_id,
       ownerName: ownersById.get(r.content_owner_id)?.name ?? "(dueño desconocido)",
       sourceRecordingSessionId: r.source_recording_session_id,
-      sessionLabel: session ? formatDay(session.scheduled_at) : null,
+      sessionLabel: session
+        ? (session.name ?? formatDay(session.scheduled_at))
+        : null,
       name: r.name,
       driveUrl: r.drive_url,
       notes: r.notes,

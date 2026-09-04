@@ -46,6 +46,7 @@ import { setSessionStatus } from "./actions";
 export interface SessionRowData {
   readonly id: string;
   readonly contentOwnerId: string;
+  readonly name: string | null;
   readonly ownerName: string;
   readonly scheduledAt: string;
   readonly durationMinutes: number | null;
@@ -104,6 +105,7 @@ export function GrabacionView({
       ? {
           id: editing.id,
           contentOwnerId: editing.contentOwnerId,
+          name: editing.name,
           scheduledAt: editing.scheduledAt,
           durationMinutes: editing.durationMinutes,
           location: editing.location,
@@ -125,7 +127,7 @@ export function GrabacionView({
       const arr = map.get(key) ?? [];
       arr.push({
         id: r.id,
-        label: `${formatTime(r.scheduledAt)} · ${r.ownerName}`,
+        label: `${formatTime(r.scheduledAt)} · ${r.name ?? r.ownerName}`,
         tone: SESSION_STATUS_TONE[r.status],
       });
       map.set(key, arr);
@@ -154,6 +156,18 @@ export function GrabacionView({
   }
 
   const columns: Column<SessionRowData>[] = [
+    {
+      key: "name",
+      label: "Nombre",
+      render: (r) =>
+        r.name ? (
+          <span style={{ color: "var(--kg-text-1)", fontWeight: 600 }}>
+            {r.name}
+          </span>
+        ) : (
+          <span style={{ color: "var(--kg-text-3)" }}>Sin nombre</span>
+        ),
+    },
     {
       key: "scheduled_at",
       label: "Fecha",
@@ -421,7 +435,7 @@ export function GrabacionView({
                       fontVariantNumeric: "tabular-nums",
                     }}
                   >
-                    {formatTime(r.scheduledAt)} · {r.ownerName}
+                    {formatTime(r.scheduledAt)} · {r.name ?? r.ownerName}
                   </div>
                   <StatusPill
                     text={SESSION_STATUS_LABEL[r.status]}

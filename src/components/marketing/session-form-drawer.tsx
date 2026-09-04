@@ -67,6 +67,7 @@ export interface SessionInitial {
   /** Sólo en modo edit. */
   readonly id?: string;
   readonly contentOwnerId?: string;
+  readonly name?: string | null;
   readonly scheduledAt?: string;
   readonly durationMinutes?: number | null;
   readonly location?: string | null;
@@ -269,6 +270,22 @@ function SessionFormBody({
             </option>
           ))}
         </select>
+      </Field>
+
+      <Field
+        label="Nombre"
+        htmlFor="name"
+        hint="Opcional — sin nombre, la sesión se identifica por fecha + dueño."
+      >
+        <input
+          id="name"
+          name="name"
+          type="text"
+          maxLength={200}
+          defaultValue={initial?.name ?? ""}
+          placeholder="Reels semana 34"
+          style={inputStyle}
+        />
       </Field>
 
       <div style={{ display: "flex", gap: 12 }}>

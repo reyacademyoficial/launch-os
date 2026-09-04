@@ -532,6 +532,7 @@ export function KanbanBoard({
                 rules={rules}
                 paymentMethods={paymentMethods}
                 teamMembers={teamMembers}
+                launches={launches}
                 createSaleAction={createSaleAction.bind(null, lead.id)}
                 updateProductAction={(saleId, productId) =>
                   updateSaleProductAction(saleId, productId)

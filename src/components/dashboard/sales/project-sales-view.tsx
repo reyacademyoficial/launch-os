@@ -702,6 +702,7 @@ export function ProjectSalesView({
       rules,
       paymentMethods,
       teamMembers,
+      launches,
       createSaleAction: createSaleAction.bind(null, leadForModal.id),
       updateProductAction: (saleId: string, productId: string) =>
         updateSaleProductAction(saleId, productId),

@@ -336,6 +336,12 @@ export interface SaleModalProps {
   readonly teamMembers: ReadonlyArray<
     Pick<TeamMemberRow, "id" | "name" | "active" | "role">
   >;
+  /**
+   * Universo de lanzamientos del proyecto — alimenta el selector de
+   * lanzamiento en `EditSaleForm`. Sin esta prop, el form de edición no
+   * muestra el campo (no hay de dónde elegir).
+   */
+  readonly launches?: ReadonlyArray<{ id: string; name: string }>;
   readonly initialSaleId?: string;
   readonly allowCreateAnother?: boolean;
   readonly createSaleAction: SaleAction;
@@ -446,6 +452,7 @@ function SaleModalBody({
   rules,
   paymentMethods,
   teamMembers,
+  launches,
   initialSaleId,
   allowCreateAnother = true,
   createSaleAction,
@@ -603,6 +610,7 @@ function SaleModalBody({
               sale={selectedSale}
               modalities={modalities}
               products={products}
+              launches={launches}
               updateSaleAction={(prev, fd) =>
                 updateSaleAction(selectedSale.id, prev, fd)
               }
@@ -2232,6 +2240,7 @@ function EditSaleForm({
   sale,
   modalities,
   products,
+  launches,
   updateSaleAction,
   onCancel,
   onSuccess,
@@ -2240,6 +2249,7 @@ function EditSaleForm({
   readonly sale: SaleRow;
   readonly modalities: ReadonlyArray<PaymentModalityRow>;
   readonly products: ReadonlyArray<ProductRow>;
+  readonly launches?: ReadonlyArray<{ id: string; name: string }>;
   readonly updateSaleAction: SaleAction;
   readonly onCancel: () => void;
   readonly onSuccess: () => void;
@@ -2303,6 +2313,24 @@ function EditSaleForm({
           ))}
         </select>
       </Field>
+
+      {launches && (
+        <Field label="Lanzamiento" htmlFor="edit-launch">
+          <select
+            id="edit-launch"
+            name="launch_id"
+            defaultValue={sale.launch_id ?? ""}
+            style={controlStyle}
+          >
+            <option value="">Sin lanzamiento</option>
+            {launches.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-[2fr_1fr_1fr]">
         <Field label="Monto pactado" htmlFor="edit-total" required>

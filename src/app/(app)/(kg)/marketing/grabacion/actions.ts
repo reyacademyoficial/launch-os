@@ -48,6 +48,7 @@ interface AssigneeInput {
 
 interface SessionPayload {
   readonly contentOwnerId: string;
+  readonly name: string | null;
   readonly scheduledAt: string;
   readonly durationMinutes: number | null;
   readonly location: string | null;
@@ -65,6 +66,8 @@ interface SessionPayload {
 function parseSessionFormData(formData: FormData): SessionPayload | string {
   const contentOwnerId = String(formData.get("content_owner_id") ?? "").trim();
   if (contentOwnerId.length === 0) return "Elegí un dueño de contenido.";
+
+  const name = nullIfEmpty(formData.get("name"));
 
   const scheduledAt = String(formData.get("scheduled_at") ?? "").trim();
   if (scheduledAt.length === 0) return "La fecha y hora de grabación es obligatoria.";
@@ -108,6 +111,7 @@ function parseSessionFormData(formData: FormData): SessionPayload | string {
 
   return {
     contentOwnerId,
+    name,
     scheduledAt,
     durationMinutes,
     location,
@@ -281,6 +285,7 @@ export async function createSession(
   const payload = {
     organization_id: organizationId,
     content_owner_id: parsed.contentOwnerId,
+    name: parsed.name,
     scheduled_at: parsed.scheduledAt,
     duration_minutes: parsed.durationMinutes,
     location: parsed.location,
@@ -360,6 +365,7 @@ export async function updateSession(
   const supabase = await createSupabaseClient();
   const payload = {
     content_owner_id: parsed.contentOwnerId,
+    name: parsed.name,
     scheduled_at: parsed.scheduledAt,
     duration_minutes: parsed.durationMinutes,
     location: parsed.location,

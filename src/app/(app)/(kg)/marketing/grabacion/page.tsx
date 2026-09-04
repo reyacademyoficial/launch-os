@@ -73,6 +73,7 @@ interface PersonLite {
 interface SessionDbRow {
   readonly id: string;
   readonly content_owner_id: string;
+  readonly name: string | null;
   readonly scheduled_at: string;
   readonly duration_minutes: number | null;
   readonly location: string | null;
@@ -124,7 +125,7 @@ export default async function GrabacionPage({
   let sessionsQuery = supabase
     .from("recording_sessions")
     .select(
-      "id, content_owner_id, scheduled_at, duration_minutes, location, materials, notes, status",
+      "id, content_owner_id, name, scheduled_at, duration_minutes, location, materials, notes, status",
     )
     .order("scheduled_at", { ascending: false });
   if (period) {
@@ -182,13 +183,16 @@ export default async function GrabacionPage({
     recordingSessionId: p.recording_session_id,
   }));
   // Picker de sesión para el drawer de "Cargar crudos" — todas las sesiones
-  // del rango visible, resueltas a un label legible.
+  // del rango visible, resueltas a un label legible. Usa el nombre de la
+  // sesión si tiene uno; si no, cae a fecha + dueño.
   const rawSessionOptions = sessions.map((s) => ({
     id: s.id,
     contentOwnerId: s.content_owner_id,
-    label: `${formatDayShort(s.scheduled_at)} · ${
-      ownersById.get(s.content_owner_id)?.name ?? "(dueño)"
-    }`,
+    label: s.name
+      ? s.name
+      : `${formatDayShort(s.scheduled_at)} · ${
+          ownersById.get(s.content_owner_id)?.name ?? "(dueño)"
+        }`,
   }));
 
   // Agrupar assignees por session (resolvidos a full_name).
@@ -226,6 +230,7 @@ export default async function GrabacionPage({
       return {
         id: s.id,
         contentOwnerId: s.content_owner_id,
+        name: s.name,
         ownerName:
           ownersById.get(s.content_owner_id)?.name ?? "(dueño desconocido)",
         scheduledAt: s.scheduled_at,

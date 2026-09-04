@@ -591,6 +591,7 @@ export function CobrosView({
         rules={rules}
         paymentMethods={paymentMethods}
         teamMembers={teamMembers}
+        launches={launches}
         canEdit={canEdit}
         fxLookup={fxLookup}
         methodCurrencies={methodCurrencies}
@@ -882,6 +883,7 @@ function SalesTable({
   rules,
   paymentMethods,
   teamMembers,
+  launches,
   canEdit,
   fxLookup,
   methodCurrencies,
@@ -920,6 +922,7 @@ function SalesTable({
   readonly products: ReadonlyArray<ProductRow>;
   readonly rules: ReadonlyArray<CommissionRuleRow>;
   readonly paymentMethods: ReadonlyArray<PaymentMethodRow>;
+  readonly launches?: ReadonlyArray<{ id: string; name: string }>;
   readonly teamMembers: ReadonlyArray<
     Pick<TeamMemberRow, "id" | "name" | "active" | "role">
   >;
@@ -1046,6 +1049,7 @@ function SalesTable({
       rules,
       paymentMethods,
       teamMembers,
+      launches,
       createSaleAction: createSaleAction.bind(null, leadForModal.id),
       updateProductAction: (saleId: string, productId: string) =>
         updateSaleProductAction(saleId, productId),
