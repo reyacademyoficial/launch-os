@@ -210,24 +210,52 @@ export interface ContentPieceRow {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Content assets (0162 + edit_due_date en 0175) — cortes que salen de una
-// grabación. Nacen EN COLA (`editedAt = null`) y entran al stock cuando el
-// editor los marca editados.
+// Content raws (0179) — Crudos: material SIN editar. Nace típicamente de una
+// recording_session realizada, pero puede cargarse suelto (nullable).
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface ContentRawRow {
+  readonly id: string;
+  readonly contentOwnerId: string;
+  readonly sourceRecordingSessionId: string | null;
+  readonly name: string;
+  readonly driveUrl: string;
+  readonly notes: string | null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Content edits (0180) — eventos de edición: "editar tal crudo". Reemplaza
+// editor_person_id/edit_due_date que antes vivían en cada content_asset.
+// Nacen EN COLA (`completedAt = null`); al marcarse realizados se cargan los
+// content_assets de salida.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface ContentEditRow {
+  readonly id: string;
+  readonly contentOwnerId: string;
+  readonly sourceContentRawId: string | null;
+  readonly title: string;
+  readonly editorPersonId: string | null;
+  readonly dueDate: string | null; // yyyy-mm-dd
+  readonly completedAt: string | null;
+  readonly notes: string | null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Content assets (0162, recortada en 0181) — archivo editado final, listo
+// para stock. Nace siempre desde un content_edit marcado "realizada" (o
+// huérfano, para importaciones — source_content_edit_id nullable).
 // ═══════════════════════════════════════════════════════════════════════════
 
 export interface ContentAssetRow {
   readonly id: string;
   readonly contentOwnerId: string;
-  readonly sourceRecordingSessionId: string | null;
+  readonly sourceContentEditId: string | null;
   readonly sourceContentPieceId: string | null;
   readonly name: string;
   readonly format: MarketingFormat;
-  readonly driveFolderUrl: string | null;
   readonly driveAssetUrl: string | null;
   readonly durationSeconds: number | null;
-  readonly editorPersonId: string | null;
-  /** Fecha objetivo de edición (futuro) — bucket del planning semanal. */
-  readonly editDueDate: string | null; // yyyy-mm-dd
   /** Cuándo se terminó de editar (pasado). Setearlo lo manda al stock. */
   readonly editedAt: string | null;
   readonly notes: string | null;

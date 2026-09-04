@@ -17,10 +17,9 @@ import {
 
 import { primaryBtn } from "@/components/kg/form-primitives";
 import {
-  ProductionBatchDrawer,
-  type PersonOptionForBatch,
-  type SessionOptionForBatch,
-} from "@/components/marketing/production-batch-drawer";
+  RawFormDrawer,
+  type SessionOption as RawSessionOption,
+} from "../crudos/raw-form-drawer";
 import {
   SessionFormDrawer,
   type OwnerOption,
@@ -73,6 +72,7 @@ export function GrabacionView({
   ownerOptions,
   personOptions,
   pieceOptions,
+  rawSessionOptions,
 }: {
   readonly view: "tabla" | "calendario";
   readonly rows: readonly SessionRowData[];
@@ -83,13 +83,14 @@ export function GrabacionView({
   readonly ownerOptions: readonly OwnerOption[];
   readonly personOptions: readonly PersonOption[];
   readonly pieceOptions: readonly PieceOption[];
+  readonly rawSessionOptions: readonly RawSessionOption[];
 }) {
   const [creating, setCreating] = useState<
     { open: true; presetDate?: string } | { open: false }
   >({ open: false });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [dayDrawerKey, setDayDrawerKey] = useState<string | null>(null);
-  const [batchFromSessionId, setBatchFromSessionId] = useState<string | null>(null);
+  const [rawSessionId, setRawSessionId] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -238,7 +239,7 @@ export function GrabacionView({
           {r.status === "realizada" && (
             <button
               type="button"
-              onClick={() => setBatchFromSessionId(r.id)}
+              onClick={() => setRawSessionId(r.id)}
               disabled={pending}
               className="kg-focus"
               style={{
@@ -246,9 +247,9 @@ export function GrabacionView({
                 borderColor: "var(--kg-accent-500)",
                 color: "var(--kg-accent-text)",
               }}
-              title="Cargar los cortes que salieron de esta grabación (van al stock)"
+              title="Cargar el material crudo que salió de esta grabación"
             >
-              Registrar producción
+              Cargar crudos
             </button>
           )}
           <button
@@ -270,21 +271,8 @@ export function GrabacionView({
     },
   ];
 
-  // Mapeo para el batch drawer — SessionRowData → SessionOptionForBatch.
-  // Le pasamos SOLO la sesión pre-seleccionada; el picker queda locked.
-  const batchSessionOptions: readonly SessionOptionForBatch[] = rows
-    .filter((r) => r.status === "realizada")
-    .map((r) => ({
-      id: r.id,
-      contentOwnerId: r.contentOwnerId,
-      ownerName: r.ownerName,
-      scheduledAt: r.scheduledAt,
-      status: r.status,
-    }));
-
-  const batchPersonOptions: readonly PersonOptionForBatch[] = personOptions.map(
-    (p) => ({ id: p.id, fullName: p.fullName }),
-  );
+  const rawSession =
+    rawSessionId != null ? rows.find((r) => r.id === rawSessionId) ?? null : null;
 
   // Preset del drawer create: en el day drawer del calendario se elige un día;
   // acá lo convertimos a ISO con hora 09:00 local (default razonable para
@@ -358,13 +346,26 @@ export function GrabacionView({
         initial={editingInitial}
       />
 
-      <ProductionBatchDrawer
-        open={batchFromSessionId != null}
-        onClose={() => setBatchFromSessionId(null)}
-        sessionOptions={batchSessionOptions}
-        personOptions={batchPersonOptions}
-        presetSessionId={batchFromSessionId ?? undefined}
-        initialKey={batchFromSessionId ?? undefined}
+      <RawFormDrawer
+        mode="create"
+        open={rawSessionId != null}
+        onClose={() => setRawSessionId(null)}
+        ownerOptions={ownerOptions}
+        sessionOptions={rawSessionOptions}
+        lockOrigin
+        initial={
+          rawSession != null
+            ? {
+                id: "",
+                contentOwnerId: rawSession.contentOwnerId,
+                sourceRecordingSessionId: rawSession.id,
+                name: "",
+                driveUrl: "",
+                notes: null,
+              }
+            : undefined
+        }
+        initialKey={rawSessionId ?? undefined}
       />
 
       <Drawer

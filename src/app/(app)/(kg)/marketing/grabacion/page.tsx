@@ -181,6 +181,15 @@ export default async function GrabacionPage({
     stage: p.stage,
     recordingSessionId: p.recording_session_id,
   }));
+  // Picker de sesión para el drawer de "Cargar crudos" — todas las sesiones
+  // del rango visible, resueltas a un label legible.
+  const rawSessionOptions = sessions.map((s) => ({
+    id: s.id,
+    contentOwnerId: s.content_owner_id,
+    label: `${formatDayShort(s.scheduled_at)} · ${
+      ownersById.get(s.content_owner_id)?.name ?? "(dueño)"
+    }`,
+  }));
 
   // Agrupar assignees por session (resolvidos a full_name).
   const assigneesBySession = new Map<
@@ -370,10 +379,18 @@ export default async function GrabacionPage({
           ownerOptions={ownerOptions}
           personOptions={personOptions}
           pieceOptions={pieceOptions}
+          rawSessionOptions={rawSessionOptions}
         />
       </Panel>
     </div>
   );
+}
+
+function formatDayShort(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`;
 }
 
 function parseView(v: string | string[] | undefined): "tabla" | "calendario" {

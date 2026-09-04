@@ -22,6 +22,7 @@ export default async function MarketingLayout({
     { href: "/marketing", label: "Dashboard" },
     { href: "/marketing/planificacion", label: "Planificación" },
     { href: "/marketing/grabacion", label: "Grabación" },
+    { href: "/marketing/crudos", label: "Crudos" },
     { href: "/marketing/edicion", label: "Edición" },
     { href: "/marketing/subidas", label: "Subidas" },
     { href: "/marketing/stock", label: "Stock" },

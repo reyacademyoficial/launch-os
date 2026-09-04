@@ -80,8 +80,12 @@ interface AssetLite {
   readonly content_owner_id: string;
   readonly format: string;
   readonly edited_at: string | null;
+}
+
+interface EditLite {
   readonly editor_person_id: string | null;
-  readonly created_at: string;
+  readonly due_date: string | null;
+  readonly completed_at: string | null;
 }
 
 interface UploadLite {
@@ -124,6 +128,7 @@ export default async function MarketingDashboardPage() {
     ownersRes,
     personsRef,
     assetsRes,
+    editsRes,
     uploadsRes,
     cadencesRes,
     sessionsRes,
@@ -135,9 +140,10 @@ export default async function MarketingDashboardPage() {
     getOrgPeople(),
     supabase
       .from("content_assets")
-      .select(
-        "id, content_owner_id, format, edited_at, editor_person_id, created_at",
-      ),
+      .select("id, content_owner_id, format, edited_at"),
+    supabase
+      .from("content_edits")
+      .select("editor_person_id, due_date, completed_at"),
     supabase
       .from("content_uploads")
       .select(
@@ -159,6 +165,7 @@ export default async function MarketingDashboardPage() {
   const owners = (ownersRes.data ?? []) as unknown as OwnerLite[];
   const persons = personsRef as unknown as PersonLite[];
   const assetsRaw = (assetsRes.data ?? []) as unknown as AssetLite[];
+  const editsRaw = (editsRes.data ?? []) as unknown as EditLite[];
   const uploadsRaw = (uploadsRes.data ?? []) as unknown as UploadLite[];
   const cadencesRaw = (cadencesRes.data ?? []) as unknown as CadenceLite[];
   const sessionsRaw = (sessionsRes.data ?? []) as unknown as SessionLite[];
@@ -244,21 +251,24 @@ export default async function MarketingDashboardPage() {
     return d.getTime() >= sevenAgo.getTime() && d.getTime() <= now.getTime();
   }).length;
 
-  // ─── Panel: editores esta semana (planning 1 semana).
+  // ─── Panel: editores esta semana (planning 1 semana). Bucketea por
+  // content_edits.due_date (fecha objetivo), no por content_assets — el
+  // editor y la fecha viven en el evento de edición, no en cada archivo.
   const monday = mondayOf(toYmd(now));
   const sunday = monday ? addDays(monday, 6) : null;
   const editorIds = Array.from(
     new Set(
-      assetsRaw
-        .map((a) => a.editor_person_id)
+      editsRaw
+        .map((e) => e.editor_person_id)
         .filter((x): x is string => x != null),
     ),
   );
-  const editorAssets = assetsRaw
-    .filter((a) => a.editor_person_id != null)
-    .map((a) => ({
-      editorPersonId: a.editor_person_id!,
-      bucketDate: a.edited_at ?? a.created_at,
+  const editorAssets = editsRaw
+    .filter((e) => e.editor_person_id != null)
+    .map((e) => ({
+      editorPersonId: e.editor_person_id!,
+      bucketDate: e.due_date,
+      edited: e.completed_at != null,
     }));
   const availabilityInput = availabilityRaw.map((a) => ({
     personId: a.person_id,

@@ -6,38 +6,28 @@ import { IconMkt } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
-import {
-  FORMAT_LABEL,
-  isMarketingFormat,
-  MARKETING_FORMATS,
-  type MarketingFormat,
-} from "@/lib/marketing/types";
 import { getOrgPeople } from "@/lib/finance/reference";
 import { createClient } from "@/lib/supabase/server";
 
-import {
-  EdicionView,
-  type AssetRowData,
-} from "./edicion-view";
-import { NewAssetButton } from "./new-asset-button";
+import { EdicionView, type EditRowData } from "./edicion-view";
+import { NewEditButton } from "./new-edit-button";
 
 export const metadata: Metadata = { title: "Marketing · Edición" };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Bloque 3 · Edición.
+// Bloque 3 · Edición — reescrito sobre content_edits (0180).
 //
 // Fetch:
-//   - content_assets (con editor + owner + sesión + piece resueltos por nombre)
+//   - content_edits (con editor + owner + crudo resueltos por nombre)
 //   - content_owners + organization_people (pickers del drawer)
-//   - recording_sessions (para picker "sesión origen")
-//   - content_pieces (para picker "piece origen")
-//   - editor_availability (para el planning semanal — solo el rango visible)
+//   - content_raws (picker "crudo a editar")
+//   - content_pieces (picker opcional del drawer de cierre)
+//   - editor_availability (planning semanal — sólo el rango visible)
 //
 // Filtros vía searchParams:
-//   ?editor=<uuid>|all       — default 'all'
-//   ?owner=<uuid>|all        — default 'all'
-//   ?format=<format>|all     — default 'all'
-//   ?status=queued|edited|all — default 'all' (queued = edited_at IS NULL)
+//   ?editor=<uuid>|all        — default 'all'
+//   ?owner=<uuid>|all         — default 'all'
+//   ?status=queued|done|all   — default 'all' (queued = completed_at IS NULL)
 //
 // Planning window: por defecto 4 semanas empezando el lunes de esta semana.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -54,33 +44,27 @@ interface PersonLite {
   readonly active: boolean;
 }
 
-interface SessionLite {
+interface RawLite {
   readonly id: string;
   readonly content_owner_id: string;
-  readonly scheduled_at: string;
-  readonly status: string;
+  readonly name: string;
+  readonly drive_url: string;
 }
 
 interface PieceLite {
   readonly id: string;
   readonly content_owner_id: string;
   readonly title: string;
-  readonly recording_session_id: string | null;
 }
 
-interface AssetDbRow {
+interface EditDbRow {
   readonly id: string;
   readonly content_owner_id: string;
-  readonly source_recording_session_id: string | null;
-  readonly source_content_piece_id: string | null;
-  readonly name: string;
-  readonly format: string;
-  readonly drive_folder_url: string | null;
-  readonly drive_asset_url: string | null;
-  readonly duration_seconds: number | null;
+  readonly source_content_raw_id: string | null;
+  readonly title: string;
   readonly editor_person_id: string | null;
-  readonly edit_due_date: string | null;
-  readonly edited_at: string | null;
+  readonly due_date: string | null;
+  readonly completed_at: string | null;
   readonly notes: string | null;
   readonly created_at: string;
 }
@@ -92,7 +76,7 @@ interface AvailabilityDbRow {
   readonly available: boolean;
 }
 
-type StatusFilter = "queued" | "edited" | "all";
+type StatusFilter = "queued" | "done" | "all";
 
 export default async function EdicionPage({
   searchParams,
@@ -102,12 +86,11 @@ export default async function EdicionPage({
   const sp = await searchParams;
   const editorFilter = parseSingle(sp.editor);
   const ownerFilter = parseSingle(sp.owner);
-  const formatFilter = parseFormatFilter(sp.format);
   const statusFilter = parseStatusFilter(sp.status);
 
   const supabase = await createClient();
 
-  const [ownersRes, personsRef, sessionsRes, piecesRes, assetsRes, availRes] =
+  const [ownersRes, personsRef, rawsRes, piecesRes, editsRes, availRes] =
     await Promise.all([
       supabase
         .from("content_owners")
@@ -115,17 +98,17 @@ export default async function EdicionPage({
         .order("name", { ascending: true }),
       getOrgPeople(),
       supabase
-        .from("recording_sessions")
-        .select("id, content_owner_id, scheduled_at, status")
-        .order("scheduled_at", { ascending: false }),
+        .from("content_raws")
+        .select("id, content_owner_id, name, drive_url")
+        .order("created_at", { ascending: false }),
       supabase
         .from("content_pieces")
-        .select("id, content_owner_id, title, recording_session_id")
+        .select("id, content_owner_id, title")
         .neq("stage", "descartado"),
       supabase
-        .from("content_assets")
+        .from("content_edits")
         .select(
-          "id, content_owner_id, source_recording_session_id, source_content_piece_id, name, format, drive_folder_url, drive_asset_url, duration_seconds, editor_person_id, edit_due_date, edited_at, notes, created_at",
+          "id, content_owner_id, source_content_raw_id, title, editor_person_id, due_date, completed_at, notes, created_at",
         )
         .order("created_at", { ascending: false }),
       supabase
@@ -135,19 +118,17 @@ export default async function EdicionPage({
 
   const owners = (ownersRes.data ?? []) as unknown as OwnerLite[];
   const persons = personsRef as unknown as PersonLite[];
-  const sessions = (sessionsRes.data ?? []) as unknown as SessionLite[];
+  const raws = (rawsRes.data ?? []) as unknown as RawLite[];
   const pieces = (piecesRes.data ?? []) as unknown as PieceLite[];
-  const assets = (assetsRes.data ?? []) as unknown as AssetDbRow[];
+  const edits = (editsRes.data ?? []) as unknown as EditDbRow[];
   const availability = (availRes.data ?? []) as unknown as AvailabilityDbRow[];
 
   const ownersById = new Map<string, OwnerLite>();
   for (const o of owners) ownersById.set(o.id, o);
   const personsById = new Map<string, PersonLite>();
   for (const p of persons) personsById.set(p.id, p);
-  const sessionsById = new Map<string, SessionLite>();
-  for (const s of sessions) sessionsById.set(s.id, s);
-  const piecesById = new Map<string, PieceLite>();
-  for (const p of pieces) piecesById.set(p.id, p);
+  const rawsById = new Map<string, RawLite>();
+  for (const r of raws) rawsById.set(r.id, r);
 
   const ownerOptions = owners
     .filter((o) => o.active)
@@ -155,113 +136,74 @@ export default async function EdicionPage({
   const personOptions = persons
     .filter((p) => p.active)
     .map((p) => ({ id: p.id, fullName: p.full_name }));
-  const sessionOptions = sessions.map((s) => ({
-    id: s.id,
-    contentOwnerId: s.content_owner_id,
-    label: `${formatDay(s.scheduled_at)} · ${
-      ownersById.get(s.content_owner_id)?.name ?? "(dueño)"
-    }`,
+  const rawOptions = raws.map((r) => ({
+    id: r.id,
+    contentOwnerId: r.content_owner_id,
+    label: r.name,
   }));
-  // Sesiones elegibles para el batch drawer del "+ Registrar producción".
-  // Sólo las 'realizada' — no tiene sentido cargar producción de una sesión
-  // que todavía no se grabó.
-  const batchSessionOptions = sessions
-    .filter((s) => s.status === "realizada")
-    .map((s) => ({
-      id: s.id,
-      contentOwnerId: s.content_owner_id,
-      ownerName:
-        ownersById.get(s.content_owner_id)?.name ?? "(dueño desconocido)",
-      scheduledAt: s.scheduled_at,
-      status: s.status,
-    }));
-  const pieceOptions = pieces.map((p) => ({
+  const pieceOptionsForComplete = pieces.map((p) => ({
     id: p.id,
     contentOwnerId: p.content_owner_id,
     title: p.title,
-    recordingSessionId: p.recording_session_id,
   }));
 
-  const normalized: AssetRowData[] = assets
-    .filter((a): a is AssetDbRow & { readonly format: MarketingFormat } =>
-      isMarketingFormat(a.format),
-    )
-    .map((a) => {
-      const session = a.source_recording_session_id
-        ? sessionsById.get(a.source_recording_session_id) ?? null
-        : null;
-      const piece = a.source_content_piece_id
-        ? piecesById.get(a.source_content_piece_id) ?? null
-        : null;
-      const editor = a.editor_person_id
-        ? personsById.get(a.editor_person_id) ?? null
-        : null;
-      return {
-        id: a.id,
-        contentOwnerId: a.content_owner_id,
-        ownerName:
-          ownersById.get(a.content_owner_id)?.name ?? "(dueño desconocido)",
-        sourceRecordingSessionId: a.source_recording_session_id,
-        sessionLabel: session ? formatDay(session.scheduled_at) : null,
-        sourceContentPieceId: a.source_content_piece_id,
-        pieceTitle: piece?.title ?? null,
-        name: a.name,
-        format: a.format,
-        driveFolderUrl: a.drive_folder_url,
-        driveAssetUrl: a.drive_asset_url,
-        durationSeconds: a.duration_seconds,
-        editorPersonId: a.editor_person_id,
-        editorName: editor?.full_name ?? null,
-        editDueDate: a.edit_due_date,
-        editedAt: a.edited_at,
-        notes: a.notes,
-        createdAt: a.created_at,
-      };
-    });
+  const normalized: EditRowData[] = edits.map((e) => {
+    const raw = e.source_content_raw_id
+      ? rawsById.get(e.source_content_raw_id) ?? null
+      : null;
+    const editor = e.editor_person_id
+      ? personsById.get(e.editor_person_id) ?? null
+      : null;
+    return {
+      id: e.id,
+      contentOwnerId: e.content_owner_id,
+      ownerName: ownersById.get(e.content_owner_id)?.name ?? "(dueño desconocido)",
+      sourceContentRawId: e.source_content_raw_id,
+      rawLabel: raw?.name ?? null,
+      rawDriveUrl: raw?.drive_url ?? null,
+      title: e.title,
+      editorPersonId: e.editor_person_id,
+      editorName: editor?.full_name ?? null,
+      dueDate: e.due_date,
+      completedAt: e.completed_at,
+      notes: e.notes,
+      createdAt: e.created_at,
+    };
+  });
 
-  // Editor set: incluye TODAS las personas activas + los editores históricos
-  // que aparezcan en assets. El filtro por editor las lista.
-  const editorIdsWithAssets = new Set(
-    assets
-      .map((a) => a.editor_person_id)
-      .filter((x): x is string => x != null),
+  const editorIdsWithEdits = new Set(
+    edits.map((e) => e.editor_person_id).filter((x): x is string => x != null),
   );
   const editorFilterOptions = persons.filter(
-    (p) => p.active || editorIdsWithAssets.has(p.id),
+    (p) => p.active || editorIdsWithEdits.has(p.id),
   );
 
-  const ownerIdsWithAssets = new Set(assets.map((a) => a.content_owner_id));
+  const ownerIdsWithEdits = new Set(edits.map((e) => e.content_owner_id));
   const ownerFilterOptions = owners.filter(
-    (o) => o.active || ownerIdsWithAssets.has(o.id),
+    (o) => o.active || ownerIdsWithEdits.has(o.id),
   );
 
   const filtered = normalized.filter((r) => {
     if (editorFilter && r.editorPersonId !== editorFilter) return false;
     if (ownerFilter && r.contentOwnerId !== ownerFilter) return false;
-    if (formatFilter !== "all" && r.format !== formatFilter) return false;
-    if (statusFilter === "queued" && r.editedAt != null) return false;
-    if (statusFilter === "edited" && r.editedAt == null) return false;
+    if (statusFilter === "queued" && r.completedAt != null) return false;
+    if (statusFilter === "done" && r.completedAt == null) return false;
     return true;
   });
 
   const totalCount = normalized.length;
-  const editedCount = normalized.filter((r) => r.editedAt != null).length;
-  const queuedCount = totalCount - editedCount;
-  const unassignedCount = normalized.filter(
-    (r) => r.editorPersonId == null,
-  ).length;
+  const doneCount = normalized.filter((r) => r.completedAt != null).length;
+  const queuedCount = totalCount - doneCount;
+  const unassignedCount = normalized.filter((r) => r.editorPersonId == null).length;
 
   // Planning window: lunes de esta semana + 4 semanas hacia adelante.
   const today = new Date();
-  const dowMon = (today.getDay() + 6) % 7; // 0=lunes
+  const dowMon = (today.getDay() + 6) % 7;
   const monday = new Date(today);
   monday.setDate(today.getDate() - dowMon);
   const monday4w = new Date(monday);
-  monday4w.setDate(monday.getDate() + 27); // 4 semanas de 7 días
-  const planningWindow = {
-    since: toYmd(monday),
-    until: toYmd(monday4w),
-  };
+  monday4w.setDate(monday.getDate() + 27);
+  const planningWindow = { since: toYmd(monday), until: toYmd(monday4w) };
 
   const availabilityInput = availability.map((a) => ({
     personId: a.person_id,
@@ -273,17 +215,14 @@ export default async function EdicionPage({
   function buildHref(overrides: Partial<{
     editor: string | null;
     owner: string | null;
-    format: MarketingFormat | "all";
     status: StatusFilter;
   }>): string {
     const params = new URLSearchParams();
     const nextEditor = "editor" in overrides ? overrides.editor : editorFilter;
     const nextOwner = "owner" in overrides ? overrides.owner : ownerFilter;
-    const nextFormat = overrides.format ?? formatFilter;
     const nextStatus = overrides.status ?? statusFilter;
     if (nextEditor) params.set("editor", nextEditor);
     if (nextOwner) params.set("owner", nextOwner);
-    if (nextFormat !== "all") params.set("format", nextFormat);
     if (nextStatus !== "all") params.set("status", nextStatus);
     const qs = params.toString();
     return qs ? `/marketing/edicion?${qs}` : "/marketing/edicion";
@@ -292,8 +231,7 @@ export default async function EdicionPage({
   const activeFilters =
     (statusFilter !== "all" ? 1 : 0) +
     (editorFilter != null ? 1 : 0) +
-    (ownerFilter != null ? 1 : 0) +
-    (formatFilter !== "all" ? 1 : 0);
+    (ownerFilter != null ? 1 : 0);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-5">
@@ -303,7 +241,7 @@ export default async function EdicionPage({
         stats={[
           { l: "Total", v: fCount(totalCount) },
           { l: "En cola", v: fCount(queuedCount) },
-          { l: "Editados", v: fCount(editedCount) },
+          { l: "Realizadas", v: fCount(doneCount) },
           { l: "Sin editor", v: fCount(unassignedCount) },
         ]}
       />
@@ -316,7 +254,7 @@ export default async function EdicionPage({
             options={[
               { label: "Todos", value: "all", href: buildHref({ status: "all" }) },
               { label: "En cola", value: "queued", href: buildHref({ status: "queued" }) },
-              { label: "Editados", value: "edited", href: buildHref({ status: "edited" }) },
+              { label: "Realizadas", value: "done", href: buildHref({ status: "done" }) },
             ]}
           />
 
@@ -357,34 +295,18 @@ export default async function EdicionPage({
               ]}
             />
           )}
-
-          <KgFilterSelect
-            label="Formato"
-            active={formatFilter}
-            options={[
-              {
-                label: "Todos los formatos",
-                value: "all",
-                href: buildHref({ format: "all" }),
-              },
-              ...MARKETING_FORMATS.map((f) => ({
-                label: FORMAT_LABEL[f],
-                value: f,
-                href: buildHref({ format: f }),
-              })),
-            ]}
-          />
         </div>
       </KgPageFilters>
 
       <Panel
-        title="Assets producidos"
+        title="Ediciones"
         pad={false}
         fillHeight
         actions={
-          <NewAssetButton
-            sessionOptions={batchSessionOptions}
+          <NewEditButton
+            ownerOptions={ownerOptions}
             personOptions={personOptions}
+            rawOptions={rawOptions}
           />
         }
       >
@@ -392,8 +314,8 @@ export default async function EdicionPage({
           rows={filtered}
           ownerOptions={ownerOptions}
           personOptions={personOptions}
-          sessionOptions={sessionOptions}
-          pieceOptions={pieceOptions}
+          rawOptions={rawOptions}
+          pieceOptions={pieceOptionsForComplete}
           availability={availabilityInput}
           planningWindow={planningWindow}
         />
@@ -408,27 +330,10 @@ function parseSingle(v: string | string[] | undefined): string | null {
   return trimmed.length === 0 ? null : trimmed;
 }
 
-function parseFormatFilter(
-  v: string | string[] | undefined,
-): MarketingFormat | "all" {
+function parseStatusFilter(v: string | string[] | undefined): StatusFilter {
   if (typeof v !== "string") return "all";
-  if (isMarketingFormat(v)) return v;
+  if (v === "queued" || v === "done") return v;
   return "all";
-}
-
-function parseStatusFilter(
-  v: string | string[] | undefined,
-): StatusFilter {
-  if (typeof v !== "string") return "all";
-  if (v === "queued" || v === "edited") return v;
-  return "all";
-}
-
-function formatDay(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`;
 }
 
 function toYmd(date: Date): string {

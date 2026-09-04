@@ -5,9 +5,10 @@ import { useMemo, useState, useTransition } from "react";
 import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { StatusPill } from "@/components/kg/status-pill";
 import {
-  FORMAT_LABEL,
-  type MarketingFormat,
-} from "@/lib/marketing/types";
+  CompleteEditDrawer,
+  type EditContextForComplete,
+  type PieceOptionForComplete,
+} from "@/components/marketing/complete-edit-drawer";
 import {
   computeEditorLoadByWeek,
   countUndatedByPerson,
@@ -15,52 +16,38 @@ import {
   type EditorAvailabilityInput,
 } from "@/lib/marketing/editor-load";
 
-import { markAssetEdited, unmarkAssetEdited } from "./actions";
+import { reopenContentEdit } from "./actions";
 import {
-  AssetFormDrawer,
-  type AssetInitial,
+  EditFormDrawer,
+  type EditInitial,
   type OwnerOption,
   type PersonOption,
-  type PieceOption,
-  type SessionOption,
-} from "./asset-form-drawer";
+  type RawOption,
+} from "./edit-form-drawer";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Vista dual:
-//   1) Tabla de assets: la cola de edición. Cada fila es un corte que salió
-//      de una grabación, con su editor, su fecha objetivo y el botón para
-//      marcarlo terminado (lo que lo manda al stock de Subidas).
-//   2) Planning semanal (pivot editor × semana): cuánto trabajo pendiente
-//      tiene cada editor en cada semana contra sus días disponibles.
-//
-// El pivot bucketea por `editDueDate` — la fecha objetivo, no la fecha en
-// que se editó. Ésa es la diferencia entre planificar y mirar el pasado: si
-// se bucketea por `editedAt` todo cae en la semana en curso y la grilla no
-// dice nada. Los assets sin fecha objetivo van a la columna "Sin fecha" en
-// vez de desaparecer.
-//
-// El toggle es un tab local (view state) — no vive en searchParams porque
-// el planning es visualmente completo por sí solo y no comparte filtros
-// server-side con la tabla.
+//   1) Tabla de content_edits: la cola de edición. Cada fila es un evento de
+//      trabajo ("editar tal crudo") con su editor, su fecha objetivo y el
+//      botón para cerrarlo (lo que carga los archivos y los manda al stock).
+//   2) Planning semanal (pivot editor × semana): igual que antes, ahora
+//      bucketeado por content_edits.dueDate en vez de
+//      content_assets.editDueDate — editor-load.ts no cambia, es agnóstico
+//      de la tabla origen.
 // ═══════════════════════════════════════════════════════════════════════════
 
-export interface AssetRowData {
+export interface EditRowData {
   readonly id: string;
   readonly contentOwnerId: string;
   readonly ownerName: string;
-  readonly sourceRecordingSessionId: string | null;
-  readonly sessionLabel: string | null;
-  readonly sourceContentPieceId: string | null;
-  readonly pieceTitle: string | null;
-  readonly name: string;
-  readonly format: MarketingFormat;
-  readonly driveFolderUrl: string | null;
-  readonly driveAssetUrl: string | null;
-  readonly durationSeconds: number | null;
+  readonly sourceContentRawId: string | null;
+  readonly rawLabel: string | null;
+  readonly rawDriveUrl: string | null;
+  readonly title: string;
   readonly editorPersonId: string | null;
   readonly editorName: string | null;
-  readonly editDueDate: string | null; // yyyy-mm-dd
-  readonly editedAt: string | null;
+  readonly dueDate: string | null; // yyyy-mm-dd
+  readonly completedAt: string | null;
   readonly notes: string | null;
   readonly createdAt: string;
 }
@@ -69,33 +56,31 @@ export function EdicionView({
   rows,
   ownerOptions,
   personOptions,
-  sessionOptions,
+  rawOptions,
   pieceOptions,
   availability,
   planningWindow,
 }: {
-  readonly rows: readonly AssetRowData[];
+  readonly rows: readonly EditRowData[];
   readonly ownerOptions: readonly OwnerOption[];
   readonly personOptions: readonly PersonOption[];
-  readonly sessionOptions: readonly SessionOption[];
-  readonly pieceOptions: readonly PieceOption[];
+  readonly rawOptions: readonly RawOption[];
+  readonly pieceOptions: readonly PieceOptionForComplete[];
   readonly availability: readonly EditorAvailabilityInput[];
   readonly planningWindow: { readonly since: string; readonly until: string };
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [completingId, setCompletingId] = useState<string | null>(null);
   const [view, setView] = useState<"tabla" | "planning">("tabla");
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
   const noOwners = ownerOptions.length === 0;
 
-  function handleToggleEdited(row: AssetRowData) {
+  function handleReopen(row: EditRowData) {
     setError(null);
     startTransition(async () => {
-      const result =
-        row.editedAt == null
-          ? await markAssetEdited(row.id)
-          : await unmarkAssetEdited(row.id);
+      const result = await reopenContentEdit(row.id);
       if ("error" in result) setError(result.error);
     });
   }
@@ -103,38 +88,39 @@ export function EdicionView({
   const editing =
     editingId != null ? rows.find((r) => r.id === editingId) ?? null : null;
 
-  const editingInitial: AssetInitial | undefined =
+  const editingInitial: EditInitial | undefined =
     editing != null
       ? {
           id: editing.id,
           contentOwnerId: editing.contentOwnerId,
-          sourceRecordingSessionId: editing.sourceRecordingSessionId,
-          sourceContentPieceId: editing.sourceContentPieceId,
-          name: editing.name,
-          format: editing.format,
-          driveFolderUrl: editing.driveFolderUrl,
-          driveAssetUrl: editing.driveAssetUrl,
-          durationSeconds: editing.durationSeconds,
+          sourceContentRawId: editing.sourceContentRawId,
+          title: editing.title,
           editorPersonId: editing.editorPersonId,
-          editDueDate: editing.editDueDate,
-          editedAt: editing.editedAt,
+          dueDate: editing.dueDate,
           notes: editing.notes,
         }
       : undefined;
 
+  const completing =
+    completingId != null ? rows.find((r) => r.id === completingId) ?? null : null;
+
+  const completingContext: EditContextForComplete | null =
+    completing != null
+      ? {
+          id: completing.id,
+          contentOwnerId: completing.contentOwnerId,
+          title: completing.title,
+          rawLabel: completing.rawLabel,
+        }
+      : null;
+
   // ─── Planning: pivot editor × semana con carga y disponibilidad.
-  //
-  // Las filas son la unión de dos conjuntos: editores con assets asignados
-  // y personas con disponibilidad cargada. Sin la segunda mitad, un editor
-  // libre esta semana no aparecería justo cuando más importa verlo — que es
-  // cuando hay que repartir trabajo nuevo.
   const editorPersonIds = useMemo(() => {
     const ids = new Set<string>();
     for (const r of rows) {
       if (r.editorPersonId != null) ids.add(r.editorPersonId);
     }
     for (const a of availability) ids.add(a.personId);
-    // Orden estable por nombre para que la grilla no baile entre renders.
     const nameOf = new Map(personOptions.map((p) => [p.id, p.fullName]));
     return Array.from(ids).sort((a, b) =>
       (nameOf.get(a) ?? a).localeCompare(nameOf.get(b) ?? b),
@@ -147,10 +133,8 @@ export function EdicionView({
         .filter((r) => r.editorPersonId != null)
         .map((r) => ({
           editorPersonId: r.editorPersonId!,
-          // Fecha objetivo: para cuándo tiene que estar. Nunca `editedAt`,
-          // que es historia y amontonaría todo en la semana en curso.
-          bucketDate: r.editDueDate,
-          edited: r.editedAt != null,
+          bucketDate: r.dueDate,
+          edited: r.completedAt != null,
         })),
     [rows],
   );
@@ -184,18 +168,18 @@ export function EdicionView({
     return Array.from(set).sort();
   }, [planningCells]);
 
-  const columns: Column<AssetRowData>[] = [
+  const columns: Column<EditRowData>[] = [
     {
-      key: "name",
-      label: "Nombre",
+      key: "title",
+      label: "Edición",
       render: (r) => (
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <span style={{ color: "var(--kg-text-1)", fontWeight: 600 }}>
-            {r.name}
+            {r.title}
           </span>
-          {r.pieceTitle && (
+          {r.rawLabel && (
             <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
-              Origen: {r.pieceTitle}
+              Crudo: {r.rawLabel}
             </span>
           )}
         </div>
@@ -205,11 +189,6 @@ export function EdicionView({
       key: "owner",
       label: "Dueño",
       render: (r) => r.ownerName,
-    },
-    {
-      key: "format",
-      label: "Formato",
-      render: (r) => FORMAT_LABEL[r.format],
     },
     {
       key: "editor",
@@ -222,29 +201,20 @@ export function EdicionView({
         ),
     },
     {
-      key: "duration",
-      label: "Duración",
-      align: "right",
-      numeric: true,
-      render: (r) =>
-        r.durationSeconds != null ? `${r.durationSeconds}s` : "—",
-    },
-    {
-      key: "edit_due_date",
+      key: "due_date",
       label: "Objetivo",
       render: (r) => {
-        if (r.editedAt != null) {
-          // Ya terminado: la fecha objetivo dejó de ser accionable.
+        if (r.completedAt != null) {
           return (
             <span style={{ color: "var(--kg-text-3)" }}>
-              {r.editDueDate ? formatDay(r.editDueDate) : "—"}
+              {r.dueDate ? formatDay(r.dueDate) : "—"}
             </span>
           );
         }
-        if (r.editDueDate == null) {
+        if (r.dueDate == null) {
           return <span style={{ color: "var(--kg-text-3)" }}>Sin fecha</span>;
         }
-        const late = isOverdue(r.editDueDate);
+        const late = isOverdue(r.dueDate);
         return (
           <span
             style={{
@@ -255,11 +225,11 @@ export function EdicionView({
               color: "var(--kg-text-1)",
             }}
           >
-            {formatDay(r.editDueDate)}
+            {formatDay(r.dueDate)}
             {late && (
               <span
                 aria-label="Vencido"
-                title="La fecha objetivo ya pasó y el corte sigue en cola"
+                title="La fecha objetivo ya pasó y la edición sigue en cola"
                 style={{
                   width: 6,
                   height: 6,
@@ -273,50 +243,16 @@ export function EdicionView({
       },
     },
     {
-      key: "edited_at",
+      key: "status",
       label: "Estado",
       render: (r) =>
-        r.editedAt ? (
+        r.completedAt ? (
           <StatusPill
-            text={`Editado ${formatDateTime(r.editedAt)}`}
+            text={`Realizada ${formatDateTime(r.completedAt)}`}
             tone="var(--kg-positive-500)"
           />
         ) : (
           <StatusPill text="En cola" tone="var(--kg-neutral-500)" />
-        ),
-    },
-    {
-      key: "drive",
-      label: "Archivo",
-      render: (r) =>
-        r.driveAssetUrl ? (
-          <a
-            href={r.driveAssetUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              color: "var(--kg-accent-text)",
-              textDecoration: "none",
-              fontSize: 11,
-            }}
-          >
-            Abrir ↗
-          </a>
-        ) : r.driveFolderUrl ? (
-          <a
-            href={r.driveFolderUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              color: "var(--kg-text-3)",
-              textDecoration: "none",
-              fontSize: 11,
-            }}
-          >
-            Carpeta ↗
-          </a>
-        ) : (
-          <span style={{ color: "var(--kg-text-3)" }}>—</span>
         ),
     },
     {
@@ -325,10 +261,10 @@ export function EdicionView({
       align: "right",
       render: (r) => (
         <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-          {r.editedAt == null ? (
+          {r.completedAt == null ? (
             <button
               type="button"
-              onClick={() => handleToggleEdited(r)}
+              onClick={() => setCompletingId(r.id)}
               disabled={pending}
               className="kg-focus"
               style={{
@@ -336,20 +272,20 @@ export function EdicionView({
                 borderColor: "var(--kg-accent-500)",
                 color: "var(--kg-accent-text)",
               }}
-              title="Marcar como editado — el corte pasa al stock disponible para subir"
+              title="Cargar los archivos que salieron y cerrar esta edición"
             >
-              Marcar editado
+              Marcar realizada
             </button>
           ) : (
             <button
               type="button"
-              onClick={() => handleToggleEdited(r)}
+              onClick={() => handleReopen(r)}
               disabled={pending}
               className="kg-focus"
               style={rowBtn}
-              title="Devolver a la cola de edición (sólo si todavía no tiene subidas)"
+              title="Devolver a la cola (sólo si los archivos no tienen subidas comprometidas)"
             >
-              Devolver a cola
+              Reabrir
             </button>
           )}
           <button
@@ -369,11 +305,7 @@ export function EdicionView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div
-        style={{
-          padding: "12px 20px 0",
-        }}
-      >
+      <div style={{ padding: "12px 20px 0" }}>
         <div
           role="tablist"
           aria-label="Cambiar vista"
@@ -386,11 +318,7 @@ export function EdicionView({
             border: "1px solid var(--kg-border-subtle)",
           }}
         >
-          <TabBtn
-            active={view === "tabla"}
-            onClick={() => setView("tabla")}
-            label="Tabla"
-          />
+          <TabBtn active={view === "tabla"} onClick={() => setView("tabla")} label="Tabla" />
           <TabBtn
             active={view === "planning"}
             onClick={() => setView("planning")}
@@ -422,11 +350,11 @@ export function EdicionView({
           rows={rows}
           rowKey={(r) => r.id}
           totalCount={rows.length}
-          emptyTitle="Sin cortes en edición"
+          emptyTitle="Sin ediciones en curso"
           emptyHint={
             noOwners
               ? "Primero creá dueños en la pestaña Dueños."
-              : "Los cortes entran acá cuando se registra la producción de una grabación realizada. Se asignan a un editor con fecha objetivo, y al marcarlos editados pasan al stock de Subidas."
+              : "Las ediciones nacen desde un crudo (pestaña Crudos) o se crean sueltas acá. Al marcarlas realizadas, los archivos que salen pasan al stock de Subidas."
           }
           fillHeight
         />
@@ -442,15 +370,21 @@ export function EdicionView({
         </div>
       )}
 
-      <AssetFormDrawer
+      <EditFormDrawer
         mode="edit"
         open={editingId != null}
         onClose={() => setEditingId(null)}
         ownerOptions={ownerOptions}
         personOptions={personOptions}
-        sessionOptions={sessionOptions}
-        pieceOptions={pieceOptions}
+        rawOptions={rawOptions}
         initial={editingInitial}
+      />
+
+      <CompleteEditDrawer
+        open={completingId != null}
+        onClose={() => setCompletingId(null)}
+        edit={completingContext}
+        pieceOptions={pieceOptions}
       />
     </div>
   );
@@ -518,14 +452,12 @@ function PlanningPivot({
         }}
       >
         Todavía no hay editores en el planning. Aparecen acá cuando asignás
-        un editor a un corte, o cuando cargás disponibilidad de alguien en la
-        pestaña Disponibilidad.
+        un editor a una edición, o cuando cargás disponibilidad de alguien en
+        la pestaña Disponibilidad.
       </div>
     );
   }
 
-  // ¿Alguien tiene trabajo sin fecha objetivo? Si nadie tiene, no gastamos
-  // una columna entera en ceros.
   const anyUndated = editorPersonIds.some(
     (id) => (undatedByPerson.get(id)?.assignedAssets ?? 0) > 0,
   );
@@ -564,13 +496,8 @@ function PlanningPivot({
             </th>
             {weekStarts.map((ws) => (
               <th key={ws} style={{ ...thStyle, textAlign: "center" }}>
-                <div style={{ fontWeight: 700 }}>
-                  Semana {formatWeekLabel(ws)}
-                </div>
-                <div
-                  className="kg-t7"
-                  style={{ color: "var(--kg-text-3)", fontWeight: 400 }}
-                >
+                <div style={{ fontWeight: 700 }}>Semana {formatWeekLabel(ws)}</div>
+                <div className="kg-t7" style={{ color: "var(--kg-text-3)", fontWeight: 400 }}>
                   {formatDayShort(ws)}
                 </div>
               </th>
@@ -578,10 +505,7 @@ function PlanningPivot({
             {anyUndated && (
               <th style={{ ...thStyle, textAlign: "center" }}>
                 <div style={{ fontWeight: 700 }}>Sin fecha</div>
-                <div
-                  className="kg-t7"
-                  style={{ color: "var(--kg-text-3)", fontWeight: 400 }}
-                >
+                <div className="kg-t7" style={{ color: "var(--kg-text-3)", fontWeight: 400 }}>
                   sin objetivo
                 </div>
               </th>
@@ -647,19 +571,11 @@ function PlanningPivot({
                           }`}
                         >
                           {cell.pendingAssets}
-                          <span
-                            style={{
-                              color: "var(--kg-text-3)",
-                              fontWeight: 400,
-                            }}
-                          >
+                          <span style={{ color: "var(--kg-text-3)", fontWeight: 400 }}>
                             /{cell.assignedAssets}
                           </span>
                         </span>
-                        <span
-                          className="kg-t7"
-                          style={{ color: "var(--kg-text-3)" }}
-                        >
+                        <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
                           · {cell.availableDays}d
                         </span>
                         {cell.overloaded && (
@@ -687,18 +603,14 @@ function PlanningPivot({
           })}
         </tbody>
       </table>
-      <div
-        className="kg-t7"
-        style={{ color: "var(--kg-text-3)", marginTop: 10, lineHeight: 1.6 }}
-      >
-        Las semanas se arman con la <strong>fecha objetivo de edición</strong>
-        {" "}de cada corte, no con la fecha en que se editó. Cada celda muestra
-        {" "}<strong>pendientes/asignados</strong> ·{" "}
-        <strong>días disponibles</strong> según la pestaña Disponibilidad. El
-        punto rojo marca sobrecarga: hay trabajo pendiente en una semana sin
-        ningún día disponible. La columna <strong>Sin fecha</strong> junta los
-        cortes asignados a los que nadie les puso objetivo — mientras estén
-        ahí, no entran en ninguna semana.
+      <div className="kg-t7" style={{ color: "var(--kg-text-3)", marginTop: 10, lineHeight: 1.6 }}>
+        Las semanas se arman con la <strong>fecha objetivo</strong> de cada
+        edición, no con la fecha en que se cerró. Cada celda muestra{" "}
+        <strong>pendientes/asignados</strong> · <strong>días disponibles</strong>{" "}
+        según la pestaña Disponibilidad. El punto rojo marca sobrecarga: hay
+        trabajo pendiente en una semana sin ningún día disponible. La columna{" "}
+        <strong>Sin fecha</strong> junta las ediciones asignadas a las que
+        nadie les puso objetivo.
       </div>
     </div>
   );
@@ -733,12 +645,7 @@ function UndatedCell({
       {entry.pendingAssets > 0 && (
         <span
           aria-hidden
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: 999,
-            background: "var(--kg-warning-500)",
-          }}
+          style={{ width: 6, height: 6, borderRadius: 999, background: "var(--kg-warning-500)" }}
         />
       )}
     </span>
@@ -790,17 +697,12 @@ const tdStyle: React.CSSProperties = {
   whiteSpace: "nowrap",
 };
 
-/** yyyy-mm-dd → dd/mm. Las fechas objetivo son `date`, no timestamptz. */
 function formatDay(ymd: string): string {
   const [, m, d] = ymd.split("-");
   if (!m || !d) return ymd;
   return `${d}/${m}`;
 }
 
-/**
- * ¿La fecha objetivo ya pasó? Comparación lexicográfica contra el hoy local
- * — ambos son yyyy-mm-dd, así que ordena bien sin construir Dates.
- */
 function isOverdue(dueYmd: string): boolean {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");

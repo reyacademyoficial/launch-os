@@ -25,6 +25,87 @@
 - Cero filas — el módulo arranca por **CRUD, no por dashboard** (regla vigente del
   Gate 0 para tablas nuevas en cero).
 
+## Estado al 2026-09-04 (sesión Claude — 0179-0181 · Crudos + Edición rehecha)
+
+Rediseño pedido por el usuario: separar "Registrar producción" (atajo que
+creaba directo el archivo editado desde la sesión de grabación) en tres pasos
+reales — **Crudos → Edición (evento) → archivo editado**. Auditoría completa
+y plan aprobados antes de tocar código; ver el plan de sesión para el detalle
+de decisiones. Resumen de lo cerrado:
+
+**1 · Auditoría — qué estaba mal.** "Registrar producción"
+(`production-batch-drawer.tsx`) se abría desde Grabación (fila `realizada`)
+Y desde Edición, y en ambos casos creaba `content_assets` directo desde la
+`recording_session`, sin dejar rastro del material crudo. Además hardcodeaba
+`source_content_piece_id: null` para todo el batch, así que una piece casi
+nunca llegaba a `listo_para_subir` por ese camino — bug de trazabilidad
+preexistente, arreglado en esta sesión. Editor y fecha objetivo vivían
+repetidos en cada archivo (`content_assets.editor_person_id` /
+`edit_due_date`, 0175) en vez de en un evento de trabajo atómico. Hallazgo
+aparte (no resuelto, fuera de alcance): el rol "operador ve solo lo suyo"
+está documentado en §Roles pero no implementado en ningún filtro server-side
+de `grabacion/page.tsx` ni `edicion/page.tsx`.
+
+**2 · Tablas nuevas.**
+- `content_raws` (0179) — Crudos: material sin editar,
+  `source_recording_session_id` nullable (un crudo puede cargarse suelto).
+- `content_edits` (0180) — el evento de trabajo real ("editar tal crudo"):
+  `source_content_raw_id` nullable, `editor_person_id`, `due_date`,
+  `completed_at`. Reemplaza `edit_due_date`/`editor_person_id` de
+  `content_assets`.
+- `content_assets` (0181) — gana `source_content_edit_id` (`on delete
+  restrict`, mismo patrón que `content_uploads → content_assets`); pierde
+  `editor_person_id`, `edit_due_date`, `source_recording_session_id`,
+  `drive_folder_url` (todo migrado a `content_edits`/`content_raws` vía
+  backfill en la propia migración — sin pérdida de datos).
+
+**3 · Módulo nuevo `/marketing/crudos`.** CRUD plano (tabla + drawer, patrón
+`/marketing/disponibilidad`): owner → filtra picker de sesión (opcional).
+Columna "Ediciones" cuenta cuántos `content_edits` referencian cada crudo —
+0 se pinta como "Sin editar" con `StateDot warning`. Tab agregado al nav
+entre Grabación y Edición.
+
+**4 · `/marketing/edicion` reescrito sobre `content_edits`.** Ya no muestra
+`content_assets` en cola — eso ahora vive en Stock. La tabla es la cola de
+eventos de edición (`En cola` / `Realizada`, con dot de vencido en la fecha
+objetivo). "Marcar como realizada" abre `complete-edit-drawer.tsx`
+(reemplaza `production-batch-drawer.tsx`): filas dinámicas de archivos de
+salida (nombre, formato, duración, link) **más un picker de piece opcional
+por fila** — arregla el bug de trazabilidad del punto 1. Inserta los
+`content_assets` y cierra el evento (`completed_at`) en el mismo action
+(`completeContentEdit`). "Reabrir" (`reopenContentEdit`) limpia
+`completed_at` sin borrar los archivos ya cargados — bloqueado si alguno ya
+tiene subidas comprometidas, mismo criterio que el viejo `unmarkAssetEdited`.
+El planning semanal (`editor-load.ts`, sin cambios — es agnóstico de tabla)
+ahora bucketea por `content_edits.due_date`.
+
+**5 · Grabación.** Se saca "Registrar producción" de la fila de sesión
+`realizada`. En su lugar, "Cargar crudos" abre `RawFormDrawer` (del módulo
+Crudos) con owner + sesión bloqueados — alta rápida de material crudo, no de
+archivos editados. El resto de Grabación (assignees, pieces, calendario,
+status) no cambia.
+
+**6 · Dashboard.** Panel "Editores esta semana" pasa a leer `content_edits`
+en vez de `content_assets` (mismo `computeEditorLoadByWeek`, sólo cambia la
+tabla origen). KPI "Editados últimos 7 días" no cambia.
+
+**Verificación:** `tsc --noEmit` = 0. `eslint` sobre `src/lib/marketing`,
+`src/app/(app)/(kg)/marketing`, `src/components/marketing` = 0 errores (1
+warning pre-existente en `grabacion/actions.ts`, no tocado). Suite **58/58**
+en `src/lib/marketing` sin regresiones (`editor-load.ts`/`stock.ts`/
+`alerts.ts` no se modificaron).
+
+**Pendiente operacional:** correr `0179`, `0180`, `0181` en Studio (en ese
+orden) y regenerar `src/lib/types/database.ts`. Humo end-to-end sugerido: 1
+sesión `realizada` → "Cargar crudos" (2 crudos) → crear edición sobre 1
+crudo desde `/marketing/edicion` → "Marcar como realizada" con 3 archivos (1
+con piece asociada) → confirmar que la piece origen pasa a
+`listo_para_subir` → aparecen en Stock → 1 subida marcada → piece pasa a
+`publicado`. Confirmar también que borrar un `content_edit` con archivos ya
+producidos rebota, y que "Reabrir" bloquea con subidas comprometidas.
+
+---
+
 ## Estado al 2026-09-01 (sesión Claude — 0175 · procedimiento operativo real)
 
 Sesión de alineación del módulo con el procedimiento que el equipo ejecuta de
@@ -320,10 +401,17 @@ default (toggle "Todas" NO aparece para operador — mismo patrón que Operacion
 - **Recording session** (`recording_session`): un evento de grabación. Agrupa 1+
   content pieces (una grabación puede producir varios reels). Tiene fecha, filmaker
   asignado, experto asignado, ubicación, materiales, notas.
-- **Asset producido** (`content_asset`): pieza editada finalizada, lista para subir.
-  De una `recording_session` (o de un `content_piece` "master") pueden salir N
-  assets. Cada asset se sube 0..N veces (típicamente 1). Tiene link a Drive/archivo,
-  nombre, usado (bool).
+- **Crudo** (`content_raw`, 0179): material SIN editar. Nace típicamente de una
+  `recording_session` realizada (nullable — también se carga suelto). Es lo
+  que se "manda a editar".
+- **Edición** (`content_edit`, 0180): el evento de trabajo — "editar tal
+  crudo". Tiene crudo origen (nullable), editor, fecha objetivo
+  (`due_date`) y `completed_at`. Al marcarse realizada se cargan los
+  `content_assets` de salida.
+- **Asset producido** (`content_asset`): archivo editado final, listo para
+  subir. Nace de un `content_edit` marcado realizada (`source_content_edit_id`)
+  o huérfano para importaciones. Cada asset se sube 0..N veces (típicamente
+  1). Tiene link a Drive/archivo, nombre, usado (bool).
 - **Upload**: cada acto de subida a una plataforma específica en una fecha. Es la
   fila que dice "reel_042 se subió a IG el 2026-09-01".
 - **Cadencia** (`publishing_cadence`): configuración por dueño — "3 publicaciones
@@ -572,7 +660,8 @@ Reglas: selectores puros, sin efectos, sin fetch. Tests colocados junto al `.ts`
 /marketing/planificacion                → Bloque 1: tabla de content_pieces (todos los stages)
 /marketing/grabacion                    → Bloque 2: tabla + calendario de recording_sessions
 /marketing/grabacion?view=calendario    → toggle vía KgParamPills
-/marketing/edicion                      → Bloque 3: assets (con drag/asignación editor + planning semanal)
+/marketing/crudos                       → Material sin editar (content_raws, 0179) — entre Grabación y Edición
+/marketing/edicion                      → Bloque 3: eventos de edición (content_edits, 0180) + planning semanal
 /marketing/subidas                      → Bloque 4: uploads (tabla + calendario)
 /marketing/subidas?view=calendario      → toggle vía KgParamPills
 /marketing/stock                        → Stock detallado por owner/platform/format

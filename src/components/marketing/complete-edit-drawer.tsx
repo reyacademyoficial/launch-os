@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 
 import { Drawer } from "@/components/kg/drawer";
 import {
@@ -12,8 +12,8 @@ import {
   smallBtn,
 } from "@/components/kg/form-primitives";
 import {
-  createProductionBatch,
-  type ProductionBatchRow,
+  completeContentEdit,
+  type CompleteEditRow,
 } from "@/app/(app)/(kg)/marketing/edicion/actions";
 import {
   FORMAT_LABEL,
@@ -22,74 +22,57 @@ import {
 } from "@/lib/marketing/types";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Drawer "Registrar producción" — bulk create de content_assets desde una
-// sesión de grabación. Filas dinámicas para los N cortes que salieron.
+// Drawer "Marcar como realizada" — cierra un content_edit cargando los N
+// archivos que salieron de esa edición. Reemplaza a ProductionBatchDrawer:
+// antes esto se abría desde una sesión de grabación y creaba directo el
+// archivo "editado"; ahora se abre desde un evento de edición ya en curso y
+// cierra ese evento en el mismo acto.
 //
-// Se abre desde dos puntos:
-//   - /marketing/grabacion (fila de sesión 'realizada') — con sesión
-//     pre-seleccionada y locked (no se puede cambiar).
-//   - /marketing/edicion (botón + Registrar producción) — con dropdown de
-//     sesiones disponibles (todas las 'realizada' del último año).
-//
-// Cada fila = un asset: nombre (obligatorio, el del archivo en Drive),
-// formato, editor opcional, duración opcional, link directo opcional.
-// El drive_folder_url arriba se propaga a los N assets — típicamente 1
-// carpeta compartida por sesión.
-//
-// Por default `edited_at = now()` en el submit (todos los assets se
-// consideran recién editados). El input datetime permite backdatear si el
-// batch se registra días después.
+// Cada fila puede opcionalmente asociarse a una content_piece — a diferencia
+// del batch viejo (que nunca lo hacía), esto es lo que permite que una piece
+// llegue a `listo_para_subir` por este camino.
 // ═══════════════════════════════════════════════════════════════════════════
 
-export interface SessionOptionForBatch {
+export interface EditContextForComplete {
   readonly id: string;
   readonly contentOwnerId: string;
-  readonly ownerName: string;
-  readonly scheduledAt: string; // ISO
-  readonly status: string;
+  readonly title: string;
+  readonly rawLabel: string | null;
 }
 
-export interface PersonOptionForBatch {
+export interface PieceOptionForComplete {
   readonly id: string;
-  readonly fullName: string;
+  readonly contentOwnerId: string;
+  readonly title: string;
 }
 
-export function ProductionBatchDrawer({
+export function CompleteEditDrawer({
   open,
   onClose,
-  sessionOptions,
-  personOptions,
-  presetSessionId,
-  initialKey,
+  edit,
+  pieceOptions,
 }: {
   readonly open: boolean;
   readonly onClose: () => void;
-  /** Sesiones elegibles (típicamente `status='realizada'`). */
-  readonly sessionOptions: readonly SessionOptionForBatch[];
-  readonly personOptions: readonly PersonOptionForBatch[];
-  /** Si viene, el picker de sesión queda bloqueado en ese id. */
-  readonly presetSessionId?: string;
-  /**
-   * Cambiar este valor entre aperturas fuerza remount — usar cuando el mismo
-   * drawer se abre con otro `presetSessionId`.
-   */
-  readonly initialKey?: string;
+  readonly edit: EditContextForComplete | null;
+  readonly pieceOptions: readonly PieceOptionForComplete[];
 }) {
-  if (!open) return null;
+  if (!open || !edit) return null;
   return (
     <Drawer
       open={open}
       onClose={onClose}
-      title="Registrar producción"
-      subtitle="Cargá los cortes que salieron de esta grabación. Entran a la cola de edición; pasan al stock cuando el editor los marca terminados."
+      title="Marcar como realizada"
+      subtitle={`Cargá los archivos que salieron de "${edit.title}"${
+        edit.rawLabel ? ` (crudo: ${edit.rawLabel})` : ""
+      }. Entran directo al stock disponible para subir.`}
       width={720}
     >
-      <BatchBody
-        key={initialKey ?? presetSessionId ?? "batch"}
+      <CompleteBody
+        key={edit.id}
         onClose={onClose}
-        sessionOptions={sessionOptions}
-        personOptions={personOptions}
-        presetSessionId={presetSessionId}
+        edit={edit}
+        pieceOptions={pieceOptions}
       />
     </Drawer>
   );
@@ -99,9 +82,9 @@ interface DraftRow {
   readonly key: string;
   readonly name: string;
   readonly format: MarketingFormat;
-  readonly editorPersonId: string;
-  readonly durationSeconds: string; // string en UI, se parsea al submit
+  readonly durationSeconds: string;
   readonly driveAssetUrl: string;
+  readonly sourceContentPieceId: string;
 }
 
 function newRow(index: number): DraftRow {
@@ -109,42 +92,29 @@ function newRow(index: number): DraftRow {
     key: `row-${Date.now()}-${index}`,
     name: "",
     format: "reel",
-    editorPersonId: "",
     durationSeconds: "",
     driveAssetUrl: "",
+    sourceContentPieceId: "",
   };
 }
 
-function BatchBody({
+function CompleteBody({
   onClose,
-  sessionOptions,
-  personOptions,
-  presetSessionId,
+  edit,
+  pieceOptions,
 }: {
   readonly onClose: () => void;
-  readonly sessionOptions: readonly SessionOptionForBatch[];
-  readonly personOptions: readonly PersonOptionForBatch[];
-  readonly presetSessionId?: string;
+  readonly edit: EditContextForComplete;
+  readonly pieceOptions: readonly PieceOptionForComplete[];
 }) {
-  const [sessionId, setSessionId] = useState<string>(presetSessionId ?? "");
-  const [driveFolderUrl, setDriveFolderUrl] = useState<string>("");
-  const [editDueDate, setEditDueDate] = useState<string>(defaultDueDate());
+  const [completedAt, setCompletedAt] = useState<string>(defaultNowLocal());
   const [rows, setRows] = useState<DraftRow[]>(() => [newRow(0)]);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
-  // Sesión seleccionada — resuelve owner que va al server. Locked si vino
-  // preset (no se puede cambiar sin cerrar el drawer).
-  const selectedSession = useMemo(
-    () => sessionOptions.find((s) => s.id === sessionId) ?? null,
-    [sessionId, sessionOptions],
+  const availablePieces = pieceOptions.filter(
+    (p) => p.contentOwnerId === edit.contentOwnerId,
   );
-
-  useEffect(() => {
-    if (presetSessionId && sessionId !== presetSessionId) {
-      setSessionId(presetSessionId);
-    }
-  }, [presetSessionId, sessionId]);
 
   function addRow() {
     setRows((prev) => [...prev, newRow(prev.length)]);
@@ -162,13 +132,6 @@ function BatchBody({
     e.preventDefault();
     setError(null);
 
-    if (!selectedSession) {
-      setError("Elegí una sesión de grabación.");
-      return;
-    }
-
-    // Validación local antes de mandar — mismos guards que la action pero
-    // con feedback inmediato.
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i]!;
       if (!r.name.trim()) {
@@ -184,25 +147,23 @@ function BatchBody({
       }
     }
 
-    const payloadRows: ProductionBatchRow[] = rows.map((r) => ({
+    const payloadRows: CompleteEditRow[] = rows.map((r) => ({
       name: r.name.trim(),
       format: r.format,
-      editorPersonId: r.editorPersonId.trim().length === 0 ? null : r.editorPersonId,
       durationSeconds:
         r.durationSeconds.trim().length === 0
           ? null
           : Number.parseInt(r.durationSeconds, 10),
       driveAssetUrl:
         r.driveAssetUrl.trim().length === 0 ? null : r.driveAssetUrl.trim(),
+      sourceContentPieceId:
+        r.sourceContentPieceId.trim().length === 0 ? null : r.sourceContentPieceId,
     }));
 
     startTransition(async () => {
-      const result = await createProductionBatch({
-        sourceRecordingSessionId: selectedSession.id,
-        contentOwnerId: selectedSession.contentOwnerId,
-        driveFolderUrl:
-          driveFolderUrl.trim().length === 0 ? null : driveFolderUrl.trim(),
-        editDueDate: editDueDate.trim().length === 0 ? null : editDueDate.trim(),
+      const result = await completeContentEdit({
+        contentEditId: edit.id,
+        completedAt: completedAt ? fromDatetimeLocal(completedAt) : null,
         rows: payloadRows,
       });
       if ("error" in result) {
@@ -218,45 +179,16 @@ function BatchBody({
       onSubmit={handleSubmit}
       style={{ display: "flex", flexDirection: "column", gap: 16 }}
     >
-      <Field label="Sesión de grabación" htmlFor="batch_session_id" required>
-        <select
-          id="batch_session_id"
-          value={sessionId}
-          onChange={(e) => setSessionId(e.target.value)}
-          required
-          disabled={presetSessionId != null}
-          style={{ ...inputStyle, opacity: presetSessionId != null ? 0.75 : 1 }}
-        >
-          <option value="">— Elegí una sesión realizada —</option>
-          {sessionOptions.map((s) => (
-            <option key={s.id} value={s.id}>
-              {formatSessionLabel(s)}
-            </option>
-          ))}
-        </select>
-      </Field>
-
-      <Field label="Carpeta de Drive (compartida)" htmlFor="batch_folder">
-        <input
-          id="batch_folder"
-          type="url"
-          value={driveFolderUrl}
-          onChange={(e) => setDriveFolderUrl(e.target.value)}
-          placeholder="https://drive.google.com/drive/folders/..."
-          style={inputStyle}
-        />
-      </Field>
-
       <Field
-        label="Editado para (fecha objetivo)"
-        htmlFor="batch_edit_due_date"
-        hint="Los cortes entran a la cola de edición con esta fecha. Es lo que ordena el planning semanal de cada editor."
+        label="Fecha de edición"
+        htmlFor="complete_completed_at"
+        hint="Por defecto ahora — cambiala si estás cargando esto días después."
       >
         <input
-          id="batch_edit_due_date"
-          type="date"
-          value={editDueDate}
-          onChange={(e) => setEditDueDate(e.target.value)}
+          id="complete_completed_at"
+          type="datetime-local"
+          value={completedAt}
+          onChange={(e) => setCompletedAt(e.target.value)}
           style={inputStyle}
         />
       </Field>
@@ -271,7 +203,7 @@ function BatchBody({
           }}
         >
           <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
-            Cortes producidos ({rows.length})
+            Archivos editados ({rows.length})
           </span>
           <button
             type="button"
@@ -279,7 +211,7 @@ function BatchBody({
             className="kg-focus"
             style={smallBtn}
           >
-            + Agregar corte
+            + Agregar archivo
           </button>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -322,8 +254,8 @@ function BatchBody({
                   }}
                   title={
                     rows.length === 1
-                      ? "Al menos un corte por batch"
-                      : "Quitar este corte"
+                      ? "Al menos un archivo por edición"
+                      : "Quitar este archivo"
                   }
                 >
                   ×
@@ -339,7 +271,7 @@ function BatchBody({
                     required
                     maxLength={200}
                     placeholder="Nombre del archivo (como está en la carpeta)"
-                    aria-label={`Fila ${idx + 1}: nombre del asset`}
+                    aria-label={`Fila ${idx + 1}: nombre del archivo`}
                     style={inputStyle}
                   />
                 </div>
@@ -347,9 +279,7 @@ function BatchBody({
                   <select
                     value={r.format}
                     onChange={(e) =>
-                      updateRow(r.key, {
-                        format: e.target.value as MarketingFormat,
-                      })
+                      updateRow(r.key, { format: e.target.value as MarketingFormat })
                     }
                     aria-label={`Fila ${idx + 1}: formato`}
                     style={inputStyle}
@@ -366,17 +296,17 @@ function BatchBody({
               <div style={{ display: "flex", gap: 8 }}>
                 <div style={{ flex: 2 }}>
                   <select
-                    value={r.editorPersonId}
+                    value={r.sourceContentPieceId}
                     onChange={(e) =>
-                      updateRow(r.key, { editorPersonId: e.target.value })
+                      updateRow(r.key, { sourceContentPieceId: e.target.value })
                     }
-                    aria-label={`Fila ${idx + 1}: editor`}
+                    aria-label={`Fila ${idx + 1}: piece origen`}
                     style={inputStyle}
                   >
-                    <option value="">Editor (opcional)</option>
-                    {personOptions.map((p) => (
+                    <option value="">Piece origen (opcional)</option>
+                    {availablePieces.map((p) => (
                       <option key={p.id} value={p.id}>
-                        {p.fullName}
+                        {p.title}
                       </option>
                     ))}
                   </select>
@@ -399,9 +329,7 @@ function BatchBody({
               <input
                 type="url"
                 value={r.driveAssetUrl}
-                onChange={(e) =>
-                  updateRow(r.key, { driveAssetUrl: e.target.value })
-                }
+                onChange={(e) => updateRow(r.key, { driveAssetUrl: e.target.value })}
                 placeholder="Link directo al archivo (opcional)"
                 aria-label={`Fila ${idx + 1}: link al archivo`}
                 style={inputStyle}
@@ -429,32 +357,23 @@ function BatchBody({
           className="kg-focus"
           style={{ ...primaryBtn, opacity: pending ? 0.7 : 1 }}
         >
-          {pending ? "Guardando…" : `Registrar ${rows.length} corte${rows.length === 1 ? "" : "s"}`}
+          {pending
+            ? "Guardando…"
+            : `Marcar realizada — ${rows.length} archivo${rows.length === 1 ? "" : "s"}`}
         </button>
       </div>
     </form>
   );
 }
 
-function formatSessionLabel(s: SessionOptionForBatch): string {
-  const d = new Date(s.scheduledAt);
+function defaultNowLocal(): string {
+  const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
-  const date = Number.isNaN(d.getTime())
-    ? s.scheduledAt
-    : `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
-  return `${date} · ${s.ownerName}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/**
- * Default de la fecha objetivo de edición: el viernes de esta semana (o el
- * de la semana que viene si hoy ya es sábado o domingo). La producción de
- * la semana se edita antes del fin de semana — es el default que menos
- * corrige el usuario. Siempre editable en el input.
- */
-function defaultDueDate(): string {
-  const d = new Date();
-  const daysToFriday = (5 - d.getDay() + 7) % 7; // getDay: 0=domingo … 6=sábado
-  d.setDate(d.getDate() + daysToFriday);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+function fromDatetimeLocal(value: string): string | null {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
 }
