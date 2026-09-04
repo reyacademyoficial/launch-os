@@ -251,6 +251,54 @@ export async function createSale(
   return { ok: true, saleId };
 }
 
+type ExistingLeadMatch = {
+  id: string;
+  team_member_id: string | null;
+  launch_id: string | null;
+};
+
+/**
+ * Busca un lead del proyecto que ya matchee el teléfono o el email cargados
+ * en el form de venta. Chequea teléfono primero (tiene unique parcial en DB,
+ * así que es el match "fuerte"); si no hay teléfono o no matchea, cae a
+ * email (sin unique constraint — puede haber colisiones legítimas, nos
+ * quedamos con la primera).
+ *
+ * Usado por `createSaleWithLead` para NO bloquear el alta de venta cuando el
+ * contacto ya existe como lead: en vez de devolver error, la venta se cuelga
+ * del lead existente automáticamente.
+ */
+async function findExistingLeadByContact(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  projectId: string,
+  phone: string | null,
+  email: string | null,
+): Promise<ExistingLeadMatch | null> {
+  if (phone) {
+    const { data } = await supabase
+      .from("leads")
+      .select("id, team_member_id, launch_id")
+      .eq("project_id", projectId)
+      .eq("phone_normalized", phone)
+      .maybeSingle();
+    const lead = data as ExistingLeadMatch | null;
+    if (lead) return lead;
+  }
+
+  if (email) {
+    const { data } = await supabase
+      .from("leads")
+      .select("id, team_member_id, launch_id")
+      .eq("project_id", projectId)
+      .eq("email", email)
+      .limit(1)
+      .maybeSingle();
+    if (data) return data as ExistingLeadMatch;
+  }
+
+  return null;
+}
+
 /**
  * Alta de venta desde la vista project-wide de Ventas. Crea el lead y la venta
  * en un mismo paso: el operador viene con la info de la venta ya cerrada y no
@@ -260,9 +308,19 @@ export async function createSale(
  * o la generación de cuotas revienta, se hace rollback manual del lead para no
  * dejar huérfanos.
  *
+ * DEDUPE POR TELÉFONO/EMAIL: si ya existe un lead del proyecto con ese
+ * teléfono o email, NO se crea un lead nuevo (el unique parcial de teléfono
+ * lo impediría igual) — la venta se asocia automáticamente al lead
+ * existente, igual que si el operador la hubiera cargado desde ahí. Antes
+ * esto frenaba el alta con un error y obligaba a ir a buscar el lead a mano;
+ * el bloqueo no aportaba nada porque el destino final es el mismo lead.
+ *
  * Los campos launch_id / team_member_id son opcionales — se guardan tanto en el
  * lead como en la sale (denormalización habitual). `createSale` hereda del lead;
  * acá los seteamos directo porque el lead se crea acá mismo con esos valores.
+ * Si se reusa un lead existente, se hereda SU atribución (team_member_id /
+ * launch_id) en lugar de la del form — mismo criterio que `createSale`, para
+ * no pisar la atribución real del lead con lo que haya tipeado el operador.
  */
 export async function createSaleWithLead(
   projectId: string,
@@ -277,8 +335,8 @@ export async function createSaleWithLead(
   const contact = parseLeadContact(formData);
   if ("error" in contact) return contact;
 
-  const launch_id = nullable(str(formData, "launch_id"));
-  const team_member_id = nullable(str(formData, "team_member_id"));
+  let launch_id = nullable(str(formData, "launch_id"));
+  let team_member_id = nullable(str(formData, "team_member_id"));
 
   const payment_modality_id = str(formData, "payment_modality_id");
   if (!payment_modality_id) return { error: "Elegí una modalidad." };
@@ -313,6 +371,21 @@ export async function createSaleWithLead(
     return { error: "Producto inexistente o de otro proyecto." };
   }
 
+  // Dedupe: si el teléfono o el email ya pertenecen a un lead del proyecto,
+  // reusamos ese lead en vez de intentar crear uno nuevo (que además
+  // pisaría contra el unique parcial de teléfono). Su atribución manda por
+  // sobre lo tipeado en el form — ver comentario del JSDoc de la función.
+  const existingLead = await findExistingLeadByContact(
+    supabase,
+    projectId,
+    contact.phone,
+    contact.email,
+  );
+  if (existingLead) {
+    launch_id = existingLead.launch_id;
+    team_member_id = existingLead.team_member_id;
+  }
+
   const snapshot = await resolveSnapshotForSale(
     projectId,
     payment_modality_id,
@@ -326,34 +399,68 @@ export async function createSaleWithLead(
     };
   }
 
-  const leadInsert = {
-    project_id: projectId,
-    name: lead_name,
-    email: contact.email,
-    phone_normalized: contact.phone,
-    launch_id,
-    team_member_id,
-    status: "cerrado",
-  } as never;
-  const { data: leadRow, error: leadErr } = await supabase
-    .from("leads")
-    .insert(leadInsert)
-    .select("id")
-    .maybeSingle();
-  if (leadErr) {
-    // Unique parcial (project_id, phone_normalized) de 0016: ese teléfono ya
-    // está cargado en otro lead del proyecto. Mensaje accionable en vez del
-    // texto crudo de postgres.
-    if (leadErr.code === "23505") {
-      return {
-        error:
-          "Ya hay un lead con ese teléfono en el proyecto. Cargá la venta desde ese lead, o corregí el número.",
-      };
+  // Sólo hacemos rollback (delete) del lead más abajo si lo creamos NOSOTROS
+  // en esta misma llamada. Un lead reusado (dedupe por teléfono/email) es
+  // ajeno a esta venta fallida — borrarlo sería destruir data real del
+  // proyecto por un error de creación de la venta.
+  let createdNewLead = false;
+  let leadId: string;
+  if (existingLead) {
+    leadId = existingLead.id;
+    // Idempotente — puede que ya esté cerrado. Ver `createSale`.
+    await supabase
+      .from("leads")
+      .update({ status: "cerrado" } as never)
+      .eq("id", leadId)
+      .eq("project_id", projectId);
+  } else {
+    const leadInsert = {
+      project_id: projectId,
+      name: lead_name,
+      email: contact.email,
+      phone_normalized: contact.phone,
+      launch_id,
+      team_member_id,
+      status: "cerrado",
+    } as never;
+    const { data: leadRow, error: leadErr } = await supabase
+      .from("leads")
+      .insert(leadInsert)
+      .select("id")
+      .maybeSingle();
+    if (leadErr) {
+      // Unique parcial (project_id, phone_normalized) de 0016: condición de
+      // carrera con el chequeo de arriba (otro alta concurrente creó el lead
+      // en el medio). Reintentamos el lookup y asociamos en vez de frenar.
+      if (leadErr.code === "23505") {
+        const raceLead = await findExistingLeadByContact(
+          supabase,
+          projectId,
+          contact.phone,
+          contact.email,
+        );
+        if (raceLead) {
+          leadId = raceLead.id;
+          launch_id = raceLead.launch_id;
+          team_member_id = raceLead.team_member_id;
+          await supabase
+            .from("leads")
+            .update({ status: "cerrado" } as never)
+            .eq("id", leadId)
+            .eq("project_id", projectId);
+        } else {
+          return { error: leadErr.message };
+        }
+      } else {
+        return { error: leadErr.message };
+      }
+    } else {
+      const newLeadId = (leadRow as { id: string } | null)?.id;
+      if (!newLeadId) return { error: "No se pudo crear el lead." };
+      leadId = newLeadId;
+      createdNewLead = true;
     }
-    return { error: leadErr.message };
   }
-  const leadId = (leadRow as { id: string } | null)?.id;
-  if (!leadId) return { error: "No se pudo crear el lead." };
 
   const saleInsert = {
     project_id: projectId,
@@ -377,7 +484,9 @@ export async function createSaleWithLead(
     .select("id")
     .maybeSingle();
   if (saleErr) {
-    await supabase.from("leads").delete().eq("id", leadId);
+    if (createdNewLead) {
+      await supabase.from("leads").delete().eq("id", leadId);
+    }
     return { error: saleErr.message };
   }
   const saleId = (saleRow as { id: string } | null)?.id;
@@ -389,7 +498,9 @@ export async function createSaleWithLead(
     );
     if (genErr) {
       await supabase.from("sales").delete().eq("id", saleId);
-      await supabase.from("leads").delete().eq("id", leadId);
+      if (createdNewLead) {
+        await supabase.from("leads").delete().eq("id", leadId);
+      }
       return {
         error: `No se pudieron generar las cuotas: ${genErr.message}`,
       };
