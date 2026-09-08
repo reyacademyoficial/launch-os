@@ -7,13 +7,13 @@
 -- │                                                                          │
 -- │ El cálculo de carga (editor-load.ts) usa esto para convertir una         │
 -- │ edición en curso a una FRACCIÓN del día: 1/max_per_day del formato       │
--- │ esperado (content_edits.target_format, 0191). Un podcast con             │
+-- │ esperado (content_edits.target_format, 0191). Un podcast (≈ 'long') con  │
 -- │ max_per_day=1 consume el día entero (1/1); un reel con max_per_day=6     │
 -- │ consume 1/6.                                                            │
 -- │                                                                          │
--- │ "nugget" no es un MarketingFormat separado — hoy se resuelve al formato  │
--- │ real (reel/short/etc.) que uses para nuggets; si aparece la necesidad de │
--- │ discriminar categoría dentro del mismo formato, se revisa como deuda.    │
+-- │ `format` acá usa el mismo enum de 0192 (otro/nugget/anuncios/reel/long)  │
+-- │ — "formato" en este módulo es el TIPO de pieza, no el layout de          │
+-- │ publicación.                                                            │
 -- │                                                                          │
 -- │ Nivel org — TEMPLATE de 0090. Mismo trigger org-match que 0164/0189.     │
 -- ╰──────────────────────────────────────────────────────────────────────────╯
@@ -24,7 +24,7 @@ create table if not exists public.editor_format_capacity (
   person_id         uuid not null references public.organization_people(id) on delete cascade,
 
   format            text not null check (format in (
-    'reel','short','long','carousel','story','post'
+    'otro','nugget','anuncios','reel','long'
   )),
   max_per_day       integer not null check (max_per_day > 0),
 
@@ -33,6 +33,15 @@ create table if not exists public.editor_format_capacity (
 
   constraint editor_format_capacity_person_format_uq unique (person_id, format)
 );
+
+-- Re-corrible: si la tabla ya existía de una corrida anterior a 0192 (con el
+-- CHECK viejo de formato), `create table if not exists` la deja intacta —
+-- este bloque corrige el constraint igual, se haya creado la tabla arriba
+-- o ya existiera.
+alter table public.editor_format_capacity drop constraint if exists editor_format_capacity_format_check;
+alter table public.editor_format_capacity
+  add constraint editor_format_capacity_format_check
+  check (format in ('otro','nugget','anuncios','reel','long'));
 
 create index if not exists editor_format_capacity_org_idx
   on public.editor_format_capacity(organization_id);

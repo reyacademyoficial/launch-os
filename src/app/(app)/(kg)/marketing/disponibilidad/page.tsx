@@ -170,7 +170,11 @@ export default async function DisponibilidadPage({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-5">
+    // Sin h-full/min-h-0: esta página apila 3 tablas (horario, capacidad,
+    // excepciones) en vez de una sola fillHeight — el flujo natural + el
+    // scroll del <main> del shell (overflow-y-auto) es lo que necesitamos,
+    // no el pattern flex-fill de una tabla única.
+    <div className="flex flex-col gap-5">
       <ContextBar
         icon={<IconCamera size={16} />}
         title="Disponibilidad de editores"
@@ -222,7 +226,6 @@ export default async function DisponibilidadPage({
       <Panel
         title="Bloques de disponibilidad (excepciones)"
         pad={false}
-        fillHeight
         actions={<NewAvailabilityButton personOptions={personOptions} />}
       >
         <DisponibilidadView rows={filtered} personOptions={personOptions} />

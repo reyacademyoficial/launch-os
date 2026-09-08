@@ -138,7 +138,6 @@ export function DisponibilidadView({
         totalCount={rows.length}
         emptyTitle="Sin bloques de disponibilidad cargados"
         emptyHint="Cargá bloques para que el planning semanal de edición muestre días disponibles por persona."
-        fillHeight
       />
 
       <AvailabilityFormDrawer

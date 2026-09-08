@@ -98,7 +98,6 @@ export function FormatCapacityView({
         totalCount={rows.length}
         emptyTitle="Sin capacidades configuradas"
         emptyHint="Definí cuánto puede terminar cada editor por formato en un día completo — se usa para calcular su carga diaria."
-        fillHeight
       />
 
       <FormatCapacityFormDrawer

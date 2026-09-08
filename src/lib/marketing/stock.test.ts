@@ -37,7 +37,7 @@ describe("computeStockByOwnerPlatformFormat", () => {
   it("devuelve un bucket por cada cadencia aunque el stock sea 0", () => {
     const cadences: StockCadenceInput[] = [
       { contentOwnerId: "o1", platform: "instagram", format: "reel", timesCount: 3, periodDays: 1, allowRepeatAsset: false },
-      { contentOwnerId: "o1", platform: "youtube", format: "short", timesCount: 1, periodDays: 1, allowRepeatAsset: false },
+      { contentOwnerId: "o1", platform: "youtube", format: "long", timesCount: 1, periodDays: 1, allowRepeatAsset: false },
     ];
     const buckets = computeStockByOwnerPlatformFormat([], [], cadences);
     expect(buckets).toHaveLength(2);
@@ -139,11 +139,11 @@ describe("computeDaysOfCoverage", () => {
   it("suma stock y dailyRate a través de formats para el mismo (owner, platform)", () => {
     const stock = [
       { contentOwnerId: "o1", platform: "instagram" as const, format: "reel" as const, stockCount: 10 },
-      { contentOwnerId: "o1", platform: "instagram" as const, format: "carousel" as const, stockCount: 6 },
+      { contentOwnerId: "o1", platform: "instagram" as const, format: "nugget" as const, stockCount: 6 },
     ];
     const cadences: StockCadenceInput[] = [
       { contentOwnerId: "o1", platform: "instagram", format: "reel", timesCount: 2, periodDays: 1, allowRepeatAsset: false },
-      { contentOwnerId: "o1", platform: "instagram", format: "carousel", timesCount: 1, periodDays: 1, allowRepeatAsset: false },
+      { contentOwnerId: "o1", platform: "instagram", format: "nugget", timesCount: 1, periodDays: 1, allowRepeatAsset: false },
     ];
     const cov = computeDaysOfCoverage(stock, cadences);
     expect(cov).toHaveLength(1);

@@ -4,9 +4,15 @@ import { useMemo, useState, useTransition } from "react";
 
 import { KgDataTable, type Column, type SortDir } from "@/components/kg/data-table";
 import { KgDetailDrawer, type DetailField } from "@/components/kg/detail-drawer";
+import { primaryBtn } from "@/components/kg/form-primitives";
 import { StateDot } from "@/components/kg/state-dot";
 import { compareSortValues, type SortValue } from "@/lib/kg/sort";
 
+import {
+  EditFormDrawer,
+  type PersonOption,
+  type RawOption,
+} from "../edicion/edit-form-drawer";
 import { reorderRaws } from "./actions";
 import {
   RawFormDrawer,
@@ -40,13 +46,16 @@ export function CrudosView({
   rows,
   ownerOptions,
   sessionOptions,
+  personOptions,
 }: {
   readonly rows: readonly RawRowData[];
   readonly ownerOptions: readonly OwnerOption[];
   readonly sessionOptions: readonly SessionOption[];
+  readonly personOptions: readonly PersonOption[];
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [viewingId, setViewingId] = useState<string | null>(null);
+  const [creatingEditForId, setCreatingEditForId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -208,6 +217,21 @@ export function CrudosView({
     },
   ];
 
+  const creatingEditFor =
+    creatingEditForId != null
+      ? rows.find((r) => r.id === creatingEditForId) ?? null
+      : null;
+
+  const rawOptionsForEdit: RawOption[] = creatingEditFor
+    ? [
+        {
+          id: creatingEditFor.id,
+          contentOwnerId: creatingEditFor.contentOwnerId,
+          label: creatingEditFor.name,
+        },
+      ]
+    : [];
+
   const viewing =
     viewingId != null ? rows.find((r) => r.id === viewingId) ?? null : null;
 
@@ -296,6 +320,22 @@ export function CrudosView({
               }
             : undefined
         }
+        extraActions={
+          viewing != null && (
+            <button
+              type="button"
+              onClick={() => {
+                setViewingId(null);
+                setCreatingEditForId(viewing.id);
+              }}
+              className="kg-focus"
+              style={primaryBtn}
+              title="Crear una edición a partir de este crudo"
+            >
+              Nueva edición
+            </button>
+          )
+        }
         title={viewing?.name ?? ""}
         subtitle={viewing?.ownerName}
         fields={viewingFields}
@@ -308,6 +348,18 @@ export function CrudosView({
         ownerOptions={ownerOptions}
         sessionOptions={sessionOptions}
         initial={editingInitial}
+      />
+
+      <EditFormDrawer
+        mode="create"
+        open={creatingEditForId != null}
+        onClose={() => setCreatingEditForId(null)}
+        ownerOptions={ownerOptions}
+        personOptions={personOptions}
+        rawOptions={rawOptionsForEdit}
+        presetOwnerId={creatingEditFor?.contentOwnerId}
+        presetRawId={creatingEditFor?.id}
+        initialKey={creatingEditFor?.id}
       />
     </div>
   );

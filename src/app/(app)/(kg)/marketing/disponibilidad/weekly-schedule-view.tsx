@@ -125,7 +125,6 @@ export function WeeklyScheduleView({
         totalCount={rows.length}
         emptyTitle="Sin horario semanal configurado"
         emptyHint="Definí qué días y en qué franja horaria trabaja cada editor — se usa para calcular su capacidad diaria en Edición."
-        fillHeight
       />
 
       <WeeklyScheduleFormDrawer

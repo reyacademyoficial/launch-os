@@ -7,6 +7,7 @@ import { IconCamera } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
+import { getOrgPeople } from "@/lib/finance/reference";
 import { createClient } from "@/lib/supabase/server";
 
 import { CrudosView, type RawRowData } from "./crudos-view";
@@ -75,7 +76,7 @@ export default async function CrudosPage({
   if (dateFromFilter) rawsQuery = rawsQuery.gte("created_at", dateFromFilter);
   if (dateToFilter) rawsQuery = rawsQuery.lte("created_at", `${dateToFilter}T23:59:59`);
 
-  const [ownersRes, sessionsRes, rawsRes, editsRes] = await Promise.all([
+  const [ownersRes, sessionsRes, rawsRes, editsRes, personsRef] = await Promise.all([
     supabase.from("content_owners").select("id, name, active").order("name"),
     supabase
       .from("recording_sessions")
@@ -83,12 +84,18 @@ export default async function CrudosPage({
       .order("scheduled_at", { ascending: false }),
     rawsQuery,
     supabase.from("content_edits").select("source_content_raw_id"),
+    getOrgPeople(),
   ]);
 
   const owners = (ownersRes.data ?? []) as unknown as OwnerLite[];
   const sessions = (sessionsRes.data ?? []) as unknown as SessionLite[];
   const raws = (rawsRes.data ?? []) as unknown as RawDbRow[];
   const edits = (editsRes.data ?? []) as unknown as EditLite[];
+  const persons = personsRef as unknown as ReadonlyArray<{
+    readonly id: string;
+    readonly full_name: string;
+    readonly active: boolean;
+  }>;
 
   const ownersById = new Map<string, OwnerLite>();
   for (const o of owners) ownersById.set(o.id, o);
@@ -116,6 +123,9 @@ export default async function CrudosPage({
         ownersById.get(s.content_owner_id)?.name ?? "(dueño)"
       }`,
   }));
+  const personOptions = persons
+    .filter((p) => p.active)
+    .map((p) => ({ id: p.id, fullName: p.full_name }));
 
   const normalized: RawRowData[] = raws.map((r) => {
     const session = r.source_recording_session_id
@@ -250,6 +260,7 @@ export default async function CrudosPage({
           rows={filtered}
           ownerOptions={ownerOptions}
           sessionOptions={sessionOptions}
+          personOptions={personOptions}
         />
       </Panel>
     </div>

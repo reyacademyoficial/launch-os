@@ -23,6 +23,7 @@ export function KgDetailDrawer({
   open,
   onClose,
   onEdit,
+  extraActions,
   title,
   subtitle,
   fields,
@@ -31,6 +32,12 @@ export function KgDetailDrawer({
   readonly onClose: () => void;
   /** Omitir si la fila no admite edición desde acá. */
   readonly onEdit?: () => void;
+  /**
+   * Botones extra entre "Cerrar" y "Editar" — para acciones puntuales que no
+   * son "editar esta fila" (ej. "Nueva edición" desde el detalle de un
+   * crudo). El componente no sabe nada de esas acciones, sólo les da lugar.
+   */
+  readonly extraActions?: ReactNode;
   readonly title: string;
   readonly subtitle?: string;
   readonly fields: readonly DetailField[];
@@ -47,6 +54,7 @@ export function KgDetailDrawer({
           <button type="button" onClick={onClose} className="kg-focus" style={secondaryBtn}>
             Cerrar
           </button>
+          {extraActions}
           {onEdit && (
             <button type="button" onClick={onEdit} className="kg-focus" style={primaryBtn}>
               Editar

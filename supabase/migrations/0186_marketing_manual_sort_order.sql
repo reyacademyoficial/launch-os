@@ -5,11 +5,11 @@
 -- render). El "hueco" entre valores no importa: al reordenar, el cliente
 -- manda la lista completa de IDs visibles y el server reescribe 0..N-1.
 
-alter table content_pieces add column sort_order integer;
-alter table recording_sessions add column sort_order integer;
-alter table content_raws add column sort_order integer;
-alter table content_edits add column sort_order integer;
-alter table content_uploads add column sort_order integer;
+alter table content_pieces add column if not exists sort_order integer;
+alter table recording_sessions add column if not exists sort_order integer;
+alter table content_raws add column if not exists sort_order integer;
+alter table content_edits add column if not exists sort_order integer;
+alter table content_uploads add column if not exists sort_order integer;
 
 with ordered as (
   select id, row_number() over (order by created_at) - 1 as rn

@@ -15,13 +15,16 @@ export const MARKETING_PLATFORMS = [
 
 export type MarketingPlatform = (typeof MARKETING_PLATFORMS)[number];
 
+// 0192: se redujo de 6 valores (reel/short/long/carousel/story/post) a estos
+// 5 — "formato" en este módulo no es el layout de publicación sino el TIPO
+// de pieza (para poder medir capacidad de edición por tipo). Los formatos
+// viejos se remapearon en la migración: short→reel, carousel/story/post→otro.
 export const MARKETING_FORMATS = [
+  "otro",
+  "nugget",
+  "anuncios",
   "reel",
-  "short",
   "long",
-  "carousel",
-  "story",
-  "post",
 ] as const;
 
 export type MarketingFormat = (typeof MARKETING_FORMATS)[number];
@@ -34,12 +37,11 @@ export const PLATFORM_LABEL: Record<MarketingPlatform, string> = {
 };
 
 export const FORMAT_LABEL: Record<MarketingFormat, string> = {
+  otro: "Otro",
+  nugget: "Nuggets",
+  anuncios: "Anuncios",
   reel: "Reel",
-  short: "Short",
   long: "Video largo",
-  carousel: "Carrusel",
-  story: "Historia",
-  post: "Post",
 };
 
 export const MARKETING_CATEGORIES = [
