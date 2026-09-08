@@ -12,6 +12,7 @@ import {
 } from "./format-capacity-form-drawer";
 
 export interface FormatCapacityRowData {
+  readonly id: string;
   readonly personId: string;
   readonly personName: string;
   readonly format: MarketingFormat;
@@ -30,17 +31,14 @@ export function FormatCapacityView({
   readonly rows: readonly FormatCapacityRowData[];
   readonly personOptions: readonly PersonOption[];
 }) {
-  const [editingKey, setEditingKey] = useState<string | null>(null);
-
-  function rowKey(r: FormatCapacityRowData): string {
-    return `${r.personId}::${r.format}`;
-  }
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const editing =
-    editingKey != null ? rows.find((r) => rowKey(r) === editingKey) ?? null : null;
+    editingId != null ? rows.find((r) => r.id === editingId) ?? null : null;
   const editingInitial: FormatCapacityInitial | undefined =
     editing != null
       ? {
+          id: editing.id,
           personId: editing.personId,
           personName: editing.personName,
           format: editing.format,
@@ -78,7 +76,7 @@ export function FormatCapacityView({
         <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
           <button
             type="button"
-            onClick={() => setEditingKey(rowKey(r))}
+            onClick={() => setEditingId(r.id)}
             className="kg-focus"
             style={rowBtn}
           >
@@ -94,7 +92,7 @@ export function FormatCapacityView({
       <KgDataTable
         columns={columns}
         rows={rows}
-        rowKey={rowKey}
+        rowKey={(r) => r.id}
         totalCount={rows.length}
         emptyTitle="Sin capacidades configuradas"
         emptyHint="Definí cuánto puede terminar cada editor por formato en un día completo — se usa para calcular su carga diaria."
@@ -102,8 +100,8 @@ export function FormatCapacityView({
 
       <FormatCapacityFormDrawer
         mode="edit"
-        open={editingKey != null}
-        onClose={() => setEditingKey(null)}
+        open={editingId != null}
+        onClose={() => setEditingId(null)}
         personOptions={personOptions}
         initial={editingInitial}
       />

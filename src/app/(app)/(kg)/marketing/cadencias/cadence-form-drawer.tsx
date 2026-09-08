@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState, useTransition } from "react";
+import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
 
 import { Drawer } from "@/components/kg/drawer";
 import {
@@ -14,17 +14,20 @@ import {
 
 import {
   deleteCadence,
+  updateCadence,
   upsertCadence,
   type CreateCadenceState,
+  type UpdateCadenceState,
 } from "./actions";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Drawer para crear o editar una cadencia (owner × platform × format).
 //
-// Modo create: los 3 campos del key son editables + pickers.
-// Modo edit: los 3 campos van bloqueados (readOnly); cambiar la triada
-// requiere eliminar + crear de nuevo. Editar acá cambia times_count/
-// period_days (0188), allow_repeat_asset y notes.
+// Modo create: `upsertCadence` — los 3 campos del key son editables.
+// Modo edit: `updateCadence` — los 3 campos TAMBIÉN son editables (se puede
+// mover la cadencia a otro dueño/plataforma/formato); la fila se identifica
+// por su clave ORIGINAL (capturada en `initial`), no por lo que el usuario
+// tipee en el formulario.
 // ═══════════════════════════════════════════════════════════════════════════
 
 const PRESETS: readonly { label: string; timesCount: number; periodDays: number }[] = [
@@ -89,10 +92,29 @@ function CadenceFormBody({
 }) {
   const isEdit = mode === "edit" && initial != null;
 
-  const [state, formAction, pending] = useActionState<
+  const updateBound = useMemo(() => {
+    if (!isEdit || !initial) return null;
+    const { contentOwnerId, platform, format } = initial;
+    return async (prev: UpdateCadenceState, fd: FormData) =>
+      updateCadence(contentOwnerId, platform, format, prev, fd);
+  }, [isEdit, initial]);
+
+  const [createState, createFormAction, createPending] = useActionState<
     CreateCadenceState,
     FormData
   >(upsertCadence, null);
+  const [updateState, updateFormAction, updatePending] = useActionState<
+    UpdateCadenceState,
+    FormData
+  >(
+    updateBound ??
+      (async () => ({ error: "Modo edit sin datos" as string }) as never),
+    null,
+  );
+
+  const state = isEdit ? updateState : createState;
+  const formAction = isEdit ? updateFormAction : createFormAction;
+  const pending = isEdit ? updatePending : createPending;
 
   useEffect(() => {
     if (state && "ok" in state && state.ok) onClose();
@@ -101,9 +123,26 @@ function CadenceFormBody({
   const [allowRepeat, setAllowRepeat] = useState(
     initial?.allowRepeatAsset ?? false,
   );
-  const [timesCount, setTimesCount] = useState(initial?.timesCount ?? 1);
-  const [periodDays, setPeriodDays] = useState(initial?.periodDays ?? 1);
-  const dailyRate = periodDays > 0 ? timesCount / periodDays : 0;
+  // String, no number — con `Number(...) || 1` en el onChange, borrar el
+  // campo para tipear un valor nuevo pasaba por un instante en "" que el
+  // fallback pisaba de vuelta a 1 antes de que el usuario pudiera terminar
+  // de escribir (se sentía como "no me deja editar"). Guardamos el texto
+  // crudo y sólo lo interpretamos para la preview de tasa/día — la
+  // validación real (entero > 0) la hace el server action al submit.
+  const [timesCount, setTimesCount] = useState(
+    String(initial?.timesCount ?? 1),
+  );
+  const [periodDays, setPeriodDays] = useState(
+    String(initial?.periodDays ?? 1),
+  );
+  const timesCountNum = Number.parseInt(timesCount, 10);
+  const periodDaysNum = Number.parseInt(periodDays, 10);
+  const dailyRate =
+    Number.isFinite(timesCountNum) &&
+    Number.isFinite(periodDaysNum) &&
+    periodDaysNum > 0
+      ? timesCountNum / periodDaysNum
+      : 0;
   const [deletePending, startDeleteTransition] = useTransition();
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -139,10 +178,9 @@ function CadenceFormBody({
           name="content_owner_id"
           required
           defaultValue={initial?.contentOwnerId ?? ""}
-          disabled={isEdit}
           style={inputStyle}
         >
-          {!isEdit && <option value="">— Elegí un dueño —</option>}
+          <option value="">— Elegí un dueño —</option>
           {ownerOptions.map((o) => (
             <option key={o.id} value={o.id}>
               {o.name}
@@ -159,10 +197,9 @@ function CadenceFormBody({
               name="platform"
               required
               defaultValue={initial?.platform ?? ""}
-              disabled={isEdit}
               style={inputStyle}
             >
-              {!isEdit && <option value="">— Elegí —</option>}
+              <option value="">— Elegí —</option>
               {MARKETING_PLATFORMS.map((p) => (
                 <option key={p} value={p}>
                   {PLATFORM_LABEL[p]}
@@ -178,10 +215,9 @@ function CadenceFormBody({
               name="format"
               required
               defaultValue={initial?.format ?? ""}
-              disabled={isEdit}
               style={inputStyle}
             >
-              {!isEdit && <option value="">— Elegí —</option>}
+              <option value="">— Elegí —</option>
               {MARKETING_FORMATS.map((f) => (
                 <option key={f} value={f}>
                   {FORMAT_LABEL[f]}
@@ -191,21 +227,6 @@ function CadenceFormBody({
           </Field>
         </div>
       </div>
-
-      {/* Cuando editamos, los pickers están disabled — los valores no viajan
-          en el submit. Los reenviamos por hidden inputs para que el upsert
-          matchee la fila correcta por PK compuesta. */}
-      {isEdit && initial && (
-        <>
-          <input
-            type="hidden"
-            name="content_owner_id"
-            value={initial.contentOwnerId}
-          />
-          <input type="hidden" name="platform" value={initial.platform} />
-          <input type="hidden" name="format" value={initial.format} />
-        </>
-      )}
 
       <div>
         <div
@@ -220,8 +241,8 @@ function CadenceFormBody({
               key={p.label}
               type="button"
               onClick={() => {
-                setTimesCount(p.timesCount);
-                setPeriodDays(p.periodDays);
+                setTimesCount(String(p.timesCount));
+                setPeriodDays(String(p.periodDays));
               }}
               className="kg-focus"
               style={presetBtn}
@@ -241,7 +262,7 @@ function CadenceFormBody({
                 max={100}
                 required
                 value={timesCount}
-                onChange={(e) => setTimesCount(Number(e.target.value) || 1)}
+                onChange={(e) => setTimesCount(e.target.value)}
                 style={inputStyle}
               />
             </Field>
@@ -262,7 +283,7 @@ function CadenceFormBody({
                 max={90}
                 required
                 value={periodDays}
-                onChange={(e) => setPeriodDays(Number(e.target.value) || 1)}
+                onChange={(e) => setPeriodDays(e.target.value)}
                 style={inputStyle}
               />
             </Field>

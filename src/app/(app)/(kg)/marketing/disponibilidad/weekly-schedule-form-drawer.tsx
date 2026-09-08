@@ -34,8 +34,8 @@ export interface WeeklyScheduleInitial {
 // — crea/pisa una fila por día seleccionado (upsert por person+day). Cubre
 // el caso típico "lunes a viernes 9 a 14" sin repetir el formulario 5 veces.
 //
-// Modo edit: persona y día quedan fijos (cambiar el día es borrar + crear);
-// se edita horario y notas de esa fila puntual.
+// Modo edit: persona y día TAMBIÉN son editables — la fila se identifica
+// por su `id` (capturado en `initial`), no por lo que el usuario elija.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function WeeklyScheduleFormDrawer({
@@ -58,7 +58,9 @@ export function WeeklyScheduleFormDrawer({
       {mode === "create" ? (
         <CreateBody onClose={onClose} personOptions={personOptions} />
       ) : (
-        initial && <EditBody onClose={onClose} initial={initial} />
+        initial && (
+          <EditBody onClose={onClose} personOptions={personOptions} initial={initial} />
+        )
       )}
     </Drawer>
   );
@@ -215,13 +217,17 @@ function CreateBody({
 
 function EditBody({
   onClose,
+  personOptions,
   initial,
 }: {
   readonly onClose: () => void;
+  readonly personOptions: readonly PersonOption[];
   readonly initial: WeeklyScheduleInitial;
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [personId, setPersonId] = useState(initial.personId);
+  const [dayOfWeek, setDayOfWeek] = useState<Weekday>(initial.dayOfWeek);
   const [startTime, setStartTime] = useState(initial.startTime);
   const [endTime, setEndTime] = useState(initial.endTime);
   const [notes, setNotes] = useState(initial.notes ?? "");
@@ -235,6 +241,8 @@ function EditBody({
     startTransition(async () => {
       const result = await updateWeeklyScheduleRow(
         initial.id,
+        personId,
+        dayOfWeek,
         startTime,
         endTime,
         notes,
@@ -266,18 +274,37 @@ function EditBody({
       onSubmit={handleSubmit}
       style={{ display: "flex", flexDirection: "column", gap: 16 }}
     >
-      <div
-        className="kg-t7"
-        style={{
-          padding: "10px 14px",
-          borderRadius: "var(--kg-r-8)",
-          background: "var(--kg-surface-2-solid)",
-          border: "1px solid var(--kg-border-subtle)",
-          color: "var(--kg-text-2)",
-        }}
-      >
-        {initial.personName} · {WEEKDAY_LABEL[initial.dayOfWeek]}
-      </div>
+      <Field label="Persona" htmlFor="edit_person_id" required>
+        <select
+          id="edit_person_id"
+          required
+          value={personId}
+          onChange={(e) => setPersonId(e.target.value)}
+          style={inputStyle}
+        >
+          {personOptions.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.fullName}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      <Field label="Día" htmlFor="edit_day_of_week" required>
+        <select
+          id="edit_day_of_week"
+          required
+          value={dayOfWeek}
+          onChange={(e) => setDayOfWeek(Number(e.target.value) as Weekday)}
+          style={inputStyle}
+        >
+          {WEEKDAYS.map((d) => (
+            <option key={d} value={d}>
+              {WEEKDAY_LABEL[d]}
+            </option>
+          ))}
+        </select>
+      </Field>
 
       <div style={{ display: "flex", gap: 12 }}>
         <div style={{ flex: 1 }}>

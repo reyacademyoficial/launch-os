@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState, useTransition } from "react";
+import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
 
 import { Drawer } from "@/components/kg/drawer";
 import {
@@ -11,6 +11,7 @@ import {
 
 import {
   deleteFormatCapacity,
+  updateFormatCapacity,
   upsertFormatCapacity,
   type UpsertFormatCapacityState,
 } from "./actions";
@@ -21,6 +22,7 @@ export interface PersonOption {
 }
 
 export interface FormatCapacityInitial {
+  readonly id: string;
   readonly personId: string;
   readonly personName: string;
   readonly format: MarketingFormat;
@@ -30,8 +32,10 @@ export interface FormatCapacityInitial {
 // ═══════════════════════════════════════════════════════════════════════════
 // Drawer de capacidad máxima por formato (persona × formato → max_per_day).
 //
-// Modo create: persona + formato editables (upsert por esa pareja).
-// Modo edit: persona + formato quedan fijos; sólo se cambia el máximo.
+// Modo create: `upsertFormatCapacity` — persona + formato editables.
+// Modo edit: `updateFormatCapacity` — persona y formato TAMBIÉN son
+// editables; la fila se identifica por su `id` (capturado en `initial`), no
+// por lo que el usuario tipee.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function FormatCapacityFormDrawer({
@@ -69,10 +73,29 @@ function FormBody({
 }) {
   const isEdit = mode === "edit" && initial != null;
 
-  const [state, formAction, pending] = useActionState<
+  const updateBound = useMemo(() => {
+    if (!isEdit || !initial) return null;
+    const id = initial.id;
+    return async (prev: UpsertFormatCapacityState, fd: FormData) =>
+      updateFormatCapacity(id, prev, fd);
+  }, [isEdit, initial]);
+
+  const [createState, createFormAction, createPending] = useActionState<
     UpsertFormatCapacityState,
     FormData
   >(upsertFormatCapacity, null);
+  const [updateState, updateFormAction, updatePending] = useActionState<
+    UpsertFormatCapacityState,
+    FormData
+  >(
+    updateBound ??
+      (async () => ({ error: "Modo edit sin id" as string }) as never),
+    null,
+  );
+
+  const state = isEdit ? updateState : createState;
+  const formAction = isEdit ? updateFormAction : createFormAction;
+  const pending = isEdit ? updatePending : createPending;
 
   useEffect(() => {
     if (state && "ok" in state && state.ok) onClose();
@@ -87,7 +110,7 @@ function FormBody({
     if (!ok) return;
     setDeleteError(null);
     startDeleteTransition(async () => {
-      const result = await deleteFormatCapacity(initial.personId, initial.format);
+      const result = await deleteFormatCapacity(initial.id);
       if ("error" in result) {
         setDeleteError(result.error);
         return;
@@ -107,10 +130,9 @@ function FormBody({
           name="person_id"
           required
           defaultValue={initial?.personId ?? ""}
-          disabled={isEdit}
           style={inputStyle}
         >
-          {!isEdit && <option value="">— Elegí una persona —</option>}
+          <option value="">— Elegí una persona —</option>
           {personOptions.map((p) => (
             <option key={p.id} value={p.id}>
               {p.fullName}
@@ -125,10 +147,9 @@ function FormBody({
           name="format"
           required
           defaultValue={initial?.format ?? ""}
-          disabled={isEdit}
           style={inputStyle}
         >
-          {!isEdit && <option value="">— Elegí —</option>}
+          <option value="">— Elegí —</option>
           {MARKETING_FORMATS.map((f) => (
             <option key={f} value={f}>
               {FORMAT_LABEL[f]}
@@ -136,13 +157,6 @@ function FormBody({
           ))}
         </select>
       </Field>
-
-      {isEdit && initial && (
-        <>
-          <input type="hidden" name="person_id" value={initial.personId} />
-          <input type="hidden" name="format" value={initial.format} />
-        </>
-      )}
 
       <Field
         label="Máximo por día"

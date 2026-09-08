@@ -14,10 +14,10 @@ import {
 // ═══════════════════════════════════════════════════════════════════════════
 // CRUD de publishing_cadences.
 //
-// PK compuesta: (content_owner_id, platform, format). El upsert on conflict
-// permite editar una cadencia existente sin traer id — la triada natural es
-// única. Para edición (mismo triada) también usamos upsert; para cambiar
-// alguno de los 3 campos del key hay que eliminar + crear (no es común).
+// PK compuesta: (content_owner_id, platform, format). `upsertCadence` crea
+// (o pisa si el usuario re-envía la misma triada). `updateCadence` edita una
+// fila EXISTENTE identificándola por su clave original, permitiendo cambiar
+// cualquiera de los 3 campos sin borrar y crear de nuevo.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export type CreateCadenceState =
@@ -136,6 +136,68 @@ export async function upsertCadence(
       };
     }
     // 23503 = FK (content_owner_id no existe).
+    if (error.code === "23503") {
+      return { error: "El dueño elegido no existe. Refrescá la página." };
+    }
+    return { error: error.message };
+  }
+
+  revalidatePath("/marketing/cadencias");
+  return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// updateCadence — edita la fila identificada por su clave ORIGINAL
+// (contentOwnerId/platform/format previos), permitiendo cambiar cualquiera
+// de esos 3 campos sin borrar y crear de nuevo. Si la clave nueva ya
+// pertenece a otra cadencia, el PK compuesto rebota (23505).
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function updateCadence(
+  originalOwnerId: string,
+  originalPlatform: string,
+  originalFormat: string,
+  _prev: UpdateCadenceState,
+  formData: FormData,
+): Promise<UpdateCadenceState> {
+  if (!originalOwnerId || !originalPlatform || !originalFormat) {
+    return { error: "Falta la clave original de la cadencia." };
+  }
+
+  const parsed = parseCadenceFormData(formData);
+  if (typeof parsed === "string") return { error: parsed };
+
+  const supabase = await createSupabaseClient();
+  const payload = {
+    content_owner_id: parsed.contentOwnerId,
+    platform: parsed.platform,
+    format: parsed.format,
+    times_count: parsed.timesCount,
+    period_days: parsed.periodDays,
+    allow_repeat_asset: parsed.allowRepeatAsset,
+    notes: parsed.notes,
+  } as never;
+
+  const { error } = await supabase
+    .from("publishing_cadences")
+    .update(payload)
+    .eq("content_owner_id", originalOwnerId)
+    .eq("platform", originalPlatform)
+    .eq("format", originalFormat);
+
+  if (error) {
+    if (error.code === "23505") {
+      return {
+        error:
+          "Ya existe una cadencia para ese dueño, plataforma y formato. Editá la existente en vez de duplicarla.",
+      };
+    }
+    if (error.code === "23514") {
+      return {
+        error:
+          "La cadencia rebotó un guard de coherencia. Verificá que el dueño pertenece a tu organización.",
+      };
+    }
     if (error.code === "23503") {
       return { error: "El dueño elegido no existe. Refrescá la página." };
     }

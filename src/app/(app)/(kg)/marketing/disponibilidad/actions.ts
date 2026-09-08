@@ -276,13 +276,20 @@ export async function upsertWeeklySchedule(
 
 export type UpdateWeeklyScheduleResult = { ok: true } | { error: string };
 
+// Edita POR ID: permite cambiar persona y/o día de una fila existente, no
+// sólo el horario — si la nueva pareja (persona, día) ya tiene otra fila,
+// el unique constraint rebota (23505).
 export async function updateWeeklyScheduleRow(
   id: string,
+  personId: string,
+  dayOfWeek: number,
   startTime: string,
   endTime: string,
   notes: string | null,
 ): Promise<UpdateWeeklyScheduleResult> {
   if (!id) return { error: "Falta el id del horario." };
+  if (!personId) return { error: "Elegí una persona." };
+  if (!isWeekday(dayOfWeek)) return { error: "Día de la semana inválido." };
   if (!startTime || !endTime) {
     return { error: "El horario de inicio y fin son obligatorios." };
   }
@@ -292,6 +299,8 @@ export async function updateWeeklyScheduleRow(
 
   const supabase = await createSupabaseClient();
   const payload = {
+    person_id: personId,
+    day_of_week: dayOfWeek,
     start_time: startTime,
     end_time: endTime,
     notes: nullIfEmpty(notes),
@@ -301,7 +310,16 @@ export async function updateWeeklyScheduleRow(
     .from("editor_weekly_schedule")
     .update(payload)
     .eq("id", id);
-  if (error) return { error: error.message };
+
+  if (error) {
+    if (error.code === "23505") {
+      return {
+        error:
+          "Esa persona ya tiene un horario configurado para ese día. Editá el existente en vez de duplicarlo.",
+      };
+    }
+    return { error: error.message };
+  }
 
   revalidatePath("/marketing/disponibilidad");
   revalidatePath("/marketing/edicion");
@@ -338,24 +356,39 @@ export type UpsertFormatCapacityState =
 
 export type DeleteFormatCapacityResult = { ok: true } | { error: string };
 
-export async function upsertFormatCapacity(
-  _prev: UpsertFormatCapacityState,
+interface FormatCapacityPayload {
+  readonly personId: string;
+  readonly format: string;
+  readonly maxPerDay: number;
+}
+
+function parseFormatCapacityFormData(
   formData: FormData,
-): Promise<UpsertFormatCapacityState> {
+): FormatCapacityPayload | string {
   const personId = String(formData.get("person_id") ?? "").trim();
-  if (personId.length === 0) return { error: "Elegí una persona." };
+  if (personId.length === 0) return "Elegí una persona.";
 
   const format = String(formData.get("format") ?? "").trim();
-  if (!isMarketingFormat(format)) return { error: "Formato inválido." };
+  if (!isMarketingFormat(format)) return "Formato inválido.";
 
   const maxPerDayRaw = String(formData.get("max_per_day") ?? "").trim();
   const maxPerDay = Number.parseInt(maxPerDayRaw, 10);
   if (!Number.isFinite(maxPerDay) || maxPerDay <= 0) {
-    return { error: "El máximo por día debe ser un número entero mayor a 0." };
+    return "El máximo por día debe ser un número entero mayor a 0.";
   }
   if (maxPerDay > 200) {
-    return { error: "El máximo por día parece demasiado alto (máximo 200)." };
+    return "El máximo por día parece demasiado alto (máximo 200).";
   }
+
+  return { personId, format, maxPerDay };
+}
+
+export async function upsertFormatCapacity(
+  _prev: UpsertFormatCapacityState,
+  formData: FormData,
+): Promise<UpsertFormatCapacityState> {
+  const parsed = parseFormatCapacityFormData(formData);
+  if (typeof parsed === "string") return { error: parsed };
 
   let organizationId: string | null;
   try {
@@ -372,9 +405,9 @@ export async function upsertFormatCapacity(
   const supabase = await createSupabaseClient();
   const payload = {
     organization_id: organizationId,
-    person_id: personId,
-    format,
-    max_per_day: maxPerDay,
+    person_id: parsed.personId,
+    format: parsed.format,
+    max_per_day: parsed.maxPerDay,
   } as never;
 
   const { error } = await supabase
@@ -396,19 +429,64 @@ export async function upsertFormatCapacity(
   return { ok: true };
 }
 
-export async function deleteFormatCapacity(
-  personId: string,
-  format: string,
-): Promise<DeleteFormatCapacityResult> {
-  if (!personId) return { error: "Falta el id de la persona." };
-  if (!isMarketingFormat(format)) return { error: "Formato inválido." };
+// ═══════════════════════════════════════════════════════════════════════════
+// updateFormatCapacity — a diferencia de `upsertFormatCapacity` (create),
+// esto edita POR ID: permite cambiar persona y/o formato de una capacidad
+// existente sin tener que borrarla y crearla de nuevo. Si la nueva pareja
+// (persona, formato) ya tiene otra fila, el unique constraint rebota (23505).
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function updateFormatCapacity(
+  id: string,
+  _prev: UpsertFormatCapacityState,
+  formData: FormData,
+): Promise<UpsertFormatCapacityState> {
+  if (!id) return { error: "Falta el id de la capacidad." };
+
+  const parsed = parseFormatCapacityFormData(formData);
+  if (typeof parsed === "string") return { error: parsed };
+
+  const supabase = await createSupabaseClient();
+  const payload = {
+    person_id: parsed.personId,
+    format: parsed.format,
+    max_per_day: parsed.maxPerDay,
+  } as never;
+
+  const { error } = await supabase
+    .from("editor_format_capacity")
+    .update(payload)
+    .eq("id", id);
+
+  if (error) {
+    if (error.code === "23505") {
+      return {
+        error:
+          "Esa persona ya tiene una capacidad configurada para ese formato. Editá la existente en vez de duplicarla.",
+      };
+    }
+    if (error.code === "23514") {
+      return {
+        error:
+          "La capacidad rebotó un guard de coherencia. Verificá que la persona pertenece a tu organización.",
+      };
+    }
+    return { error: error.message };
+  }
+
+  revalidatePath("/marketing/disponibilidad");
+  revalidatePath("/marketing/edicion");
+  return { ok: true };
+}
+
+export async function deleteFormatCapacity(id: string): Promise<DeleteFormatCapacityResult> {
+  if (!id) return { error: "Falta el id de la capacidad." };
 
   const supabase = await createSupabaseClient();
   const { error } = await supabase
     .from("editor_format_capacity")
     .delete()
-    .eq("person_id", personId)
-    .eq("format", format);
+    .eq("id", id);
   if (error) return { error: error.message };
 
   revalidatePath("/marketing/disponibilidad");

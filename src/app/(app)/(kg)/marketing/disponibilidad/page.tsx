@@ -63,6 +63,7 @@ interface WeeklyScheduleDbRow {
 }
 
 interface FormatCapacityDbRow {
+  readonly id: string;
   readonly person_id: string;
   readonly format: string;
   readonly max_per_day: number;
@@ -90,7 +91,7 @@ export default async function DisponibilidadPage({
       .order("day_of_week", { ascending: true }),
     supabase
       .from("editor_format_capacity")
-      .select("person_id, format, max_per_day"),
+      .select("id, person_id, format, max_per_day"),
   ]);
 
   const persons = personsRef as unknown as PersonLite[];
@@ -151,6 +152,7 @@ export default async function DisponibilidadPage({
       isMarketingFormat(c.format),
     )
     .map((c) => ({
+      id: c.id,
       personId: c.person_id,
       personName:
         personsById.get(c.person_id)?.full_name ?? "(persona desconocida)",
