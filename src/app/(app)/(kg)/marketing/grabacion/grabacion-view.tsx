@@ -157,6 +157,7 @@ export function GrabacionView({
           durationMinutes: editing.durationMinutes,
           location: editing.location,
           materials: editing.materials,
+          scriptUrl: editing.scriptUrl,
           notes: editing.notes,
           assignees: editing.assignees.map((a) => ({
             personId: a.personId,
@@ -359,6 +360,19 @@ export function GrabacionView({
           },
           { label: "Ubicación", value: viewing.location },
           { label: "Materiales", value: viewing.materials },
+          {
+            label: "Guion",
+            value: viewing.scriptUrl ? (
+              <a
+                href={viewing.scriptUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: "var(--kg-accent-text)", textDecoration: "none" }}
+              >
+                Abrir ↗
+              </a>
+            ) : null,
+          },
           {
             label: "Asignados",
             value:
