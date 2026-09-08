@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
 import { KgFilterSelect } from "@/components/kg/filter-select";
-import { IconMkt } from "@/components/kg/icons";
+import { IconCamera } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
@@ -15,7 +15,7 @@ import {
 } from "./disponibilidad-view";
 import { NewAvailabilityButton } from "./new-availability-button";
 
-export const metadata: Metadata = { title: "Marketing · Disponibilidad" };
+export const metadata: Metadata = { title: "Producción · Disponibilidad" };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Bloque 3 (config) · editor_availability.
@@ -104,7 +104,7 @@ export default async function DisponibilidadPage({
   return (
     <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
-        icon={<IconMkt size={16} />}
+        icon={<IconCamera size={16} />}
         title="Disponibilidad de editores"
         stats={[
           { l: "Bloques", v: fCount(rows.length) },

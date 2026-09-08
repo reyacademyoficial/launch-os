@@ -239,11 +239,40 @@ export interface DataTableSort {
   readonly hrefFor?: (key: string, dir: SortDir) => string;
 }
 
+/**
+ * Orden manual por arrastre (drag & drop nativo HTML5 — sin estado interno,
+ * consistente con la regla "cero hooks" de este archivo: la fila arrastrada
+ * viaja en `e.dataTransfer`, no en un `useState`).
+ *
+ * `active` distingue el modo: cuando la tabla está ordenada por columna
+ * (`sort.key != null`) el caller pasa `active: false` para que el handle se
+ * vea pero no dispare — no tiene sentido arrastrar filas mientras se mira un
+ * orden por fecha, el resultado se perdería en el próximo render server.
+ */
+export interface DataTableDragSort {
+  readonly active: boolean;
+  /**
+   * IDs (`rowKey`) en el nuevo orden, ya con el movido en su lugar. Solo
+   * incluye las filas visibles — el caller decide cómo mapear esto a
+   * `sort_order` en DB (ver `reorderRows` en `@/lib/kg/reorder`).
+   */
+  readonly onReorder: (orderedIds: ReadonlyArray<string>) => void;
+  readonly disabled?: boolean;
+}
+
 export interface DataTableProps<Row> {
   readonly columns: ReadonlyArray<Column<Row>>;
   readonly rows: ReadonlyArray<Row>;
   /** Key extractor para el key del <tr> y para el id de selección. */
   readonly rowKey: (row: Row) => string;
+  /** Orden manual por arrastre. Ver `DataTableDragSort`. */
+  readonly dragSort?: DataTableDragSort;
+  /**
+   * Click en cualquier punto de la fila que no sea un control interactivo.
+   * Los `render` de columna que metan botones/links propios deben llamar
+   * `e.stopPropagation()` en su `onClick` para no disparar esto también.
+   */
+  readonly onRowClick?: (row: Row) => void;
   /**
    * Total de filas EN LA FUENTE (no las visibles). Si la página es 20 de 340,
    * pasar 340. Si trajiste todas, pasar `rows.length` o omitirlo.
@@ -385,13 +414,18 @@ function toSearchParams(
 // ─── Tabla ─────────────────────────────────────────────────────────────────
 
 const CHECK_COL_WIDTH = "36px";
+const DRAG_COL_WIDTH = "28px";
 /** Alto reservado bajo el footer para que la barra flotante no lo tape. */
 const SELECTION_BAR_CLEARANCE = 76;
+/** Mime type propio para el payload del drag — evita interferir con drags nativos del browser (imágenes, texto seleccionado). */
+const DRAG_MIME = "application/x-kg-row-id";
 
 export function KgDataTable<Row>({
   columns,
   rows,
   rowKey,
+  dragSort,
+  onRowClick,
   totalCount,
   emptyTitle,
   emptyHint,
@@ -469,6 +503,18 @@ export function KgDataTable<Row>({
         >
           <thead>
             <tr>
+              {dragSort && (
+                <th
+                  scope="col"
+                  aria-hidden
+                  style={{
+                    padding: "10px 0 10px 14px",
+                    borderBottom: "1px solid var(--kg-border-subtle)",
+                    width: DRAG_COL_WIDTH,
+                    ...stickyThStyle,
+                  }}
+                />
+              )}
               {selection && (
                 <th
                   scope="col"
@@ -548,14 +594,44 @@ export function KgDataTable<Row>({
               const isSelected = selection
                 ? selection.selectedIds.has(id)
                 : false;
+              const draggable = (dragSort?.active ?? false) && !dragSort?.disabled;
               return (
                 <tr
                   key={id}
                   // Con la fila seleccionada el hover deja de aportar: el halo
                   // ya la distingue y el `kg-row:hover` la apagaría.
                   className={isSelected ? undefined : "kg-row"}
+                  draggable={draggable}
+                  onDragStart={
+                    draggable
+                      ? (e) => {
+                          e.dataTransfer.setData(DRAG_MIME, id);
+                          e.dataTransfer.effectAllowed = "move";
+                        }
+                      : undefined
+                  }
+                  onDragOver={
+                    draggable ? (e) => e.preventDefault() : undefined
+                  }
+                  onDrop={
+                    draggable
+                      ? (e) => {
+                          e.preventDefault();
+                          const draggedId = e.dataTransfer.getData(DRAG_MIME);
+                          if (!draggedId || draggedId === id) return;
+                          const ids = rows.map(rowKey);
+                          if (!ids.includes(draggedId)) return;
+                          const without = ids.filter((x) => x !== draggedId);
+                          const to = without.indexOf(id);
+                          without.splice(to, 0, draggedId);
+                          dragSort?.onReorder(without);
+                        }
+                      : undefined
+                  }
+                  onClick={onRowClick ? () => onRowClick(row) : undefined}
                   style={{
                     borderBottom: "1px solid var(--kg-border-subtle)",
+                    cursor: onRowClick ? "pointer" : undefined,
                     // Halo de acento, no tono semántico: estar seleccionada es
                     // un modo de la UI, no un estado del dato.
                     ...(isSelected
@@ -563,6 +639,19 @@ export function KgDataTable<Row>({
                       : {}),
                   }}
                 >
+                  {dragSort && (
+                    <td
+                      style={{
+                        padding: "10px 0 10px 14px",
+                        cursor: draggable ? "grab" : "default",
+                        color: "var(--kg-text-3)",
+                        opacity: draggable ? 1 : 0.35,
+                      }}
+                      aria-hidden
+                    >
+                      ⠿
+                    </td>
+                  )}
                   {selection && (
                     <td style={{ padding: "10px 0 10px 14px" }}>
                       {selectable && (

@@ -42,13 +42,19 @@ export const FORMAT_LABEL: Record<MarketingFormat, string> = {
   post: "Post",
 };
 
-export const MARKETING_CATEGORIES = ["viral", "nugget", "otro"] as const;
+export const MARKETING_CATEGORIES = [
+  "viral",
+  "nugget",
+  "anuncios",
+  "otro",
+] as const;
 
 export type MarketingCategory = (typeof MARKETING_CATEGORIES)[number];
 
 export const CATEGORY_LABEL: Record<MarketingCategory, string> = {
   viral: "Viral",
-  nugget: "Nugget",
+  nugget: "Nuggets",
+  anuncios: "Anuncios",
   otro: "Otro",
 };
 

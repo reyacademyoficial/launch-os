@@ -1,8 +1,10 @@
 "use client";
 
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition } from "react";
 
-import { KgDataTable, type Column } from "@/components/kg/data-table";
+import { KgDataTable, type Column, type SortDir } from "@/components/kg/data-table";
+import { KgDetailDrawer, type DetailField } from "@/components/kg/detail-drawer";
 import { StatusPill } from "@/components/kg/status-pill";
 import {
   SessionFormDrawer,
@@ -23,7 +25,7 @@ import {
   type MarketingStage,
 } from "@/lib/marketing/types";
 
-import { setPieceStage } from "./actions";
+import { reorderPieces, setPieceStage } from "./actions";
 import {
   PieceFormDrawer,
   type OwnerOption,
@@ -73,10 +75,39 @@ export function PlanificacionView({
   readonly pieceOptions: readonly PieceOption[];
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [viewingId, setViewingId] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [schedulingFromPiece, setSchedulingFromPiece] =
     useState<PieceRowData | null>(null);
+
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const sortByDate = searchParams?.get("sort") === "fecha";
+  const sortDir: SortDir = searchParams?.get("dir") === "desc" ? "desc" : "asc";
+
+  function setSort(key: string, dir: SortDir) {
+    const sp = new URLSearchParams(searchParams?.toString() ?? "");
+    sp.set("sort", key);
+    sp.set("dir", dir);
+    router.replace(`?${sp.toString()}`, { scroll: false });
+  }
+
+  function clearSort() {
+    const sp = new URLSearchParams(searchParams?.toString() ?? "");
+    sp.delete("sort");
+    sp.delete("dir");
+    const qs = sp.toString();
+    router.replace(qs ? `?${qs}` : "?", { scroll: false });
+  }
+
+  function handleReorder(orderedIds: readonly string[]) {
+    setError(null);
+    startTransition(async () => {
+      const result = await reorderPieces(orderedIds);
+      if ("error" in result) setError(result.error);
+    });
+  }
 
   const editing =
     editingId != null ? rows.find((r) => r.id === editingId) ?? null : null;
@@ -180,6 +211,8 @@ export function PlanificacionView({
     {
       key: "publish",
       label: "Publicación",
+      sortable: true,
+      sortKey: "fecha",
       render: (r) => (r.scheduledPublishAt ? formatDate(r.scheduledPublishAt) : "—"),
     },
     {
@@ -202,7 +235,10 @@ export function PlanificacionView({
           (r.stage === "planificado" || r.stage === "en_grabacion") &&
           r.recordingSessionId == null;
         return (
-          <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}
+          >
             {canSchedule && (
               <button
                 type="button"
@@ -272,6 +308,45 @@ export function PlanificacionView({
 
   const noOwners = ownerOptions.length === 0;
 
+  const viewing =
+    viewingId != null ? rows.find((r) => r.id === viewingId) ?? null : null;
+
+  const viewingFields: readonly DetailField[] =
+    viewing != null
+      ? [
+          { label: "Dueño", value: viewing.ownerName },
+          { label: "Categoría", value: CATEGORY_LABEL[viewing.category] },
+          { label: "Formato", value: FORMAT_LABEL[viewing.format] },
+          {
+            label: "Plataformas",
+            value: viewing.platforms.map((p) => PLATFORM_LABEL[p]).join(", "),
+          },
+          {
+            label: "Grabación",
+            value: viewing.scheduledRecordingAt
+              ? formatDateTime(viewing.scheduledRecordingAt)
+              : null,
+          },
+          {
+            label: "Publicación",
+            value: viewing.scheduledPublishAt
+              ? formatDate(viewing.scheduledPublishAt)
+              : null,
+          },
+          {
+            label: "Estado",
+            value: (
+              <StatusPill
+                text={STAGE_LABEL[viewing.stage]}
+                tone={STAGE_TONE[viewing.stage]}
+              />
+            ),
+          },
+          { label: "Guion", value: viewing.scriptMd },
+          { label: "Notas", value: viewing.notes },
+        ]
+      : [];
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {error && (
@@ -290,6 +365,29 @@ export function PlanificacionView({
         </div>
       )}
 
+      {sortByDate && (
+        <div
+          style={{
+            margin: "12px 20px 0",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+            Ordenado por fecha de publicación — el orden manual queda pausado.
+          </span>
+          <button
+            type="button"
+            onClick={clearSort}
+            className="kg-focus"
+            style={{ ...rowBtn, padding: "2px 8px" }}
+          >
+            Volver a orden manual
+          </button>
+        </div>
+      )}
+
       <KgDataTable
         columns={columns}
         rows={rows}
@@ -302,6 +400,25 @@ export function PlanificacionView({
             : "Cuando planificás un contenido, se lista acá y pasa a Grabación cuando lo asignás a una sesión."
         }
         fillHeight
+        sort={{ key: sortByDate ? "fecha" : null, dir: sortDir, onChange: setSort }}
+        dragSort={{ active: !sortByDate, onReorder: handleReorder, disabled: pending }}
+        onRowClick={(r) => setViewingId(r.id)}
+      />
+
+      <KgDetailDrawer
+        open={viewing != null}
+        onClose={() => setViewingId(null)}
+        onEdit={
+          viewing != null
+            ? () => {
+                setViewingId(null);
+                setEditingId(viewing.id);
+              }
+            : undefined
+        }
+        title={viewing?.title ?? ""}
+        subtitle={viewing?.ownerName}
+        fields={viewingFields}
       />
 
       <PieceFormDrawer

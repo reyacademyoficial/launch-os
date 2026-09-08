@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
 import { KgFilterSelect } from "@/components/kg/filter-select";
-import { IconCalendar, IconMkt, IconTable } from "@/components/kg/icons";
+import { IconCalendar, IconCamera, IconTable } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { Panel } from "@/components/kg/panel";
 import { KgViewToggle } from "@/components/kg/view-toggle";
@@ -32,7 +32,7 @@ import {
   type UploadRowData,
 } from "./subidas-view";
 
-export const metadata: Metadata = { title: "Marketing · Subidas" };
+export const metadata: Metadata = { title: "Producción · Subidas" };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Bloque 4 · Subidas.
@@ -109,6 +109,7 @@ export default async function SubidasPage({
   const rangeParam = parseRange(sp.range);
   const fromParam = parseYmd(sp.from);
   const toParam = parseYmd(sp.to);
+  const manualSort = sp.sort === "manual";
 
   // Rango temporal SOLO se aplica en vista tabla (en calendario navegás por mes).
   const isCustom = fromParam != null && toParam != null;
@@ -126,8 +127,10 @@ export default async function SubidasPage({
     .from("content_uploads")
     .select(
       "id, content_asset_id, platform, scheduled_for, uploaded_at, status, public_url, notes, planned_by_person_id, uploaded_by_person_id",
-    )
-    .order("scheduled_for", { ascending: false });
+    );
+  uploadsQuery = manualSort
+    ? uploadsQuery.order("sort_order", { ascending: true })
+    : uploadsQuery.order("scheduled_for", { ascending: false });
   if (period) {
     // scheduled_for es `date` (yyyy-mm-dd), comparación lexicográfica OK.
     uploadsQuery = uploadsQuery
@@ -316,6 +319,7 @@ export default async function SubidasPage({
       } else if (rangeParam !== "todo") {
         params.set("range", rangeParam);
       }
+      if (manualSort) params.set("sort", "manual");
     }
 
     const qs = params.toString();
@@ -346,7 +350,7 @@ export default async function SubidasPage({
   return (
     <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
-        icon={<IconMkt size={16} />}
+        icon={<IconCamera size={16} />}
         title="Subidas"
         stats={[
           { l: "Total", v: fCount(totalCount) },

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
 import type { HeroKpiTone } from "@/components/kg/hero-kpi";
-import { IconMkt } from "@/components/kg/icons";
+import { IconCamera } from "@/components/kg/icons";
 import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { Panel } from "@/components/kg/panel";
 import { StateDot } from "@/components/kg/state-dot";
@@ -47,7 +47,7 @@ import { createClient } from "@/lib/supabase/server";
 
 import { MarketingHeroKpis } from "./_hero-kpis";
 
-export const metadata: Metadata = { title: "Marketing" };
+export const metadata: Metadata = { title: "Producción" };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Dashboard `/marketing`.
@@ -314,8 +314,8 @@ export default async function MarketingDashboardPage() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <ContextBar
-        icon={<IconMkt size={16} />}
-        title="Marketing"
+        icon={<IconCamera size={16} />}
+        title="Producción"
         stats={[
           { l: "Dueños", v: fCount(owners.filter((o) => o.active).length) },
           { l: "Cadencias", v: fCount(cadences.length) },

@@ -2,21 +2,14 @@ import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
 import { KgFilterSelect } from "@/components/kg/filter-select";
-import { IconMkt } from "@/components/kg/icons";
+import { IconCamera } from "@/components/kg/icons";
 import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
-import { StateDot } from "@/components/kg/state-dot";
 import { StatusPill } from "@/components/kg/status-pill";
-import type { KgTone } from "@/components/kg/tone";
 import { fCount } from "@/lib/finance/format";
-import {
-  computeCoverageAlerts,
-  DEFAULT_ALERT_THRESHOLDS,
-  severityFor,
-  type AlertSeverity,
-} from "@/lib/marketing/alerts";
+import { computeCoverageAlerts } from "@/lib/marketing/alerts";
 import {
   computeAssetStockStates,
   computeDaysOfCoverage,
@@ -34,19 +27,18 @@ import {
   FORMAT_LABEL,
   isMarketingFormat,
   isMarketingPlatform,
-  PLATFORM_LABEL,
   type MarketingFormat,
   type MarketingPlatform,
 } from "@/lib/marketing/types";
 import { createClient } from "@/lib/supabase/server";
 
-export const metadata: Metadata = { title: "Marketing · Stock" };
+export const metadata: Metadata = { title: "Producción · Stock" };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Bloque 6 · Stock y alertas de cobertura.
 //
-// Vista pivot (owner × platform × format) con stock, dailyRate, días de
-// cobertura y severity dot. Filtros:
+// KPIs de cobertura en el ContextBar (stock total, días mínimos, alertas) +
+// inventario individual de cortes con su estado frente al stock. Filtros:
 //   ?owner=<uuid>|all         — default 'all'
 //   ?onlyActive=1|0           — default 1 (solo dueños activos)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -89,17 +81,6 @@ interface CadenceLite {
   readonly format: string;
   readonly posts_per_day: number;
   readonly allow_repeat_asset: boolean;
-}
-
-interface StockPivotRow {
-  readonly contentOwnerId: string;
-  readonly ownerName: string;
-  readonly platform: MarketingPlatform;
-  readonly format: MarketingFormat;
-  readonly stockCount: number;
-  readonly dailyRate: number;
-  readonly daysOfCoverage: number;
-  readonly severity: AlertSeverity;
 }
 
 export default async function StockPage({
@@ -183,52 +164,8 @@ export default async function StockPage({
   const criticalCount = alerts.filter((a) => a.severity === "critical").length;
   const warningCount = alerts.filter((a) => a.severity === "warning").length;
 
-  // ─── Filtrado + severity por fila (dailyRate individual del bucket).
-  const rows: StockPivotRow[] = stockBuckets
-    .map((b) => {
-      const cad = cadences.find(
-        (c) =>
-          c.contentOwnerId === b.contentOwnerId &&
-          c.platform === b.platform &&
-          c.format === b.format,
-      );
-      const dailyRate = cad?.postsPerDay ?? 0;
-      const daysOfCoverage =
-        dailyRate > 0 ? Math.floor(b.stockCount / dailyRate) : Infinity;
-      return {
-        contentOwnerId: b.contentOwnerId,
-        ownerName:
-          ownersById.get(b.contentOwnerId)?.name ?? "(dueño desconocido)",
-        platform: b.platform,
-        format: b.format,
-        stockCount: b.stockCount,
-        dailyRate,
-        daysOfCoverage,
-        severity: severityFor(daysOfCoverage),
-      };
-    })
-    .filter((r) => {
-      if (ownerFilter && r.contentOwnerId !== ownerFilter) return false;
-      if (onlyActive) {
-        const owner = ownersById.get(r.contentOwnerId);
-        if (!owner?.active) return false;
-      }
-      return true;
-    })
-    .sort((a, b) => {
-      // Los peor parados primero (finito antes que infinito).
-      if (a.daysOfCoverage === b.daysOfCoverage) {
-        return a.ownerName.localeCompare(b.ownerName);
-      }
-      if (!Number.isFinite(a.daysOfCoverage)) return 1;
-      if (!Number.isFinite(b.daysOfCoverage)) return -1;
-      return a.daysOfCoverage - b.daysOfCoverage;
-    });
-
-  // ─── Inventario individual. El pivot de arriba responde "¿cuántos días
-  // aguanto?"; esto responde "¿qué video concreto tengo y en qué está?".
-  // Existe porque el pivot sólo muestra combinaciones CON cadencia — un
-  // corte de un dueño sin cadencia configurada sería invisible ahí.
+  // ─── Inventario individual: qué corte concreto hay y en qué estado está
+  // frente al stock (en cola, disponible, reservado, utilizado).
   const assetStates = computeAssetStockStates(assets, uploads);
 
   const inventoryAll: AssetInventoryRow[] = assetsRaw
@@ -290,15 +227,13 @@ export default async function StockPage({
     return qs ? `/marketing/stock?${qs}` : "/marketing/stock";
   }
 
-  const hasCadences = cadences.length > 0;
-
   const activeFilters =
     (onlyActive === false ? 1 : 0) + (ownerFilter != null ? 1 : 0);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
-        icon={<IconMkt size={16} />}
+        icon={<IconCamera size={16} />}
         title="Stock de contenido"
         stats={[
           { l: "Assets en stock", v: fCount(totalStockCount) },
@@ -356,34 +291,6 @@ export default async function StockPage({
           )}
         </div>
       </KgPageFilters>
-
-      <Panel
-        title="Cobertura por dueño × plataforma × formato"
-        pad={!hasCadences}
-        fillHeight
-      >
-        {!hasCadences ? (
-          <div
-            className="kg-t7"
-            style={{
-              padding: "18px 20px",
-              borderRadius: "var(--kg-r-8)",
-              background: "var(--kg-surface-2-solid)",
-              border: "1px dashed var(--kg-border-subtle)",
-              color: "var(--kg-text-3)",
-              textAlign: "center",
-            }}
-          >
-            Configurá cadencias en <a href="/marketing/cadencias" style={{
-              color: "var(--kg-accent-text)",
-              textDecoration: "none",
-            }}>/marketing/cadencias</a> para que Stock pueda calcular días
-            de cobertura.
-          </div>
-        ) : (
-          <StockTable rows={rows} />
-        )}
-      </Panel>
 
       <Panel
         title={`Contenido producido (${inventory.length})`}
@@ -459,130 +366,6 @@ function InventoryTable({
       emptyHint="Los cortes aparecen acá después de registrar la producción de una grabación realizada, en /marketing/edicion."
     />
   );
-}
-
-function StockTable({ rows }: { readonly rows: readonly StockPivotRow[] }) {
-  const columns: Column<StockPivotRow>[] = [
-    {
-      key: "owner",
-      label: "Dueño",
-      render: (r) => (
-        <span style={{ color: "var(--kg-text-1)", fontWeight: 600 }}>
-          {r.ownerName}
-        </span>
-      ),
-    },
-    {
-      key: "platform",
-      label: "Plataforma",
-      render: (r) => PLATFORM_LABEL[r.platform],
-    },
-    {
-      key: "format",
-      label: "Formato",
-      render: (r) => FORMAT_LABEL[r.format],
-    },
-    {
-      key: "stock",
-      label: "Stock",
-      align: "right",
-      numeric: true,
-      render: (r) => (
-        <span
-          style={{
-            color: "var(--kg-text-1)",
-            fontVariantNumeric: "tabular-nums",
-            fontWeight: 600,
-          }}
-        >
-          {r.stockCount}
-        </span>
-      ),
-    },
-    {
-      key: "rate",
-      label: "Por día",
-      align: "right",
-      numeric: true,
-      render: (r) => (
-        <span
-          style={{
-            color: "var(--kg-text-2)",
-            fontVariantNumeric: "tabular-nums",
-          }}
-        >
-          {r.dailyRate}
-        </span>
-      ),
-    },
-    {
-      key: "days",
-      label: "Días de cobertura",
-      align: "right",
-      numeric: true,
-      render: (r) => (
-        <div
-          style={{
-            display: "flex",
-            gap: 6,
-            alignItems: "center",
-            justifyContent: "flex-end",
-          }}
-        >
-          <span
-            style={{
-              color: "var(--kg-text-1)",
-              fontVariantNumeric: "tabular-nums",
-              fontWeight: 700,
-            }}
-          >
-            {Number.isFinite(r.daysOfCoverage) ? r.daysOfCoverage : "∞"}
-          </span>
-          <StateDot tone={toneForRow(r.severity)} />
-        </div>
-      ),
-    },
-    {
-      key: "severity",
-      label: "Estado",
-      render: (r) => (
-        <StatusPill
-          text={LABEL_BY_SEVERITY[r.severity]}
-          tone={PILL_TONE[r.severity]}
-        />
-      ),
-    },
-  ];
-
-  return (
-    <KgDataTable
-      columns={columns}
-      rows={rows}
-      rowKey={(r) => `${r.contentOwnerId}::${r.platform}::${r.format}`}
-      totalCount={rows.length}
-      emptyTitle="Sin combinaciones para mostrar"
-      emptyHint={`Cambiá el filtro (${DEFAULT_ALERT_THRESHOLDS.criticalUnderDays}d crítico, ${DEFAULT_ALERT_THRESHOLDS.warningUnderDays}d warning) o revisá que haya cadencias.`}
-      fillHeight
-    />
-  );
-}
-
-const LABEL_BY_SEVERITY: Record<AlertSeverity, string> = {
-  critical: "Crítico",
-  warning: "En riesgo",
-  ok: "Cubierto",
-};
-
-const PILL_TONE: Record<AlertSeverity, string> = {
-  critical: "var(--kg-negative-500)",
-  warning: "var(--kg-warning-500)",
-  ok: "var(--kg-positive-500)",
-};
-
-function toneForRow(severity: AlertSeverity): KgTone {
-  if (severity === "critical") return "negative";
-  if (severity === "warning") return "warning";
-  return "positive";
 }
 
 function parseSingle(v: string | string[] | undefined): string | null {

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
-import { IconMkt } from "@/components/kg/icons";
+import { IconCamera } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
@@ -11,7 +11,7 @@ import { createClient } from "@/lib/supabase/server";
 import { DuenosView, type OwnerRowData } from "./duenos-view";
 import { NewOwnerButton } from "./new-owner-button";
 
-export const metadata: Metadata = { title: "Marketing · Dueños" };
+export const metadata: Metadata = { title: "Producción · Dueños" };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Listado de content_owners.
@@ -110,7 +110,7 @@ export default async function DuenosPage({
   return (
     <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
-        icon={<IconMkt size={16} />}
+        icon={<IconCamera size={16} />}
         title="Dueños de contenido"
         stats={[
           { l: "Total", v: fCount(allOwners.length) },

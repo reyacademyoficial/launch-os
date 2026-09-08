@@ -3,7 +3,7 @@ import { KgModuleNav } from "@/components/kg/module-nav";
 import type { TabItem } from "@/components/kg/tabs-bar";
 
 /**
- * Layout del módulo Marketing (pipeline creativo: planificación → grabación →
+ * Layout del módulo Producción (pipeline creativo: planificación → grabación →
  * edición → publicación).
  *
  * Visible para superadmin / admin / coordinador / operador. El operador ve el

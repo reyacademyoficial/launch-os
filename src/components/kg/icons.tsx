@@ -56,11 +56,11 @@ export function IconFin(props: IconProps) {
   );
 }
 
-export function IconMkt(props: IconProps) {
+export function IconCamera(props: IconProps) {
   return (
     <Svg {...props}>
-      <path d="M3 11v2a2 2 0 0 0 2 2h1l3 5 3-1-2-4h1l8-4V6L11 10H5a2 2 0 0 0-2 2Z" />
-      <path d="M18 8v6" />
+      <path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z" />
+      <circle cx="12" cy="14" r="3.5" />
     </Svg>
   );
 }

@@ -1,9 +1,11 @@
 "use client";
 
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
 import { KgCalendar, type KgCalendarEvent } from "@/components/kg/calendar";
 import { KgDataTable, type Column } from "@/components/kg/data-table";
+import { KgDetailDrawer, type DetailField } from "@/components/kg/detail-drawer";
 import { Drawer } from "@/components/kg/drawer";
 import { StatusPill } from "@/components/kg/status-pill";
 import {
@@ -28,7 +30,7 @@ import {
   type SessionInitial,
 } from "@/components/marketing/session-form-drawer";
 
-import { setSessionStatus } from "./actions";
+import { reorderSessions, setSessionStatus } from "./actions";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Vista dual tabla / calendario para recording_sessions.
@@ -90,10 +92,31 @@ export function GrabacionView({
     { open: true; presetDate?: string } | { open: false }
   >({ open: false });
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [viewingId, setViewingId] = useState<string | null>(null);
   const [dayDrawerKey, setDayDrawerKey] = useState<string | null>(null);
   const [rawSessionId, setRawSessionId] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const manualSort = searchParams?.get("sort") === "manual";
+
+  function toggleManualSort(next: boolean) {
+    const sp = new URLSearchParams(searchParams?.toString() ?? "");
+    if (next) sp.set("sort", "manual");
+    else sp.delete("sort");
+    const qs = sp.toString();
+    router.replace(qs ? `?${qs}` : "?", { scroll: false });
+  }
+
+  function handleReorder(orderedIds: readonly string[]) {
+    setError(null);
+    startTransition(async () => {
+      const result = await reorderSessions(orderedIds);
+      if ("error" in result) setError(result.error);
+    });
+  }
 
   const noOwners = ownerOptions.length === 0;
 
@@ -249,7 +272,10 @@ export function GrabacionView({
       label: "",
       align: "right",
       render: (r) => (
-        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}
+        >
           {r.status === "realizada" && (
             <button
               type="button"
@@ -288,6 +314,43 @@ export function GrabacionView({
   const rawSession =
     rawSessionId != null ? rows.find((r) => r.id === rawSessionId) ?? null : null;
 
+  const viewing =
+    viewingId != null ? rows.find((r) => r.id === viewingId) ?? null : null;
+
+  const viewingFields: readonly DetailField[] =
+    viewing != null
+      ? [
+          { label: "Dueño", value: viewing.ownerName },
+          { label: "Fecha", value: formatDateTime(viewing.scheduledAt) },
+          {
+            label: "Duración",
+            value: viewing.durationMinutes != null ? `${viewing.durationMinutes} min` : null,
+          },
+          { label: "Ubicación", value: viewing.location },
+          { label: "Materiales", value: viewing.materials },
+          {
+            label: "Asignados",
+            value:
+              viewing.assignees.length > 0
+                ? viewing.assignees
+                    .map((a) => `${a.personName} (${ROLE_LABEL[a.role]})`)
+                    .join(", ")
+                : null,
+          },
+          { label: "Pieces", value: viewing.piecesCount > 0 ? String(viewing.piecesCount) : null },
+          {
+            label: "Estado",
+            value: (
+              <StatusPill
+                text={SESSION_STATUS_LABEL[viewing.status]}
+                tone={SESSION_STATUS_TONE[viewing.status]}
+              />
+            ),
+          },
+          { label: "Notas", value: viewing.notes },
+        ]
+      : [];
+
   // Preset del drawer create: en el day drawer del calendario se elige un día;
   // acá lo convertimos a ISO con hora 09:00 local (default razonable para
   // grabaciones). El usuario ajusta hora exacta en el drawer.
@@ -314,15 +377,33 @@ export function GrabacionView({
       )}
 
       {view === "tabla" ? (
-        <KgDataTable
-          columns={columns}
-          rows={rows}
-          rowKey={(r) => r.id}
-          totalCount={rows.length}
-          emptyTitle="Sin sesiones planificadas"
-          emptyHint="Creá una sesión y asignale las pieces que se van a grabar."
-          fillHeight
-        />
+        <>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <label
+              className="kg-t7"
+              style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--kg-text-3)" }}
+            >
+              <input
+                type="checkbox"
+                checked={manualSort}
+                onChange={(e) => toggleManualSort(e.target.checked)}
+                style={{ accentColor: "var(--kg-accent-500)", cursor: "pointer" }}
+              />
+              Orden manual (arrastrar filas)
+            </label>
+          </div>
+          <KgDataTable
+            columns={columns}
+            rows={rows}
+            rowKey={(r) => r.id}
+            totalCount={rows.length}
+            emptyTitle="Sin sesiones planificadas"
+            emptyHint="Creá una sesión y asignale las pieces que se van a grabar."
+            fillHeight
+            dragSort={{ active: manualSort, onReorder: handleReorder, disabled: pending }}
+            onRowClick={(r) => setViewingId(r.id)}
+          />
+        </>
       ) : (
         <KgCalendar
           year={year}
@@ -334,6 +415,22 @@ export function GrabacionView({
           fillHeight
         />
       )}
+
+      <KgDetailDrawer
+        open={viewing != null}
+        onClose={() => setViewingId(null)}
+        onEdit={
+          viewing != null
+            ? () => {
+                setViewingId(null);
+                setEditingId(viewing.id);
+              }
+            : undefined
+        }
+        title={viewing?.name ?? viewing?.ownerName ?? ""}
+        subtitle={viewing?.name ? viewing.ownerName : undefined}
+        fields={viewingFields}
+      />
 
       <SessionFormDrawer
         mode="create"

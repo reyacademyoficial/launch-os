@@ -6,11 +6,11 @@ import {
   IconAca,
   IconAdmin,
   IconCalc,
+  IconCamera,
   IconCli,
   IconExec,
   IconFin,
   IconLaunch,
-  IconMkt,
   IconOps,
   IconOrg,
 } from "./icons";
@@ -55,7 +55,7 @@ export const LAYERS: readonly KgLayer[] = [
     id: "comercial",
     label: "Comercial",
     modules: [
-      { id: "marketing", label: "Marketing", href: "/marketing", icon: IconMkt },
+      { id: "marketing", label: "Producción", href: "/marketing", icon: IconCamera },
       { id: "comercial", label: "Comercial", href: "/comercial", icon: IconOrg },
       { id: "lanzamientos", label: "Lanzamientos", href: "/lanzamientos", icon: IconLaunch },
       { id: "clientes", label: "Clientes", href: "/clientes", icon: IconCli },

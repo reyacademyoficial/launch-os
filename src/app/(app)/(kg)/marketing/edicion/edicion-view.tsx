@@ -1,8 +1,10 @@
 "use client";
 
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
 import { KgDataTable, type Column } from "@/components/kg/data-table";
+import { KgDetailDrawer, type DetailField } from "@/components/kg/detail-drawer";
 import { StatusPill } from "@/components/kg/status-pill";
 import {
   CompleteEditDrawer,
@@ -16,7 +18,7 @@ import {
   type EditorAvailabilityInput,
 } from "@/lib/marketing/editor-load";
 
-import { reopenContentEdit } from "./actions";
+import { reopenContentEdit, reorderEdits } from "./actions";
 import {
   EditFormDrawer,
   type EditInitial,
@@ -70,10 +72,31 @@ export function EdicionView({
   readonly planningWindow: { readonly since: string; readonly until: string };
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [viewingId, setViewingId] = useState<string | null>(null);
   const [completingId, setCompletingId] = useState<string | null>(null);
   const [view, setView] = useState<"tabla" | "planning">("tabla");
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const manualSort = searchParams?.get("sort") === "manual";
+
+  function toggleManualSort(next: boolean) {
+    const sp = new URLSearchParams(searchParams?.toString() ?? "");
+    if (next) sp.set("sort", "manual");
+    else sp.delete("sort");
+    const qs = sp.toString();
+    router.replace(qs ? `?${qs}` : "?", { scroll: false });
+  }
+
+  function handleReorder(orderedIds: readonly string[]) {
+    setError(null);
+    startTransition(async () => {
+      const result = await reorderEdits(orderedIds);
+      if ("error" in result) setError(result.error);
+    });
+  }
 
   const noOwners = ownerOptions.length === 0;
 
@@ -180,6 +203,20 @@ export function EdicionView({
           {r.rawLabel && (
             <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
               Crudo: {r.rawLabel}
+              {r.rawDriveUrl && (
+                <>
+                  {" · "}
+                  <a
+                    href={r.rawDriveUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ color: "var(--kg-accent-text)", textDecoration: "none" }}
+                  >
+                    Ver crudo ↗
+                  </a>
+                </>
+              )}
             </span>
           )}
         </div>
@@ -260,7 +297,10 @@ export function EdicionView({
       label: "",
       align: "right",
       render: (r) => (
-        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}
+        >
           {r.completedAt == null ? (
             <button
               type="button"
@@ -302,6 +342,47 @@ export function EdicionView({
       ),
     },
   ];
+
+  const viewing =
+    viewingId != null ? rows.find((r) => r.id === viewingId) ?? null : null;
+
+  const viewingFields: readonly DetailField[] =
+    viewing != null
+      ? [
+          { label: "Dueño", value: viewing.ownerName },
+          {
+            label: "Crudo origen",
+            value: viewing.rawLabel ? (
+              viewing.rawDriveUrl ? (
+                <a
+                  href={viewing.rawDriveUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "var(--kg-accent-text)", textDecoration: "none" }}
+                >
+                  {viewing.rawLabel} ↗
+                </a>
+              ) : (
+                viewing.rawLabel
+              )
+            ) : null,
+          },
+          { label: "Editor", value: viewing.editorName },
+          { label: "Fecha objetivo", value: viewing.dueDate ? formatDay(viewing.dueDate) : null },
+          {
+            label: "Estado",
+            value: viewing.completedAt ? (
+              <StatusPill
+                text={`Realizada ${formatDateTime(viewing.completedAt)}`}
+                tone="var(--kg-positive-500)"
+              />
+            ) : (
+              <StatusPill text="En cola" tone="var(--kg-neutral-500)" />
+            ),
+          },
+          { label: "Notas", value: viewing.notes },
+        ]
+      : [];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -345,19 +426,37 @@ export function EdicionView({
       )}
 
       {view === "tabla" ? (
-        <KgDataTable
-          columns={columns}
-          rows={rows}
-          rowKey={(r) => r.id}
-          totalCount={rows.length}
-          emptyTitle="Sin ediciones en curso"
-          emptyHint={
-            noOwners
-              ? "Primero creá dueños en la pestaña Dueños."
-              : "Las ediciones nacen desde un crudo (pestaña Crudos) o se crean sueltas acá. Al marcarlas realizadas, los archivos que salen pasan al stock de Subidas."
-          }
-          fillHeight
-        />
+        <>
+          <div style={{ padding: "0 20px 8px", display: "flex", justifyContent: "flex-end" }}>
+            <label
+              className="kg-t7"
+              style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--kg-text-3)" }}
+            >
+              <input
+                type="checkbox"
+                checked={manualSort}
+                onChange={(e) => toggleManualSort(e.target.checked)}
+                style={{ accentColor: "var(--kg-accent-500)", cursor: "pointer" }}
+              />
+              Orden manual (arrastrar filas)
+            </label>
+          </div>
+          <KgDataTable
+            columns={columns}
+            rows={rows}
+            rowKey={(r) => r.id}
+            totalCount={rows.length}
+            emptyTitle="Sin ediciones en curso"
+            emptyHint={
+              noOwners
+                ? "Primero creá dueños en la pestaña Dueños."
+                : "Las ediciones nacen desde un crudo (pestaña Crudos) o se crean sueltas acá. Al marcarlas realizadas, los archivos que salen pasan al stock de Subidas."
+            }
+            fillHeight
+            dragSort={{ active: manualSort, onReorder: handleReorder, disabled: pending }}
+            onRowClick={(r) => setViewingId(r.id)}
+          />
+        </>
       ) : (
         <div style={{ padding: "12px 20px 20px" }}>
           <PlanningPivot
@@ -369,6 +468,22 @@ export function EdicionView({
           />
         </div>
       )}
+
+      <KgDetailDrawer
+        open={viewing != null}
+        onClose={() => setViewingId(null)}
+        onEdit={
+          viewing != null
+            ? () => {
+                setViewingId(null);
+                setEditingId(viewing.id);
+              }
+            : undefined
+        }
+        title={viewing?.title ?? ""}
+        subtitle={viewing?.ownerName}
+        fields={viewingFields}
+      />
 
       <EditFormDrawer
         mode="edit"

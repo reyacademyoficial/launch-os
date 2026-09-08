@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
+import { KgDateRangeFilter } from "@/components/kg/date-range-filter";
 import { KgFilterSelect } from "@/components/kg/filter-select";
-import { IconMkt } from "@/components/kg/icons";
+import { IconCamera } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
@@ -12,7 +13,7 @@ import { createClient } from "@/lib/supabase/server";
 import { EdicionView, type EditRowData } from "./edicion-view";
 import { NewEditButton } from "./new-edit-button";
 
-export const metadata: Metadata = { title: "Marketing · Edición" };
+export const metadata: Metadata = { title: "Producción · Edición" };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Bloque 3 · Edición — reescrito sobre content_edits (0180).
@@ -87,8 +88,22 @@ export default async function EdicionPage({
   const editorFilter = parseSingle(sp.editor);
   const ownerFilter = parseSingle(sp.owner);
   const statusFilter = parseStatusFilter(sp.status);
+  const dateFromFilter = parseSingle(sp.dateFrom);
+  const dateToFilter = parseSingle(sp.dateTo);
+  const manualSort = sp.sort === "manual";
 
   const supabase = await createClient();
+
+  let editsQuery = supabase
+    .from("content_edits")
+    .select(
+      "id, content_owner_id, source_content_raw_id, title, editor_person_id, due_date, completed_at, notes, created_at",
+    );
+  if (dateFromFilter) editsQuery = editsQuery.gte("due_date", dateFromFilter);
+  if (dateToFilter) editsQuery = editsQuery.lte("due_date", dateToFilter);
+  editsQuery = manualSort
+    ? editsQuery.order("sort_order", { ascending: true })
+    : editsQuery.order("created_at", { ascending: false });
 
   const [ownersRes, personsRef, rawsRes, piecesRes, editsRes, availRes] =
     await Promise.all([
@@ -105,12 +120,7 @@ export default async function EdicionPage({
         .from("content_pieces")
         .select("id, content_owner_id, title")
         .neq("stage", "descartado"),
-      supabase
-        .from("content_edits")
-        .select(
-          "id, content_owner_id, source_content_raw_id, title, editor_person_id, due_date, completed_at, notes, created_at",
-        )
-        .order("created_at", { ascending: false }),
+      editsQuery,
       supabase
         .from("editor_availability")
         .select("person_id, date_from, date_to, available"),
@@ -224,6 +234,9 @@ export default async function EdicionPage({
     if (nextEditor) params.set("editor", nextEditor);
     if (nextOwner) params.set("owner", nextOwner);
     if (nextStatus !== "all") params.set("status", nextStatus);
+    if (dateFromFilter) params.set("dateFrom", dateFromFilter);
+    if (dateToFilter) params.set("dateTo", dateToFilter);
+    if (manualSort) params.set("sort", "manual");
     const qs = params.toString();
     return qs ? `/marketing/edicion?${qs}` : "/marketing/edicion";
   }
@@ -231,12 +244,14 @@ export default async function EdicionPage({
   const activeFilters =
     (statusFilter !== "all" ? 1 : 0) +
     (editorFilter != null ? 1 : 0) +
-    (ownerFilter != null ? 1 : 0);
+    (ownerFilter != null ? 1 : 0) +
+    (dateFromFilter ? 1 : 0) +
+    (dateToFilter ? 1 : 0);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
-        icon={<IconMkt size={16} />}
+        icon={<IconCamera size={16} />}
         title="Edición de contenido"
         stats={[
           { l: "Total", v: fCount(totalCount) },
@@ -295,6 +310,21 @@ export default async function EdicionPage({
               ]}
             />
           )}
+
+          <div>
+            <div
+              className="kg-t7"
+              style={{ color: "var(--kg-text-3)", fontWeight: 600, marginBottom: 6 }}
+            >
+              Fecha objetivo
+            </div>
+            <KgDateRangeFilter
+              fromParam="dateFrom"
+              toParam="dateTo"
+              initialFrom={dateFromFilter ?? ""}
+              initialTo={dateToFilter ?? ""}
+            />
+          </div>
         </div>
       </KgPageFilters>
 

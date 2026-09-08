@@ -185,3 +185,31 @@ export async function deleteRaw(rawId: string): Promise<DeleteRawResult> {
   revalidatePath("/marketing/edicion");
   return { ok: true };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// reorderRaws — persiste el orden manual (drag & drop) de la tabla.
+// Ver mismo patrón en `planificacion/actions.ts`.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type ReorderResult = { ok: true } | { error: string };
+
+export async function reorderRaws(
+  orderedIds: readonly string[],
+): Promise<ReorderResult> {
+  if (orderedIds.length === 0) return { ok: true };
+
+  const supabase = await createSupabaseClient();
+  const results = await Promise.all(
+    orderedIds.map((id, index) =>
+      supabase
+        .from("content_raws")
+        .update({ sort_order: index } as never)
+        .eq("id", id),
+    ),
+  );
+  const failed = results.find((r) => r.error);
+  if (failed?.error) return { error: failed.error.message };
+
+  revalidatePath("/marketing/crudos");
+  return { ok: true };
+}

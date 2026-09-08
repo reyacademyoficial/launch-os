@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
-import { IconCalendar, IconMkt, IconTable } from "@/components/kg/icons";
+import { IconCalendar, IconCamera, IconTable } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { Panel } from "@/components/kg/panel";
 import { KgViewToggle } from "@/components/kg/view-toggle";
@@ -29,7 +29,7 @@ import {
   type PendingPiece,
 } from "./pending-pieces-panel";
 
-export const metadata: Metadata = { title: "Marketing · Grabación" };
+export const metadata: Metadata = { title: "Producción · Grabación" };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Listado de recording_sessions con toggle tabla|calendario.
@@ -108,6 +108,7 @@ export default async function GrabacionPage({
   const rangeParam = parseRange(sp.range);
   const fromParam = parseYmd(sp.from);
   const toParam = parseYmd(sp.to);
+  const manualSort = sp.sort === "manual";
 
   // El rango temporal SOLO se aplica en vista tabla. En calendario navegás
   // por mes con las flechas — el filtro no aplica.
@@ -126,8 +127,10 @@ export default async function GrabacionPage({
     .from("recording_sessions")
     .select(
       "id, content_owner_id, name, scheduled_at, duration_minutes, location, materials, notes, status",
-    )
-    .order("scheduled_at", { ascending: false });
+    );
+  sessionsQuery = manualSort
+    ? sessionsQuery.order("sort_order", { ascending: true })
+    : sessionsQuery.order("scheduled_at", { ascending: false });
   if (period) {
     // scheduled_at es timestamptz; comparamos contra rangos de día inclusivos.
     // fromYmd → 00:00 (implícito al comparar >= 'YYYY-MM-DD'); para toYmd
@@ -308,7 +311,7 @@ export default async function GrabacionPage({
   return (
     <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
-        icon={<IconMkt size={16} />}
+        icon={<IconCamera size={16} />}
         title="Grabaciones"
         stats={[
           { l: "Total", v: fCount(rows.length) },

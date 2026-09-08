@@ -300,6 +300,38 @@ export async function setPieceStage(
 // piece pero lo saca del pipeline.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════
+// reorderPieces — persiste el orden manual (drag & drop) de la tabla.
+//
+// El cliente manda TODOS los IDs visibles en el nuevo orden; el server
+// reescribe `sort_order` como el índice de cada uno (0..N-1). No valida
+// pertenencia fila-por-fila más allá del `update...eq("id", ...)` normal —
+// RLS ya filtra por organización.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type ReorderResult = { ok: true } | { error: string };
+
+export async function reorderPieces(
+  orderedIds: readonly string[],
+): Promise<ReorderResult> {
+  if (orderedIds.length === 0) return { ok: true };
+
+  const supabase = await createSupabaseClient();
+  const results = await Promise.all(
+    orderedIds.map((id, index) =>
+      supabase
+        .from("content_pieces")
+        .update({ sort_order: index } as never)
+        .eq("id", id),
+    ),
+  );
+  const failed = results.find((r) => r.error);
+  if (failed?.error) return { error: failed.error.message };
+
+  revalidatePath("/marketing/planificacion");
+  return { ok: true };
+}
+
 export async function deletePiece(
   pieceId: string,
 ): Promise<DeletePieceResult> {

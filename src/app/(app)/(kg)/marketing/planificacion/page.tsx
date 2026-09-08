@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
+import { KgDateRangeFilter } from "@/components/kg/date-range-filter";
 import { KgFilterSelect } from "@/components/kg/filter-select";
-import { IconMkt } from "@/components/kg/icons";
+import { IconCamera } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
@@ -31,7 +32,7 @@ import {
   type PieceRowData,
 } from "./planificacion-view";
 
-export const metadata: Metadata = { title: "Marketing · Planificación" };
+export const metadata: Metadata = { title: "Producción · Planificación" };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Listado de content_pieces con filtros vía searchParams.
@@ -80,24 +81,36 @@ export default async function PlanificacionPage({
   const ownerFilter = parseSingle(sp.owner);
   const categoryFilter = parseCategoryFilter(sp.category);
   const formatFilter = parseFormatFilter(sp.format);
+  const dateFromFilter = parseSingle(sp.dateFrom);
+  const dateToFilter = parseSingle(sp.dateTo);
+  const sortByDate = parseSingle(sp.sort) === "fecha";
+  const sortDir = parseSingle(sp.dir) === "desc" ? "desc" : "asc";
 
   const supabase = await createClient();
 
   // Además de owners+pieces (lo propio de esta vista), traemos también
   // organization_people activas — se pasan al drawer de sesión que se abre
   // desde el botón "Programar grabación" en la fila de la piece.
+  let piecesQuery = supabase
+    .from("content_pieces")
+    .select(
+      "id, content_owner_id, title, script_md, category, format, platforms, scheduled_recording_at, scheduled_publish_at, stage, recording_session_id, is_daily_recurring, notes",
+    );
+  if (dateFromFilter) piecesQuery = piecesQuery.gte("scheduled_publish_at", dateFromFilter);
+  if (dateToFilter) piecesQuery = piecesQuery.lte("scheduled_publish_at", dateToFilter);
+  piecesQuery = sortByDate
+    ? piecesQuery.order("scheduled_publish_at", {
+        ascending: sortDir === "asc",
+        nullsFirst: false,
+      })
+    : piecesQuery.order("sort_order", { ascending: true });
+
   const [ownersRes, piecesRes, personsRef] = await Promise.all([
     supabase
       .from("content_owners")
       .select("id, name, active")
       .order("name", { ascending: true }),
-    supabase
-      .from("content_pieces")
-      .select(
-        "id, content_owner_id, title, script_md, category, format, platforms, scheduled_recording_at, scheduled_publish_at, stage, recording_session_id, is_daily_recurring, notes",
-      )
-      .order("scheduled_publish_at", { ascending: true, nullsFirst: false })
-      .order("created_at", { ascending: false }),
+    piecesQuery,
     getOrgPeople(),
   ]);
 
@@ -202,6 +215,13 @@ export default async function PlanificacionPage({
     if (nextOwner) params.set("owner", nextOwner);
     if (nextCategory !== "all") params.set("category", nextCategory);
     if (nextFormat !== "all") params.set("format", nextFormat);
+    // Preserva rango de fecha y orden — cambiar un pill no debe resetearlos.
+    if (dateFromFilter) params.set("dateFrom", dateFromFilter);
+    if (dateToFilter) params.set("dateTo", dateToFilter);
+    if (sortByDate) {
+      params.set("sort", "fecha");
+      params.set("dir", sortDir);
+    }
 
     const qs = params.toString();
     return qs ? `/marketing/planificacion?${qs}` : "/marketing/planificacion";
@@ -217,7 +237,9 @@ export default async function PlanificacionPage({
     (stageFilter !== "open" ? 1 : 0) +
     (ownerFilter != null ? 1 : 0) +
     (categoryFilter !== "all" ? 1 : 0) +
-    (formatFilter !== "all" ? 1 : 0);
+    (formatFilter !== "all" ? 1 : 0) +
+    (dateFromFilter ? 1 : 0) +
+    (dateToFilter ? 1 : 0);
 
   const personOptionsForDrawer = persons
     .filter((p) => p.active)
@@ -233,7 +255,7 @@ export default async function PlanificacionPage({
   return (
     <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
-        icon={<IconMkt size={16} />}
+        icon={<IconCamera size={16} />}
         title="Planificación de contenido"
         stats={[
           { l: "Total", v: fCount(totalCount) },
@@ -307,6 +329,23 @@ export default async function PlanificacionPage({
               })),
             ]}
           />
+
+          <div>
+            <div
+              className="kg-t7"
+              style={{ color: "var(--kg-text-3)", fontWeight: 600, marginBottom: 6 }}
+            >
+              Fecha de publicación
+            </div>
+            <KgDateRangeFilter
+              fromParam="dateFrom"
+              toParam="dateTo"
+              fromLabel="Desde"
+              toLabel="Hasta"
+              initialFrom={dateFromFilter ?? ""}
+              initialTo={dateToFilter ?? ""}
+            />
+          </div>
         </div>
       </KgPageFilters>
 

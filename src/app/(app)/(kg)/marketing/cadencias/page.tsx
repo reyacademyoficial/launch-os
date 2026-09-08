@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
-import { IconMkt } from "@/components/kg/icons";
+import { IconCamera } from "@/components/kg/icons";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
 import {
@@ -15,7 +15,7 @@ import { createClient } from "@/lib/supabase/server";
 import { CadenciasView, type CadenceRowData } from "./cadencias-view";
 import { NewCadenceButton } from "./new-cadence-button";
 
-export const metadata: Metadata = { title: "Marketing · Cadencias" };
+export const metadata: Metadata = { title: "Producción · Cadencias" };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Listado de publishing_cadences.
@@ -100,7 +100,7 @@ export default async function CadenciasPage() {
   return (
     <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
-        icon={<IconMkt size={16} />}
+        icon={<IconCamera size={16} />}
         title="Cadencias de publicación"
         stats={[
           { l: "Cadencias", v: fCount(rows.length) },

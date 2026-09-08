@@ -441,6 +441,34 @@ export async function setSessionStatus(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// reorderSessions — persiste el orden manual (drag & drop) de la tabla.
+// Ver mismo patrón en `planificacion/actions.ts`.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type ReorderResult = { ok: true } | { error: string };
+
+export async function reorderSessions(
+  orderedIds: readonly string[],
+): Promise<ReorderResult> {
+  if (orderedIds.length === 0) return { ok: true };
+
+  const supabase = await createSupabaseClient();
+  const results = await Promise.all(
+    orderedIds.map((id, index) =>
+      supabase
+        .from("recording_sessions")
+        .update({ sort_order: index } as never)
+        .eq("id", id),
+    ),
+  );
+  const failed = results.find((r) => r.error);
+  if (failed?.error) return { error: failed.error.message };
+
+  revalidatePath("/marketing/grabacion");
+  return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // deleteSession — hard delete.
 //
 // La FK 0160 con `on delete set null` sobre content_pieces preserva las

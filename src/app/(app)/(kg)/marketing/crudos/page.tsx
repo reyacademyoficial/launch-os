@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 
 import { ContextBar } from "@/components/kg/context-bar";
+import { KgDateRangeFilter } from "@/components/kg/date-range-filter";
 import { KgFilterSelect } from "@/components/kg/filter-select";
-import { IconMkt } from "@/components/kg/icons";
+import { IconCamera } from "@/components/kg/icons";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
@@ -11,7 +12,7 @@ import { createClient } from "@/lib/supabase/server";
 import { CrudosView, type RawRowData } from "./crudos-view";
 import { NewRawButton } from "./new-raw-button";
 
-export const metadata: Metadata = { title: "Marketing · Crudos" };
+export const metadata: Metadata = { title: "Producción · Crudos" };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Crudos (0179) — material sin editar. Entre Grabación y Edición: una
@@ -41,6 +42,7 @@ interface RawDbRow {
   readonly name: string;
   readonly drive_url: string;
   readonly notes: string | null;
+  readonly created_at: string;
 }
 
 interface EditLite {
@@ -57,8 +59,22 @@ export default async function CrudosPage({
   const sp = await searchParams;
   const ownerFilter = parseSingle(sp.owner);
   const sessionFilter = parseSessionFilter(sp.session);
+  const dateFromFilter = parseSingle(sp.dateFrom);
+  const dateToFilter = parseSingle(sp.dateTo);
+  const manualSort = sp.sort === "manual";
 
   const supabase = await createClient();
+
+  let rawsQuery = supabase
+    .from("content_raws")
+    .select(
+      "id, content_owner_id, source_recording_session_id, name, drive_url, notes, created_at",
+    );
+  if (dateFromFilter) rawsQuery = rawsQuery.gte("created_at", dateFromFilter);
+  if (dateToFilter) rawsQuery = rawsQuery.lte("created_at", `${dateToFilter}T23:59:59`);
+  rawsQuery = manualSort
+    ? rawsQuery.order("sort_order", { ascending: true })
+    : rawsQuery.order("created_at", { ascending: false });
 
   const [ownersRes, sessionsRes, rawsRes, editsRes] = await Promise.all([
     supabase.from("content_owners").select("id, name, active").order("name"),
@@ -66,12 +82,7 @@ export default async function CrudosPage({
       .from("recording_sessions")
       .select("id, content_owner_id, name, scheduled_at")
       .order("scheduled_at", { ascending: false }),
-    supabase
-      .from("content_raws")
-      .select(
-        "id, content_owner_id, source_recording_session_id, name, drive_url, notes",
-      )
-      .order("created_at", { ascending: false }),
+    rawsQuery,
     supabase.from("content_edits").select("source_content_raw_id"),
   ]);
 
@@ -123,6 +134,7 @@ export default async function CrudosPage({
       driveUrl: r.drive_url,
       notes: r.notes,
       editsCount: editsCountByRaw.get(r.id) ?? 0,
+      createdAt: r.created_at,
     };
   });
 
@@ -148,17 +160,23 @@ export default async function CrudosPage({
     const nextSession = overrides.session ?? sessionFilter;
     if (nextOwner) params.set("owner", nextOwner);
     if (nextSession !== "all") params.set("session", nextSession);
+    if (dateFromFilter) params.set("dateFrom", dateFromFilter);
+    if (dateToFilter) params.set("dateTo", dateToFilter);
+    if (manualSort) params.set("sort", "manual");
     const qs = params.toString();
     return qs ? `/marketing/crudos?${qs}` : "/marketing/crudos";
   }
 
   const activeFilters =
-    (ownerFilter != null ? 1 : 0) + (sessionFilter !== "all" ? 1 : 0);
+    (ownerFilter != null ? 1 : 0) +
+    (sessionFilter !== "all" ? 1 : 0) +
+    (dateFromFilter ? 1 : 0) +
+    (dateToFilter ? 1 : 0);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-5">
       <ContextBar
-        icon={<IconMkt size={16} />}
+        icon={<IconCamera size={16} />}
         title="Crudos"
         stats={[
           { l: "Total", v: fCount(normalized.length) },
@@ -204,6 +222,21 @@ export default async function CrudosPage({
               },
             ]}
           />
+
+          <div>
+            <div
+              className="kg-t7"
+              style={{ color: "var(--kg-text-3)", fontWeight: 600, marginBottom: 6 }}
+            >
+              Fecha de carga
+            </div>
+            <KgDateRangeFilter
+              fromParam="dateFrom"
+              toParam="dateTo"
+              initialFrom={dateFromFilter ?? ""}
+              initialTo={dateToFilter ?? ""}
+            />
+          </div>
         </div>
       </KgPageFilters>
 

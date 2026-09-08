@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
 import { KgCalendar, type KgCalendarEvent } from "@/components/kg/calendar";
@@ -17,7 +18,7 @@ import {
   type UploadStatus,
 } from "@/lib/marketing/types";
 
-import { markUploaded, setUploadStatus } from "./actions";
+import { markUploaded, reorderUploads, setUploadStatus } from "./actions";
 import {
   UploadFormDrawer,
   type AssetOption,
@@ -81,6 +82,26 @@ export function SubidasView({
   const [markingId, setMarkingId] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const manualSort = searchParams?.get("sort") === "manual";
+
+  function toggleManualSort(next: boolean) {
+    const sp = new URLSearchParams(searchParams?.toString() ?? "");
+    if (next) sp.set("sort", "manual");
+    else sp.delete("sort");
+    const qs = sp.toString();
+    router.replace(qs ? `?${qs}` : "?", { scroll: false });
+  }
+
+  function handleReorder(orderedIds: readonly string[]) {
+    setError(null);
+    startTransition(async () => {
+      const result = await reorderUploads(orderedIds);
+      if ("error" in result) setError(result.error);
+    });
+  }
 
   const noAssets = assetOptions.length === 0;
 
@@ -280,19 +301,36 @@ export function SubidasView({
       )}
 
       {view === "tabla" ? (
-        <KgDataTable
-          columns={columns}
-          rows={rows}
-          rowKey={(r) => r.id}
-          totalCount={rows.length}
-          emptyTitle="Sin subidas registradas"
-          emptyHint={
-            noAssets
-              ? "Primero registrá assets en la pestaña Edición."
-              : "Programá subidas para ver la agenda por plataforma y fecha."
-          }
-          fillHeight
-        />
+        <>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <label
+              className="kg-t7"
+              style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--kg-text-3)" }}
+            >
+              <input
+                type="checkbox"
+                checked={manualSort}
+                onChange={(e) => toggleManualSort(e.target.checked)}
+                style={{ accentColor: "var(--kg-accent-500)", cursor: "pointer" }}
+              />
+              Orden manual (arrastrar filas)
+            </label>
+          </div>
+          <KgDataTable
+            columns={columns}
+            rows={rows}
+            rowKey={(r) => r.id}
+            totalCount={rows.length}
+            emptyTitle="Sin subidas registradas"
+            emptyHint={
+              noAssets
+                ? "Primero registrá assets en la pestaña Edición."
+                : "Programá subidas para ver la agenda por plataforma y fecha."
+            }
+            fillHeight
+            dragSort={{ active: manualSort, onReorder: handleReorder, disabled: pending }}
+          />
+        </>
       ) : (
         <KgCalendar
           year={year}
