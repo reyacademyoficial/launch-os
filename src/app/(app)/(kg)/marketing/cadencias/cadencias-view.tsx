@@ -10,6 +10,7 @@ import {
   type MarketingFormat,
   type MarketingPlatform,
 } from "@/lib/marketing/types";
+import { cadenceDailyRate } from "@/lib/marketing/stock";
 
 import {
   CadenceFormDrawer,
@@ -28,7 +29,8 @@ export interface CadenceRowData {
   readonly ownerName: string;
   readonly platform: MarketingPlatform;
   readonly format: MarketingFormat;
-  readonly postsPerDay: number;
+  readonly timesCount: number;
+  readonly periodDays: number;
   readonly allowRepeatAsset: boolean;
   readonly notes: string | null;
 }
@@ -54,7 +56,8 @@ export function CadenciasView({
           contentOwnerId: editing.contentOwnerId,
           platform: editing.platform,
           format: editing.format,
-          postsPerDay: editing.postsPerDay,
+          timesCount: editing.timesCount,
+          periodDays: editing.periodDays,
           allowRepeatAsset: editing.allowRepeatAsset,
           notes: editing.notes,
         }
@@ -81,11 +84,19 @@ export function CadenciasView({
       render: (r) => FORMAT_LABEL[r.format],
     },
     {
-      key: "posts_per_day",
-      label: "Posts/día",
+      key: "rate",
+      label: "Ritmo",
       align: "right",
-      numeric: true,
-      render: (r) => String(r.postsPerDay),
+      render: (r) => (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+          <span style={{ color: "var(--kg-text-1)", fontWeight: 600 }}>
+            {r.timesCount} cada {r.periodDays} día{r.periodDays === 1 ? "" : "s"}
+          </span>
+          <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
+            ≈ {cadenceDailyRate(r).toFixed(2)}/día
+          </span>
+        </div>
+      ),
     },
     {
       key: "allow_repeat",

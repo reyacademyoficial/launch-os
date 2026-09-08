@@ -2,13 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import {
   addDaysYmd,
+  computeEditorCapacityByDay,
   computeEditorLoadByWeek,
   countUndatedByPerson,
   countAvailableDaysInRange,
   enumerateWeekStarts,
+  isoWeekdayOf,
   isoWeekLabel,
   mondayOf,
   takeDatePart,
+  type EditorFormatCapacityInput,
+  type EditorPendingEditInput,
+  type EditorWeeklyScheduleInput,
 } from "./editor-load";
 
 describe("takeDatePart", () => {
@@ -275,5 +280,152 @@ describe("countUndatedByPerson", () => {
     );
     expect(map.size).toBe(1);
     expect(map.get("p1")?.assignedAssets).toBe(0);
+  });
+});
+
+describe("isoWeekdayOf", () => {
+  it("lunes 2026-08-24 da 1", () => {
+    expect(isoWeekdayOf("2026-08-24")).toBe(1);
+  });
+  it("domingo 2026-08-30 da 7", () => {
+    expect(isoWeekdayOf("2026-08-30")).toBe(7);
+  });
+  it("miércoles 2026-08-26 da 3", () => {
+    expect(isoWeekdayOf("2026-08-26")).toBe(3);
+  });
+});
+
+describe("computeEditorCapacityByDay", () => {
+  // 2026-08-24 = lunes, 2026-08-25 = martes, ... 2026-08-30 = domingo.
+  const schedule: EditorWeeklyScheduleInput[] = [
+    { personId: "adrian", dayOfWeek: 1 },
+    { personId: "adrian", dayOfWeek: 2 },
+    { personId: "adrian", dayOfWeek: 3 },
+    { personId: "adrian", dayOfWeek: 4 },
+    { personId: "adrian", dayOfWeek: 5 },
+  ];
+  const capacities: EditorFormatCapacityInput[] = [
+    { personId: "adrian", format: "reel", maxPerDay: 6 },
+    { personId: "adrian", format: "long", maxPerDay: 1 }, // "podcast" ≈ long
+  ];
+
+  it("un día fuera del horario semanal, sin trabajo, no está sobrecargado", () => {
+    const rows = computeEditorCapacityByDay(
+      [],
+      schedule,
+      [],
+      capacities,
+      "2026-08-29", // sábado
+      "2026-08-29",
+      ["adrian"],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ available: false, usedFraction: 0, overloaded: false });
+  });
+
+  it("6 reels en un día disponible llenan exactamente la capacidad (1.0)", () => {
+    const edits: EditorPendingEditInput[] = Array.from({ length: 6 }, () => ({
+      editorPersonId: "adrian",
+      dueDate: "2026-08-24",
+      targetFormat: "reel",
+    }));
+    const rows = computeEditorCapacityByDay(
+      edits,
+      schedule,
+      [],
+      capacities,
+      "2026-08-24",
+      "2026-08-24",
+      ["adrian"],
+    );
+    expect(rows[0]?.usedFraction).toBeCloseTo(1, 5);
+    expect(rows[0]?.overloaded).toBe(true);
+  });
+
+  it("1 podcast (max_per_day=1) consume el día entero", () => {
+    const edits: EditorPendingEditInput[] = [
+      { editorPersonId: "adrian", dueDate: "2026-08-24", targetFormat: "long" },
+    ];
+    const rows = computeEditorCapacityByDay(
+      edits,
+      schedule,
+      [],
+      capacities,
+      "2026-08-24",
+      "2026-08-24",
+      ["adrian"],
+    );
+    expect(rows[0]?.usedFraction).toBe(1);
+    expect(rows[0]?.overloaded).toBe(true);
+  });
+
+  it("3 reels no llenan el día (0.5 < 1)", () => {
+    const edits: EditorPendingEditInput[] = Array.from({ length: 3 }, () => ({
+      editorPersonId: "adrian",
+      dueDate: "2026-08-24",
+      targetFormat: "reel",
+    }));
+    const rows = computeEditorCapacityByDay(
+      edits,
+      schedule,
+      [],
+      capacities,
+      "2026-08-24",
+      "2026-08-24",
+      ["adrian"],
+    );
+    expect(rows[0]?.usedFraction).toBeCloseTo(0.5, 5);
+    expect(rows[0]?.overloaded).toBe(false);
+  });
+
+  it("trabajo pendiente sin formato conocido no suma a la fracción, pero se cuenta aparte", () => {
+    const edits: EditorPendingEditInput[] = [
+      { editorPersonId: "adrian", dueDate: "2026-08-24", targetFormat: null },
+    ];
+    const rows = computeEditorCapacityByDay(
+      edits,
+      schedule,
+      [],
+      capacities,
+      "2026-08-24",
+      "2026-08-24",
+      ["adrian"],
+    );
+    expect(rows[0]?.usedFraction).toBe(0);
+    expect(rows[0]?.unknownFormatCount).toBe(1);
+  });
+
+  it("una excepción de licencia pisa el horario semanal y marca sobrecarga si hay trabajo pendiente", () => {
+    const edits: EditorPendingEditInput[] = [
+      { editorPersonId: "adrian", dueDate: "2026-08-24", targetFormat: "reel" },
+    ];
+    const rows = computeEditorCapacityByDay(
+      edits,
+      schedule,
+      [{ personId: "adrian", dateFrom: "2026-08-24", dateTo: "2026-08-24", available: false }],
+      capacities,
+      "2026-08-24",
+      "2026-08-24",
+      ["adrian"],
+    );
+    expect(rows[0]?.available).toBe(false);
+    expect(rows[0]?.overloaded).toBe(true);
+  });
+
+  it("ediciones ya completadas no suman a la carga", () => {
+    const edits: EditorPendingEditInput[] = [
+      { editorPersonId: "adrian", dueDate: "2026-08-24", targetFormat: "long", completed: true },
+    ];
+    const rows = computeEditorCapacityByDay(
+      edits,
+      schedule,
+      [],
+      capacities,
+      "2026-08-24",
+      "2026-08-24",
+      ["adrian"],
+    );
+    expect(rows[0]?.usedFraction).toBe(0);
+    expect(rows[0]?.overloaded).toBe(false);
   });
 });

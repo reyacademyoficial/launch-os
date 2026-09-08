@@ -59,8 +59,18 @@ export interface StockCadenceInput {
   readonly contentOwnerId: string;
   readonly platform: MarketingPlatform;
   readonly format: MarketingFormat;
-  readonly postsPerDay: number;
+  /** Cuántas veces se publica cada `periodDays` días. Diario = timesCount/1. */
+  readonly timesCount: number;
+  readonly periodDays: number;
   readonly allowRepeatAsset: boolean;
+}
+
+/** Tasa diaria equivalente (posts/día) de una cadencia — puede ser < 1. */
+export function cadenceDailyRate(c: {
+  readonly timesCount: number;
+  readonly periodDays: number;
+}): number {
+  return c.timesCount / c.periodDays;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -142,8 +152,9 @@ export function computeStockByOwnerPlatformFormat(
 // ═══════════════════════════════════════════════════════════════════════════
 // computeDaysOfCoverage
 //
-// Colapsa por (owner, platform): suma stock a través de formats y suma
-// posts_per_day de las cadencias de esa (owner, platform). Divide.
+// Colapsa por (owner, platform): suma stock a través de formats y suma la
+// tasa diaria (`cadenceDailyRate`) de las cadencias de esa (owner, platform).
+// Divide.
 //
 // Ejemplo: para (Rey Academy, IG) hay cadencia reel=2/día y carousel=1/día
 // (dailyRate=3), con stock reel=10 y carousel=6 (stockCount=16) → 16/3 = 5 días.
@@ -165,7 +176,7 @@ export function computeDaysOfCoverage(
   const rateByPair = new Map<string, number>();
   for (const c of cadences) {
     const key = `${c.contentOwnerId}::${c.platform}`;
-    rateByPair.set(key, (rateByPair.get(key) ?? 0) + c.postsPerDay);
+    rateByPair.set(key, (rateByPair.get(key) ?? 0) + cadenceDailyRate(c));
   }
 
   const out: CoverageBucket[] = [];

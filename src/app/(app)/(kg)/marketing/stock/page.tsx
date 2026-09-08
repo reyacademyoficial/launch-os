@@ -3,11 +3,9 @@ import type { Metadata } from "next";
 import { ContextBar } from "@/components/kg/context-bar";
 import { KgFilterSelect } from "@/components/kg/filter-select";
 import { IconCamera } from "@/components/kg/icons";
-import { KgDataTable, type Column } from "@/components/kg/data-table";
 import { KgPageFilters } from "@/components/kg/page-menu";
 import { KgParamPills } from "@/components/kg/param-pills";
 import { Panel } from "@/components/kg/panel";
-import { StatusPill } from "@/components/kg/status-pill";
 import { fCount } from "@/lib/finance/format";
 import { computeCoverageAlerts } from "@/lib/marketing/alerts";
 import {
@@ -22,15 +20,14 @@ import {
   type AssetStockState,
 } from "@/lib/marketing/stock";
 import {
-  ASSET_STOCK_STATE_LABEL,
-  ASSET_STOCK_STATE_TONE,
-  FORMAT_LABEL,
   isMarketingFormat,
   isMarketingPlatform,
   type MarketingFormat,
   type MarketingPlatform,
 } from "@/lib/marketing/types";
 import { createClient } from "@/lib/supabase/server";
+
+import { InventoryTable, type AssetInventoryRow } from "./inventory-table";
 
 export const metadata: Metadata = { title: "Producción · Stock" };
 
@@ -56,17 +53,8 @@ interface AssetLite {
   readonly format: string;
   readonly edited_at: string | null;
   readonly created_at: string;
-}
-
-/** Fila del inventario individual (panel "Contenido producido"). */
-interface AssetInventoryRow {
-  readonly id: string;
-  readonly name: string;
-  readonly ownerName: string;
-  readonly contentOwnerId: string;
-  readonly format: MarketingFormat;
-  readonly state: AssetStockState;
-  readonly createdAt: string;
+  readonly drive_asset_url: string | null;
+  readonly source_content_edit_id: string | null;
 }
 
 interface UploadLite {
@@ -79,7 +67,8 @@ interface CadenceLite {
   readonly content_owner_id: string;
   readonly platform: string;
   readonly format: string;
-  readonly posts_per_day: number;
+  readonly times_count: number;
+  readonly period_days: number;
   readonly allow_repeat_asset: boolean;
 }
 
@@ -100,14 +89,16 @@ export default async function StockPage({
       .order("name", { ascending: true }),
     supabase
       .from("content_assets")
-      .select("id, content_owner_id, name, format, edited_at, created_at"),
+      .select(
+        "id, content_owner_id, name, format, edited_at, created_at, drive_asset_url, source_content_edit_id",
+      ),
     supabase
       .from("content_uploads")
       .select("content_asset_id, platform, status"),
     supabase
       .from("publishing_cadences")
       .select(
-        "content_owner_id, platform, format, posts_per_day, allow_repeat_asset",
+        "content_owner_id, platform, format, times_count, period_days, allow_repeat_asset",
       ),
   ]);
 
@@ -151,7 +142,8 @@ export default async function StockPage({
       contentOwnerId: c.content_owner_id,
       platform: c.platform,
       format: c.format,
-      postsPerDay: c.posts_per_day,
+      timesCount: c.times_count,
+      periodDays: c.period_days,
       allowRepeatAsset: c.allow_repeat_asset,
     }));
 
@@ -168,20 +160,39 @@ export default async function StockPage({
   // frente al stock (en cola, disponible, reservado, utilizado).
   const assetStates = computeAssetStockStates(assets, uploads);
 
-  const inventoryAll: AssetInventoryRow[] = assetsRaw
-    .filter((a): a is AssetLite & { readonly format: MarketingFormat } =>
+  const validAssets = assetsRaw.filter(
+    (a): a is AssetLite & { readonly format: MarketingFormat } =>
       isMarketingFormat(a.format),
-    )
-    .map((a) => ({
-      id: a.id,
-      name: a.name,
-      contentOwnerId: a.content_owner_id,
-      ownerName:
-        ownersById.get(a.content_owner_id)?.name ?? "(dueño desconocido)",
-      format: a.format,
-      state: assetStates.get(a.id) ?? "en_cola",
-      createdAt: a.created_at,
-    }));
+  );
+
+  // Assets agrupados por edición de origen — permite mostrar "de esta
+  // edición salieron otros N archivos" en el detalle, sin tener que ir a
+  // buscarlo a /marketing/edicion.
+  const assetsByEditId = new Map<string, { id: string; name: string }[]>();
+  for (const a of validAssets) {
+    if (!a.source_content_edit_id) continue;
+    const arr = assetsByEditId.get(a.source_content_edit_id) ?? [];
+    arr.push({ id: a.id, name: a.name });
+    assetsByEditId.set(a.source_content_edit_id, arr);
+  }
+
+  const inventoryAll: AssetInventoryRow[] = validAssets.map((a) => ({
+    id: a.id,
+    name: a.name,
+    contentOwnerId: a.content_owner_id,
+    ownerName:
+      ownersById.get(a.content_owner_id)?.name ?? "(dueño desconocido)",
+    format: a.format,
+    state: assetStates.get(a.id) ?? "en_cola",
+    createdAt: a.created_at,
+    driveAssetUrl: a.drive_asset_url,
+    sourceContentEditId: a.source_content_edit_id,
+    siblings: a.source_content_edit_id
+      ? (assetsByEditId.get(a.source_content_edit_id) ?? []).filter(
+          (s) => s.id !== a.id,
+        )
+      : [],
+  }));
 
   const inventory = inventoryAll
     .filter((r) => {
@@ -307,64 +318,6 @@ export default async function StockPage({
         <InventoryTable rows={inventory} />
       </Panel>
     </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// InventoryTable — un corte por fila con su estado frente al stock.
-//
-// Es la lectura que pide el procedimiento: todo lo que salió de producción,
-// qué está libre para agendar, qué ya quedó reservado por una subida
-// planificada y qué se consumió. Color sólo en el StatusPill, nunca en el
-// texto (regla del proyecto).
-// ═══════════════════════════════════════════════════════════════════════════
-
-function InventoryTable({
-  rows,
-}: {
-  readonly rows: readonly AssetInventoryRow[];
-}) {
-  const columns: Column<AssetInventoryRow>[] = [
-    {
-      key: "name",
-      label: "Corte",
-      render: (r) => (
-        <span style={{ color: "var(--kg-text-1)", fontWeight: 600 }}>
-          {r.name}
-        </span>
-      ),
-    },
-    {
-      key: "owner",
-      label: "Dueño",
-      render: (r) => r.ownerName,
-    },
-    {
-      key: "format",
-      label: "Formato",
-      render: (r) => FORMAT_LABEL[r.format],
-    },
-    {
-      key: "state",
-      label: "Estado",
-      render: (r) => (
-        <StatusPill
-          text={ASSET_STOCK_STATE_LABEL[r.state]}
-          tone={ASSET_STOCK_STATE_TONE[r.state]}
-        />
-      ),
-    },
-  ];
-
-  return (
-    <KgDataTable
-      columns={columns}
-      rows={rows}
-      rowKey={(r) => r.id}
-      totalCount={rows.length}
-      emptyTitle="Sin contenido producido"
-      emptyHint="Los cortes aparecen acá después de registrar la producción de una grabación realizada, en /marketing/edicion."
-    />
   );
 }
 

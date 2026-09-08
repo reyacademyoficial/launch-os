@@ -51,6 +51,7 @@ interface EditPayload {
   readonly title: string;
   readonly editorPersonId: string | null;
   readonly dueDate: string | null;
+  readonly targetFormat: MarketingFormat | null;
   readonly notes: string | null;
 }
 
@@ -70,9 +71,23 @@ function parseEditFormData(formData: FormData): EditPayload | string {
     return "La fecha objetivo es inválida.";
   }
 
+  const targetFormatRaw = nullIfEmpty(formData.get("target_format"));
+  if (targetFormatRaw != null && !isMarketingFormat(targetFormatRaw)) {
+    return "Formato esperado inválido.";
+  }
+  const targetFormat = targetFormatRaw as MarketingFormat | null;
+
   const notes = nullIfEmpty(formData.get("notes"));
 
-  return { contentOwnerId, sourceContentRawId, title, editorPersonId, dueDate, notes };
+  return {
+    contentOwnerId,
+    sourceContentRawId,
+    title,
+    editorPersonId,
+    dueDate,
+    targetFormat,
+    notes,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -106,6 +121,7 @@ export async function createContentEdit(
     title: parsed.title,
     editor_person_id: parsed.editorPersonId,
     due_date: parsed.dueDate,
+    target_format: parsed.targetFormat,
     notes: parsed.notes,
   } as never;
 
@@ -157,6 +173,7 @@ export async function updateContentEdit(
     title: parsed.title,
     editor_person_id: parsed.editorPersonId,
     due_date: parsed.dueDate,
+    target_format: parsed.targetFormat,
     notes: parsed.notes,
   } as never;
 

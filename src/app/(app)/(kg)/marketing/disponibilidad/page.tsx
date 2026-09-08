@@ -7,13 +7,23 @@ import { KgPageFilters } from "@/components/kg/page-menu";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
 import { getOrgPeople } from "@/lib/finance/reference";
+import {
+  isMarketingFormat,
+  isWeekday,
+  type MarketingFormat,
+  type Weekday,
+} from "@/lib/marketing/types";
 import { createClient } from "@/lib/supabase/server";
 
 import {
   DisponibilidadView,
   type AvailabilityRowData,
 } from "./disponibilidad-view";
+import { FormatCapacityView, type FormatCapacityRowData } from "./format-capacity-view";
 import { NewAvailabilityButton } from "./new-availability-button";
+import { NewFormatCapacityButton } from "./new-format-capacity-button";
+import { NewWeeklyScheduleButton } from "./new-weekly-schedule-button";
+import { WeeklyScheduleView, type WeeklyScheduleRowData } from "./weekly-schedule-view";
 
 export const metadata: Metadata = { title: "Producción · Disponibilidad" };
 
@@ -43,6 +53,21 @@ interface AvailabilityDbRow {
   readonly notes: string | null;
 }
 
+interface WeeklyScheduleDbRow {
+  readonly id: string;
+  readonly person_id: string;
+  readonly day_of_week: number;
+  readonly start_time: string;
+  readonly end_time: string;
+  readonly notes: string | null;
+}
+
+interface FormatCapacityDbRow {
+  readonly person_id: string;
+  readonly format: string;
+  readonly max_per_day: number;
+}
+
 export default async function DisponibilidadPage({
   searchParams,
 }: {
@@ -53,16 +78,25 @@ export default async function DisponibilidadPage({
 
   const supabase = await createClient();
 
-  const [personsRef, availRes] = await Promise.all([
+  const [personsRef, availRes, scheduleRes, capacityRes] = await Promise.all([
     getOrgPeople(),
     supabase
       .from("editor_availability")
       .select("id, person_id, date_from, date_to, available, notes")
       .order("date_from", { ascending: false }),
+    supabase
+      .from("editor_weekly_schedule")
+      .select("id, person_id, day_of_week, start_time, end_time, notes")
+      .order("day_of_week", { ascending: true }),
+    supabase
+      .from("editor_format_capacity")
+      .select("person_id, format, max_per_day"),
   ]);
 
   const persons = personsRef as unknown as PersonLite[];
   const rowsRaw = (availRes.data ?? []) as unknown as AvailabilityDbRow[];
+  const scheduleRaw = (scheduleRes.data ?? []) as unknown as WeeklyScheduleDbRow[];
+  const capacityRaw = (capacityRes.data ?? []) as unknown as FormatCapacityDbRow[];
 
   const personsById = new Map<string, PersonLite>();
   for (const p of persons) personsById.set(p.id, p);
@@ -93,6 +127,40 @@ export default async function DisponibilidadPage({
   const availableCount = rows.filter((r) => r.available).length;
   const blockedCount = rows.length - availableCount;
 
+  const scheduleRows: WeeklyScheduleRowData[] = scheduleRaw
+    .filter(
+      (r): r is WeeklyScheduleDbRow & { readonly day_of_week: Weekday } =>
+        isWeekday(r.day_of_week),
+    )
+    .map((r) => ({
+      id: r.id,
+      personId: r.person_id,
+      personName:
+        personsById.get(r.person_id)?.full_name ?? "(persona desconocida)",
+      dayOfWeek: r.day_of_week,
+      startTime: r.start_time,
+      endTime: r.end_time,
+      notes: r.notes,
+    }));
+  const filteredSchedule = personFilter
+    ? scheduleRows.filter((r) => r.personId === personFilter)
+    : scheduleRows;
+
+  const capacityRows: FormatCapacityRowData[] = capacityRaw
+    .filter((c): c is FormatCapacityDbRow & { readonly format: MarketingFormat } =>
+      isMarketingFormat(c.format),
+    )
+    .map((c) => ({
+      personId: c.person_id,
+      personName:
+        personsById.get(c.person_id)?.full_name ?? "(persona desconocida)",
+      format: c.format,
+      maxPerDay: c.max_per_day,
+    }));
+  const filteredCapacity = personFilter
+    ? capacityRows.filter((r) => r.personId === personFilter)
+    : capacityRows;
+
   function buildHref(overrides: Partial<{ person: string | null }>): string {
     const params = new URLSearchParams();
     const nextPerson = "person" in overrides ? overrides.person : personFilter;
@@ -107,8 +175,9 @@ export default async function DisponibilidadPage({
         icon={<IconCamera size={16} />}
         title="Disponibilidad de editores"
         stats={[
-          { l: "Bloques", v: fCount(rows.length) },
-          { l: "Disponibles", v: fCount(availableCount) },
+          { l: "Horarios semanales", v: fCount(scheduleRows.length) },
+          { l: "Capacidades configuradas", v: fCount(capacityRows.length) },
+          { l: "Excepciones", v: fCount(rows.length) },
           { l: "Ausencias", v: fCount(blockedCount) },
         ]}
       />
@@ -135,7 +204,23 @@ export default async function DisponibilidadPage({
       )}
 
       <Panel
-        title="Bloques de disponibilidad"
+        title="Horario semanal"
+        pad={false}
+        actions={<NewWeeklyScheduleButton personOptions={personOptions} />}
+      >
+        <WeeklyScheduleView rows={filteredSchedule} personOptions={personOptions} />
+      </Panel>
+
+      <Panel
+        title="Capacidad máxima por formato"
+        pad={false}
+        actions={<NewFormatCapacityButton personOptions={personOptions} />}
+      >
+        <FormatCapacityView rows={filteredCapacity} personOptions={personOptions} />
+      </Panel>
+
+      <Panel
+        title="Bloques de disponibilidad (excepciones)"
         pad={false}
         fillHeight
         actions={<NewAvailabilityButton personOptions={personOptions} />}

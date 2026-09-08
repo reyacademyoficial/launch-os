@@ -23,15 +23,23 @@ import {
 //
 // Modo create: los 3 campos del key son editables + pickers.
 // Modo edit: los 3 campos van bloqueados (readOnly); cambiar la triada
-// requiere eliminar + crear de nuevo. Editar acá cambia posts_per_day,
-// allow_repeat_asset y notes.
+// requiere eliminar + crear de nuevo. Editar acá cambia times_count/
+// period_days (0188), allow_repeat_asset y notes.
 // ═══════════════════════════════════════════════════════════════════════════
+
+const PRESETS: readonly { label: string; timesCount: number; periodDays: number }[] = [
+  { label: "Diario", timesCount: 1, periodDays: 1 },
+  { label: "Día por medio", timesCount: 1, periodDays: 2 },
+  { label: "3x/semana", timesCount: 3, periodDays: 7 },
+  { label: "Semanal", timesCount: 1, periodDays: 7 },
+];
 
 export interface CadenceInitial {
   readonly contentOwnerId: string;
   readonly platform: MarketingPlatform;
   readonly format: MarketingFormat;
-  readonly postsPerDay: number;
+  readonly timesCount: number;
+  readonly periodDays: number;
   readonly allowRepeatAsset: boolean;
   readonly notes: string | null;
 }
@@ -93,6 +101,9 @@ function CadenceFormBody({
   const [allowRepeat, setAllowRepeat] = useState(
     initial?.allowRepeatAsset ?? false,
   );
+  const [timesCount, setTimesCount] = useState(initial?.timesCount ?? 1);
+  const [periodDays, setPeriodDays] = useState(initial?.periodDays ?? 1);
+  const dailyRate = periodDays > 0 ? timesCount / periodDays : 0;
   const [deletePending, startDeleteTransition] = useTransition();
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -196,18 +207,74 @@ function CadenceFormBody({
         </>
       )}
 
-      <Field label="Posts por día" htmlFor="posts_per_day" required>
-        <input
-          id="posts_per_day"
-          name="posts_per_day"
-          type="number"
-          min={1}
-          max={100}
-          required
-          defaultValue={initial?.postsPerDay ?? 1}
-          style={inputStyle}
-        />
-      </Field>
+      <div>
+        <div
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)", marginBottom: 6 }}
+        >
+          Ritmo de publicación
+        </div>
+        <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+          {PRESETS.map((p) => (
+            <button
+              key={p.label}
+              type="button"
+              onClick={() => {
+                setTimesCount(p.timesCount);
+                setPeriodDays(p.periodDays);
+              }}
+              className="kg-focus"
+              style={presetBtn}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-end" }}>
+          <div style={{ flex: 1 }}>
+            <Field label="Cantidad" htmlFor="times_count" required>
+              <input
+                id="times_count"
+                name="times_count"
+                type="number"
+                min={1}
+                max={100}
+                required
+                value={timesCount}
+                onChange={(e) => setTimesCount(Number(e.target.value) || 1)}
+                style={inputStyle}
+              />
+            </Field>
+          </div>
+          <div
+            className="kg-t7"
+            style={{ color: "var(--kg-text-3)", paddingBottom: 10 }}
+          >
+            cada
+          </div>
+          <div style={{ flex: 1 }}>
+            <Field label="Días" htmlFor="period_days" required>
+              <input
+                id="period_days"
+                name="period_days"
+                type="number"
+                min={1}
+                max={90}
+                required
+                value={periodDays}
+                onChange={(e) => setPeriodDays(Number(e.target.value) || 1)}
+                style={inputStyle}
+              />
+            </Field>
+          </div>
+        </div>
+        <div
+          className="kg-t7"
+          style={{ color: "var(--kg-text-3)", marginTop: 6 }}
+        >
+          ≈ {dailyRate.toFixed(2)} posts/día
+        </div>
+      </div>
 
       <label
         htmlFor="allow_repeat_toggle"
@@ -384,6 +451,17 @@ const inputStyle: React.CSSProperties = {
   color: "var(--kg-text-1)",
   fontSize: 13,
   colorScheme: "dark",
+};
+
+const presetBtn: React.CSSProperties = {
+  padding: "4px 10px",
+  borderRadius: 999,
+  background: "transparent",
+  border: "1px solid var(--kg-border-subtle)",
+  color: "var(--kg-text-2)",
+  fontSize: 11,
+  fontWeight: 600,
+  cursor: "pointer",
 };
 
 const primaryBtn: React.CSSProperties = {

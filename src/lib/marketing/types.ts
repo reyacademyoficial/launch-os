@@ -197,7 +197,9 @@ export interface PublishingCadenceRow {
   readonly contentOwnerId: string;
   readonly platform: MarketingPlatform;
   readonly format: MarketingFormat;
-  readonly postsPerDay: number;
+  /** Cuántas veces se publica cada `periodDays` días (0188). */
+  readonly timesCount: number;
+  readonly periodDays: number;
   readonly allowRepeatAsset: boolean;
   readonly notes: string | null;
 }
@@ -247,6 +249,8 @@ export interface ContentEditRow {
   readonly editorPersonId: string | null;
   readonly dueDate: string | null; // yyyy-mm-dd
   readonly completedAt: string | null;
+  /** Formato esperado — alimenta el cálculo de capacidad diaria. 0191. */
+  readonly targetFormat: MarketingFormat | null;
   readonly notes: string | null;
 }
 
@@ -300,6 +304,64 @@ export interface EditorAvailabilityRow {
   readonly dateTo: string; // yyyy-mm-dd
   readonly available: boolean;
   readonly notes: string | null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Editor weekly schedule (0189) — horario recurrente por día de semana.
+// Complementa (no reemplaza) editor_availability: eso sigue siendo para
+// excepciones puntuales (licencia, vacaciones); esto es la regla general.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
+
+export type Weekday = (typeof WEEKDAYS)[number];
+
+export const WEEKDAY_LABEL: Record<Weekday, string> = {
+  1: "Lunes",
+  2: "Martes",
+  3: "Miércoles",
+  4: "Jueves",
+  5: "Viernes",
+  6: "Sábado",
+  7: "Domingo",
+};
+
+export const WEEKDAY_LABEL_SHORT: Record<Weekday, string> = {
+  1: "Lun",
+  2: "Mar",
+  3: "Mié",
+  4: "Jue",
+  5: "Vie",
+  6: "Sáb",
+  7: "Dom",
+};
+
+export function isWeekday(v: number): v is Weekday {
+  return (WEEKDAYS as readonly number[]).includes(v);
+}
+
+export interface EditorWeeklyScheduleRow {
+  readonly id: string;
+  readonly personId: string;
+  readonly dayOfWeek: Weekday;
+  readonly startTime: string; // HH:mm o HH:mm:ss
+  readonly endTime: string;
+  readonly notes: string | null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Editor format capacity (0190) — máximo de piezas de un formato que un
+// editor puede terminar en un día completo. Es un tope ALTERNATIVO por
+// formato, no acumulable: "6 reels O 10 nuggets O 1 podcast", no los tres
+// juntos. El cálculo de carga usa esto como 1/maxPerDay = fracción del día
+// que consume una edición de ese formato.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface EditorFormatCapacityRow {
+  readonly id: string;
+  readonly personId: string;
+  readonly format: MarketingFormat;
+  readonly maxPerDay: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

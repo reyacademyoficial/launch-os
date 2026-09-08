@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  cadenceDailyRate,
   committedPlatformsByAsset,
   computeAssetStockStates,
   computeDaysOfCoverage,
@@ -23,7 +24,7 @@ describe("computeStockByOwnerPlatformFormat", () => {
         contentOwnerId: "o1",
         platform: "instagram",
         format: "reel",
-        postsPerDay: 1,
+        timesCount: 1, periodDays: 1,
         allowRepeatAsset: false,
       },
     ];
@@ -35,8 +36,8 @@ describe("computeStockByOwnerPlatformFormat", () => {
 
   it("devuelve un bucket por cada cadencia aunque el stock sea 0", () => {
     const cadences: StockCadenceInput[] = [
-      { contentOwnerId: "o1", platform: "instagram", format: "reel", postsPerDay: 3, allowRepeatAsset: false },
-      { contentOwnerId: "o1", platform: "youtube", format: "short", postsPerDay: 1, allowRepeatAsset: false },
+      { contentOwnerId: "o1", platform: "instagram", format: "reel", timesCount: 3, periodDays: 1, allowRepeatAsset: false },
+      { contentOwnerId: "o1", platform: "youtube", format: "short", timesCount: 1, periodDays: 1, allowRepeatAsset: false },
     ];
     const buckets = computeStockByOwnerPlatformFormat([], [], cadences);
     expect(buckets).toHaveLength(2);
@@ -52,7 +53,7 @@ describe("computeStockByOwnerPlatformFormat", () => {
       { contentAssetId: "a1", platform: "instagram", status: "subida" },
     ];
     const cadences: StockCadenceInput[] = [
-      { contentOwnerId: "o1", platform: "instagram", format: "reel", postsPerDay: 1, allowRepeatAsset: false },
+      { contentOwnerId: "o1", platform: "instagram", format: "reel", timesCount: 1, periodDays: 1, allowRepeatAsset: false },
     ];
     const buckets = computeStockByOwnerPlatformFormat(assets, uploads, cadences);
     expect(buckets[0]?.stockCount).toBe(1); // a2 sigue disponible
@@ -66,7 +67,7 @@ describe("computeStockByOwnerPlatformFormat", () => {
       { contentAssetId: "a1", platform: "instagram", status: "subida" },
     ];
     const cadences: StockCadenceInput[] = [
-      { contentOwnerId: "o1", platform: "instagram", format: "reel", postsPerDay: 1, allowRepeatAsset: true },
+      { contentOwnerId: "o1", platform: "instagram", format: "reel", timesCount: 1, periodDays: 1, allowRepeatAsset: true },
     ];
     const buckets = computeStockByOwnerPlatformFormat(assets, uploads, cadences);
     expect(buckets[0]?.stockCount).toBe(1);
@@ -81,7 +82,7 @@ describe("computeStockByOwnerPlatformFormat", () => {
       { contentAssetId: "a1", platform: "instagram", status: "planificada" },
     ];
     const cadences: StockCadenceInput[] = [
-      { contentOwnerId: "o1", platform: "instagram", format: "reel", postsPerDay: 1, allowRepeatAsset: false },
+      { contentOwnerId: "o1", platform: "instagram", format: "reel", timesCount: 1, periodDays: 1, allowRepeatAsset: false },
     ];
     const buckets = computeStockByOwnerPlatformFormat(assets, uploads, cadences);
     expect(buckets[0]?.stockCount).toBe(1); // sólo a2 queda disponible
@@ -96,7 +97,7 @@ describe("computeStockByOwnerPlatformFormat", () => {
       { contentAssetId: "a1", platform: "instagram", status: "cancelada" },
     ];
     const cadences: StockCadenceInput[] = [
-      { contentOwnerId: "o1", platform: "instagram", format: "reel", postsPerDay: 1, allowRepeatAsset: false },
+      { contentOwnerId: "o1", platform: "instagram", format: "reel", timesCount: 1, periodDays: 1, allowRepeatAsset: false },
     ];
     const buckets = computeStockByOwnerPlatformFormat(assets, uploads, cadences);
     expect(buckets[0]?.stockCount).toBe(1);
@@ -107,8 +108,8 @@ describe("computeStockByOwnerPlatformFormat", () => {
       { id: "a1", contentOwnerId: "o1", format: "reel", editedAt: "2026-08-01" },
     ];
     const cadences: StockCadenceInput[] = [
-      { contentOwnerId: "o1", platform: "instagram", format: "reel", postsPerDay: 1, allowRepeatAsset: false },
-      { contentOwnerId: "o1", platform: "facebook", format: "reel", postsPerDay: 1, allowRepeatAsset: false },
+      { contentOwnerId: "o1", platform: "instagram", format: "reel", timesCount: 1, periodDays: 1, allowRepeatAsset: false },
+      { contentOwnerId: "o1", platform: "facebook", format: "reel", timesCount: 1, periodDays: 1, allowRepeatAsset: false },
     ];
     const buckets = computeStockByOwnerPlatformFormat(assets, [], cadences);
     expect(buckets).toHaveLength(2);
@@ -123,8 +124,8 @@ describe("computeStockByOwnerPlatformFormat", () => {
       { contentAssetId: "a1", platform: "instagram", status: "subida" },
     ];
     const cadences: StockCadenceInput[] = [
-      { contentOwnerId: "o1", platform: "instagram", format: "reel", postsPerDay: 1, allowRepeatAsset: false },
-      { contentOwnerId: "o1", platform: "facebook", format: "reel", postsPerDay: 1, allowRepeatAsset: false },
+      { contentOwnerId: "o1", platform: "instagram", format: "reel", timesCount: 1, periodDays: 1, allowRepeatAsset: false },
+      { contentOwnerId: "o1", platform: "facebook", format: "reel", timesCount: 1, periodDays: 1, allowRepeatAsset: false },
     ];
     const buckets = computeStockByOwnerPlatformFormat(assets, uploads, cadences);
     const ig = buckets.find((b) => b.platform === "instagram");
@@ -141,8 +142,8 @@ describe("computeDaysOfCoverage", () => {
       { contentOwnerId: "o1", platform: "instagram" as const, format: "carousel" as const, stockCount: 6 },
     ];
     const cadences: StockCadenceInput[] = [
-      { contentOwnerId: "o1", platform: "instagram", format: "reel", postsPerDay: 2, allowRepeatAsset: false },
-      { contentOwnerId: "o1", platform: "instagram", format: "carousel", postsPerDay: 1, allowRepeatAsset: false },
+      { contentOwnerId: "o1", platform: "instagram", format: "reel", timesCount: 2, periodDays: 1, allowRepeatAsset: false },
+      { contentOwnerId: "o1", platform: "instagram", format: "carousel", timesCount: 1, periodDays: 1, allowRepeatAsset: false },
     ];
     const cov = computeDaysOfCoverage(stock, cadences);
     expect(cov).toHaveLength(1);
@@ -157,7 +158,7 @@ describe("computeDaysOfCoverage", () => {
 
   it("stock cero devuelve 0 días", () => {
     const cadences: StockCadenceInput[] = [
-      { contentOwnerId: "o1", platform: "instagram", format: "reel", postsPerDay: 3, allowRepeatAsset: false },
+      { contentOwnerId: "o1", platform: "instagram", format: "reel", timesCount: 3, periodDays: 1, allowRepeatAsset: false },
     ];
     const cov = computeDaysOfCoverage([], cadences);
     expect(cov[0]?.daysOfCoverage).toBe(0);
@@ -170,6 +171,31 @@ describe("computeDaysOfCoverage", () => {
     ];
     const cov = computeDaysOfCoverage(stock, []);
     expect(cov).toHaveLength(0);
+  });
+
+  it("soporta cadencias no diarias (día por medio, 3 veces por semana)", () => {
+    const stock = [
+      { contentOwnerId: "o1", platform: "instagram" as const, format: "reel" as const, stockCount: 10 },
+    ];
+    const cadences: StockCadenceInput[] = [
+      // Día por medio: 1 cada 2 días → dailyRate 0.5.
+      { contentOwnerId: "o1", platform: "instagram", format: "reel", timesCount: 1, periodDays: 2, allowRepeatAsset: false },
+    ];
+    const cov = computeDaysOfCoverage(stock, cadences);
+    expect(cov[0]?.dailyRate).toBe(0.5);
+    expect(cov[0]?.daysOfCoverage).toBe(20); // 10 / 0.5 = 20
+  });
+});
+
+describe("cadenceDailyRate", () => {
+  it("diario (1 cada 1 día) da tasa 1", () => {
+    expect(cadenceDailyRate({ timesCount: 1, periodDays: 1 })).toBe(1);
+  });
+  it("día por medio (1 cada 2 días) da tasa 0.5", () => {
+    expect(cadenceDailyRate({ timesCount: 1, periodDays: 2 })).toBe(0.5);
+  });
+  it("3 veces por semana (3 cada 7 días) da tasa ~0.4286", () => {
+    expect(cadenceDailyRate({ timesCount: 3, periodDays: 7 })).toBeCloseTo(0.4286, 4);
   });
 });
 

@@ -11,11 +11,18 @@ import {
   type PieceOptionForComplete,
 } from "@/components/marketing/complete-edit-drawer";
 import {
+  addDaysYmd,
+  computeEditorCapacityByDay,
   computeEditorLoadByWeek,
   countUndatedByPerson,
   type EditorAssetInput,
   type EditorAvailabilityInput,
+  type EditorDayCapacity,
+  type EditorFormatCapacityInput,
+  type EditorPendingEditInput,
+  type EditorWeeklyScheduleInput,
 } from "@/lib/marketing/editor-load";
+import { FORMAT_LABEL, type MarketingFormat } from "@/lib/marketing/types";
 import { compareSortValues, type SortValue } from "@/lib/kg/sort";
 
 import { reopenContentEdit, reorderEdits } from "./actions";
@@ -50,6 +57,7 @@ export interface EditRowData {
   readonly editorName: string | null;
   readonly dueDate: string | null; // yyyy-mm-dd
   readonly completedAt: string | null;
+  readonly targetFormat: MarketingFormat | null;
   readonly notes: string | null;
   readonly createdAt: string;
 }
@@ -61,6 +69,8 @@ export function EdicionView({
   rawOptions,
   pieceOptions,
   availability,
+  weeklySchedule,
+  formatCapacities,
   planningWindow,
 }: {
   readonly rows: readonly EditRowData[];
@@ -69,6 +79,8 @@ export function EdicionView({
   readonly rawOptions: readonly RawOption[];
   readonly pieceOptions: readonly PieceOptionForComplete[];
   readonly availability: readonly EditorAvailabilityInput[];
+  readonly weeklySchedule: readonly EditorWeeklyScheduleInput[];
+  readonly formatCapacities: readonly EditorFormatCapacityInput[];
   readonly planningWindow: { readonly since: string; readonly until: string };
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -92,6 +104,8 @@ export function EdicionView({
         return row.editorName;
       case "due_date":
         return row.dueDate;
+      case "target_format":
+        return row.targetFormat ? FORMAT_LABEL[row.targetFormat] : null;
       case "status":
         return row.completedAt ?? "en_cola";
       default:
@@ -139,6 +153,7 @@ export function EdicionView({
           title: editing.title,
           editorPersonId: editing.editorPersonId,
           dueDate: editing.dueDate,
+          targetFormat: editing.targetFormat,
           notes: editing.notes,
         }
       : undefined;
@@ -197,6 +212,41 @@ export function EdicionView({
     () => countUndatedByPerson(editorAssetsInput, editorPersonIds),
     [editorAssetsInput, editorPersonIds],
   );
+
+  // ─── Capacidad diaria: fracción del día que consume cada edición pendiente
+  // según el formato esperado y el tope configurado en Disponibilidad.
+  const pendingEditsInput: EditorPendingEditInput[] = useMemo(
+    () =>
+      rows
+        .filter((r) => r.editorPersonId != null)
+        .map((r) => ({
+          editorPersonId: r.editorPersonId!,
+          dueDate: r.dueDate,
+          targetFormat: r.targetFormat,
+          completed: r.completedAt != null,
+        })),
+    [rows],
+  );
+
+  const capacityByDay = useMemo(
+    () =>
+      computeEditorCapacityByDay(
+        pendingEditsInput,
+        weeklySchedule,
+        availability,
+        formatCapacities,
+        planningWindow.since,
+        planningWindow.until,
+        editorPersonIds,
+      ),
+    [pendingEditsInput, weeklySchedule, availability, formatCapacities, planningWindow, editorPersonIds],
+  );
+
+  const capacityByPersonDay = useMemo(() => {
+    const map = new Map<string, EditorDayCapacity>();
+    for (const c of capacityByDay) map.set(`${c.personId}::${c.date}`, c);
+    return map;
+  }, [capacityByDay]);
 
   const personById = useMemo(() => {
     const map = new Map<string, PersonOption>();
@@ -303,6 +353,17 @@ export function EdicionView({
       },
     },
     {
+      key: "target_format",
+      label: "Formato",
+      sortable: true,
+      render: (r) =>
+        r.targetFormat ? (
+          FORMAT_LABEL[r.targetFormat]
+        ) : (
+          <span style={{ color: "var(--kg-text-3)" }}>—</span>
+        ),
+    },
+    {
       key: "status",
       label: "Estado",
       sortable: true,
@@ -393,6 +454,10 @@ export function EdicionView({
           },
           { label: "Editor", value: viewing.editorName },
           { label: "Fecha objetivo", value: viewing.dueDate ? formatDay(viewing.dueDate) : null },
+          {
+            label: "Formato esperado",
+            value: viewing.targetFormat ? FORMAT_LABEL[viewing.targetFormat] : null,
+          },
           {
             label: "Estado",
             value: viewing.completedAt ? (
@@ -495,6 +560,7 @@ export function EdicionView({
             editorPersonIds={editorPersonIds}
             personById={personById}
             undatedByPerson={undatedByPerson}
+            capacityByPersonDay={capacityByPersonDay}
           />
         </div>
       )}
@@ -573,6 +639,7 @@ function PlanningPivot({
   editorPersonIds,
   personById,
   undatedByPerson,
+  capacityByPersonDay,
 }: {
   readonly cells: ReturnType<typeof computeEditorLoadByWeek>;
   readonly weekStarts: readonly string[];
@@ -582,6 +649,7 @@ function PlanningPivot({
     string,
     { assignedAssets: number; pendingAssets: number }
   >;
+  readonly capacityByPersonDay: ReadonlyMap<string, EditorDayCapacity>;
 }) {
   if (editorPersonIds.length === 0) {
     return (
@@ -735,6 +803,11 @@ function PlanningPivot({
                           />
                         )}
                       </div>
+                      <DayDotsRow
+                        personId={personId}
+                        weekStart={ws}
+                        capacityByPersonDay={capacityByPersonDay}
+                      />
                     </td>
                   );
                 })}
@@ -756,9 +829,74 @@ function PlanningPivot({
         trabajo pendiente en una semana sin ningún día disponible. La columna{" "}
         <strong>Sin fecha</strong> junta las ediciones asignadas a las que
         nadie les puso objetivo.
+        <br />
+        La fila de 7 puntos (lun a dom) es la <strong>capacidad diaria</strong>:
+        gris = día sin horario cargado, verde = disponible con lugar, ámbar =
+        casi lleno, rojo = sin capacidad para más — según los máximos por
+        formato configurados en Disponibilidad.
       </div>
     </div>
   );
+}
+
+function DayDotsRow({
+  personId,
+  weekStart,
+  capacityByPersonDay,
+}: {
+  readonly personId: string;
+  readonly weekStart: string;
+  readonly capacityByPersonDay: ReadonlyMap<string, EditorDayCapacity>;
+}) {
+  const days = Array.from({ length: 7 }, (_, i) => addDaysYmd(weekStart, i));
+  return (
+    <div
+      style={{ display: "flex", gap: 3, justifyContent: "center", marginTop: 4 }}
+      aria-hidden
+    >
+      {days.map((day) => {
+        const cap = capacityByPersonDay.get(`${personId}::${day}`);
+        const color = dayDotColor(cap);
+        const title = dayDotTitle(day, cap);
+        return (
+          <span
+            key={day}
+            title={title}
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: 999,
+              background: color,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function dayDotColor(cap: EditorDayCapacity | undefined): string {
+  if (!cap) return "var(--kg-border-subtle)";
+  if (cap.overloaded) return "var(--kg-negative-500)";
+  if (!cap.available) return "var(--kg-border-subtle)";
+  if (cap.usedFraction >= 0.7) return "var(--kg-warning-500)";
+  return "var(--kg-positive-500)";
+}
+
+function dayDotTitle(day: string, cap: EditorDayCapacity | undefined): string {
+  const [, m, d] = day.split("-");
+  const dayLabel = m && d ? `${d}/${m}` : day;
+  if (!cap) return dayLabel;
+  if (!cap.available) {
+    return cap.overloaded
+      ? `${dayLabel}: sin horario cargado, pero tiene trabajo pendiente`
+      : `${dayLabel}: sin horario cargado`;
+  }
+  const pct = Math.round(cap.usedFraction * 100);
+  const extra = cap.unknownFormatCount > 0
+    ? ` (+${cap.unknownFormatCount} sin formato, no contabilizada)`
+    : "";
+  return `${dayLabel}: ${pct}% de la capacidad usada${extra}`;
 }
 
 function UndatedCell({

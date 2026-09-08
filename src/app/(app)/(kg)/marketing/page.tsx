@@ -102,7 +102,8 @@ interface CadenceLite {
   readonly content_owner_id: string;
   readonly platform: string;
   readonly format: string;
-  readonly posts_per_day: number;
+  readonly times_count: number;
+  readonly period_days: number;
   readonly allow_repeat_asset: boolean;
 }
 
@@ -152,7 +153,7 @@ export default async function MarketingDashboardPage() {
     supabase
       .from("publishing_cadences")
       .select(
-        "content_owner_id, platform, format, posts_per_day, allow_repeat_asset",
+        "content_owner_id, platform, format, times_count, period_days, allow_repeat_asset",
       ),
     supabase
       .from("recording_sessions")
@@ -211,7 +212,8 @@ export default async function MarketingDashboardPage() {
       contentOwnerId: c.content_owner_id,
       platform: c.platform,
       format: c.format,
-      postsPerDay: c.posts_per_day,
+      timesCount: c.times_count,
+      periodDays: c.period_days,
       allowRepeatAsset: c.allow_repeat_asset,
     }));
 

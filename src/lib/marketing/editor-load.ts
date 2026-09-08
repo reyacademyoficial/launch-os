@@ -289,3 +289,178 @@ export function isoWeekLabel(mondayYmd: string): string {
     1;
   return `${isoYear}-W${String(weekNum).padStart(2, "0")}`;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Capacidad diaria por editor (día por día, no por semana).
+//
+// Cruza CUATRO fuentes:
+//   - `editor_weekly_schedule` (0189) → qué días de la semana trabaja el
+//     editor (regla general).
+//   - `editor_availability` (0164) → excepciones puntuales (licencia,
+//     vacaciones) que PISAN la regla general para un rango de fechas.
+//   - `editor_format_capacity` (0190) → cuántas piezas de cada formato entran
+//     en un día completo — el tope es ALTERNATIVO por formato, no acumulable
+//     ("6 reels O 10 nuggets O 1 podcast", no los tres juntos), así que cada
+//     edición pendiente de formato X consume `1/maxPerDay[X]` del día.
+//   - `content_edits` pendientes (con `dueDate` + `targetFormat`) → la carga.
+//
+// Un día está "sobrecargado" si:
+//   - no está en el horario semanal (ni cubierto por una excepción que lo
+//     habilite) y de todos modos tiene trabajo pendiente ese día, o
+//   - está disponible pero la fracción usada llega a 1.0 (el día se llena).
+//
+// Ediciones sin `targetFormat` conocido (o sin capacidad configurada para
+// ese formato) NO suman a la fracción — se cuentan aparte
+// (`unknownFormatCount`) para que la UI avise "esto no se está considerando"
+// en vez de fingir que no existen.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface EditorWeeklyScheduleInput {
+  readonly personId: string;
+  /** ISO: 1=lunes … 7=domingo. */
+  readonly dayOfWeek: number;
+}
+
+export interface EditorFormatCapacityInput {
+  readonly personId: string;
+  readonly format: string;
+  readonly maxPerDay: number;
+}
+
+export interface EditorPendingEditInput {
+  readonly editorPersonId: string;
+  /** yyyy-mm-dd o iso ts — se usa la parte de fecha. `null` = sin fecha objetivo. */
+  readonly dueDate: string | null;
+  readonly targetFormat: string | null;
+  /** `true` cuando la edición ya se cerró. Default: pendiente. */
+  readonly completed?: boolean;
+}
+
+export interface EditorDayCapacity {
+  readonly personId: string;
+  readonly date: string; // yyyy-mm-dd
+  /** ISO: 1=lunes … 7=domingo. */
+  readonly dayOfWeek: number;
+  readonly available: boolean;
+  /** Suma de 1/maxPerDay de las ediciones pendientes con formato conocido. */
+  readonly usedFraction: number;
+  /** Ediciones pendientes ese día sin formato o sin capacidad configurada — no entran en `usedFraction`. */
+  readonly unknownFormatCount: number;
+  readonly overloaded: boolean;
+}
+
+/** yyyy-mm-dd → día ISO (1=lunes … 7=domingo). */
+export function isoWeekdayOf(dayYmd: string): number {
+  const parts = dayYmd.split("-");
+  const y = Number.parseInt(parts[0] ?? "", 10);
+  const m = Number.parseInt(parts[1] ?? "", 10);
+  const d = Number.parseInt(parts[2] ?? "", 10);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  const dow0 = date.getUTCDay(); // 0=domingo … 6=sábado
+  return dow0 === 0 ? 7 : dow0;
+}
+
+/**
+ * Resuelve si un día puntual está disponible según las excepciones de
+ * `editor_availability` que lo cubren — mismo criterio "rango más
+ * específico gana" que `countAvailableDaysInRange`. Devuelve `null` si
+ * ninguna excepción cubre ese día (no hay override, manda el horario
+ * semanal).
+ */
+function resolveExceptionForDay(
+  rows: readonly EditorAvailabilityInput[],
+  day: string,
+): boolean | null {
+  const covering = rows.filter((r) => r.dateFrom <= day && day <= r.dateTo);
+  if (covering.length === 0) return null;
+  // Más específico = rango más chico.
+  covering.sort((a, b) => rangeLen(a) - rangeLen(b));
+  return covering[0]!.available;
+}
+
+/**
+ * `since`/`until` yyyy-mm-dd inclusivos. Devuelve una fila por (persona, día)
+ * en ese rango, ordenadas por (personId, date).
+ */
+export function computeEditorCapacityByDay(
+  edits: readonly EditorPendingEditInput[],
+  weeklySchedule: readonly EditorWeeklyScheduleInput[],
+  availabilityExceptions: readonly EditorAvailabilityInput[],
+  formatCapacities: readonly EditorFormatCapacityInput[],
+  since: string,
+  until: string,
+  personIds: readonly string[],
+): EditorDayCapacity[] {
+  const days = enumerateDays(since, until);
+  if (days.length === 0) return [];
+
+  // Sumar N veces 1/N en floating point puede quedar a 1e-16 de 1.0 (ej.
+  // 6×(1/6)=0.9999999999999999) — sin tolerancia, "llenar exactamente el
+  // día" nunca marcaría sobrecarga.
+  const FULL_DAY_EPSILON = 1e-9;
+
+  const scheduledDaysByPerson = new Map<string, Set<number>>();
+  for (const s of weeklySchedule) {
+    const set = scheduledDaysByPerson.get(s.personId) ?? new Set<number>();
+    set.add(s.dayOfWeek);
+    scheduledDaysByPerson.set(s.personId, set);
+  }
+
+  const maxPerDayByPersonFormat = new Map<string, number>();
+  for (const c of formatCapacities) {
+    maxPerDayByPersonFormat.set(`${c.personId}::${c.format}`, c.maxPerDay);
+  }
+
+  // Ediciones pendientes agrupadas por (persona, día).
+  const editsByPersonDay = new Map<string, EditorPendingEditInput[]>();
+  for (const e of edits) {
+    if (e.completed === true) continue;
+    const dayKey = takeDatePart(e.dueDate);
+    if (!dayKey) continue;
+    const key = `${e.editorPersonId}::${dayKey}`;
+    const arr = editsByPersonDay.get(key) ?? [];
+    arr.push(e);
+    editsByPersonDay.set(key, arr);
+  }
+
+  const result: EditorDayCapacity[] = [];
+  for (const personId of personIds) {
+    const exceptionsForPerson = availabilityExceptions.filter(
+      (a) => a.personId === personId,
+    );
+    const scheduledDays = scheduledDaysByPerson.get(personId) ?? new Set<number>();
+
+    for (const day of days) {
+      const dayOfWeek = isoWeekdayOf(day);
+      const exception = resolveExceptionForDay(exceptionsForPerson, day);
+      const available = exception ?? scheduledDays.has(dayOfWeek);
+
+      const dayEdits = editsByPersonDay.get(`${personId}::${day}`) ?? [];
+      let usedFraction = 0;
+      let unknownFormatCount = 0;
+      for (const e of dayEdits) {
+        const maxPerDay = e.targetFormat
+          ? maxPerDayByPersonFormat.get(`${personId}::${e.targetFormat}`)
+          : undefined;
+        if (maxPerDay != null && maxPerDay > 0) {
+          usedFraction += 1 / maxPerDay;
+        } else {
+          unknownFormatCount += 1;
+        }
+      }
+
+      result.push({
+        personId,
+        date: day,
+        dayOfWeek,
+        available,
+        usedFraction,
+        unknownFormatCount,
+        overloaded:
+          usedFraction > 0 && (!available || usedFraction >= 1 - FULL_DAY_EPSILON),
+      });
+    }
+  }
+
+  return result;
+}

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { resolveCurrentOrganizationId } from "@/lib/organization/current";
+import { isMarketingFormat, isWeekday } from "@/lib/marketing/types";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -169,6 +170,245 @@ export async function deleteAvailability(
     .from("editor_availability")
     .delete()
     .eq("id", id);
+  if (error) return { error: error.message };
+
+  revalidatePath("/marketing/disponibilidad");
+  revalidatePath("/marketing/edicion");
+  return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CRUD de editor_weekly_schedule (0189) — horario semanal recurrente.
+//
+// `upsertWeeklySchedule` crea/actualiza VARIAS filas de una — una por cada
+// día seleccionado, todas con el mismo horario. Simplifica el caso típico
+// ("lunes a viernes 9 a 14") sin obligar a crear 5 bloques a mano. El
+// conflicto (person_id, day_of_week) resuelve como upsert: reconfigurar un
+// día ya cargado simplemente pisa el horario anterior.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type UpsertWeeklyScheduleState =
+  | { ok: true }
+  | { error: string }
+  | null;
+
+export type DeleteWeeklyScheduleResult = { ok: true } | { error: string };
+
+function parseWeeklyScheduleFormData(formData: FormData):
+  | {
+      personId: string;
+      days: number[];
+      startTime: string;
+      endTime: string;
+      notes: string | null;
+    }
+  | string {
+  const personId = String(formData.get("person_id") ?? "").trim();
+  if (personId.length === 0) return "Elegí una persona.";
+
+  const days = formData
+    .getAll("day_of_week")
+    .map((v) => Number.parseInt(String(v), 10))
+    .filter((d) => isWeekday(d));
+  if (days.length === 0) return "Elegí al menos un día de la semana.";
+
+  const startTime = String(formData.get("start_time") ?? "").trim();
+  const endTime = String(formData.get("end_time") ?? "").trim();
+  if (startTime.length === 0 || endTime.length === 0) {
+    return "El horario de inicio y fin son obligatorios.";
+  }
+  if (endTime <= startTime) {
+    return "El horario de fin debe ser posterior al de inicio.";
+  }
+
+  const notes = nullIfEmpty(formData.get("notes"));
+
+  return { personId, days, startTime, endTime, notes };
+}
+
+export async function upsertWeeklySchedule(
+  _prev: UpsertWeeklyScheduleState,
+  formData: FormData,
+): Promise<UpsertWeeklyScheduleState> {
+  const parsed = parseWeeklyScheduleFormData(formData);
+  if (typeof parsed === "string") return { error: parsed };
+
+  let organizationId: string | null;
+  try {
+    organizationId = await resolveCurrentOrganizationId();
+  } catch (e) {
+    return {
+      error: e instanceof Error ? e.message : "Error resolviendo la organización.",
+    };
+  }
+  if (!organizationId) {
+    return { error: "No pudimos resolver tu organización. Revisá tus permisos." };
+  }
+
+  const supabase = await createSupabaseClient();
+  const payload = parsed.days.map((dayOfWeek) => ({
+    organization_id: organizationId,
+    person_id: parsed.personId,
+    day_of_week: dayOfWeek,
+    start_time: parsed.startTime,
+    end_time: parsed.endTime,
+    notes: parsed.notes,
+  })) as never;
+
+  const { error } = await supabase
+    .from("editor_weekly_schedule")
+    .upsert(payload, { onConflict: "person_id,day_of_week" });
+
+  if (error) {
+    if (error.code === "23514") {
+      return {
+        error:
+          "El horario rebotó un guard de coherencia. Verificá que la persona pertenece a tu organización.",
+      };
+    }
+    return { error: error.message };
+  }
+
+  revalidatePath("/marketing/disponibilidad");
+  revalidatePath("/marketing/edicion");
+  return { ok: true };
+}
+
+export type UpdateWeeklyScheduleResult = { ok: true } | { error: string };
+
+export async function updateWeeklyScheduleRow(
+  id: string,
+  startTime: string,
+  endTime: string,
+  notes: string | null,
+): Promise<UpdateWeeklyScheduleResult> {
+  if (!id) return { error: "Falta el id del horario." };
+  if (!startTime || !endTime) {
+    return { error: "El horario de inicio y fin son obligatorios." };
+  }
+  if (endTime <= startTime) {
+    return { error: "El horario de fin debe ser posterior al de inicio." };
+  }
+
+  const supabase = await createSupabaseClient();
+  const payload = {
+    start_time: startTime,
+    end_time: endTime,
+    notes: nullIfEmpty(notes),
+  } as never;
+
+  const { error } = await supabase
+    .from("editor_weekly_schedule")
+    .update(payload)
+    .eq("id", id);
+  if (error) return { error: error.message };
+
+  revalidatePath("/marketing/disponibilidad");
+  revalidatePath("/marketing/edicion");
+  return { ok: true };
+}
+
+export async function deleteWeeklyScheduleRow(
+  id: string,
+): Promise<DeleteWeeklyScheduleResult> {
+  if (!id) return { error: "Falta el id del horario." };
+
+  const supabase = await createSupabaseClient();
+  const { error } = await supabase
+    .from("editor_weekly_schedule")
+    .delete()
+    .eq("id", id);
+  if (error) return { error: error.message };
+
+  revalidatePath("/marketing/disponibilidad");
+  revalidatePath("/marketing/edicion");
+  return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CRUD de editor_format_capacity (0190) — máximo de piezas por formato que
+// un editor puede terminar en un día completo. PK natural (person_id,
+// format) — mismo patrón de upsert que publishing_cadences.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type UpsertFormatCapacityState =
+  | { ok: true }
+  | { error: string }
+  | null;
+
+export type DeleteFormatCapacityResult = { ok: true } | { error: string };
+
+export async function upsertFormatCapacity(
+  _prev: UpsertFormatCapacityState,
+  formData: FormData,
+): Promise<UpsertFormatCapacityState> {
+  const personId = String(formData.get("person_id") ?? "").trim();
+  if (personId.length === 0) return { error: "Elegí una persona." };
+
+  const format = String(formData.get("format") ?? "").trim();
+  if (!isMarketingFormat(format)) return { error: "Formato inválido." };
+
+  const maxPerDayRaw = String(formData.get("max_per_day") ?? "").trim();
+  const maxPerDay = Number.parseInt(maxPerDayRaw, 10);
+  if (!Number.isFinite(maxPerDay) || maxPerDay <= 0) {
+    return { error: "El máximo por día debe ser un número entero mayor a 0." };
+  }
+  if (maxPerDay > 200) {
+    return { error: "El máximo por día parece demasiado alto (máximo 200)." };
+  }
+
+  let organizationId: string | null;
+  try {
+    organizationId = await resolveCurrentOrganizationId();
+  } catch (e) {
+    return {
+      error: e instanceof Error ? e.message : "Error resolviendo la organización.",
+    };
+  }
+  if (!organizationId) {
+    return { error: "No pudimos resolver tu organización. Revisá tus permisos." };
+  }
+
+  const supabase = await createSupabaseClient();
+  const payload = {
+    organization_id: organizationId,
+    person_id: personId,
+    format,
+    max_per_day: maxPerDay,
+  } as never;
+
+  const { error } = await supabase
+    .from("editor_format_capacity")
+    .upsert(payload, { onConflict: "person_id,format" });
+
+  if (error) {
+    if (error.code === "23514") {
+      return {
+        error:
+          "La capacidad rebotó un guard de coherencia. Verificá que la persona pertenece a tu organización.",
+      };
+    }
+    return { error: error.message };
+  }
+
+  revalidatePath("/marketing/disponibilidad");
+  revalidatePath("/marketing/edicion");
+  return { ok: true };
+}
+
+export async function deleteFormatCapacity(
+  personId: string,
+  format: string,
+): Promise<DeleteFormatCapacityResult> {
+  if (!personId) return { error: "Falta el id de la persona." };
+  if (!isMarketingFormat(format)) return { error: "Formato inválido." };
+
+  const supabase = await createSupabaseClient();
+  const { error } = await supabase
+    .from("editor_format_capacity")
+    .delete()
+    .eq("person_id", personId)
+    .eq("format", format);
   if (error) return { error: error.message };
 
   revalidatePath("/marketing/disponibilidad");

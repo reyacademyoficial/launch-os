@@ -12,6 +12,8 @@ import {
 } from "@/lib/marketing/types";
 import { createClient } from "@/lib/supabase/server";
 
+import { cadenceDailyRate } from "@/lib/marketing/stock";
+
 import { CadenciasView, type CadenceRowData } from "./cadencias-view";
 import { NewCadenceButton } from "./new-cadence-button";
 
@@ -35,7 +37,8 @@ interface CadenceDbRow {
   readonly content_owner_id: string;
   readonly platform: string;
   readonly format: string;
-  readonly posts_per_day: number;
+  readonly times_count: number;
+  readonly period_days: number;
   readonly allow_repeat_asset: boolean;
   readonly notes: string | null;
 }
@@ -51,7 +54,7 @@ export default async function CadenciasPage() {
     supabase
       .from("publishing_cadences")
       .select(
-        "content_owner_id, platform, format, posts_per_day, allow_repeat_asset, notes",
+        "content_owner_id, platform, format, times_count, period_days, allow_repeat_asset, notes",
       ),
   ]);
 
@@ -81,7 +84,8 @@ export default async function CadenciasPage() {
         ownersById.get(c.content_owner_id)?.name ?? "(dueño desconocido)",
       platform: c.platform,
       format: c.format,
-      postsPerDay: c.posts_per_day,
+      timesCount: c.times_count,
+      periodDays: c.period_days,
       allowRepeatAsset: c.allow_repeat_asset,
       notes: c.notes,
     }))
@@ -95,7 +99,7 @@ export default async function CadenciasPage() {
 
   const uniqueOwners = new Set(rows.map((r) => r.contentOwnerId)).size;
   const uniquePlatforms = new Set(rows.map((r) => r.platform)).size;
-  const dailyTotal = rows.reduce((sum, r) => sum + r.postsPerDay, 0);
+  const dailyTotal = rows.reduce((sum, r) => sum + cadenceDailyRate(r), 0);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-5">
@@ -106,7 +110,7 @@ export default async function CadenciasPage() {
           { l: "Cadencias", v: fCount(rows.length) },
           { l: "Dueños con cadencia", v: fCount(uniqueOwners) },
           { l: "Plataformas cubiertas", v: fCount(uniquePlatforms) },
-          { l: "Posts/día total", v: fCount(dailyTotal) },
+          { l: "Posts/día total", v: dailyTotal.toFixed(1) },
         ]}
       />
 

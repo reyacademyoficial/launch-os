@@ -38,7 +38,8 @@ interface CadencePayload {
   readonly contentOwnerId: string;
   readonly platform: MarketingPlatform;
   readonly format: MarketingFormat;
-  readonly postsPerDay: number;
+  readonly timesCount: number;
+  readonly periodDays: number;
   readonly allowRepeatAsset: boolean;
   readonly notes: string | null;
 }
@@ -53,13 +54,22 @@ function parseCadenceFormData(formData: FormData): CadencePayload | string {
   const format = String(formData.get("format") ?? "").trim();
   if (!isMarketingFormat(format)) return "Formato inválido.";
 
-  const postsPerDayRaw = String(formData.get("posts_per_day") ?? "").trim();
-  const postsPerDay = Number.parseInt(postsPerDayRaw, 10);
-  if (!Number.isFinite(postsPerDay) || postsPerDay <= 0) {
-    return "Posts por día debe ser un número entero mayor a 0.";
+  const timesCountRaw = String(formData.get("times_count") ?? "").trim();
+  const timesCount = Number.parseInt(timesCountRaw, 10);
+  if (!Number.isFinite(timesCount) || timesCount <= 0) {
+    return "La cantidad debe ser un número entero mayor a 0.";
   }
-  if (postsPerDay > 100) {
-    return "Posts por día parece demasiado alto (máximo 100).";
+  if (timesCount > 100) {
+    return "La cantidad parece demasiado alta (máximo 100).";
+  }
+
+  const periodDaysRaw = String(formData.get("period_days") ?? "").trim();
+  const periodDays = Number.parseInt(periodDaysRaw, 10);
+  if (!Number.isFinite(periodDays) || periodDays <= 0) {
+    return "El período (cada cuántos días) debe ser un número entero mayor a 0.";
+  }
+  if (periodDays > 90) {
+    return "El período parece demasiado largo (máximo 90 días).";
   }
 
   const allowRepeatAssetRaw = formData.get("allow_repeat_asset");
@@ -71,7 +81,8 @@ function parseCadenceFormData(formData: FormData): CadencePayload | string {
     contentOwnerId,
     platform,
     format,
-    postsPerDay,
+    timesCount,
+    periodDays,
     allowRepeatAsset,
     notes,
   };
@@ -106,7 +117,8 @@ export async function upsertCadence(
     platform: parsed.platform,
     format: parsed.format,
     organization_id: organizationId,
-    posts_per_day: parsed.postsPerDay,
+    times_count: parsed.timesCount,
+    period_days: parsed.periodDays,
     allow_repeat_asset: parsed.allowRepeatAsset,
     notes: parsed.notes,
   } as never;

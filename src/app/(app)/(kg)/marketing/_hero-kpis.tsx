@@ -43,7 +43,7 @@ export function MarketingHeroKpis({
             : "El par owner×platform peor parado"
         }
         tone={minDaysTone}
-        help="Se calcula por (owner, platform) sumando stock a través de formats y dividiendo por posts_per_day."
+        help="Se calcula por (owner, platform) sumando stock a través de formats y dividiendo por la tasa diaria de la cadencia (cantidad ÷ cada N días)."
       />
       <HeroKpi
         label="Grabaciones próximas"

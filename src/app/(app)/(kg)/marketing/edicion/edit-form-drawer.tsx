@@ -13,6 +13,11 @@ import {
 } from "@/components/kg/form-primitives";
 
 import {
+  FORMAT_LABEL,
+  MARKETING_FORMATS,
+} from "@/lib/marketing/types";
+
+import {
   createContentEdit,
   deleteContentEdit,
   updateContentEdit,
@@ -50,6 +55,7 @@ export interface EditInitial {
   readonly title: string;
   readonly editorPersonId: string | null;
   readonly dueDate: string | null;
+  readonly targetFormat: string | null;
   readonly notes: string | null;
 }
 
@@ -274,6 +280,26 @@ function EditFormBody({
           </Field>
         </div>
       </div>
+
+      <Field
+        label="Formato esperado"
+        htmlFor="target_format"
+        hint="Opcional — lo que se espera que salga de esta edición. Se usa para calcular la capacidad diaria del editor."
+      >
+        <select
+          id="target_format"
+          name="target_format"
+          defaultValue={initial?.targetFormat ?? ""}
+          style={inputStyle}
+        >
+          <option value="">— Sin definir —</option>
+          {MARKETING_FORMATS.map((f) => (
+            <option key={f} value={f}>
+              {FORMAT_LABEL[f]}
+            </option>
+          ))}
+        </select>
+      </Field>
 
       <Field label="Notas" htmlFor="notes">
         <textarea

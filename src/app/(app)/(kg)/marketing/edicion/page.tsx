@@ -8,6 +8,7 @@ import { KgPageFilters } from "@/components/kg/page-menu";
 import { Panel } from "@/components/kg/panel";
 import { fCount } from "@/lib/finance/format";
 import { getOrgPeople } from "@/lib/finance/reference";
+import { isMarketingFormat, type MarketingFormat } from "@/lib/marketing/types";
 import { createClient } from "@/lib/supabase/server";
 
 import { EdicionView, type EditRowData } from "./edicion-view";
@@ -66,6 +67,7 @@ interface EditDbRow {
   readonly editor_person_id: string | null;
   readonly due_date: string | null;
   readonly completed_at: string | null;
+  readonly target_format: string | null;
   readonly notes: string | null;
   readonly created_at: string;
 }
@@ -75,6 +77,17 @@ interface AvailabilityDbRow {
   readonly date_from: string;
   readonly date_to: string;
   readonly available: boolean;
+}
+
+interface WeeklyScheduleDbRow {
+  readonly person_id: string;
+  readonly day_of_week: number;
+}
+
+interface FormatCapacityDbRow {
+  readonly person_id: string;
+  readonly format: string;
+  readonly max_per_day: number;
 }
 
 type StatusFilter = "queued" | "done" | "all";
@@ -98,32 +111,44 @@ export default async function EdicionPage({
   let editsQuery = supabase
     .from("content_edits")
     .select(
-      "id, content_owner_id, source_content_raw_id, title, editor_person_id, due_date, completed_at, notes, created_at",
+      "id, content_owner_id, source_content_raw_id, title, editor_person_id, due_date, completed_at, target_format, notes, created_at",
     )
     .order("sort_order", { ascending: true });
   if (dateFromFilter) editsQuery = editsQuery.gte("due_date", dateFromFilter);
   if (dateToFilter) editsQuery = editsQuery.lte("due_date", dateToFilter);
 
-  const [ownersRes, personsRef, rawsRes, piecesRes, editsRes, availRes] =
-    await Promise.all([
-      supabase
-        .from("content_owners")
-        .select("id, name, active")
-        .order("name", { ascending: true }),
-      getOrgPeople(),
-      supabase
-        .from("content_raws")
-        .select("id, content_owner_id, name, drive_url")
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("content_pieces")
-        .select("id, content_owner_id, title")
-        .neq("stage", "descartado"),
-      editsQuery,
-      supabase
-        .from("editor_availability")
-        .select("person_id, date_from, date_to, available"),
-    ]);
+  const [
+    ownersRes,
+    personsRef,
+    rawsRes,
+    piecesRes,
+    editsRes,
+    availRes,
+    scheduleRes,
+    capacityRes,
+  ] = await Promise.all([
+    supabase
+      .from("content_owners")
+      .select("id, name, active")
+      .order("name", { ascending: true }),
+    getOrgPeople(),
+    supabase
+      .from("content_raws")
+      .select("id, content_owner_id, name, drive_url")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("content_pieces")
+      .select("id, content_owner_id, title")
+      .neq("stage", "descartado"),
+    editsQuery,
+    supabase
+      .from("editor_availability")
+      .select("person_id, date_from, date_to, available"),
+    supabase.from("editor_weekly_schedule").select("person_id, day_of_week"),
+    supabase
+      .from("editor_format_capacity")
+      .select("person_id, format, max_per_day"),
+  ]);
 
   const owners = (ownersRes.data ?? []) as unknown as OwnerLite[];
   const persons = personsRef as unknown as PersonLite[];
@@ -131,6 +156,8 @@ export default async function EdicionPage({
   const pieces = (piecesRes.data ?? []) as unknown as PieceLite[];
   const edits = (editsRes.data ?? []) as unknown as EditDbRow[];
   const availability = (availRes.data ?? []) as unknown as AvailabilityDbRow[];
+  const weeklySchedule = (scheduleRes.data ?? []) as unknown as WeeklyScheduleDbRow[];
+  const formatCapacities = (capacityRes.data ?? []) as unknown as FormatCapacityDbRow[];
 
   const ownersById = new Map<string, OwnerLite>();
   for (const o of owners) ownersById.set(o.id, o);
@@ -175,6 +202,9 @@ export default async function EdicionPage({
       editorName: editor?.full_name ?? null,
       dueDate: e.due_date,
       completedAt: e.completed_at,
+      targetFormat: (e.target_format && isMarketingFormat(e.target_format)
+        ? e.target_format
+        : null) as MarketingFormat | null,
       notes: e.notes,
       createdAt: e.created_at,
     };
@@ -345,6 +375,15 @@ export default async function EdicionPage({
           rawOptions={rawOptions}
           pieceOptions={pieceOptionsForComplete}
           availability={availabilityInput}
+          weeklySchedule={weeklySchedule.map((s) => ({
+            personId: s.person_id,
+            dayOfWeek: s.day_of_week,
+          }))}
+          formatCapacities={formatCapacities.map((c) => ({
+            personId: c.person_id,
+            format: c.format,
+            maxPerDay: c.max_per_day,
+          }))}
           planningWindow={planningWindow}
         />
       </Panel>
