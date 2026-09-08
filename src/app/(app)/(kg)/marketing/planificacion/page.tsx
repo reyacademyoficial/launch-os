@@ -83,27 +83,23 @@ export default async function PlanificacionPage({
   const formatFilter = parseFormatFilter(sp.format);
   const dateFromFilter = parseSingle(sp.dateFrom);
   const dateToFilter = parseSingle(sp.dateTo);
-  const sortByDate = parseSingle(sp.sort) === "fecha";
-  const sortDir = parseSingle(sp.dir) === "desc" ? "desc" : "asc";
 
   const supabase = await createClient();
 
   // Además de owners+pieces (lo propio de esta vista), traemos también
   // organization_people activas — se pasan al drawer de sesión que se abre
   // desde el botón "Programar grabación" en la fila de la piece.
+  // Orden base: manual (sort_order) — el orden por columna que ve el usuario
+  // al clickear un encabezado se aplica client-side sobre estas mismas filas
+  // (ver PlanificacionView), sin volver a pedirle al server.
   let piecesQuery = supabase
     .from("content_pieces")
     .select(
       "id, content_owner_id, title, script_md, category, format, platforms, scheduled_recording_at, scheduled_publish_at, stage, recording_session_id, is_daily_recurring, notes",
-    );
+    )
+    .order("sort_order", { ascending: true });
   if (dateFromFilter) piecesQuery = piecesQuery.gte("scheduled_publish_at", dateFromFilter);
   if (dateToFilter) piecesQuery = piecesQuery.lte("scheduled_publish_at", dateToFilter);
-  piecesQuery = sortByDate
-    ? piecesQuery.order("scheduled_publish_at", {
-        ascending: sortDir === "asc",
-        nullsFirst: false,
-      })
-    : piecesQuery.order("sort_order", { ascending: true });
 
   const [ownersRes, piecesRes, personsRef] = await Promise.all([
     supabase
@@ -215,13 +211,9 @@ export default async function PlanificacionPage({
     if (nextOwner) params.set("owner", nextOwner);
     if (nextCategory !== "all") params.set("category", nextCategory);
     if (nextFormat !== "all") params.set("format", nextFormat);
-    // Preserva rango de fecha y orden — cambiar un pill no debe resetearlos.
+    // Preserva rango de fecha — cambiar un pill no debe resetearlo.
     if (dateFromFilter) params.set("dateFrom", dateFromFilter);
     if (dateToFilter) params.set("dateTo", dateToFilter);
-    if (sortByDate) {
-      params.set("sort", "fecha");
-      params.set("dir", sortDir);
-    }
 
     const qs = params.toString();
     return qs ? `/marketing/planificacion?${qs}` : "/marketing/planificacion";

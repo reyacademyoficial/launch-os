@@ -53,6 +53,7 @@ interface SessionPayload {
   readonly durationMinutes: number | null;
   readonly location: string | null;
   readonly materials: string | null;
+  readonly scriptUrl: string | null;
   readonly notes: string | null;
   readonly assignees: readonly AssigneeInput[];
   readonly pieceIds: readonly string[];
@@ -84,6 +85,7 @@ function parseSessionFormData(formData: FormData): SessionPayload | string {
 
   const location = nullIfEmpty(formData.get("location"));
   const materials = nullIfEmpty(formData.get("materials"));
+  const scriptUrl = nullIfEmpty(formData.get("script_url"));
   const notes = nullIfEmpty(formData.get("notes"));
 
   const personIds = formData.getAll("assignee_person_id").map((v) => String(v));
@@ -116,6 +118,7 @@ function parseSessionFormData(formData: FormData): SessionPayload | string {
     durationMinutes,
     location,
     materials,
+    scriptUrl,
     notes,
     assignees,
     pieceIds,
@@ -290,6 +293,7 @@ export async function createSession(
     duration_minutes: parsed.durationMinutes,
     location: parsed.location,
     materials: parsed.materials,
+    script_url: parsed.scriptUrl,
     notes: parsed.notes,
     // status default 'planificada' desde 0160
   } as never;
@@ -370,6 +374,7 @@ export async function updateSession(
     duration_minutes: parsed.durationMinutes,
     location: parsed.location,
     materials: parsed.materials,
+    script_url: parsed.scriptUrl,
     notes: parsed.notes,
   } as never;
 

@@ -90,20 +90,19 @@ export default async function EdicionPage({
   const statusFilter = parseStatusFilter(sp.status);
   const dateFromFilter = parseSingle(sp.dateFrom);
   const dateToFilter = parseSingle(sp.dateTo);
-  const manualSort = sp.sort === "manual";
 
   const supabase = await createClient();
 
+  // Orden base: manual (sort_order). El orden por columna que ve el usuario
+  // al clickear un encabezado se aplica client-side (ver EdicionView).
   let editsQuery = supabase
     .from("content_edits")
     .select(
       "id, content_owner_id, source_content_raw_id, title, editor_person_id, due_date, completed_at, notes, created_at",
-    );
+    )
+    .order("sort_order", { ascending: true });
   if (dateFromFilter) editsQuery = editsQuery.gte("due_date", dateFromFilter);
   if (dateToFilter) editsQuery = editsQuery.lte("due_date", dateToFilter);
-  editsQuery = manualSort
-    ? editsQuery.order("sort_order", { ascending: true })
-    : editsQuery.order("created_at", { ascending: false });
 
   const [ownersRes, personsRef, rawsRes, piecesRes, editsRes, availRes] =
     await Promise.all([
@@ -236,7 +235,6 @@ export default async function EdicionPage({
     if (nextStatus !== "all") params.set("status", nextStatus);
     if (dateFromFilter) params.set("dateFrom", dateFromFilter);
     if (dateToFilter) params.set("dateTo", dateToFilter);
-    if (manualSort) params.set("sort", "manual");
     const qs = params.toString();
     return qs ? `/marketing/edicion?${qs}` : "/marketing/edicion";
   }

@@ -72,6 +72,7 @@ export interface SessionInitial {
   readonly durationMinutes?: number | null;
   readonly location?: string | null;
   readonly materials?: string | null;
+  readonly scriptUrl?: string | null;
   readonly notes?: string | null;
   readonly assignees?: readonly {
     readonly personId: string;
@@ -335,6 +336,21 @@ function SessionFormBody({
           defaultValue={initial?.materials ?? ""}
           placeholder="Cámara, luces, atril, props especiales..."
           style={{ ...inputStyle, resize: "vertical", minHeight: 60 }}
+        />
+      </Field>
+
+      <Field
+        label="Guion"
+        htmlFor="script_url"
+        hint="Opcional — link a Drive con el guion de la grabación."
+      >
+        <input
+          id="script_url"
+          name="script_url"
+          type="url"
+          defaultValue={initial?.scriptUrl ?? ""}
+          placeholder="https://drive.google.com/..."
+          style={inputStyle}
         />
       </Field>
 

@@ -1,7 +1,6 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 
 import { KgDataTable, type Column, type SortDir } from "@/components/kg/data-table";
 import { KgDetailDrawer, type DetailField } from "@/components/kg/detail-drawer";
@@ -24,6 +23,7 @@ import {
   type MarketingPlatform,
   type MarketingStage,
 } from "@/lib/marketing/types";
+import { compareSortValues, type SortValue } from "@/lib/kg/sort";
 
 import { reorderPieces, setPieceStage } from "./actions";
 import {
@@ -81,25 +81,42 @@ export function PlanificacionView({
   const [schedulingFromPiece, setSchedulingFromPiece] =
     useState<PieceRowData | null>(null);
 
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const sortByDate = searchParams?.get("sort") === "fecha";
-  const sortDir: SortDir = searchParams?.get("dir") === "desc" ? "desc" : "asc";
+  const [sortState, setSortState] = useState<{ key: string; dir: SortDir } | null>(
+    null,
+  );
 
-  function setSort(key: string, dir: SortDir) {
-    const sp = new URLSearchParams(searchParams?.toString() ?? "");
-    sp.set("sort", key);
-    sp.set("dir", dir);
-    router.replace(`?${sp.toString()}`, { scroll: false });
+  function sortValueFor(row: PieceRowData, key: string): SortValue {
+    switch (key) {
+      case "title":
+        return row.title;
+      case "owner":
+        return row.ownerName;
+      case "category":
+        return CATEGORY_LABEL[row.category];
+      case "format":
+        return FORMAT_LABEL[row.format];
+      case "platforms":
+        return row.platforms.map((p) => PLATFORM_LABEL[p]).join(", ");
+      case "recording":
+        return row.scheduledRecordingAt;
+      case "publish":
+        return row.scheduledPublishAt;
+      case "stage":
+        return STAGE_LABEL[row.stage];
+      default:
+        return null;
+    }
   }
 
-  function clearSort() {
-    const sp = new URLSearchParams(searchParams?.toString() ?? "");
-    sp.delete("sort");
-    sp.delete("dir");
-    const qs = sp.toString();
-    router.replace(qs ? `?${qs}` : "?", { scroll: false });
-  }
+  const sortedRows = useMemo(() => {
+    if (!sortState) return rows;
+    const dirMul = sortState.dir === "asc" ? 1 : -1;
+    return [...rows].sort(
+      (a, b) =>
+        compareSortValues(sortValueFor(a, sortState.key), sortValueFor(b, sortState.key)) *
+        dirMul,
+    );
+  }, [rows, sortState]);
 
   function handleReorder(orderedIds: readonly string[]) {
     setError(null);
@@ -145,6 +162,7 @@ export function PlanificacionView({
     {
       key: "title",
       label: "Título",
+      sortable: true,
       render: (r) => (
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <span style={{ color: "var(--kg-text-1)", fontWeight: 600 }}>
@@ -164,21 +182,25 @@ export function PlanificacionView({
     {
       key: "owner",
       label: "Dueño",
+      sortable: true,
       render: (r) => r.ownerName,
     },
     {
       key: "category",
       label: "Categoría",
+      sortable: true,
       render: (r) => CATEGORY_LABEL[r.category],
     },
     {
       key: "format",
       label: "Formato",
+      sortable: true,
       render: (r) => FORMAT_LABEL[r.format],
     },
     {
       key: "platforms",
       label: "Plataformas",
+      sortable: true,
       render: (r) =>
         r.platforms.length === 0 ? (
           "—"
@@ -205,6 +227,7 @@ export function PlanificacionView({
     {
       key: "recording",
       label: "Grabación",
+      sortable: true,
       render: (r) =>
         r.scheduledRecordingAt ? formatDateTime(r.scheduledRecordingAt) : "—",
     },
@@ -212,12 +235,12 @@ export function PlanificacionView({
       key: "publish",
       label: "Publicación",
       sortable: true,
-      sortKey: "fecha",
       render: (r) => (r.scheduledPublishAt ? formatDate(r.scheduledPublishAt) : "—"),
     },
     {
       key: "stage",
       label: "Estado",
+      sortable: true,
       render: (r) => (
         <StatusPill text={STAGE_LABEL[r.stage]} tone={STAGE_TONE[r.stage]} />
       ),
@@ -365,7 +388,7 @@ export function PlanificacionView({
         </div>
       )}
 
-      {sortByDate && (
+      {sortState && (
         <div
           style={{
             margin: "12px 20px 0",
@@ -375,11 +398,11 @@ export function PlanificacionView({
           }}
         >
           <span className="kg-t7" style={{ color: "var(--kg-text-3)" }}>
-            Ordenado por fecha de publicación — el orden manual queda pausado.
+            Ordenado por columna — el orden manual queda pausado.
           </span>
           <button
             type="button"
-            onClick={clearSort}
+            onClick={() => setSortState(null)}
             className="kg-focus"
             style={{ ...rowBtn, padding: "2px 8px" }}
           >
@@ -390,7 +413,7 @@ export function PlanificacionView({
 
       <KgDataTable
         columns={columns}
-        rows={rows}
+        rows={sortedRows}
         rowKey={(r) => r.id}
         totalCount={rows.length}
         emptyTitle="Sin planificaciones que coincidan con el filtro"
@@ -400,8 +423,12 @@ export function PlanificacionView({
             : "Cuando planificás un contenido, se lista acá y pasa a Grabación cuando lo asignás a una sesión."
         }
         fillHeight
-        sort={{ key: sortByDate ? "fecha" : null, dir: sortDir, onChange: setSort }}
-        dragSort={{ active: !sortByDate, onReorder: handleReorder, disabled: pending }}
+        sort={{
+          key: sortState?.key ?? null,
+          dir: sortState?.dir ?? "asc",
+          onChange: (key, dir) => setSortState({ key, dir }),
+        }}
+        dragSort={{ active: sortState == null, onReorder: handleReorder, disabled: pending }}
         onRowClick={(r) => setViewingId(r.id)}
       />
 

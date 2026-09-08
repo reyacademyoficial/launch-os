@@ -78,6 +78,7 @@ interface SessionDbRow {
   readonly duration_minutes: number | null;
   readonly location: string | null;
   readonly materials: string | null;
+  readonly script_url: string | null;
   readonly notes: string | null;
   readonly status: string;
 }
@@ -108,7 +109,6 @@ export default async function GrabacionPage({
   const rangeParam = parseRange(sp.range);
   const fromParam = parseYmd(sp.from);
   const toParam = parseYmd(sp.to);
-  const manualSort = sp.sort === "manual";
 
   // El rango temporal SOLO se aplica en vista tabla. En calendario navegás
   // por mes con las flechas — el filtro no aplica.
@@ -123,14 +123,14 @@ export default async function GrabacionPage({
 
   const supabase = await createClient();
 
+  // Orden base: manual (sort_order). El orden por columna que ve el usuario
+  // al clickear un encabezado se aplica client-side (ver GrabacionView).
   let sessionsQuery = supabase
     .from("recording_sessions")
     .select(
-      "id, content_owner_id, name, scheduled_at, duration_minutes, location, materials, notes, status",
-    );
-  sessionsQuery = manualSort
-    ? sessionsQuery.order("sort_order", { ascending: true })
-    : sessionsQuery.order("scheduled_at", { ascending: false });
+      "id, content_owner_id, name, scheduled_at, duration_minutes, location, materials, script_url, notes, status",
+    )
+    .order("sort_order", { ascending: true });
   if (period) {
     // scheduled_at es timestamptz; comparamos contra rangos de día inclusivos.
     // fromYmd → 00:00 (implícito al comparar >= 'YYYY-MM-DD'); para toYmd
@@ -240,6 +240,7 @@ export default async function GrabacionPage({
         durationMinutes: s.duration_minutes,
         location: s.location,
         materials: s.materials,
+        scriptUrl: s.script_url,
         notes: s.notes,
         status: s.status,
         assignees: assigneesBySession.get(s.id) ?? [],

@@ -165,6 +165,8 @@ export interface RecordingSessionRow {
   readonly durationMinutes: number | null;
   readonly location: string | null;
   readonly materials: string | null;
+  /** Link opcional al guion (típicamente Drive). 0187. */
+  readonly scriptUrl: string | null;
   readonly notes: string | null;
   readonly status: RecordingSessionStatus;
   readonly completedAt: string | null;

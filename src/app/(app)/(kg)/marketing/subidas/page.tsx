@@ -109,7 +109,6 @@ export default async function SubidasPage({
   const rangeParam = parseRange(sp.range);
   const fromParam = parseYmd(sp.from);
   const toParam = parseYmd(sp.to);
-  const manualSort = sp.sort === "manual";
 
   // Rango temporal SOLO se aplica en vista tabla (en calendario navegás por mes).
   const isCustom = fromParam != null && toParam != null;
@@ -123,14 +122,14 @@ export default async function SubidasPage({
 
   const supabase = await createClient();
 
+  // Orden base: manual (sort_order). El orden por columna que ve el usuario
+  // al clickear un encabezado se aplica client-side (ver SubidasView).
   let uploadsQuery = supabase
     .from("content_uploads")
     .select(
       "id, content_asset_id, platform, scheduled_for, uploaded_at, status, public_url, notes, planned_by_person_id, uploaded_by_person_id",
-    );
-  uploadsQuery = manualSort
-    ? uploadsQuery.order("sort_order", { ascending: true })
-    : uploadsQuery.order("scheduled_for", { ascending: false });
+    )
+    .order("sort_order", { ascending: true });
   if (period) {
     // scheduled_for es `date` (yyyy-mm-dd), comparación lexicográfica OK.
     uploadsQuery = uploadsQuery
@@ -319,7 +318,6 @@ export default async function SubidasPage({
       } else if (rangeParam !== "todo") {
         params.set("range", rangeParam);
       }
-      if (manualSort) params.set("sort", "manual");
     }
 
     const qs = params.toString();

@@ -61,20 +61,19 @@ export default async function CrudosPage({
   const sessionFilter = parseSessionFilter(sp.session);
   const dateFromFilter = parseSingle(sp.dateFrom);
   const dateToFilter = parseSingle(sp.dateTo);
-  const manualSort = sp.sort === "manual";
 
   const supabase = await createClient();
 
+  // Orden base: manual (sort_order). El orden por columna que ve el usuario
+  // al clickear un encabezado se aplica client-side (ver CrudosView).
   let rawsQuery = supabase
     .from("content_raws")
     .select(
       "id, content_owner_id, source_recording_session_id, name, drive_url, notes, created_at",
-    );
+    )
+    .order("sort_order", { ascending: true });
   if (dateFromFilter) rawsQuery = rawsQuery.gte("created_at", dateFromFilter);
   if (dateToFilter) rawsQuery = rawsQuery.lte("created_at", `${dateToFilter}T23:59:59`);
-  rawsQuery = manualSort
-    ? rawsQuery.order("sort_order", { ascending: true })
-    : rawsQuery.order("created_at", { ascending: false });
 
   const [ownersRes, sessionsRes, rawsRes, editsRes] = await Promise.all([
     supabase.from("content_owners").select("id, name, active").order("name"),
@@ -162,7 +161,6 @@ export default async function CrudosPage({
     if (nextSession !== "all") params.set("session", nextSession);
     if (dateFromFilter) params.set("dateFrom", dateFromFilter);
     if (dateToFilter) params.set("dateTo", dateToFilter);
-    if (manualSort) params.set("sort", "manual");
     const qs = params.toString();
     return qs ? `/marketing/crudos?${qs}` : "/marketing/crudos";
   }

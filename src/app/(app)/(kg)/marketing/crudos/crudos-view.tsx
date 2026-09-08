@@ -1,11 +1,11 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 
-import { KgDataTable, type Column } from "@/components/kg/data-table";
+import { KgDataTable, type Column, type SortDir } from "@/components/kg/data-table";
 import { KgDetailDrawer, type DetailField } from "@/components/kg/detail-drawer";
 import { StateDot } from "@/components/kg/state-dot";
+import { compareSortValues, type SortValue } from "@/lib/kg/sort";
 
 import { reorderRaws } from "./actions";
 import {
@@ -50,17 +50,36 @@ export function CrudosView({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const manualSort = searchParams?.get("sort") === "manual";
+  const [sortState, setSortState] = useState<{ key: string; dir: SortDir } | null>(
+    null,
+  );
 
-  function toggleManualSort(next: boolean) {
-    const sp = new URLSearchParams(searchParams?.toString() ?? "");
-    if (next) sp.set("sort", "manual");
-    else sp.delete("sort");
-    const qs = sp.toString();
-    router.replace(qs ? `?${qs}` : "?", { scroll: false });
+  function sortValueFor(row: RawRowData, key: string): SortValue {
+    switch (key) {
+      case "name":
+        return row.name;
+      case "owner":
+        return row.ownerName;
+      case "session":
+        return row.sessionLabel;
+      case "created":
+        return row.createdAt;
+      case "edits":
+        return row.editsCount;
+      default:
+        return null;
+    }
   }
+
+  const sortedRows = useMemo(() => {
+    if (!sortState) return rows;
+    const dirMul = sortState.dir === "asc" ? 1 : -1;
+    return [...rows].sort(
+      (a, b) =>
+        compareSortValues(sortValueFor(a, sortState.key), sortValueFor(b, sortState.key)) *
+        dirMul,
+    );
+  }, [rows, sortState]);
 
   function handleReorder(orderedIds: readonly string[]) {
     setError(null);
@@ -89,6 +108,7 @@ export function CrudosView({
     {
       key: "name",
       label: "Nombre",
+      sortable: true,
       render: (r) => (
         <span style={{ color: "var(--kg-text-1)", fontWeight: 600 }}>
           {r.name}
@@ -98,11 +118,13 @@ export function CrudosView({
     {
       key: "owner",
       label: "Dueño",
+      sortable: true,
       render: (r) => r.ownerName,
     },
     {
       key: "session",
       label: "Sesión origen",
+      sortable: true,
       render: (r) =>
         r.sessionLabel ? (
           r.sessionLabel
@@ -132,6 +154,7 @@ export function CrudosView({
     {
       key: "created",
       label: "Cargado",
+      sortable: true,
       render: (r) => (
         <span style={{ color: "var(--kg-text-2)", fontVariantNumeric: "tabular-nums" }}>
           {formatDay(r.createdAt)}
@@ -143,6 +166,7 @@ export function CrudosView({
       label: "Ediciones",
       align: "right",
       numeric: true,
+      sortable: true,
       render: (r) =>
         r.editsCount === 0 ? (
           <span
@@ -228,30 +252,36 @@ export function CrudosView({
         </div>
       )}
 
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <label
-          className="kg-t7"
-          style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--kg-text-3)" }}
-        >
-          <input
-            type="checkbox"
-            checked={manualSort}
-            onChange={(e) => toggleManualSort(e.target.checked)}
-            style={{ accentColor: "var(--kg-accent-500)", cursor: "pointer" }}
-          />
-          Orden manual (arrastrar filas)
-        </label>
-      </div>
+      {sortState && (
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <span className="kg-t7" style={{ color: "var(--kg-text-3)", marginRight: 8 }}>
+            Ordenado por columna — el orden manual queda pausado.
+          </span>
+          <button
+            type="button"
+            onClick={() => setSortState(null)}
+            className="kg-focus"
+            style={{ ...rowBtn, padding: "2px 8px" }}
+          >
+            Volver a orden manual
+          </button>
+        </div>
+      )}
 
       <KgDataTable
         columns={columns}
-        rows={rows}
+        rows={sortedRows}
         rowKey={(r) => r.id}
         totalCount={rows.length}
         emptyTitle="Sin crudos cargados"
         emptyHint="Los crudos aparecen acá después de una grabación realizada, o se cargan sueltos. Desde acá se abre una edición."
         fillHeight
-        dragSort={{ active: manualSort, onReorder: handleReorder, disabled: pending }}
+        sort={{
+          key: sortState?.key ?? null,
+          dir: sortState?.dir ?? "asc",
+          onChange: (key, dir) => setSortState({ key, dir }),
+        }}
+        dragSort={{ active: sortState == null, onReorder: handleReorder, disabled: pending }}
         onRowClick={(r) => setViewingId(r.id)}
       />
 

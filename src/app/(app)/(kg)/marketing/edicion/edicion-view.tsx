@@ -1,9 +1,8 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
-import { KgDataTable, type Column } from "@/components/kg/data-table";
+import { KgDataTable, type Column, type SortDir } from "@/components/kg/data-table";
 import { KgDetailDrawer, type DetailField } from "@/components/kg/detail-drawer";
 import { StatusPill } from "@/components/kg/status-pill";
 import {
@@ -17,6 +16,7 @@ import {
   type EditorAssetInput,
   type EditorAvailabilityInput,
 } from "@/lib/marketing/editor-load";
+import { compareSortValues, type SortValue } from "@/lib/kg/sort";
 
 import { reopenContentEdit, reorderEdits } from "./actions";
 import {
@@ -78,17 +78,36 @@ export function EdicionView({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const manualSort = searchParams?.get("sort") === "manual";
+  const [sortState, setSortState] = useState<{ key: string; dir: SortDir } | null>(
+    null,
+  );
 
-  function toggleManualSort(next: boolean) {
-    const sp = new URLSearchParams(searchParams?.toString() ?? "");
-    if (next) sp.set("sort", "manual");
-    else sp.delete("sort");
-    const qs = sp.toString();
-    router.replace(qs ? `?${qs}` : "?", { scroll: false });
+  function sortValueFor(row: EditRowData, key: string): SortValue {
+    switch (key) {
+      case "title":
+        return row.title;
+      case "owner":
+        return row.ownerName;
+      case "editor":
+        return row.editorName;
+      case "due_date":
+        return row.dueDate;
+      case "status":
+        return row.completedAt ?? "en_cola";
+      default:
+        return null;
+    }
   }
+
+  const sortedRows = useMemo(() => {
+    if (!sortState) return rows;
+    const dirMul = sortState.dir === "asc" ? 1 : -1;
+    return [...rows].sort(
+      (a, b) =>
+        compareSortValues(sortValueFor(a, sortState.key), sortValueFor(b, sortState.key)) *
+        dirMul,
+    );
+  }, [rows, sortState]);
 
   function handleReorder(orderedIds: readonly string[]) {
     setError(null);
@@ -195,6 +214,7 @@ export function EdicionView({
     {
       key: "title",
       label: "Edición",
+      sortable: true,
       render: (r) => (
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <span style={{ color: "var(--kg-text-1)", fontWeight: 600 }}>
@@ -225,11 +245,13 @@ export function EdicionView({
     {
       key: "owner",
       label: "Dueño",
+      sortable: true,
       render: (r) => r.ownerName,
     },
     {
       key: "editor",
       label: "Editor",
+      sortable: true,
       render: (r) =>
         r.editorName ? (
           r.editorName
@@ -240,6 +262,7 @@ export function EdicionView({
     {
       key: "due_date",
       label: "Objetivo",
+      sortable: true,
       render: (r) => {
         if (r.completedAt != null) {
           return (
@@ -282,6 +305,7 @@ export function EdicionView({
     {
       key: "status",
       label: "Estado",
+      sortable: true,
       render: (r) =>
         r.completedAt ? (
           <StatusPill
@@ -427,23 +451,24 @@ export function EdicionView({
 
       {view === "tabla" ? (
         <>
-          <div style={{ padding: "0 20px 8px", display: "flex", justifyContent: "flex-end" }}>
-            <label
-              className="kg-t7"
-              style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--kg-text-3)" }}
-            >
-              <input
-                type="checkbox"
-                checked={manualSort}
-                onChange={(e) => toggleManualSort(e.target.checked)}
-                style={{ accentColor: "var(--kg-accent-500)", cursor: "pointer" }}
-              />
-              Orden manual (arrastrar filas)
-            </label>
-          </div>
+          {sortState && (
+            <div style={{ padding: "0 20px 8px", display: "flex", justifyContent: "flex-end" }}>
+              <span className="kg-t7" style={{ color: "var(--kg-text-3)", marginRight: 8 }}>
+                Ordenado por columna — el orden manual queda pausado.
+              </span>
+              <button
+                type="button"
+                onClick={() => setSortState(null)}
+                className="kg-focus"
+                style={{ ...rowBtn, padding: "2px 8px" }}
+              >
+                Volver a orden manual
+              </button>
+            </div>
+          )}
           <KgDataTable
             columns={columns}
-            rows={rows}
+            rows={sortedRows}
             rowKey={(r) => r.id}
             totalCount={rows.length}
             emptyTitle="Sin ediciones en curso"
@@ -453,7 +478,12 @@ export function EdicionView({
                 : "Las ediciones nacen desde un crudo (pestaña Crudos) o se crean sueltas acá. Al marcarlas realizadas, los archivos que salen pasan al stock de Subidas."
             }
             fillHeight
-            dragSort={{ active: manualSort, onReorder: handleReorder, disabled: pending }}
+            sort={{
+              key: sortState?.key ?? null,
+              dir: sortState?.dir ?? "asc",
+              onChange: (key, dir) => setSortState({ key, dir }),
+            }}
+            dragSort={{ active: sortState == null, onReorder: handleReorder, disabled: pending }}
             onRowClick={(r) => setViewingId(r.id)}
           />
         </>

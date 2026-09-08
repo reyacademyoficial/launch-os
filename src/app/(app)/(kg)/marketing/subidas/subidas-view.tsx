@@ -1,10 +1,9 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
 import { KgCalendar, type KgCalendarEvent } from "@/components/kg/calendar";
-import { KgDataTable, type Column } from "@/components/kg/data-table";
+import { KgDataTable, type Column, type SortDir } from "@/components/kg/data-table";
 import { Drawer } from "@/components/kg/drawer";
 import { StatusPill } from "@/components/kg/status-pill";
 import {
@@ -17,6 +16,7 @@ import {
   type MarketingPlatform,
   type UploadStatus,
 } from "@/lib/marketing/types";
+import { compareSortValues, type SortValue } from "@/lib/kg/sort";
 
 import { markUploaded, reorderUploads, setUploadStatus } from "./actions";
 import {
@@ -83,17 +83,38 @@ export function SubidasView({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const manualSort = searchParams?.get("sort") === "manual";
+  const [sortState, setSortState] = useState<{ key: string; dir: SortDir } | null>(
+    null,
+  );
 
-  function toggleManualSort(next: boolean) {
-    const sp = new URLSearchParams(searchParams?.toString() ?? "");
-    if (next) sp.set("sort", "manual");
-    else sp.delete("sort");
-    const qs = sp.toString();
-    router.replace(qs ? `?${qs}` : "?", { scroll: false });
+  function sortValueFor(row: UploadRowData, key: string): SortValue {
+    switch (key) {
+      case "scheduled_for":
+        return row.scheduledFor;
+      case "platform":
+        return PLATFORM_LABEL[row.platform];
+      case "asset":
+        return row.assetName;
+      case "uploaded_at":
+        return row.uploadedAt;
+      case "status":
+        return UPLOAD_STATUS_LABEL[row.status];
+      case "people":
+        return row.plannedByName;
+      default:
+        return null;
+    }
   }
+
+  const sortedRows = useMemo(() => {
+    if (!sortState) return rows;
+    const dirMul = sortState.dir === "asc" ? 1 : -1;
+    return [...rows].sort(
+      (a, b) =>
+        compareSortValues(sortValueFor(a, sortState.key), sortValueFor(b, sortState.key)) *
+        dirMul,
+    );
+  }, [rows, sortState]);
 
   function handleReorder(orderedIds: readonly string[]) {
     setError(null);
@@ -163,6 +184,7 @@ export function SubidasView({
     {
       key: "scheduled_for",
       label: "Fecha",
+      sortable: true,
       render: (r) => (
         <span
           style={{
@@ -177,11 +199,13 @@ export function SubidasView({
     {
       key: "platform",
       label: "Plataforma",
+      sortable: true,
       render: (r) => PLATFORM_LABEL[r.platform],
     },
     {
       key: "asset",
       label: "Asset",
+      sortable: true,
       render: (r) => (
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <span style={{ color: "var(--kg-text-1)", fontWeight: 600 }}>
@@ -196,6 +220,7 @@ export function SubidasView({
     {
       key: "uploaded_at",
       label: "Subida",
+      sortable: true,
       render: (r) =>
         r.uploadedAt ? (
           <span
@@ -213,6 +238,7 @@ export function SubidasView({
     {
       key: "status",
       label: "Estado",
+      sortable: true,
       render: (r) => (
         <StatusPill
           text={UPLOAD_STATUS_LABEL[r.status]}
@@ -225,6 +251,7 @@ export function SubidasView({
       // seteada (líder) y quién confirmó que la subió (CM).
       key: "people",
       label: "Responsables",
+      sortable: true,
       render: (r) => (
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <span className="kg-t7" style={{ color: "var(--kg-text-2)" }}>
@@ -302,23 +329,24 @@ export function SubidasView({
 
       {view === "tabla" ? (
         <>
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <label
-              className="kg-t7"
-              style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--kg-text-3)" }}
-            >
-              <input
-                type="checkbox"
-                checked={manualSort}
-                onChange={(e) => toggleManualSort(e.target.checked)}
-                style={{ accentColor: "var(--kg-accent-500)", cursor: "pointer" }}
-              />
-              Orden manual (arrastrar filas)
-            </label>
-          </div>
+          {sortState && (
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <span className="kg-t7" style={{ color: "var(--kg-text-3)", marginRight: 8 }}>
+                Ordenado por columna — el orden manual queda pausado.
+              </span>
+              <button
+                type="button"
+                onClick={() => setSortState(null)}
+                className="kg-focus"
+                style={{ ...rowBtn, padding: "2px 8px" }}
+              >
+                Volver a orden manual
+              </button>
+            </div>
+          )}
           <KgDataTable
             columns={columns}
-            rows={rows}
+            rows={sortedRows}
             rowKey={(r) => r.id}
             totalCount={rows.length}
             emptyTitle="Sin subidas registradas"
@@ -328,7 +356,12 @@ export function SubidasView({
                 : "Programá subidas para ver la agenda por plataforma y fecha."
             }
             fillHeight
-            dragSort={{ active: manualSort, onReorder: handleReorder, disabled: pending }}
+            sort={{
+              key: sortState?.key ?? null,
+              dir: sortState?.dir ?? "asc",
+              onChange: (key, dir) => setSortState({ key, dir }),
+            }}
+            dragSort={{ active: sortState == null, onReorder: handleReorder, disabled: pending }}
           />
         </>
       ) : (

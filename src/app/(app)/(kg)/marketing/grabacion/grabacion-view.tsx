@@ -1,10 +1,9 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
 import { KgCalendar, type KgCalendarEvent } from "@/components/kg/calendar";
-import { KgDataTable, type Column } from "@/components/kg/data-table";
+import { KgDataTable, type Column, type SortDir } from "@/components/kg/data-table";
 import { KgDetailDrawer, type DetailField } from "@/components/kg/detail-drawer";
 import { Drawer } from "@/components/kg/drawer";
 import { StatusPill } from "@/components/kg/status-pill";
@@ -16,6 +15,7 @@ import {
   type RecordingRole,
   type RecordingSessionStatus,
 } from "@/lib/marketing/types";
+import { compareSortValues, type SortValue } from "@/lib/kg/sort";
 
 import { primaryBtn } from "@/components/kg/form-primitives";
 import {
@@ -54,6 +54,7 @@ export interface SessionRowData {
   readonly durationMinutes: number | null;
   readonly location: string | null;
   readonly materials: string | null;
+  readonly scriptUrl: string | null;
   readonly notes: string | null;
   readonly status: RecordingSessionStatus;
   readonly assignees: readonly {
@@ -98,17 +99,40 @@ export function GrabacionView({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const manualSort = searchParams?.get("sort") === "manual";
+  const [sortState, setSortState] = useState<{ key: string; dir: SortDir } | null>(
+    null,
+  );
 
-  function toggleManualSort(next: boolean) {
-    const sp = new URLSearchParams(searchParams?.toString() ?? "");
-    if (next) sp.set("sort", "manual");
-    else sp.delete("sort");
-    const qs = sp.toString();
-    router.replace(qs ? `?${qs}` : "?", { scroll: false });
+  function sortValueFor(row: SessionRowData, key: string): SortValue {
+    switch (key) {
+      case "name":
+        return row.name;
+      case "scheduled_at":
+        return row.scheduledAt;
+      case "owner":
+        return row.ownerName;
+      case "duration":
+        return row.durationMinutes;
+      case "assignees":
+        return row.assignees.map((a) => a.personName).join(", ");
+      case "pieces":
+        return row.piecesCount;
+      case "status":
+        return SESSION_STATUS_LABEL[row.status];
+      default:
+        return null;
+    }
   }
+
+  const sortedRows = useMemo(() => {
+    if (!sortState) return rows;
+    const dirMul = sortState.dir === "asc" ? 1 : -1;
+    return [...rows].sort(
+      (a, b) =>
+        compareSortValues(sortValueFor(a, sortState.key), sortValueFor(b, sortState.key)) *
+        dirMul,
+    );
+  }, [rows, sortState]);
 
   function handleReorder(orderedIds: readonly string[]) {
     setError(null);
@@ -182,6 +206,7 @@ export function GrabacionView({
     {
       key: "name",
       label: "Nombre",
+      sortable: true,
       render: (r) =>
         r.name ? (
           <span style={{ color: "var(--kg-text-1)", fontWeight: 600 }}>
@@ -194,6 +219,7 @@ export function GrabacionView({
     {
       key: "scheduled_at",
       label: "Fecha",
+      sortable: true,
       render: (r) => (
         <span
           style={{
@@ -208,6 +234,7 @@ export function GrabacionView({
     {
       key: "owner",
       label: "Dueño",
+      sortable: true,
       render: (r) => r.ownerName,
     },
     {
@@ -215,12 +242,14 @@ export function GrabacionView({
       label: "Duración",
       align: "right",
       numeric: true,
+      sortable: true,
       render: (r) =>
         r.durationMinutes != null ? `${r.durationMinutes} min` : "—",
     },
     {
       key: "assignees",
       label: "Asignados",
+      sortable: true,
       render: (r) =>
         r.assignees.length === 0 ? (
           <span style={{ color: "var(--kg-text-3)" }}>—</span>
@@ -255,11 +284,13 @@ export function GrabacionView({
       label: "Pieces",
       align: "right",
       numeric: true,
+      sortable: true,
       render: (r) => (r.piecesCount === 0 ? "—" : String(r.piecesCount)),
     },
     {
       key: "status",
       label: "Estado",
+      sortable: true,
       render: (r) => (
         <StatusPill
           text={SESSION_STATUS_LABEL[r.status]}
@@ -378,29 +409,35 @@ export function GrabacionView({
 
       {view === "tabla" ? (
         <>
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <label
-              className="kg-t7"
-              style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--kg-text-3)" }}
-            >
-              <input
-                type="checkbox"
-                checked={manualSort}
-                onChange={(e) => toggleManualSort(e.target.checked)}
-                style={{ accentColor: "var(--kg-accent-500)", cursor: "pointer" }}
-              />
-              Orden manual (arrastrar filas)
-            </label>
-          </div>
+          {sortState && (
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <span className="kg-t7" style={{ color: "var(--kg-text-3)", marginRight: 8 }}>
+                Ordenado por columna — el orden manual queda pausado.
+              </span>
+              <button
+                type="button"
+                onClick={() => setSortState(null)}
+                className="kg-focus"
+                style={{ ...rowBtn, padding: "2px 8px" }}
+              >
+                Volver a orden manual
+              </button>
+            </div>
+          )}
           <KgDataTable
             columns={columns}
-            rows={rows}
+            rows={sortedRows}
             rowKey={(r) => r.id}
             totalCount={rows.length}
             emptyTitle="Sin sesiones planificadas"
             emptyHint="Creá una sesión y asignale las pieces que se van a grabar."
             fillHeight
-            dragSort={{ active: manualSort, onReorder: handleReorder, disabled: pending }}
+            sort={{
+              key: sortState?.key ?? null,
+              dir: sortState?.dir ?? "asc",
+              onChange: (key, dir) => setSortState({ key, dir }),
+            }}
+            dragSort={{ active: sortState == null, onReorder: handleReorder, disabled: pending }}
             onRowClick={(r) => setViewingId(r.id)}
           />
         </>
