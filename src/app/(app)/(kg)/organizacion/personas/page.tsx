@@ -35,20 +35,61 @@ export default async function PersonasPage({
   const show = parseShow(sp);
 
   const supabase = await createClient();
-  // RLS de organization_people gatea por can_edit_organization — el listado
+  // RLS de organization_people gatea por can_view_organization — el listado
   // se limita solo por la etiqueta de estado, no hace falta filtrar por org.
+  // monthly_salary/salary_currency no tienen grant de columna directo (0195):
+  // se traen vía RPC get_people_salaries, gateada a superadmin/admin/dev.
   const [{ data }, allUsers] = await Promise.all([
     supabase
       .from("organization_people")
       .select(
-        "id, full_name, national_id, email, phone, notes, active, created_at, monthly_salary, salary_currency, auth_user_id",
+        "id, full_name, national_id, email, phone, notes, active, created_at, organization_id, auth_user_id",
       )
       .order("active", { ascending: false })
       .order("full_name", { ascending: true }),
     listAllUsers(),
   ]);
 
-  const rows = (data ?? []) as PersonRow[];
+  const baseRows = (data ?? []) as Array<
+    Omit<PersonRow, "monthly_salary" | "salary_currency"> & {
+      organization_id: string;
+    }
+  >;
+  const orgIds = Array.from(new Set(baseRows.map((p) => p.organization_id)));
+  const salaryById = new Map<
+    string,
+    { monthly_salary: number; salary_currency: "ARS" | "USD" }
+  >();
+  for (const orgId of orgIds) {
+    const { data: salaries } = await supabase.rpc(
+      "get_people_salaries" as never,
+      { p_organization_id: orgId } as never,
+    );
+    for (const s of (salaries ?? []) as Array<{
+      id: string;
+      monthly_salary: number;
+      salary_currency: "ARS" | "USD";
+    }>) {
+      salaryById.set(s.id, {
+        monthly_salary: s.monthly_salary,
+        salary_currency: s.salary_currency,
+      });
+    }
+  }
+
+  const rows: PersonRow[] = baseRows.map((p) => ({
+    id: p.id,
+    full_name: p.full_name,
+    national_id: p.national_id,
+    email: p.email,
+    phone: p.phone,
+    notes: p.notes,
+    active: p.active,
+    created_at: p.created_at,
+    auth_user_id: p.auth_user_id,
+    monthly_salary: salaryById.get(p.id)?.monthly_salary ?? 0,
+    salary_currency: salaryById.get(p.id)?.salary_currency ?? "ARS",
+  }));
   const activeCount = rows.filter((p) => p.active).length;
   const inactiveCount = rows.length - activeCount;
 

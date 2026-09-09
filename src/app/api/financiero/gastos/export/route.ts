@@ -6,6 +6,7 @@ import {
 } from "@/lib/finance/xlsx-export";
 import { resolvePeriod, type Period } from "@/lib/finance/period";
 import { createClient } from "@/lib/supabase/server";
+import { requireRole } from "@/lib/supabase/auth";
 
 type PaidParam = "todos" | "pagado" | "impago";
 type RangeParam = "todo" | "mes-actual" | "mes-anterior" | "90d";
@@ -34,6 +35,8 @@ interface ProjectRow {
 }
 
 export async function GET(request: Request) {
+  await requireRole("superadmin");
+
   const url = new URL(request.url);
   const paid = parsePaid(url.searchParams.get("paid"));
   const range = parseRange(url.searchParams.get("range"));

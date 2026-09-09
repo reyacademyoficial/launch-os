@@ -73,14 +73,14 @@ function parseSessionFormData(formData: FormData): SessionPayload | string {
   const scheduledAt = String(formData.get("scheduled_at") ?? "").trim();
   if (scheduledAt.length === 0) return "La fecha y hora de grabación es obligatoria.";
 
-  const durationRaw = String(formData.get("duration_minutes") ?? "").trim();
+  const durationRaw = String(formData.get("duration_hours") ?? "").trim();
   let durationMinutes: number | null = null;
   if (durationRaw.length > 0) {
-    const n = Number.parseInt(durationRaw, 10);
-    if (!Number.isFinite(n) || n <= 0) {
-      return "La duración estimada debe ser un entero positivo (minutos).";
+    const hours = Number.parseFloat(durationRaw);
+    if (!Number.isFinite(hours) || hours <= 0) {
+      return "La duración estimada debe ser un número positivo (horas).";
     }
-    durationMinutes = n;
+    durationMinutes = Math.round(hours * 60);
   }
 
   const location = nullIfEmpty(formData.get("location"));

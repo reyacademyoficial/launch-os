@@ -105,12 +105,46 @@ export default async function NominaPage({
       .order("period_end", { ascending: false }),
     supabase
       .from("organization_people")
-      .select("id, full_name, monthly_salary, salary_currency, active")
+      .select("id, full_name, organization_id, active")
       .order("full_name", { ascending: true }),
   ]);
 
   const allRows = (payrollRes.data ?? []) as unknown as PayrollDbRow[];
-  const allPeople = (peopleRes.data ?? []) as unknown as PersonSalaryRow[];
+  const peopleBase = (peopleRes.data ?? []) as unknown as Array<
+    Omit<PersonSalaryRow, "monthly_salary" | "salary_currency"> & {
+      organization_id: string;
+    }
+  >;
+  // monthly_salary/salary_currency no tienen grant de columna directo (0195):
+  // se traen vía RPC get_people_salaries, gateada a superadmin/admin/dev.
+  const orgIds = Array.from(new Set(peopleBase.map((p) => p.organization_id)));
+  const salaryById = new Map<
+    string,
+    { monthly_salary: number; salary_currency: "ARS" | "USD" }
+  >();
+  for (const orgId of orgIds) {
+    const { data: salaries } = await supabase.rpc(
+      "get_people_salaries" as never,
+      { p_organization_id: orgId } as never,
+    );
+    for (const s of (salaries ?? []) as Array<{
+      id: string;
+      monthly_salary: number;
+      salary_currency: "ARS" | "USD";
+    }>) {
+      salaryById.set(s.id, {
+        monthly_salary: s.monthly_salary,
+        salary_currency: s.salary_currency,
+      });
+    }
+  }
+  const allPeople: PersonSalaryRow[] = peopleBase.map((p) => ({
+    id: p.id,
+    full_name: p.full_name,
+    active: p.active,
+    monthly_salary: salaryById.get(p.id)?.monthly_salary ?? 0,
+    salary_currency: salaryById.get(p.id)?.salary_currency ?? "ARS",
+  }));
   const personById = new Map<string, string>(
     allPeople.map((p) => [p.id, p.full_name] as const),
   );

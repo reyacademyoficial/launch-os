@@ -245,7 +245,7 @@ export function GrabacionView({
       numeric: true,
       sortable: true,
       render: (r) =>
-        r.durationMinutes != null ? `${r.durationMinutes} min` : "—",
+        r.durationMinutes != null ? formatHours(r.durationMinutes) : "—",
     },
     {
       key: "assignees",
@@ -356,7 +356,7 @@ export function GrabacionView({
           { label: "Fecha", value: formatDateTime(viewing.scheduledAt) },
           {
             label: "Duración",
-            value: viewing.durationMinutes != null ? `${viewing.durationMinutes} min` : null,
+            value: viewing.durationMinutes != null ? formatHours(viewing.durationMinutes) : null,
           },
           { label: "Ubicación", value: viewing.location },
           { label: "Materiales", value: viewing.materials },
@@ -692,6 +692,11 @@ function formatTime(iso: string): string {
   if (Number.isNaN(d.getTime())) return "";
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function formatHours(minutes: number): string {
+  const hours = Math.round((minutes / 60) * 100) / 100;
+  return `${hours} h`;
 }
 
 function formatDay(key: string): string {

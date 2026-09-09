@@ -122,13 +122,22 @@ export async function runNotionDatabaseSync(
 
   const wsRes = await supabase
     .from("notion_workspaces")
-    .select("secret_token, organization_id, enabled")
+    .select("organization_id, enabled")
     .eq("id", db.workspace_id)
     .maybeSingle();
-  const ws = wsRes.data as
-    | { secret_token: string; organization_id: string; enabled: boolean }
+  const wsBase = wsRes.data as
+    | { organization_id: string; enabled: boolean }
     | null;
-  if (!ws) return { ok: false, error: "Workspace no encontrado." };
+  if (!wsBase) return { ok: false, error: "Workspace no encontrado." };
+
+  const tokenRes = await supabase.rpc(
+    "get_notion_workspace_secret" as never,
+    { p_workspace_id: db.workspace_id } as never,
+  );
+  if (tokenRes.error || !tokenRes.data) {
+    return { ok: false, error: "No autorizado para leer el token de este workspace." };
+  }
+  const ws = { ...wsBase, secret_token: tokenRes.data as unknown as string };
 
   const map = parsePropertyMap(db.property_map);
   if (!map) {

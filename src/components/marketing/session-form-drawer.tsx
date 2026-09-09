@@ -303,14 +303,19 @@ function SessionFormBody({
           </Field>
         </div>
         <div style={{ flex: 1 }}>
-          <Field label="Duración (min)" htmlFor="duration_minutes">
+          <Field label="Duración (h)" htmlFor="duration_hours">
             <input
-              id="duration_minutes"
-              name="duration_minutes"
+              id="duration_hours"
+              name="duration_hours"
               type="number"
-              min={1}
-              defaultValue={initial?.durationMinutes ?? ""}
-              placeholder="60"
+              min={0.25}
+              step={0.25}
+              defaultValue={
+                initial?.durationMinutes != null
+                  ? roundHours(initial.durationMinutes / 60)
+                  : ""
+              }
+              placeholder="1"
               style={inputStyle}
             />
           </Field>
@@ -595,4 +600,8 @@ function toDatetimeLocal(iso: string | null | undefined): string {
   if (Number.isNaN(d.getTime())) return "";
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function roundHours(hours: number): number {
+  return Math.round(hours * 100) / 100;
 }

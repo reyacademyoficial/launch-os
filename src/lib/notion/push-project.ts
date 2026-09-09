@@ -143,22 +143,33 @@ export async function pushProjectToNotion(
 
   const wsRes = await supabase
     .from("notion_workspaces")
-    .select("secret_token, enabled")
+    .select("enabled")
     .eq("id", db.workspace_id)
     .maybeSingle();
-  const ws = wsRes.data as
-    | { secret_token: string; enabled: boolean }
-    | null;
-  if (!ws) {
+  const wsBase = wsRes.data as { enabled: boolean } | null;
+  if (!wsBase) {
     return await markPushFailed(
       supabase,
       projectId,
       "El workspace de Notion de origen ya no existe.",
     );
   }
-  if (!ws.enabled) {
+  if (!wsBase.enabled) {
     return { ok: true, pushed: false, reason: "workspace-disabled" };
   }
+
+  const tokenRes = await supabase.rpc(
+    "get_notion_workspace_secret" as never,
+    { p_workspace_id: db.workspace_id } as never,
+  );
+  if (tokenRes.error || !tokenRes.data) {
+    return await markPushFailed(
+      supabase,
+      projectId,
+      "No autorizado para leer el token de este workspace.",
+    );
+  }
+  const ws = { ...wsBase, secret_token: tokenRes.data as unknown as string };
 
   // Schema en vivo: necesitamos el TIPO real de cada columna (select vs
   // status vs checkbox) y sus opciones para traducir el valor KG a la

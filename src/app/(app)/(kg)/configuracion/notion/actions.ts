@@ -28,6 +28,29 @@ import { requireRole } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
 // ═══════════════════════════════════════════════════════════════════════════
+// get_notion_workspace_secret — RPC nueva (0195), no está en el Database type
+// generado (mismo workaround `loose` que sync.ts/launches/actions.ts). Gatea
+// is_kingrow_admin() adentro; requireRole("superadmin") de cada action ya lo
+// garantiza en el caller.
+// ═══════════════════════════════════════════════════════════════════════════
+async function getNotionWorkspaceSecret(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  workspaceId: string,
+): Promise<string | null> {
+  const loose = supabase as unknown as {
+    rpc: (
+      name: string,
+      args?: Record<string, unknown>,
+    ) => Promise<{ data: unknown; error: unknown }>;
+  };
+  const res = await loose.rpc("get_notion_workspace_secret", {
+    p_workspace_id: workspaceId,
+  });
+  if (res.error || !res.data) return null;
+  return res.data as string;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Contratos de retorno
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -203,18 +226,24 @@ export async function discoverNotionDatabases(
 
   const supabase = await createClient();
 
-  // Fetch del token — SELECT trae el token porque el llamante es superadmin
-  // (RLS ya lo restringió).
+  // Fetch del token — vía RPC porque la columna secret_token no tiene grant
+  // directo a `authenticated` (0195). La función valida is_kingrow_admin()
+  // adentro; requireRole("superadmin") de arriba ya lo garantiza acá.
   const wsRes = await supabase
     .from("notion_workspaces")
-    .select("id, secret_token")
+    .select("id")
     .eq("id", workspaceId)
     .maybeSingle();
-
-  const ws = wsRes.data as { id: string; secret_token: string } | null;
-  if (wsRes.error || !ws) {
+  const wsBase = wsRes.data as { id: string } | null;
+  if (wsRes.error || !wsBase) {
     return { ok: false, error: "No pudimos encontrar el workspace." };
   }
+
+  const wsSecret = await getNotionWorkspaceSecret(supabase, workspaceId);
+  if (!wsSecret) {
+    return { ok: false, error: "No autorizado para leer el token de este workspace." };
+  }
+  const ws = { id: wsBase.id, secret_token: wsSecret };
 
   let dbs: Awaited<ReturnType<typeof apiListDatabases>>;
   try {
@@ -345,16 +374,19 @@ export async function syncNotionUsers(
 
   const wsRes = await supabase
     .from("notion_workspaces")
-    .select("id, organization_id, secret_token")
+    .select("id, organization_id")
     .eq("id", workspaceId)
     .maybeSingle();
-
-  const ws = wsRes.data as
-    | { id: string; organization_id: string; secret_token: string }
-    | null;
-  if (wsRes.error || !ws) {
+  const wsBase = wsRes.data as { id: string; organization_id: string } | null;
+  if (wsRes.error || !wsBase) {
     return { ok: false, error: "No pudimos encontrar el workspace." };
   }
+
+  const wsSecret = await getNotionWorkspaceSecret(supabase, workspaceId);
+  if (!wsSecret) {
+    return { ok: false, error: "No autorizado para leer el token de este workspace." };
+  }
+  const ws = { ...wsBase, secret_token: wsSecret };
 
   // Log inicial en 'running' — nos permite detectar syncs que colgaron
   // (updateamos a 'ok' o 'error' al finalizar). El id devuelto es el que
@@ -653,13 +685,11 @@ export async function retrieveNotionDatabaseSchema(
     | null;
   if (!db) return { ok: false, error: "Database no encontrada." };
 
-  const wsRes = await supabase
-    .from("notion_workspaces")
-    .select("secret_token")
-    .eq("id", db.workspace_id)
-    .maybeSingle();
-  const ws = wsRes.data as { secret_token: string } | null;
-  if (!ws) return { ok: false, error: "Workspace no encontrado." };
+  const wsSecret = await getNotionWorkspaceSecret(supabase, db.workspace_id);
+  if (!wsSecret) {
+    return { ok: false, error: "No autorizado para leer el token de este workspace." };
+  }
+  const ws = { secret_token: wsSecret };
 
   try {
     const schema = await apiRetrieveDatabase(ws.secret_token, db.notion_id);
@@ -797,16 +827,23 @@ export async function postNotionComment(
 
   const wsRes = await supabase
     .from("notion_workspaces")
-    .select("secret_token, enabled")
+    .select("enabled")
     .eq("id", project.notion_workspace_id)
     .maybeSingle();
-  const ws = wsRes.data as
-    | { secret_token: string; enabled: boolean }
-    | null;
-  if (!ws) return { ok: false, error: "Workspace de Notion no encontrado." };
-  if (!ws.enabled) {
+  const wsBase = wsRes.data as { enabled: boolean } | null;
+  if (!wsBase) return { ok: false, error: "Workspace de Notion no encontrado." };
+  if (!wsBase.enabled) {
     return { ok: false, error: "El workspace de Notion está deshabilitado." };
   }
+
+  const wsSecret = await getNotionWorkspaceSecret(
+    supabase,
+    project.notion_workspace_id,
+  );
+  if (!wsSecret) {
+    return { ok: false, error: "No autorizado para leer el token de este workspace." };
+  }
+  const ws = { ...wsBase, secret_token: wsSecret };
 
   // Validar mentions server-side: solo dejamos pasar notion_users mapeados
   // a organization_people. Devuelve el subset válido (en orden estable
