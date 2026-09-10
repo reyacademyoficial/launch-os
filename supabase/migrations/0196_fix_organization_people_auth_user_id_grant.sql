@@ -1,0 +1,21 @@
+-- ╭──────────────────────────────────────────────────────────────────────────╮
+-- │ Fix urgente — 0195 se olvidó de `auth_user_id` en el GRANT de columnas   │
+-- │                                                                          │
+-- │ 0195 hizo `revoke select` + `grant select (lista de columnas)` sobre     │
+-- │ `organization_people`, pero la lista no incluía `auth_user_id` (0111).   │
+-- │ Efecto real: CUALQUIER query que pida esa columna (select o incluso un   │
+-- │ `.eq("auth_user_id", ...)` en el WHERE) es rechazada COMPLETA por        │
+-- │ Postgres con 42501 — no se omite la columna, se cae la fila entera.      │
+-- │ Rompió:                                                                  │
+-- │   - /organizacion/personas y /configuracion/personas (select trae la    │
+-- │     columna) → tabla aparecía vacía, como si se hubiera borrado todo.    │
+-- │     LOS DATOS NUNCA SE TOCARON — es 100% un problema de grant, no de     │
+-- │     datos perdidos.                                                      │
+-- │   - src/lib/ops/current-person.ts (filtra por auth_user_id en WHERE).    │
+-- │                                                                          │
+-- │ Fix: agregar la columna faltante al grant existente. No hace falta      │
+-- │ revocar de nuevo — GRANT SELECT (col) es aditivo sobre el set ya         │
+-- │ otorgado por 0195.                                                      │
+-- ╰──────────────────────────────────────────────────────────────────────────╯
+
+grant select (auth_user_id) on public.organization_people to authenticated;
